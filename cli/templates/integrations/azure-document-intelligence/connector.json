@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "analyze_invoice",
+      "id": "azure-document-intelligence__analyze_invoice",
       "name": "Analyze Invoice",
       "description": "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID to fetch the extracted fields.",
       "requiresWrite": true,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "analyze_receipt",
+      "id": "azure-document-intelligence__analyze_receipt",
       "name": "Analyze Receipt",
       "description": "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
       "requiresWrite": true,
@@ -110,7 +110,7 @@
       }
     },
     {
-      "id": "analyze_layout",
+      "id": "azure-document-intelligence__analyze_layout",
       "name": "Analyze Layout",
       "description": "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
       "requiresWrite": true,
@@ -148,7 +148,7 @@
       }
     },
     {
-      "id": "get_analyze_result",
+      "id": "azure-document-intelligence__get_analyze_result",
       "name": "Get Analyze Result",
       "description": "Fetch the result of a previously started analysis. Use the result ID (GUID) from the Operation-Location response header of an analyze call, and the same model ID that started it. While status is 'running', wait and poll again; when status is 'succeeded', the extracted fields are in analyzeResult.",
       "requiresWrite": false,
@@ -178,7 +178,7 @@
       }
     },
     {
-      "id": "analyze_read",
+      "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
       "description": "Start pure OCR text extraction with the prebuilt-read model — the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
       "requiresWrite": true,
@@ -216,7 +216,7 @@
       }
     },
     {
-      "id": "list_document_models",
+      "id": "azure-document-intelligence__list_document_models",
       "name": "List Document Models",
       "description": "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions — use this to discover valid model IDs",
       "requiresWrite": false,

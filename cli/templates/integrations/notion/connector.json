@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "search_notion",
+      "id": "notion__search_notion",
       "name": "Search Notion",
       "description": "Search pages and databases in the workspace",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "read_page",
+      "id": "notion__read_page",
       "name": "Read Page",
       "description": "Read the content of a Notion page",
       "requiresWrite": false,
@@ -118,7 +118,7 @@
       }
     },
     {
-      "id": "create_page",
+      "id": "notion__create_page",
       "name": "Create Page",
       "description": "Create a new page in a database or as a subpage",
       "requiresWrite": true,
@@ -152,7 +152,7 @@
       }
     },
     {
-      "id": "query_database",
+      "id": "notion__query_database",
       "name": "Query Database",
       "description": "Query a Notion database with filters and sorts",
       "requiresWrite": false,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "get_page",
+      "id": "notion__get_page",
       "name": "Get Page Metadata",
       "description": "Retrieve Notion page metadata and properties without fetching child block content",
       "requiresWrite": false,
@@ -222,7 +222,7 @@
       }
     },
     {
-      "id": "get_database",
+      "id": "notion__get_database",
       "name": "Get Database",
       "description": "Retrieve Notion database metadata, title, and property schema",
       "requiresWrite": false,
@@ -246,7 +246,7 @@
       }
     },
     {
-      "id": "append_blocks",
+      "id": "notion__append_blocks",
       "name": "Append Blocks",
       "description": "Append child blocks to a Notion page or block",
       "requiresWrite": true,
@@ -281,7 +281,7 @@
       }
     },
     {
-      "id": "update_page",
+      "id": "notion__update_page",
       "name": "Update Page",
       "description": "Update Notion page properties or archive/unarchive a page",
       "requiresWrite": true,
@@ -323,7 +323,7 @@
       }
     },
     {
-      "id": "create_database",
+      "id": "notion__create_database",
       "name": "Create Database",
       "description": "Create a new Notion database as a subpage with a property schema",
       "requiresWrite": true,
@@ -362,7 +362,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "notion__list_users",
       "name": "List Users",
       "description": "List users in the Notion workspace so pages can mention or attribute the right person",
       "requiresWrite": false,

@@ -38,7 +38,7 @@
   ],
   "tools": [
     {
-      "id": "list_calendars",
+      "id": "calendar__list_calendars",
       "name": "List Calendars",
       "description": "List all calendars in the authenticated user's calendar list",
       "requiresWrite": false,
@@ -59,7 +59,7 @@
       }
     },
     {
-      "id": "list_events",
+      "id": "calendar__list_events",
       "name": "List Events",
       "description": "Get upcoming calendar events",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "create_event",
+      "id": "calendar__create_event",
       "name": "Create Event",
       "description": "Schedule a new calendar event",
       "requiresWrite": true,
@@ -157,7 +157,7 @@
       }
     },
     {
-      "id": "get_event",
+      "id": "calendar__get_event",
       "name": "Get Event",
       "description": "Get details of a specific calendar event",
       "requiresWrite": false,
@@ -182,7 +182,7 @@
       }
     },
     {
-      "id": "update_event",
+      "id": "calendar__update_event",
       "name": "Update Event",
       "description": "Update an existing calendar event",
       "requiresWrite": true,
@@ -239,7 +239,7 @@
       }
     },
     {
-      "id": "delete_event",
+      "id": "calendar__delete_event",
       "name": "Delete Event",
       "description": "Delete a calendar event by ID",
       "requiresWrite": true,
@@ -270,7 +270,7 @@
       }
     },
     {
-      "id": "find_free_time",
+      "id": "calendar__find_free_time",
       "name": "Find Free Time",
       "description": "Find available time slots in calendar",
       "requiresWrite": false,

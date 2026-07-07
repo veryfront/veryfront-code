@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_tickets",
+      "id": "gorgias__list_tickets",
       "name": "List Tickets",
       "description": "List helpdesk tickets, optionally filtered by customer or ordered by creation/update time",
       "requiresWrite": false,
@@ -97,7 +97,7 @@
       }
     },
     {
-      "id": "get_ticket",
+      "id": "gorgias__get_ticket",
       "name": "Get Ticket",
       "description": "Retrieve a single ticket with its full details (customer, assignee, status, tags)",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "list_ticket_messages",
+      "id": "gorgias__list_ticket_messages",
       "name": "List Ticket Messages",
       "description": "List the messages (customer and agent) in a ticket's conversation thread",
       "requiresWrite": false,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "create_ticket_message",
+      "id": "gorgias__create_ticket_message",
       "name": "Create Ticket Message",
       "description": "Add a message to a ticket, e.g. an agent reply to the customer or an internal note",
       "requiresWrite": true,
@@ -228,7 +228,7 @@
       }
     },
     {
-      "id": "create_ticket",
+      "id": "gorgias__create_ticket",
       "name": "Create Ticket",
       "description": "Create a new helpdesk ticket with an initial message, e.g. to open an issue on behalf of a customer",
       "requiresWrite": true,
@@ -269,7 +269,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "gorgias__list_customers",
       "name": "List Customers",
       "description": "List or search helpdesk customers, e.g. to find a customer ID by email for ticket filtering",
       "requiresWrite": false,
@@ -328,7 +328,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "gorgias__list_users",
       "name": "List Users",
       "description": "List helpdesk agents/users, e.g. to find the user IDs needed for ticket assignment and message senders",
       "requiresWrite": false,
@@ -381,7 +381,7 @@
       }
     },
     {
-      "id": "update_ticket_status",
+      "id": "gorgias__update_ticket_status",
       "name": "Update Ticket Status",
       "description": "Update a ticket, e.g. close or reopen it, or change its assignee",
       "requiresWrite": true,

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_transcripts",
+      "id": "fireflies__list_transcripts",
       "name": "List Transcripts",
       "description": "List meeting transcripts, optionally filtered by date, participants, or keyword",
       "requiresWrite": false,
@@ -94,7 +94,7 @@
       }
     },
     {
-      "id": "get_transcript",
+      "id": "fireflies__get_transcript",
       "name": "Get Transcript",
       "description": "Get a transcript with its sentences and AI summary",
       "requiresWrite": false,
@@ -117,7 +117,7 @@
       }
     },
     {
-      "id": "search_transcripts",
+      "id": "fireflies__search_transcripts",
       "name": "Search Transcripts",
       "description": "Keyword-search transcripts and return matches with summaries",
       "requiresWrite": false,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "fireflies__list_users",
       "name": "List Users",
       "description": "List teammates in the Fireflies workspace",
       "requiresWrite": false,
@@ -161,7 +161,7 @@
       }
     },
     {
-      "id": "get_user",
+      "id": "fireflies__get_user",
       "name": "Get User",
       "description": "Get a workspace user by ID",
       "requiresWrite": false,

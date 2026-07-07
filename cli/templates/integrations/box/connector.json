@@ -39,7 +39,7 @@
   ],
   "tools": [
     {
-      "id": "list_folder_items",
+      "id": "box__list_folder_items",
       "name": "List Folder Items",
       "description": "List files and subfolders inside a Box folder (folder 0 is the root)",
       "requiresWrite": false,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "get_file",
+      "id": "box__get_file",
       "name": "Get File",
       "description": "Get metadata about a Box file",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "get_folder",
+      "id": "box__get_folder",
       "name": "Get Folder",
       "description": "Get metadata about a Box folder",
       "requiresWrite": false,
@@ -155,7 +155,7 @@
       }
     },
     {
-      "id": "search",
+      "id": "box__search",
       "name": "Search",
       "description": "Search for files and folders across the Box account",
       "requiresWrite": false,
@@ -195,7 +195,7 @@
       }
     },
     {
-      "id": "create_folder",
+      "id": "box__create_folder",
       "name": "Create Folder",
       "description": "Create a new folder inside a Box parent folder",
       "requiresWrite": true,
@@ -213,14 +213,14 @@
             "description": "Parent folder reference, e.g. { \"id\": \"0\" } for the root folder",
             "required": true,
             "default": {
-              "id": "0"
+              "id": "box__0"
             }
           }
         }
       }
     },
     {
-      "id": "upload_file",
+      "id": "box__upload_file",
       "name": "Upload File",
       "description": "Upload a new file (up to 50 MB) into a Box folder; larger files require Box's chunked upload API",
       "requiresWrite": true,
@@ -258,7 +258,7 @@
       }
     },
     {
-      "id": "upload_file_version",
+      "id": "box__upload_file_version",
       "name": "Upload File Version",
       "description": "Upload a new version of an existing Box file (up to 50 MB)",
       "requiresWrite": true,
@@ -297,7 +297,7 @@
       }
     },
     {
-      "id": "list_file_comments",
+      "id": "box__list_file_comments",
       "name": "List File Comments",
       "description": "List comments on a Box file",
       "requiresWrite": false,
@@ -327,7 +327,7 @@
       }
     },
     {
-      "id": "add_comment",
+      "id": "box__add_comment",
       "name": "Add Comment",
       "description": "Add a comment to a Box file",
       "requiresWrite": true,
@@ -349,7 +349,7 @@
       }
     },
     {
-      "id": "download_file",
+      "id": "box__download_file",
       "name": "Download File",
       "description": "Download a file's content; Box responds with a 302 redirect to a short-lived dl.boxcloud.com URL that is followed to fetch the binary content (a 202 with Retry-After means the file is not yet ready)",
       "requiresWrite": false,

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_apps",
+      "id": "fly-io__list_apps",
       "name": "List Apps",
       "description": "List apps in a Fly.io organization",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "get_app",
+      "id": "fly-io__get_app",
       "name": "Get App",
       "description": "Get details about an app, including its organization and status",
       "requiresWrite": false,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "list_machines",
+      "id": "fly-io__list_machines",
       "name": "List Machines",
       "description": "List Machines of an app with their states",
       "requiresWrite": false,
@@ -150,7 +150,7 @@
       }
     },
     {
-      "id": "get_machine",
+      "id": "fly-io__get_machine",
       "name": "Get Machine",
       "description": "Get a Machine by ID, including its config and state",
       "requiresWrite": false,
@@ -174,7 +174,7 @@
       }
     },
     {
-      "id": "start_machine",
+      "id": "fly-io__start_machine",
       "name": "Start Machine",
       "description": "Start a stopped Machine",
       "requiresWrite": true,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "stop_machine",
+      "id": "fly-io__stop_machine",
       "name": "Stop Machine",
       "description": "Stop a running Machine",
       "requiresWrite": true,

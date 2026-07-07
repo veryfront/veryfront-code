@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_payments",
+      "id": "square__list_payments",
       "name": "List Payments",
       "description": "List payments taken by the seller account",
       "requiresWrite": false,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "get_payment",
+      "id": "square__get_payment",
       "name": "Get Payment",
       "description": "Get details of a payment",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "search_orders",
+      "id": "square__search_orders",
       "name": "Search Orders",
       "description": "Search orders across locations (read-only search via POST)",
       "requiresWrite": false,
@@ -178,7 +178,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "square__list_customers",
       "name": "List Customers",
       "description": "List customer profiles",
       "requiresWrite": false,
@@ -220,7 +220,7 @@
       }
     },
     {
-      "id": "list_locations",
+      "id": "square__list_locations",
       "name": "List Locations",
       "description": "List the seller's business locations",
       "requiresWrite": false,
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "list_catalog",
+      "id": "square__list_catalog",
       "name": "List Catalog",
       "description": "List catalog objects such as items and categories",
       "requiresWrite": false,

@@ -43,7 +43,7 @@
   ],
   "tools": [
     {
-      "id": "list_spreadsheets",
+      "id": "sheets__list_spreadsheets",
       "name": "List Spreadsheets",
       "description": "List recent Google Sheets spreadsheets from Drive",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "get_spreadsheet",
+      "id": "sheets__get_spreadsheet",
       "name": "Get Spreadsheet",
       "description": "Get spreadsheet metadata including sheet names and properties",
       "requiresWrite": false,
@@ -110,7 +110,7 @@
       }
     },
     {
-      "id": "read_range",
+      "id": "sheets__read_range",
       "name": "Read Range",
       "description": "Read cell data from a spreadsheet range",
       "requiresWrite": false,
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "write_range",
+      "id": "sheets__write_range",
       "name": "Write Range",
       "description": "Write data to a spreadsheet range",
       "requiresWrite": true,
@@ -192,7 +192,7 @@
       }
     },
     {
-      "id": "create_spreadsheet",
+      "id": "sheets__create_spreadsheet",
       "name": "Create Spreadsheet",
       "description": "Create a new spreadsheet with optional initial data",
       "requiresWrite": true,
@@ -213,7 +213,7 @@
       }
     },
     {
-      "id": "append_rows",
+      "id": "sheets__append_rows",
       "name": "Append Rows",
       "description": "Append rows to a spreadsheet range",
       "requiresWrite": true,
@@ -267,7 +267,7 @@
       }
     },
     {
-      "id": "clear_range",
+      "id": "sheets__clear_range",
       "name": "Clear Range",
       "description": "Clear values from a spreadsheet range",
       "requiresWrite": true,
@@ -292,7 +292,7 @@
       }
     },
     {
-      "id": "batch_update",
+      "id": "sheets__batch_update",
       "name": "Batch Update",
       "description": "Run raw Google Sheets batchUpdate requests for formatting and structural changes",
       "requiresWrite": true,
@@ -321,7 +321,7 @@
       }
     },
     {
-      "id": "add_sheet",
+      "id": "sheets__add_sheet",
       "name": "Add Sheet",
       "description": "Add a new sheet/tab to a spreadsheet",
       "requiresWrite": true,
@@ -346,7 +346,7 @@
       }
     },
     {
-      "id": "delete_sheet",
+      "id": "sheets__delete_sheet",
       "name": "Delete Sheet",
       "description": "Delete a sheet/tab from a spreadsheet by sheet ID",
       "requiresWrite": true,
@@ -371,7 +371,7 @@
       }
     },
     {
-      "id": "rename_sheet",
+      "id": "sheets__rename_sheet",
       "name": "Rename Sheet",
       "description": "Rename a sheet/tab by sheet ID",
       "requiresWrite": true,
@@ -396,7 +396,7 @@
       }
     },
     {
-      "id": "delete_spreadsheet",
+      "id": "sheets__delete_spreadsheet",
       "name": "Delete Spreadsheet",
       "description": "Move an app-accessible spreadsheet file to trash",
       "requiresWrite": true,
@@ -421,7 +421,7 @@
       }
     },
     {
-      "id": "find_replace",
+      "id": "sheets__find_replace",
       "name": "Find and Replace",
       "description": "Find and replace text in a spreadsheet or sheet",
       "requiresWrite": true,
@@ -446,7 +446,7 @@
       }
     },
     {
-      "id": "copy_sheet",
+      "id": "sheets__copy_sheet",
       "name": "Copy Sheet",
       "description": "Copy a sheet/tab to another spreadsheet",
       "requiresWrite": true,
@@ -477,7 +477,7 @@
       }
     },
     {
-      "id": "create_chart",
+      "id": "sheets__create_chart",
       "name": "Create Chart",
       "description": "Create an embedded chart using a Sheets API chart specification",
       "requiresWrite": true,
@@ -502,7 +502,7 @@
       }
     },
     {
-      "id": "set_data_validation",
+      "id": "sheets__set_data_validation",
       "name": "Set Data Validation",
       "description": "Set data validation rules on a sheet range",
       "requiresWrite": true,

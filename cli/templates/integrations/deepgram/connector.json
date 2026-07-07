@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "transcribe_url",
+      "id": "deepgram__transcribe_url",
       "name": "Transcribe URL",
       "description": "Transcribe a prerecorded audio file from a publicly accessible URL",
       "requiresWrite": true,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "deepgram__list_projects",
       "name": "List Projects",
       "description": "List the Deepgram projects associated with the API key",
       "requiresWrite": false,
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "get_project_balances",
+      "id": "deepgram__get_project_balances",
       "name": "Get Project Balances",
       "description": "Get the outstanding credit balances for a project",
       "requiresWrite": false,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "list_models",
+      "id": "deepgram__list_models",
       "name": "List Models",
       "description": "List the speech-to-text and text-to-speech models Deepgram offers",
       "requiresWrite": false,

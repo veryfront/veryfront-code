@@ -49,7 +49,7 @@
   ],
   "tools": [
     {
-      "id": "list_containers",
+      "id": "azure-blob-storage__list_containers",
       "name": "List Containers",
       "description": "List blob containers in a storage account; the response is XML (EnumerationResults), not JSON",
       "requiresWrite": false,
@@ -84,7 +84,7 @@
       }
     },
     {
-      "id": "list_blobs",
+      "id": "azure-blob-storage__list_blobs",
       "name": "List Blobs",
       "description": "List blobs in a container, optionally filtered by name prefix; the response is XML (EnumerationResults), not JSON",
       "requiresWrite": false,
@@ -125,7 +125,7 @@
       }
     },
     {
-      "id": "download_blob",
+      "id": "azure-blob-storage__download_blob",
       "name": "Download Blob",
       "description": "Download a blob's content (Get Blob); blob properties are returned as x-ms-* response headers",
       "requiresWrite": false,
@@ -161,7 +161,7 @@
       }
     },
     {
-      "id": "upload_blob",
+      "id": "azure-blob-storage__upload_blob",
       "name": "Upload Blob",
       "description": "Create or overwrite a block blob with the given content (Put Blob)",
       "requiresWrite": true,
@@ -218,7 +218,7 @@
       }
     },
     {
-      "id": "delete_blob",
+      "id": "azure-blob-storage__delete_blob",
       "name": "Delete Blob",
       "description": "Delete a blob from a container (Delete Blob); errors are returned as XML",
       "requiresWrite": true,
@@ -254,7 +254,7 @@
       }
     },
     {
-      "id": "create_container",
+      "id": "azure-blob-storage__create_container",
       "name": "Create Container",
       "description": "Create a new blob container in the storage account (Create Container); fails with 409 if a container with the same name already exists",
       "requiresWrite": true,
@@ -289,7 +289,7 @@
       }
     },
     {
-      "id": "copy_blob",
+      "id": "azure-blob-storage__copy_blob",
       "name": "Copy Blob",
       "description": "Server-side copy of a blob to a destination within the storage account (Copy Blob) — no download/re-upload needed; returns 202 with x-ms-copy-status 'success' or 'pending' (poll the destination blob until the copy finishes)",
       "requiresWrite": true,

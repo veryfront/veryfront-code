@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "langsmith__list_projects",
       "name": "List Projects",
       "description": "List tracing projects (tracer sessions) in your LangSmith workspace",
       "requiresWrite": false,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "query_runs",
+      "id": "langsmith__query_runs",
       "name": "Query Runs",
       "description": "Query traced runs with filters (project, trace filter expressions, root runs only)",
       "requiresWrite": false,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "get_run",
+      "id": "langsmith__get_run",
       "name": "Get Run",
       "description": "Get full details of a single run, including inputs, outputs, and errors",
       "requiresWrite": false,
@@ -125,7 +125,7 @@
       }
     },
     {
-      "id": "list_datasets",
+      "id": "langsmith__list_datasets",
       "name": "List Datasets",
       "description": "List evaluation datasets in your LangSmith workspace",
       "requiresWrite": false,
@@ -154,7 +154,7 @@
       }
     },
     {
-      "id": "list_examples",
+      "id": "langsmith__list_examples",
       "name": "List Examples",
       "description": "List examples in a LangSmith dataset",
       "requiresWrite": false,

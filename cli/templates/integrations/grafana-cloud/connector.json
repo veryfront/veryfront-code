@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "search_dashboards",
+      "id": "grafana-cloud__search_dashboards",
       "name": "Search Dashboards",
       "description": "Search dashboards and folders in the Grafana stack",
       "requiresWrite": false,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "get_dashboard",
+      "id": "grafana-cloud__get_dashboard",
       "name": "Get Dashboard",
       "description": "Get a dashboard's full JSON model by UID",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "list_folders",
+      "id": "grafana-cloud__list_folders",
       "name": "List Folders",
       "description": "List dashboard folders in the Grafana stack",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "list_annotations",
+      "id": "grafana-cloud__list_annotations",
       "name": "List Annotations",
       "description": "List annotations and alert events in a time range",
       "requiresWrite": false,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "create_annotation",
+      "id": "grafana-cloud__create_annotation",
       "name": "Create Annotation",
       "description": "Create an annotation (e.g. mark a deploy) on a dashboard or globally",
       "requiresWrite": true,
@@ -222,7 +222,7 @@
       }
     },
     {
-      "id": "list_datasources",
+      "id": "grafana-cloud__list_datasources",
       "name": "List Data Sources",
       "description": "List data sources configured in the Grafana stack",
       "requiresWrite": false,

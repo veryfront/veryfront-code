@@ -44,7 +44,7 @@
   ],
   "tools": [
     {
-      "id": "list_orders",
+      "id": "billbee__list_orders",
       "name": "List Orders",
       "description": "List orders across all connected shops, optionally filtered by date range, modification time, or order state",
       "requiresWrite": false,
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "get_order",
+      "id": "billbee__get_order",
       "name": "Get Order",
       "description": "Get a single order with positions, addresses, and payment details by its internal Billbee ID",
       "requiresWrite": false,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "update_order_state",
+      "id": "billbee__update_order_state",
       "name": "Update Order State",
       "description": "Change the main state of an order, e.g. mark it as confirmed, paid, or shipped",
       "requiresWrite": true,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "list_products",
+      "id": "billbee__list_products",
       "name": "List Products",
       "description": "List products (articles) in the Billbee account",
       "requiresWrite": false,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "billbee__list_customers",
       "name": "List Customers",
       "description": "List customers in the Billbee account",
       "requiresWrite": false,
@@ -189,7 +189,7 @@
       }
     },
     {
-      "id": "list_invoices",
+      "id": "billbee__list_invoices",
       "name": "List Invoices",
       "description": "List invoices with positions and amounts over a date range — the export feed into accounting tools. Throttled to 1 request per minute for the same page and minInvoiceDate.",
       "requiresWrite": false,
@@ -228,7 +228,7 @@
       }
     },
     {
-      "id": "get_order_states",
+      "id": "billbee__get_order_states",
       "name": "Get Order States",
       "description": "List all defined order state IDs and names — resolves the NewStateId values used by Update Order State",
       "requiresWrite": false,
@@ -238,7 +238,7 @@
       }
     },
     {
-      "id": "update_stock",
+      "id": "billbee__update_stock",
       "name": "Update Stock",
       "description": "Set the absolute stock quantity of a product by SKU or Billbee product ID — the most common multichannel write; the change is pushed to connected shops",
       "requiresWrite": true,

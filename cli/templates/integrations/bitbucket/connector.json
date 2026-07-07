@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_repositories",
+      "id": "bitbucket__list_repositories",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
       "requiresWrite": false,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "get_repository",
+      "id": "bitbucket__get_repository",
       "name": "Get Repository",
       "description": "Get details of a specific repository",
       "requiresWrite": false,
@@ -153,7 +153,7 @@
       }
     },
     {
-      "id": "list_pull_requests",
+      "id": "bitbucket__list_pull_requests",
       "name": "List Pull Requests",
       "description": "Get pull requests for a repository",
       "requiresWrite": false,
@@ -245,7 +245,7 @@
       }
     },
     {
-      "id": "get_pull_request",
+      "id": "bitbucket__get_pull_request",
       "name": "Get Pull Request",
       "description": "Get details of a specific pull request",
       "requiresWrite": false,
@@ -275,7 +275,7 @@
       }
     },
     {
-      "id": "create_pull_request",
+      "id": "bitbucket__create_pull_request",
       "name": "Create Pull Request",
       "description": "Create a new pull request",
       "requiresWrite": true,
@@ -327,7 +327,7 @@
       }
     },
     {
-      "id": "add_pull_request_comment",
+      "id": "bitbucket__add_pull_request_comment",
       "name": "Add Pull Request Comment",
       "description": "Add a comment to a pull request",
       "requiresWrite": true,
@@ -364,7 +364,7 @@
       }
     },
     {
-      "id": "list_issues",
+      "id": "bitbucket__list_issues",
       "name": "List Issues",
       "description": "Get issues for a repository",
       "requiresWrite": false,

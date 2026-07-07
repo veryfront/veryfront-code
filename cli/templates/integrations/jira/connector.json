@@ -45,7 +45,7 @@
   ],
   "tools": [
     {
-      "id": "list_sites",
+      "id": "jira__list_sites",
       "name": "List Atlassian Sites",
       "description": "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
       "requiresWrite": false,
@@ -163,7 +163,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "jira__list_projects",
       "name": "List Projects",
       "description": "List all accessible Jira projects",
       "requiresWrite": false,
@@ -306,7 +306,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "jira__get_project",
       "name": "Get Project",
       "description": "Get detailed information about a Jira project",
       "requiresWrite": false,
@@ -330,7 +330,7 @@
       }
     },
     {
-      "id": "search_issues",
+      "id": "jira__search_issues",
       "name": "Search Issues",
       "description": "Search Jira issues using JQL (Jira Query Language)",
       "requiresWrite": false,
@@ -441,7 +441,7 @@
       }
     },
     {
-      "id": "get_issue",
+      "id": "jira__get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Jira issue",
       "requiresWrite": false,
@@ -470,7 +470,7 @@
       }
     },
     {
-      "id": "create_issue",
+      "id": "jira__create_issue",
       "name": "Create Issue",
       "description": "Create a new Jira issue in a project",
       "requiresWrite": true,
@@ -495,7 +495,7 @@
       }
     },
     {
-      "id": "update_issue",
+      "id": "jira__update_issue",
       "name": "Update Issue",
       "description": "Update an existing Jira issue (status, fields, etc.)",
       "requiresWrite": true,
@@ -529,7 +529,7 @@
       }
     },
     {
-      "id": "list_comments",
+      "id": "jira__list_comments",
       "name": "List Comments",
       "description": "List comments on a Jira issue",
       "requiresWrite": false,
@@ -605,7 +605,7 @@
       }
     },
     {
-      "id": "add_comment",
+      "id": "jira__add_comment",
       "name": "Add Comment",
       "description": "Add a comment to a Jira issue",
       "requiresWrite": true,
@@ -636,7 +636,7 @@
       }
     },
     {
-      "id": "get_transitions",
+      "id": "jira__get_transitions",
       "name": "Get Transitions",
       "description": "List available workflow transitions for a Jira issue",
       "requiresWrite": false,
@@ -660,7 +660,7 @@
       }
     },
     {
-      "id": "transition_issue",
+      "id": "jira__transition_issue",
       "name": "Transition Issue",
       "description": "Move a Jira issue to a new workflow status. First call get_transitions to get valid transition IDs, then pass the ID here.",
       "requiresWrite": true,
@@ -699,7 +699,7 @@
       }
     },
     {
-      "id": "search_users",
+      "id": "jira__search_users",
       "name": "Search Users",
       "description": "Search Jira users by name or email to find the accountId needed for assigning issues",
       "requiresWrite": false,

@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_subscriptions",
+      "id": "azure__list_subscriptions",
       "name": "List Subscriptions",
       "description": "List all Azure subscriptions the signed-in user can access; use this first to get subscription IDs for the other tools",
       "requiresWrite": false,
@@ -62,7 +62,7 @@
       }
     },
     {
-      "id": "list_resource_groups",
+      "id": "azure__list_resource_groups",
       "name": "List Resource Groups",
       "description": "List the resource groups in an Azure subscription",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "list_virtual_machines",
+      "id": "azure__list_virtual_machines",
       "name": "List Virtual Machines",
       "description": "List all virtual machines in an Azure subscription, optionally with runtime power state",
       "requiresWrite": false,
@@ -131,7 +131,7 @@
       }
     },
     {
-      "id": "start_virtual_machine",
+      "id": "azure__start_virtual_machine",
       "name": "Start Virtual Machine",
       "description": "Start a stopped or deallocated virtual machine (returns 202 Accepted; the operation completes asynchronously)",
       "requiresWrite": true,
@@ -167,7 +167,7 @@
       }
     },
     {
-      "id": "deallocate_virtual_machine",
+      "id": "azure__deallocate_virtual_machine",
       "name": "Deallocate Virtual Machine",
       "description": "Shut down a virtual machine and release its compute resources so it stops incurring compute charges (returns 202 Accepted)",
       "requiresWrite": true,
@@ -208,7 +208,7 @@
       }
     },
     {
-      "id": "list_storage_accounts",
+      "id": "azure__list_storage_accounts",
       "name": "List Storage Accounts",
       "description": "List all storage accounts in an Azure subscription (storage keys are not returned)",
       "requiresWrite": false,
@@ -235,7 +235,7 @@
       }
     },
     {
-      "id": "list_function_apps",
+      "id": "azure__list_function_apps",
       "name": "List Function and Web Apps",
       "description": "List all App Service sites (function apps and web apps, Microsoft.Web/sites) in an Azure subscription; function apps have kind 'functionapp'",
       "requiresWrite": false,
@@ -262,7 +262,7 @@
       }
     },
     {
-      "id": "restart_virtual_machine",
+      "id": "azure__restart_virtual_machine",
       "name": "Restart Virtual Machine",
       "description": "Restart a running virtual machine (returns 202 Accepted; the operation completes asynchronously)",
       "requiresWrite": true,
@@ -298,7 +298,7 @@
       }
     },
     {
-      "id": "get_vm_instance_view",
+      "id": "azure__get_vm_instance_view",
       "name": "Get VM Instance View",
       "description": "Get the runtime state of a single virtual machine, including power state (statuses with code PowerState/running etc.), OS info, and boot diagnostics — cheaper than listing all VMs with statusOnly",
       "requiresWrite": false,
@@ -334,7 +334,7 @@
       }
     },
     {
-      "id": "list_resources",
+      "id": "azure__list_resources",
       "name": "List Resources",
       "description": "List all resources in an Azure subscription across every resource type — a generic inventory beyond the dedicated list tools",
       "requiresWrite": false,

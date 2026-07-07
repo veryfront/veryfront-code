@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_shipments",
+      "id": "sendcloud__list_shipments",
       "name": "List Shipments",
       "description": "List shipments (parcels) in the Sendcloud account with optional filters such as order number, tracking number, or update time",
       "requiresWrite": false,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "get_shipment",
+      "id": "sendcloud__get_shipment",
       "name": "Get Shipment",
       "description": "Get a single shipment with its parcels, addresses, tracking numbers, and label documents",
       "requiresWrite": false,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "create_shipment",
+      "id": "sendcloud__create_shipment",
       "name": "Create Shipment",
       "description": "Create and announce a shipment synchronously, generating a shipping label for one or more parcels",
       "requiresWrite": true,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "list_shipping_options",
+      "id": "sendcloud__list_shipping_options",
       "name": "List Shipping Options",
       "description": "List available carrier shipping options (methods) for a given route and parcel, optionally with price quotes",
       "requiresWrite": false,
@@ -185,7 +185,7 @@
       }
     },
     {
-      "id": "get_tracking",
+      "id": "sendcloud__get_tracking",
       "name": "Get Tracking",
       "description": "Get the current status and recent tracking events of a parcel by its carrier tracking number",
       "requiresWrite": false,
@@ -203,7 +203,7 @@
       }
     },
     {
-      "id": "cancel_shipment",
+      "id": "sendcloud__cancel_shipment",
       "name": "Cancel Shipment",
       "description": "Cancel an announced shipment and its label before carrier collection — the undo for a mis-announced (cost-incurring) label; cancellation is no longer possible once the carrier has the parcel",
       "requiresWrite": true,

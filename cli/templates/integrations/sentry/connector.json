@@ -44,7 +44,7 @@
   ],
   "tools": [
     {
-      "id": "list_organizations",
+      "id": "sentry__list_organizations",
       "name": "List Organizations",
       "description": "List Sentry organizations available to the authenticated user so agents can discover organization slugs before project or issue calls",
       "requiresWrite": false,
@@ -71,7 +71,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "sentry__list_projects",
       "name": "List Projects",
       "description": "List Sentry projects for an organization",
       "requiresWrite": false,
@@ -94,7 +94,7 @@
       }
     },
     {
-      "id": "list_issues",
+      "id": "sentry__list_issues",
       "name": "List Issues",
       "description": "List Sentry issues for a project",
       "requiresWrite": false,
@@ -138,7 +138,7 @@
       }
     },
     {
-      "id": "get_issue",
+      "id": "sentry__get_issue",
       "name": "Get Issue",
       "description": "Get details for a Sentry issue",
       "requiresWrite": false,
@@ -167,7 +167,7 @@
       }
     },
     {
-      "id": "resolve_issue",
+      "id": "sentry__resolve_issue",
       "name": "Resolve Issue",
       "description": "Resolve a Sentry issue",
       "requiresWrite": true,
@@ -202,7 +202,7 @@
       }
     },
     {
-      "id": "get_latest_event",
+      "id": "sentry__get_latest_event",
       "name": "Get Latest Event",
       "description": "Get the latest event for a Sentry issue, including the stack trace and tags needed for root-cause analysis",
       "requiresWrite": false,

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "scrape",
+      "id": "firecrawl__scrape",
       "name": "Scrape Page",
       "description": "Scrape a single URL into markdown or other formats",
       "requiresWrite": false,
@@ -56,7 +56,7 @@
       }
     },
     {
-      "id": "search",
+      "id": "firecrawl__search",
       "name": "Search Web",
       "description": "Search the web and optionally scrape the results' content",
       "requiresWrite": false,
@@ -96,7 +96,7 @@
       }
     },
     {
-      "id": "map_site",
+      "id": "firecrawl__map_site",
       "name": "Map Site",
       "description": "Quickly list the URLs discovered on a website",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "start_crawl",
+      "id": "firecrawl__start_crawl",
       "name": "Start Crawl",
       "description": "Start an asynchronous crawl job over a website (returns a job ID)",
       "requiresWrite": true,
@@ -147,7 +147,7 @@
       }
     },
     {
-      "id": "get_crawl_status",
+      "id": "firecrawl__get_crawl_status",
       "name": "Get Crawl Status",
       "description": "Get the status and results of a crawl job",
       "requiresWrite": false,
