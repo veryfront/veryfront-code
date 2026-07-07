@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_tasks",
+      "id": "todoist__list_tasks",
       "name": "List Tasks",
       "description": "List active tasks, optionally filtered by project",
       "requiresWrite": false,
@@ -86,7 +86,7 @@
       }
     },
     {
-      "id": "get_task",
+      "id": "todoist__get_task",
       "name": "Get Task",
       "description": "Get details of a specific task",
       "requiresWrite": false,
@@ -104,7 +104,7 @@
       }
     },
     {
-      "id": "create_task",
+      "id": "todoist__create_task",
       "name": "Create Task",
       "description": "Create a new task",
       "requiresWrite": true,
@@ -141,7 +141,7 @@
       }
     },
     {
-      "id": "update_task",
+      "id": "todoist__update_task",
       "name": "Update Task",
       "description": "Update an existing task",
       "requiresWrite": true,
@@ -181,7 +181,7 @@
       }
     },
     {
-      "id": "close_task",
+      "id": "todoist__close_task",
       "name": "Complete Task",
       "description": "Mark a task as complete",
       "requiresWrite": true,
@@ -199,7 +199,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "todoist__list_projects",
       "name": "List Projects",
       "description": "List the user's projects",
       "requiresWrite": false,

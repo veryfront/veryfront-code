@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_candidates",
+      "id": "ashby__list_candidates",
       "name": "List Candidates",
       "description": "List all candidates in the organization (read-only RPC via POST)",
       "requiresWrite": false,
@@ -73,7 +73,7 @@
       }
     },
     {
-      "id": "get_candidate",
+      "id": "ashby__get_candidate",
       "name": "Get Candidate",
       "description": "Get a candidate by ID (read-only RPC via POST)",
       "requiresWrite": false,
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "search_candidates",
+      "id": "ashby__search_candidates",
       "name": "Search Candidates",
       "description": "Search candidates by email or name (read-only RPC via POST)",
       "requiresWrite": false,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "create_candidate",
+      "id": "ashby__create_candidate",
       "name": "Create Candidate",
       "description": "Create a new candidate",
       "requiresWrite": true,
@@ -148,7 +148,7 @@
       }
     },
     {
-      "id": "list_jobs",
+      "id": "ashby__list_jobs",
       "name": "List Jobs",
       "description": "List jobs, optionally filtered by status (read-only RPC via POST)",
       "requiresWrite": false,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "list_applications",
+      "id": "ashby__list_applications",
       "name": "List Applications",
       "description": "List applications, optionally filtered by job or status (read-only RPC via POST)",
       "requiresWrite": false,

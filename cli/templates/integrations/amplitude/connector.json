@@ -33,7 +33,7 @@
   ],
   "tools": [
     {
-      "id": "list_events",
+      "id": "amplitude__list_events",
       "name": "List Events",
       "description": "List event types visible in the project with current week totals",
       "requiresWrite": false,
@@ -66,7 +66,7 @@
       }
     },
     {
-      "id": "query_event_segmentation",
+      "id": "amplitude__query_event_segmentation",
       "name": "Query Event Segmentation",
       "description": "Get metrics for an event over a date range (Event Segmentation chart data)",
       "requiresWrite": false,
@@ -122,7 +122,7 @@
       }
     },
     {
-      "id": "query_active_users",
+      "id": "amplitude__query_active_users",
       "name": "Query Active Users",
       "description": "Get active or new user counts over a date range",
       "requiresWrite": false,
@@ -172,7 +172,7 @@
       }
     },
     {
-      "id": "get_chart_results",
+      "id": "amplitude__get_chart_results",
       "name": "Get Chart Results",
       "description": "Get JSON results from a saved Amplitude chart by chart ID",
       "requiresWrite": false,
@@ -196,7 +196,7 @@
       }
     },
     {
-      "id": "track_event",
+      "id": "amplitude__track_event",
       "name": "Track Event",
       "description": "Send events to Amplitude via the HTTP V2 ingestion API",
       "requiresWrite": true,

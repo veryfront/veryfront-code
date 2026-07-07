@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "get_schema",
+      "id": "weaviate__get_schema",
       "name": "Get Schema",
       "description": "List all collections (classes) and their property definitions",
       "requiresWrite": false,
@@ -56,7 +56,7 @@
       }
     },
     {
-      "id": "graphql_query",
+      "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
       "description": "Run a GraphQL query against the cluster (Get, Aggregate, Explore — including nearText/nearVector search)",
       "requiresWrite": false,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "list_objects",
+      "id": "weaviate__list_objects",
       "name": "List Objects",
       "description": "List objects, optionally filtered to one collection (class)",
       "requiresWrite": false,
@@ -119,7 +119,7 @@
       }
     },
     {
-      "id": "get_object",
+      "id": "weaviate__get_object",
       "name": "Get Object",
       "description": "Get a single object by collection (class) and ID",
       "requiresWrite": false,
@@ -149,7 +149,7 @@
       }
     },
     {
-      "id": "create_object",
+      "id": "weaviate__create_object",
       "name": "Create Object",
       "description": "Create a new object in a collection (class)",
       "requiresWrite": true,

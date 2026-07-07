@@ -37,7 +37,7 @@
   ],
   "tools": [
     {
-      "id": "list_files",
+      "id": "drive__list_files",
       "name": "List Files",
       "description": "List files and folders in a Google Drive folder or root",
       "requiresWrite": false,
@@ -74,7 +74,7 @@
       }
     },
     {
-      "id": "get_file",
+      "id": "drive__get_file",
       "name": "Get File",
       "description": "Get metadata and details about a specific file or folder",
       "requiresWrite": false,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "search_files",
+      "id": "drive__search_files",
       "name": "Search Files",
       "description": "Search for files and folders using queries",
       "requiresWrite": false,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "create_folder",
+      "id": "drive__create_folder",
       "name": "Create Folder",
       "description": "Create a new folder in Google Drive",
       "requiresWrite": true,
@@ -162,7 +162,7 @@
       }
     },
     {
-      "id": "upload_file",
+      "id": "drive__upload_file",
       "name": "Upload File",
       "description": "Upload or create a file in Google Drive",
       "requiresWrite": true,
@@ -207,7 +207,7 @@
       }
     },
     {
-      "id": "update_file",
+      "id": "drive__update_file",
       "name": "Update File",
       "description": "Rename a file, update its description, or move it to a different folder in Google Drive",
       "requiresWrite": true,
@@ -251,7 +251,7 @@
       }
     },
     {
-      "id": "delete_file",
+      "id": "drive__delete_file",
       "name": "Delete File",
       "description": "Permanently delete a file or folder from Google Drive",
       "requiresWrite": true,
@@ -269,7 +269,7 @@
       }
     },
     {
-      "id": "download_file",
+      "id": "drive__download_file",
       "name": "Download File",
       "description": "Download the content of a binary or text file stored in Google Drive (not Google Docs/Sheets/Slides; use export_file for those)",
       "requiresWrite": false,
@@ -293,7 +293,7 @@
       }
     },
     {
-      "id": "export_file",
+      "id": "drive__export_file",
       "name": "Export File",
       "description": "Export a Google Docs/Sheets/Slides file to another format such as text/plain, text/csv, or application/pdf",
       "requiresWrite": false,

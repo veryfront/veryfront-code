@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "search_people",
+      "id": "apollo__search_people",
       "name": "Search People",
       "description": "Search the Apollo database for people by keywords, titles, and locations",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "search_organizations",
+      "id": "apollo__search_organizations",
       "name": "Search Organizations",
       "description": "Search the Apollo database for companies; consumes Apollo credits",
       "requiresWrite": true,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "enrich_person",
+      "id": "apollo__enrich_person",
       "name": "Enrich Person",
       "description": "Enrich a person's profile by name, email, domain, or LinkedIn URL; consumes Apollo credits",
       "requiresWrite": true,
@@ -161,7 +161,7 @@
       }
     },
     {
-      "id": "enrich_organization",
+      "id": "apollo__enrich_organization",
       "name": "Enrich Organization",
       "description": "Enrich a company profile from its domain; consumes Apollo credits",
       "requiresWrite": true,
@@ -182,7 +182,7 @@
       }
     },
     {
-      "id": "search_contacts",
+      "id": "apollo__search_contacts",
       "name": "Search Contacts",
       "description": "Search contacts already saved to your Apollo account",
       "requiresWrite": false,
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "apollo__create_contact",
       "name": "Create Contact",
       "description": "Create a new contact in your Apollo account",
       "requiresWrite": true,
@@ -252,7 +252,7 @@
       }
     },
     {
-      "id": "update_contact",
+      "id": "apollo__update_contact",
       "name": "Update Contact",
       "description": "Update an existing contact in your Apollo account",
       "requiresWrite": true,

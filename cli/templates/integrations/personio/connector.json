@@ -35,7 +35,7 @@
   ],
   "tools": [
     {
-      "id": "list_persons",
+      "id": "personio__list_persons",
       "name": "List Persons",
       "description": "List employees (persons) in the Personio account with optional email filtering",
       "requiresWrite": false,
@@ -63,7 +63,7 @@
       }
     },
     {
-      "id": "get_person",
+      "id": "personio__get_person",
       "name": "Get Person",
       "description": "Retrieve a single employee (person) by ID",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "list_employments",
+      "id": "personio__list_employments",
       "name": "List Employments",
       "description": "List a person's employment records (position, department, supervisor, status), most recent first",
       "requiresWrite": false,
@@ -110,7 +110,7 @@
       }
     },
     {
-      "id": "list_absence_types",
+      "id": "personio__list_absence_types",
       "name": "List Absence Types",
       "description": "List the account's absence types (vacation, sick leave, ...) to find the absence_type IDs needed to create absences",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "list_absence_periods",
+      "id": "personio__list_absence_periods",
       "name": "List Absence Periods",
       "description": "List absence periods (vacation, sick leave, etc.) with person and date-range filters",
       "requiresWrite": false,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "list_attendance_periods",
+      "id": "personio__list_attendance_periods",
       "name": "List Attendance Periods",
       "description": "List attendance periods (work and break times) with person and update-date filters",
       "requiresWrite": false,
@@ -204,7 +204,7 @@
       }
     },
     {
-      "id": "create_absence_period",
+      "id": "personio__create_absence_period",
       "name": "Create Absence Period",
       "description": "Create an absence period (e.g. vacation or sick leave) for an employee",
       "requiresWrite": true,

@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_customers",
+      "id": "gocardless__list_customers",
       "name": "List Customers",
       "description": "List GoCardless customers to find customer IDs and contact details",
       "requiresWrite": false,
@@ -66,7 +66,7 @@
       }
     },
     {
-      "id": "list_payments",
+      "id": "gocardless__list_payments",
       "name": "List Payments",
       "description": "List GoCardless payments with optional status, customer, or mandate filtering",
       "requiresWrite": false,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "get_payment",
+      "id": "gocardless__get_payment",
       "name": "Get Payment",
       "description": "Get a single GoCardless payment by ID to check its status, amount, and linked mandate",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "list_mandates",
+      "id": "gocardless__list_mandates",
       "name": "List Mandates",
       "description": "List Direct Debit mandates to find an active mandate before collecting a payment",
       "requiresWrite": false,
@@ -182,7 +182,7 @@
       }
     },
     {
-      "id": "create_payment",
+      "id": "gocardless__create_payment",
       "name": "Create Payment",
       "description": "Collect a one-off payment against an existing active Direct Debit mandate",
       "requiresWrite": true,
@@ -213,7 +213,7 @@
       }
     },
     {
-      "id": "create_subscription",
+      "id": "gocardless__create_subscription",
       "name": "Create Subscription",
       "description": "Set up a recurring payment collection against an existing active Direct Debit mandate",
       "requiresWrite": true,
@@ -244,7 +244,7 @@
       }
     },
     {
-      "id": "retry_payment",
+      "id": "gocardless__retry_payment",
       "name": "Retry Payment",
       "description": "Retry a failed payment if its mandate is still active; a payment can be retried at most three times",
       "requiresWrite": true,
@@ -269,7 +269,7 @@
       }
     },
     {
-      "id": "list_events",
+      "id": "gocardless__list_events",
       "name": "List Events",
       "description": "List GoCardless events (status changes such as payment failures, chargebacks, and mandate cancellations) for monitoring and audit workflows",
       "requiresWrite": false,

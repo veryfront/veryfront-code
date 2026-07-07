@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_orgs",
+      "id": "snyk__list_orgs",
       "name": "List Organizations",
       "description": "List Snyk organizations the token can access",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "snyk__list_projects",
       "name": "List Projects",
       "description": "List projects in a Snyk organization",
       "requiresWrite": false,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "snyk__get_project",
       "name": "Get Project",
       "description": "Get a project's details in a Snyk organization",
       "requiresWrite": false,
@@ -128,7 +128,7 @@
       }
     },
     {
-      "id": "list_issues",
+      "id": "snyk__list_issues",
       "name": "List Issues",
       "description": "List security issues in a Snyk organization, optionally filtered by severity or status",
       "requiresWrite": false,
@@ -171,7 +171,7 @@
       }
     },
     {
-      "id": "get_org",
+      "id": "snyk__get_org",
       "name": "Get Organization",
       "description": "Get details of a Snyk organization",
       "requiresWrite": false,

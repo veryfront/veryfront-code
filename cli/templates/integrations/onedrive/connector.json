@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_files",
+      "id": "onedrive__list_files",
       "name": "List Files",
       "description": "List files and folders in a OneDrive folder",
       "requiresWrite": false,
@@ -65,7 +65,7 @@
       }
     },
     {
-      "id": "search_files",
+      "id": "onedrive__search_files",
       "name": "Search Files",
       "description": "Search for files and folders in OneDrive by name or content",
       "requiresWrite": false,
@@ -89,7 +89,7 @@
       }
     },
     {
-      "id": "upload_file",
+      "id": "onedrive__upload_file",
       "name": "Upload File",
       "description": "Upload or update a file in OneDrive",
       "requiresWrite": true,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "download_file",
+      "id": "onedrive__download_file",
       "name": "Download File",
       "description": "Download file content from OneDrive",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "get_file",
+      "id": "onedrive__get_file",
       "name": "Get File",
       "description": "Get metadata for a OneDrive file or folder",
       "requiresWrite": false,
@@ -162,7 +162,7 @@
       }
     },
     {
-      "id": "create_folder",
+      "id": "onedrive__create_folder",
       "name": "Create Folder",
       "description": "Create a new folder in OneDrive",
       "requiresWrite": true,
@@ -197,7 +197,7 @@
       }
     },
     {
-      "id": "delete_file",
+      "id": "onedrive__delete_file",
       "name": "Delete File",
       "description": "Delete a file or folder from OneDrive (moves it to the recycle bin)",
       "requiresWrite": true,

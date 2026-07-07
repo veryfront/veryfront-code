@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "run_nrql_query",
+      "id": "new-relic__run_nrql_query",
       "name": "Run NRQL Query",
       "description": "Run an NRQL query against a New Relic account and return the results",
       "requiresWrite": false,
@@ -55,7 +55,7 @@
       }
     },
     {
-      "id": "search_entities",
+      "id": "new-relic__search_entities",
       "name": "Search Entities",
       "description": "Search monitored entities (apps, hosts, services) with an entity search query",
       "requiresWrite": false,
@@ -95,7 +95,7 @@
       }
     },
     {
-      "id": "get_entity",
+      "id": "new-relic__get_entity",
       "name": "Get Entity",
       "description": "Get an entity's details and tags by GUID",
       "requiresWrite": false,
@@ -118,7 +118,7 @@
       }
     },
     {
-      "id": "list_issues",
+      "id": "new-relic__list_issues",
       "name": "List Issues",
       "description": "List alert issues from the last day in an account (queries the NrAiIssue event type via NRQL)",
       "requiresWrite": false,

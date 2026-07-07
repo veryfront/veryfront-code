@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "send_email",
+      "id": "sendgrid__send_email",
       "name": "Send Email",
       "description": "Send an email via the SendGrid v3 Mail Send API",
       "requiresWrite": true,
@@ -62,7 +62,7 @@
       }
     },
     {
-      "id": "list_contacts",
+      "id": "sendgrid__list_contacts",
       "name": "List Contacts",
       "description": "List marketing contacts in the account",
       "requiresWrite": false,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "search_contacts",
+      "id": "sendgrid__search_contacts",
       "name": "Search Contacts",
       "description": "Search marketing contacts with an SGQL query (read-only search via POST)",
       "requiresWrite": false,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "upsert_contacts",
+      "id": "sendgrid__upsert_contacts",
       "name": "Upsert Contacts",
       "description": "Add or update marketing contacts (asynchronous; returns a job_id)",
       "requiresWrite": true,
@@ -128,7 +128,7 @@
       }
     },
     {
-      "id": "list_templates",
+      "id": "sendgrid__list_templates",
       "name": "List Templates",
       "description": "List transactional email templates",
       "requiresWrite": false,
@@ -157,7 +157,7 @@
       }
     },
     {
-      "id": "get_email_stats",
+      "id": "sendgrid__get_email_stats",
       "name": "Get Email Stats",
       "description": "Get global email statistics (delivered, opens, clicks, bounces) for a date range",
       "requiresWrite": false,

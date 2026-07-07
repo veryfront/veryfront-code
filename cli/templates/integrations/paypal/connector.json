@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_transactions",
+      "id": "paypal__list_transactions",
       "name": "List Transactions",
       "description": "Search account transactions in a date window (max 31 days per request)",
       "requiresWrite": false,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "list_balances",
+      "id": "paypal__list_balances",
       "name": "List Balances",
       "description": "Get current account balances by currency",
       "requiresWrite": false,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "list_invoices",
+      "id": "paypal__list_invoices",
       "name": "List Invoices",
       "description": "List invoices",
       "requiresWrite": false,
@@ -150,7 +150,7 @@
       }
     },
     {
-      "id": "get_invoice",
+      "id": "paypal__get_invoice",
       "name": "Get Invoice",
       "description": "Get details of an invoice",
       "requiresWrite": false,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "id": "get_order",
+      "id": "paypal__get_order",
       "name": "Get Order",
       "description": "Get details of a checkout order",
       "requiresWrite": false,

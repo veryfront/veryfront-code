@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "search_models",
+      "id": "huggingface__search_models",
       "name": "Search Models",
       "description": "Search models on the Hugging Face Hub",
       "requiresWrite": false,
@@ -77,7 +77,7 @@
       }
     },
     {
-      "id": "get_model",
+      "id": "huggingface__get_model",
       "name": "Get Model",
       "description": "Get details about a model repository on the Hub",
       "requiresWrite": false,
@@ -101,7 +101,7 @@
       }
     },
     {
-      "id": "search_datasets",
+      "id": "huggingface__search_datasets",
       "name": "Search Datasets",
       "description": "Search datasets on the Hugging Face Hub",
       "requiresWrite": false,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "whoami",
+      "id": "huggingface__whoami",
       "name": "Who Am I",
       "description": "Get the account and permissions associated with the access token",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "create_chat_completion",
+      "id": "huggingface__create_chat_completion",
       "name": "Create Chat Completion",
       "description": "Generate a chat completion through the Hugging Face Inference Providers router (OpenAI-compatible)",
       "requiresWrite": true,

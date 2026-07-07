@@ -37,7 +37,7 @@
   ],
   "tools": [
     {
-      "id": "list_invoices",
+      "id": "quickbooks__list_invoices",
       "name": "List Invoices",
       "description": "List recent invoices in a QuickBooks Online company",
       "requiresWrite": false,
@@ -97,7 +97,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "quickbooks__list_customers",
       "name": "List Customers",
       "description": "List customers in a QuickBooks Online company",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "list_accounts",
+      "id": "quickbooks__list_accounts",
       "name": "List Accounts",
       "description": "List the chart of accounts in a QuickBooks Online company",
       "requiresWrite": false,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "get_invoice",
+      "id": "quickbooks__get_invoice",
       "name": "Get Invoice",
       "description": "Get a QuickBooks invoice with its line items",
       "requiresWrite": false,
@@ -217,7 +217,7 @@
       }
     },
     {
-      "id": "create_invoice",
+      "id": "quickbooks__create_invoice",
       "name": "Create Invoice",
       "description": "Create an invoice in a QuickBooks Online company",
       "requiresWrite": true,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "list_bills",
+      "id": "quickbooks__list_bills",
       "name": "List Bills",
       "description": "List vendor bills (accounts payable) in a QuickBooks Online company",
       "requiresWrite": false,
@@ -318,7 +318,7 @@
       }
     },
     {
-      "id": "get_bill",
+      "id": "quickbooks__get_bill",
       "name": "Get Bill",
       "description": "Get a QuickBooks vendor bill with its line items",
       "requiresWrite": false,
@@ -358,7 +358,7 @@
       }
     },
     {
-      "id": "create_bill",
+      "id": "quickbooks__create_bill",
       "name": "Create Bill",
       "description": "Create a vendor bill (accounts payable) in a QuickBooks Online company",
       "requiresWrite": true,
@@ -400,7 +400,7 @@
       }
     },
     {
-      "id": "create_purchase",
+      "id": "quickbooks__create_purchase",
       "name": "Create Purchase",
       "description": "Record an expense (cash, check, or credit card purchase) in a QuickBooks Online company",
       "requiresWrite": true,
@@ -442,7 +442,7 @@
       }
     },
     {
-      "id": "upload_attachment",
+      "id": "quickbooks__upload_attachment",
       "name": "Upload Attachment",
       "description": "Upload a file and attach it to a QuickBooks transaction (bill, invoice, purchase, ...) via the Attachable API",
       "requiresWrite": true,
@@ -494,7 +494,7 @@
       }
     },
     {
-      "id": "run_query",
+      "id": "quickbooks__run_query",
       "name": "Run Query",
       "description": "Run an arbitrary QuickBooks query against any entity (Invoice, Customer, Account, Payment, Bill, Item, ...)",
       "requiresWrite": false,
@@ -534,7 +534,7 @@
       }
     },
     {
-      "id": "list_vendors",
+      "id": "quickbooks__list_vendors",
       "name": "List Vendors",
       "description": "List vendors in a QuickBooks Online company — use this to find the VendorRef IDs that Create Bill requires",
       "requiresWrite": false,
@@ -591,7 +591,7 @@
       }
     },
     {
-      "id": "list_purchases",
+      "id": "quickbooks__list_purchases",
       "name": "List Purchases",
       "description": "List purchase transactions (cash, check, or credit card expenses) in a QuickBooks Online company — the read counterpart to Create Purchase",
       "requiresWrite": false,

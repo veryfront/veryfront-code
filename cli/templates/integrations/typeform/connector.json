@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_forms",
+      "id": "typeform__list_forms",
       "name": "List Forms",
       "description": "List forms in the account or a workspace",
       "requiresWrite": false,
@@ -91,7 +91,7 @@
       }
     },
     {
-      "id": "get_form",
+      "id": "typeform__get_form",
       "name": "Get Form",
       "description": "Get a form definition including its fields",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "list_responses",
+      "id": "typeform__list_responses",
       "name": "List Responses",
       "description": "List responses submitted to a form",
       "requiresWrite": false,
@@ -173,7 +173,7 @@
       }
     },
     {
-      "id": "list_workspaces",
+      "id": "typeform__list_workspaces",
       "name": "List Workspaces",
       "description": "List workspaces in the account",
       "requiresWrite": false,
@@ -202,7 +202,7 @@
       }
     },
     {
-      "id": "get_me",
+      "id": "typeform__get_me",
       "name": "Get Me",
       "description": "Get the authenticated Typeform account profile",
       "requiresWrite": false,

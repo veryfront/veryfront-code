@@ -43,7 +43,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "google-bigquery__list_projects",
       "name": "List Projects",
       "description": "List the Google Cloud projects the connected user can access, so agents can discover the projectId every other tool requires",
       "requiresWrite": false,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "list_datasets",
+      "id": "google-bigquery__list_datasets",
       "name": "List Datasets",
       "description": "List all BigQuery datasets in a Google Cloud project",
       "requiresWrite": false,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "list_tables",
+      "id": "google-bigquery__list_tables",
       "name": "List Tables",
       "description": "List tables and views in a BigQuery dataset",
       "requiresWrite": false,
@@ -145,7 +145,7 @@
       }
     },
     {
-      "id": "get_table",
+      "id": "google-bigquery__get_table",
       "name": "Get Table Schema",
       "description": "Get a table's metadata including its full column schema, row count, and size",
       "requiresWrite": false,
@@ -180,7 +180,7 @@
       }
     },
     {
-      "id": "preview_table_data",
+      "id": "google-bigquery__preview_table_data",
       "name": "Preview Table Data",
       "description": "Read sample rows directly from a table without running a query - no bytes are billed, ideal for inspecting data before writing SQL",
       "requiresWrite": false,
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "run_query",
+      "id": "google-bigquery__run_query",
       "name": "Run SQL Query",
       "description": "Run a read/SELECT GoogleSQL query and return the first page of results. With the default read-only scope only SELECT queries work; DML statements (INSERT/UPDATE/DELETE) require the full https://www.googleapis.com/auth/bigquery scope.",
       "requiresWrite": false,
@@ -283,7 +283,7 @@
       }
     },
     {
-      "id": "get_query_results",
+      "id": "google-bigquery__get_query_results",
       "name": "Get Query Results",
       "description": "Fetch additional pages of results from a previously started query job, using the jobId and pageToken returned by Run SQL Query",
       "requiresWrite": false,

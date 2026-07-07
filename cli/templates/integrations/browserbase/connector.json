@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_sessions",
+      "id": "browserbase__list_sessions",
       "name": "List Sessions",
       "description": "List browser sessions, optionally filtered by status",
       "requiresWrite": false,
@@ -58,7 +58,7 @@
       }
     },
     {
-      "id": "create_session",
+      "id": "browserbase__create_session",
       "name": "Create Session",
       "description": "Create a new cloud browser session (consumes plan browser minutes)",
       "requiresWrite": true,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "get_session",
+      "id": "browserbase__get_session",
       "name": "Get Session",
       "description": "Get a session's status, connection URL, and metadata",
       "requiresWrite": false,
@@ -108,7 +108,7 @@
       }
     },
     {
-      "id": "release_session",
+      "id": "browserbase__release_session",
       "name": "Release Session",
       "description": "Request release of a running session to stop billing for it",
       "requiresWrite": true,
@@ -138,7 +138,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "browserbase__list_projects",
       "name": "List Projects",
       "description": "List the Browserbase projects available to the API key",
       "requiresWrite": false,

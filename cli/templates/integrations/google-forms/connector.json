@@ -44,7 +44,7 @@
   ],
   "tools": [
     {
-      "id": "get_form",
+      "id": "google-forms__get_form",
       "name": "Get Form",
       "description": "Get a form's metadata, settings, and items (questions) including the question IDs needed to interpret responses",
       "requiresWrite": false,
@@ -62,7 +62,7 @@
       }
     },
     {
-      "id": "list_form_responses",
+      "id": "google-forms__list_form_responses",
       "name": "List Form Responses",
       "description": "List submitted responses for a form, with answers keyed by question ID",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "get_form_response",
+      "id": "google-forms__get_form_response",
       "name": "Get Form Response",
       "description": "Get a single response submitted to a form",
       "requiresWrite": false,
@@ -123,7 +123,7 @@
       }
     },
     {
-      "id": "create_form",
+      "id": "google-forms__create_form",
       "name": "Create Form",
       "description": "Create a new form with a title; add questions afterwards with Batch Update Form",
       "requiresWrite": true,
@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "set_publish_settings",
+      "id": "google-forms__set_publish_settings",
       "name": "Set Publish Settings",
       "description": "Publish or unpublish a form and toggle whether it accepts responses, e.g. to open a survey after building it or close it when done (requires the forms.body scope)",
       "requiresWrite": true,
@@ -169,7 +169,7 @@
       }
     },
     {
-      "id": "batch_update_form",
+      "id": "google-forms__batch_update_form",
       "name": "Batch Update Form",
       "description": "Apply a batch of updates to a form, such as adding questions, updating form info, or changing settings",
       "requiresWrite": true,
