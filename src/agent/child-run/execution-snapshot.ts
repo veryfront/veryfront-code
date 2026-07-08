@@ -1,3 +1,5 @@
+import type { ChildRunResultSummary } from "./result-summary.ts";
+
 /** Public API contract for child run execution usage. */
 export interface ChildRunExecutionUsage {
   inputTokens: number;
@@ -38,7 +40,7 @@ export type ChildRunExecutionResult =
   | {
     success: true;
     description: string;
-    summary: { text: string };
+    summary: ChildRunResultSummary;
     steps: number;
     toolCalls: ChildRunToolCallSnapshot[];
     toolResults: ChildRunToolResultSnapshot[];
@@ -98,7 +100,7 @@ export function buildChildRunResultCommon(input: ChildRunResultCommon): ChildRun
 /** Result returned from build child run success. */
 export function buildChildRunSuccessResult(
   common: ChildRunResultCommon,
-  summary: { text: string },
+  summary: ChildRunResultSummary,
 ): ChildRunExecutionResult & { success: true } {
   return {
     success: true,
