@@ -23,7 +23,8 @@ export interface ConversationRunMirrorStoppedState {
     | "cursor_resyncs_exhausted"
     | "non_appendable"
     | "ignorable_append_rejection"
-    | "payload_too_large";
+    | "payload_too_large"
+    | "auth_rejected";
 }
 
 /** State for conversation run mirror retry scheduled. */

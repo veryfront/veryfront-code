@@ -308,6 +308,19 @@ function recordHostedChunkMirrorStopped(input: {
     return;
   }
 
+  if (input.flushAttempt.disableReason === "auth_rejected") {
+    input.instrumentation?.error?.(
+      "Disabling durable run mirroring after permanent append authentication rejection",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId: input.flushAttempt.latestEventId,
+        latestExternalEventSequence: input.flushAttempt.latestExternalEventSequence,
+      },
+    );
+    return;
+  }
+
   if (input.flushAttempt.disableReason === "ignorable_append_rejection") {
     input.instrumentation?.warn?.(
       "Disabling durable run mirroring after external append rejection",
