@@ -832,6 +832,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/server": "Server runtime helpers.",
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
+  "veryfront/ui": "UI primitives - the base layer for veryfront/chat components.",
   "veryfront/utils": "Runtime utilities.",
   "veryfront/work": "Business process outcome definitions.",
   "veryfront/workflow": "Workflows.",

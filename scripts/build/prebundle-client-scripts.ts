@@ -92,12 +92,20 @@ const FRAMEWORK_DIRS = [
 ];
 const SOURCE_EXTS = new Set([".ts", ".tsx"]);
 
+/** Test files ship no runtime UI, so their symbols must not pollute the CSS
+ * candidate heuristic (e.g. `expectedRuntimeExports`, `assertEquals(...)`). */
+function isTestFile(name: string): boolean {
+  return /\.(test|spec)\.(ts|tsx)$/.test(name);
+}
+
 async function scanDir(dir: string, allCandidates: Set<string>): Promise<void> {
   for await (const entry of Deno.readDir(dir)) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory) {
       await scanDir(fullPath, allCandidates);
-    } else if (entry.isFile && SOURCE_EXTS.has(extname(entry.name))) {
+    } else if (
+      entry.isFile && SOURCE_EXTS.has(extname(entry.name)) && !isTestFile(entry.name)
+    ) {
       const content = await Deno.readTextFile(fullPath);
       for (const c of extractCandidates(content)) allCandidates.add(c);
     }

@@ -10,17 +10,16 @@
  * that slides in from the relevant edge, with Escape-to-close, scroll-lock, and
  * focus restore.
  *
- * Renders the chat design-token stylesheet (`ChatTokens`) so a standalone
+ * Renders the design-token stylesheet (`DesignTokenStyle`) so a standalone
  * `AppShell` mounted *outside* `<Chat>` still resolves its `[var(--token)]`
- * utilities — the one remaining dependency back into `chat/` (the token
- * vocabulary still lives with the chat theme; a future move would lift it here).
- * Otherwise self-contained: uses the local `cn` + `ui/button`.
+ * utilities. Fully self-contained within `veryfront/ui`: uses the local `cn`,
+ * `ui/button`, and `ui/tokens` — no imports back into `chat/`.
  *
  * @module react/components/ui/app-shell
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { ChatTokens } from "#veryfront/react/components/chat/chat-tokens-style.tsx";
+import { DesignTokenStyle } from "./tokens.tsx";
 import { PanelLeftIcon, PanelRightIcon } from "./icons/index.ts";
 import { Button, type ButtonProps } from "./button.tsx";
 
@@ -207,7 +206,7 @@ function AppShellRoot({
 
   return (
     <AppShellContext.Provider value={value}>
-      <ChatTokens />
+      <DesignTokenStyle />
       <div
         ref={ref}
         className={cn("flex h-full w-full", className)}

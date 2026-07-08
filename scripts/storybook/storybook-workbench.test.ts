@@ -38,7 +38,7 @@ async function* storyFiles(dir: string): AsyncGenerator<string> {
 }
 
 describe("Storybook UI workbench", () => {
-  it("Overview links every UI/Component/Composition story exactly once, in the right section", async () => {
+  it("Overview links every UI/Component story exactly once, in the right section", async () => {
     const overview = await readText("storybook/stories/Overview.stories.tsx");
 
     // All nav ids in order, plus a duplicate check (one link per story).
@@ -49,15 +49,14 @@ describe("Storybook UI workbench", () => {
     const dupes = [...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i))];
     assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
 
-    // Every linkable docs page: an autodocs story titled under one of the three
-    // linked sections — the top-level `UI/*` primitives, plus `Chat/Components`
-    // and `Chat/Composition`. (`Chat/Overview` and any non-autodocs story are
-    // excluded.)
+    // Every linkable docs page: an autodocs story titled under one of the two
+    // linked sections — the top-level `UI/*` primitives and `Chat/Components`.
+    // (`Chat/Overview` and any non-autodocs story are excluded.)
     const expected = new Set<string>();
     for await (const path of storyFiles("storybook/stories")) {
       const src = await readText(path);
       const title = src.match(
-        /title:\s*"((?:Chat\/(?:Components|Composition)|UI)\/[^"]+)"/,
+        /title:\s*"((?:Chat\/Components|UI)\/[^"]+)"/,
       )?.[1];
       if (title && /tags:\s*\[[^\]]*"autodocs"/.test(src)) {
         expected.add(`${toStorybookId(title)}--docs`);
@@ -78,7 +77,6 @@ describe("Storybook UI workbench", () => {
     for (
       const [name, prefix] of [
         ["COMPONENTS", "chat-components-"],
-        ["COMPOSITION", "chat-composition-"],
         ["UI", "ui-"],
       ] as const
     ) {
@@ -186,28 +184,10 @@ describe("Storybook UI workbench", () => {
         names: ["Chat", "modelOptions"],
       },
       {
-        path: "storybook/stories/chat/ChatComposition.stories.tsx",
-        title: "Chat/Composition/Anatomy",
-        imports: ['from "veryfront/chat"'],
-        names: ["ChatRoot", "ChatMessageList", "ChatInput", "Message"],
-      },
-      {
-        path: "storybook/stories/chat/ChatSubcomponents.stories.tsx",
-        title: "Chat/Composition/Subcomponents",
-        imports: ['from "veryfront/chat"'],
-        names: ["ToolCall", "Sources", "Reasoning", "MessageActionBar"],
-      },
-      {
         path: "storybook/stories/chat/ChatSidebar.stories.tsx",
         title: "Chat/Components/ChatSidebar",
         imports: ['from "veryfront/chat"'],
         names: ["ChatSidebar"],
-      },
-      {
-        path: "storybook/stories/primitives/ReactPrimitives.stories.tsx",
-        title: "Chat/Composition/React Primitives",
-        imports: ['from "../../../src/react/primitives/index.ts"'],
-        names: ["ChatContainer", "MessageList", "InputBox", "SubmitButton"],
       },
     ];
 
@@ -394,10 +374,10 @@ describe("Storybook UI workbench", () => {
       }
     }
 
-    const themeSource = await readText("src/react/components/chat/theme.ts");
+    const tokenSource = await readText("src/react/components/ui/design-tokens.ts");
     const previewSource = await readText("storybook/.storybook/preview.css");
     const bridgeSource = await readText("src/studio/bridge/bridge-styles.ts");
-    assertStringIncludes(themeSource, "font-family:Inter");
+    assertStringIncludes(tokenSource, "font-family:Inter");
     assertStringIncludes(previewSource, "Inter, ui-sans-serif");
     assertStringIncludes(bridgeSource, "font-family: Inter, ui-sans-serif");
   });
