@@ -767,16 +767,12 @@ describe("ReadOperations", () => {
 
       deferred.get("pages/fast.ts")?.resolve("fast ts content");
 
-      let settled: { status: "resolved"; value: string } | { status: "pending" } = {
-        status: "pending",
-      };
-      readPromise.then((value) => {
-        settled = { status: "resolved", value };
-      });
-
-      for (let i = 0; i < 10 && settled.status === "pending"; i++) {
-        await Promise.resolve();
-      }
+      const settled = await Promise.race([
+        readPromise.then((value) => ({ status: "resolved" as const, value })),
+        new Promise<{ status: "pending" }>((resolve) =>
+          setTimeout(() => resolve({ status: "pending" }), 100)
+        ),
+      ]);
 
       assertEquals(settled, { status: "resolved", value: "fast ts content" });
     });

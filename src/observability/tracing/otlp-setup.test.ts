@@ -3,6 +3,9 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
+  type Context,
+  setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalTracerProvider,
   type Span,
   type SpanContext,
@@ -135,5 +138,132 @@ describe("observability/tracing/otlp-setup", () => {
     await withSpan("test.after-provider-swap", async () => "ok");
 
     assertEquals(getTracerCalls, 2);
+  });
+
+  it("withSpan starts nested spans with the active parent context", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+
+    function makeContext(label: string): Context {
+      const store = new Map<symbol, unknown>();
+      return {
+        getValue: (key) => store.get(key),
+        setValue(key, value) {
+          store.set(key, value);
+          return this;
+        },
+        deleteValue(key) {
+          store.delete(key);
+          return this;
+        },
+        label,
+      } as Context & { label: string };
+    }
+
+    let activeContext = makeContext("root");
+    const contextSpans = new WeakMap<Context, Span>();
+    const spansByName = new Map<string, Span>();
+    const starts: Array<{ name: string; parentSpan: Span | undefined }> = [];
+
+    setGlobalContextAccessor({
+      active: () => activeContext,
+      with: (ctx, fn) => {
+        const previous = activeContext;
+        activeContext = ctx;
+        try {
+          const result = fn();
+          if (result && typeof (result as { finally?: unknown }).finally === "function") {
+            return (result as unknown as Promise<unknown>).finally(() => {
+              activeContext = previous;
+            }) as never;
+          }
+          activeContext = previous;
+          return result;
+        } catch (error) {
+          activeContext = previous;
+          throw error;
+        }
+      },
+    });
+    setGlobalActiveSpanAccessor({
+      getActiveSpan: () => contextSpans.get(activeContext),
+      getSpan: (ctx) => contextSpans.get(ctx),
+      setSpan: (_ctx, span) => {
+        const next = makeContext(`span-${starts.length}`);
+        contextSpans.set(next, span);
+        return next;
+      },
+    });
+
+    function createSpan(name: string): Span {
+      const span: Span = {
+        setAttribute() {
+          return this;
+        },
+        setAttributes() {
+          return this;
+        },
+        setStatus() {
+          return this;
+        },
+        recordException() {},
+        addEvent() {
+          return this;
+        },
+        end() {},
+        spanContext() {
+          return {
+            traceId: `trace-${name}`,
+            spanId: `span-${name}`,
+            traceFlags: 1,
+          };
+        },
+        updateName() {},
+      };
+      spansByName.set(name, span);
+      return span;
+    }
+
+    setGlobalTracerProvider({
+      getTracer() {
+        return {
+          startSpan(name, _options, parentContext) {
+            starts.push({ name, parentSpan: parentContext && contextSpans.get(parentContext) });
+            return createSpan(name);
+          },
+          startActiveSpan<T>(
+            _name: string,
+            optionsOrFn:
+              | {
+                kind?: number;
+                attributes?: Record<string, string | number | boolean | undefined>;
+              }
+              | ((span: Span) => T),
+            contextOrFn?: unknown,
+            fn?: (span: Span) => T,
+          ): T {
+            const callback = typeof optionsOrFn === "function"
+              ? optionsOrFn
+              : typeof contextOrFn === "function"
+              ? contextOrFn as (span: Span) => T
+              : fn!;
+            return callback(createSpan("active"));
+          },
+        };
+      },
+    });
+
+    await withSpan("parent", async () => {
+      await withSpan("child", async () => "ok");
+    });
+
+    assertEquals(starts.length, 2);
+    const parentStart = starts[0];
+    const childStart = starts[1];
+    assertExists(parentStart);
+    assertExists(childStart);
+    assertEquals(parentStart.name, "parent");
+    assertEquals(parentStart.parentSpan, undefined);
+    assertEquals(childStart.name, "child");
+    assertEquals(childStart.parentSpan, spansByName.get("parent"));
   });
 });

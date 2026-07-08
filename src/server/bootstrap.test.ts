@@ -11,7 +11,11 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { orchestrateOrDisposeFS } from "./bootstrap.ts";
+import { _resetShimForTests } from "#veryfront/observability/tracing/api-shim.ts";
+import { register, reset } from "#veryfront/extensions/contracts.ts";
+import { __resetLogRecordEmitterForTests, logger } from "#veryfront/utils/logger/index.ts";
+import type { TracingExporter } from "veryfront/extensions/observability";
+import { orchestrateOrDisposeFS, wireTracingShim } from "./bootstrap.ts";
 import { ExtensionLoader } from "veryfront/extensions";
 
 const noopLogger = {
@@ -88,5 +92,38 @@ describe("orchestrateOrDisposeFS()", () => {
       // for a resource-leak fix (both errors are visible).
       "fsDispose-boom",
     );
+  });
+});
+
+describe("wireTracingShim()", () => {
+  it("registers and clears the TracingExporter log emitter", () => {
+    reset();
+    _resetShimForTests();
+    __resetLogRecordEmitterForTests();
+
+    const emitted: unknown[] = [];
+    const exporter: TracingExporter = {
+      start: () => Promise.resolve(),
+      export: () => Promise.resolve(),
+      shutdown: () => Promise.resolve(),
+      getProvider: () => ({ getTracer: () => ({}) }),
+      getMetricsAPI: () => null,
+      getLogRecordEmitter: () => (record) => emitted.push(record),
+    };
+
+    register("TracingExporter", exporter);
+    wireTracingShim();
+    logger.info("otel bridge smoke", { project_id: "project-1" });
+
+    assertEquals(emitted.length, 1);
+    assertEquals((emitted[0] as { message: string }).message, "otel bridge smoke");
+
+    reset();
+    wireTracingShim();
+    logger.info("after bridge clear");
+
+    assertEquals(emitted.length, 1);
+    _resetShimForTests();
+    __resetLogRecordEmitterForTests();
   });
 });

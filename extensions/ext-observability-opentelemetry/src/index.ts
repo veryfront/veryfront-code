@@ -58,7 +58,15 @@ type SdkLoggerProvider = InstanceType<
   typeof import("@opentelemetry/sdk-logs").LoggerProvider
 >;
 type MetricsAPI = { getMeter(name: string | undefined, version?: string): unknown };
-type TraceAPI = { getActiveSpan(): unknown; getSpan(ctx: unknown): unknown };
+type TraceAPI = {
+  getActiveSpan(): unknown;
+  getSpan(ctx: unknown): unknown;
+  setSpan(ctx: unknown, span: unknown): unknown;
+};
+type ContextAPI = {
+  active(): unknown;
+  with<T>(ctx: unknown, fn: () => T): T;
+};
 
 const NOOP_SPAN = {
   setAttribute() {
@@ -388,6 +396,8 @@ class OtlpTracingExporter implements TracingExporter {
   private logProvider: SdkLoggerProvider | null = null;
   private metricsApi: MetricsAPI | null = null;
   private traceApi: TraceAPI | null = null;
+  private contextApi: ContextAPI | null = null;
+  private logRecordEmitter: ((record: NodeTelemetryLogRecord) => void) | null = null;
 
   async start(_ctxConfig: Record<string, unknown>): Promise<void> {
     const cfg = resolveOtlpExtensionConfig(readEnv);
@@ -436,6 +446,19 @@ class OtlpTracingExporter implements TracingExporter {
         getActiveSpan: () => otel.api.trace.getActiveSpan(),
         getSpan: (ctx) =>
           otel.api.trace.getSpan(ctx as Parameters<typeof otel.api.trace.getSpan>[0]),
+        setSpan: (ctx, span) =>
+          otel.api.trace.setSpan(
+            ctx as Parameters<typeof otel.api.trace.setSpan>[0],
+            span as Parameters<typeof otel.api.trace.setSpan>[1],
+          ),
+      };
+      this.contextApi = {
+        active: () => otel.api.context.active(),
+        with: (ctx, fn) =>
+          otel.api.context.with(
+            ctx as Parameters<typeof otel.api.context.with>[0],
+            fn,
+          ),
       };
     }
 
@@ -485,7 +508,17 @@ class OtlpTracingExporter implements TracingExporter {
         ],
       });
       otel.apiLogs.logs.setGlobalLoggerProvider(this.logProvider);
-      otel.apiLogs.logs.getLogger(cfg.serviceName, cfg.serviceVersion).emit({
+      const otelLogger = otel.apiLogs.logs.getLogger(cfg.serviceName, cfg.serviceVersion);
+      this.logRecordEmitter = (record) => {
+        otelLogger.emit({
+          timestamp: record.timestamp ? new Date(record.timestamp) : new Date(),
+          severityNumber: logSeverityNumber(otel, record.level),
+          severityText: record.level?.toUpperCase() ?? "INFO",
+          body: record.message,
+          attributes: logAttributes(record),
+        });
+      };
+      otelLogger.emit({
         severityNumber: otel.apiLogs.SeverityNumber.INFO,
         severityText: "INFO",
         body: "OpenTelemetry log export initialized",
@@ -508,6 +541,7 @@ class OtlpTracingExporter implements TracingExporter {
         await this.logProvider.shutdown();
       } finally {
         this.logProvider = null;
+        this.logRecordEmitter = null;
       }
     }
 
@@ -524,6 +558,8 @@ class OtlpTracingExporter implements TracingExporter {
         await this.sdkProvider.shutdown();
       } finally {
         this.sdkProvider = null;
+        this.traceApi = null;
+        this.contextApi = null;
       }
     }
   }
@@ -539,6 +575,14 @@ class OtlpTracingExporter implements TracingExporter {
 
   getTraceAPI(): TraceAPI | null {
     return this.traceApi;
+  }
+
+  getContextAPI(): ContextAPI | null {
+    return this.contextApi;
+  }
+
+  getLogRecordEmitter(): ((record: NodeTelemetryLogRecord) => void) | null {
+    return this.logRecordEmitter;
   }
 }
 

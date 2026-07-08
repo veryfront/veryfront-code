@@ -19,6 +19,7 @@ import {
   defaultTextMapSetter,
   propagation as shimPropagation,
   setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
   type Span,
@@ -167,6 +168,12 @@ export async function initializeOTLPWithApis(
     if (traceApi) {
       setGlobalActiveSpanAccessor(
         traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
+      );
+    }
+    const contextApi = exporterImpl.getContextAPI?.();
+    if (contextApi) {
+      setGlobalContextAccessor(
+        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
       );
     }
 

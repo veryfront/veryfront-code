@@ -57,9 +57,12 @@ export class ContextPropagation {
     endSpan: (span: Span | null, error?: Error) => void,
   ): T {
     const span = startSpan(name);
+    const spanContext = span
+      ? this.api.trace.setSpan(this.api.context.active(), span)
+      : this.api.context.active();
 
     try {
-      const result = fn(span);
+      const result = this.api.context.with(spanContext, () => fn(span));
       endSpan(span);
       return result;
     } catch (error) {
@@ -75,9 +78,12 @@ export class ContextPropagation {
     endSpan: (span: Span | null, error?: Error) => void,
   ): Promise<T> {
     const span = startSpan(name);
+    const spanContext = span
+      ? this.api.trace.setSpan(this.api.context.active(), span)
+      : this.api.context.active();
 
     try {
-      const result = await fn(span);
+      const result = await this.api.context.with(spanContext, () => fn(span));
       endSpan(span);
       return result;
     } catch (error) {

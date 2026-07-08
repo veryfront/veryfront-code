@@ -51,18 +51,9 @@ function createMockSpan(): Span {
     addEvent() {
       return span;
     },
-    addLink() {
-      return span;
-    },
-    addLinks() {
-      return span;
-    },
     recordException() {},
     spanContext() {
       return { traceId: "abc", spanId: "def", traceFlags: 1, isRemote: false };
-    },
-    isRecording() {
-      return true;
     },
     updateName() {
       return span;
@@ -170,7 +161,7 @@ describe("observability/tracing/context-propagation", () => {
       const span = createMockSpan();
       let executed = false;
 
-      await ctx.withActiveSpan(span, () => {
+      await ctx.withActiveSpan(span, async () => {
         executed = true;
       });
 
@@ -179,14 +170,14 @@ describe("observability/tracing/context-propagation", () => {
 
     it("should return function result", async () => {
       const span = createMockSpan();
-      const result = await ctx.withActiveSpan(span, () => "test-result");
+      const result = await ctx.withActiveSpan(span, async () => "test-result");
       assertEquals(result, "test-result");
     });
 
     it("should execute function directly when span is null", async () => {
       let executed = false;
 
-      await ctx.withActiveSpan(null, () => {
+      await ctx.withActiveSpan(null, async () => {
         executed = true;
       });
 
@@ -229,6 +220,37 @@ describe("observability/tracing/context-propagation", () => {
       assertEquals(result, "result");
       assertEquals(startCalled, true);
       assertEquals(endCalled, true);
+    });
+
+    it("should execute fn inside the started span context", () => {
+      const mockSpan = createMockSpan();
+      const spanContext = { _type: "span-context" } as unknown as Context;
+      let withContext: Context | null = null;
+      const apiWithContextCapture: OpenTelemetryAPI = {
+        ...api,
+        trace: {
+          ...api.trace,
+          setSpan: () => spanContext,
+        },
+        context: {
+          ...api.context,
+          with: (context, fn) => {
+            withContext = context;
+            return fn();
+          },
+        },
+      };
+      const contextPropagation = new ContextPropagation(apiWithContextCapture, propagator);
+
+      const result = contextPropagation.withSpan(
+        "test",
+        () => withContext,
+        () => mockSpan,
+        () => {},
+      );
+
+      assertEquals(result, spanContext);
+      assertEquals(withContext, spanContext);
     });
 
     it("should pass span to function", () => {
@@ -294,6 +316,37 @@ describe("observability/tracing/context-propagation", () => {
       assertEquals(result, "async-result");
       assertEquals(startCalled, true);
       assertEquals(endCalled, true);
+    });
+
+    it("should execute async fn inside the started span context", async () => {
+      const mockSpan = createMockSpan();
+      const spanContext = { _type: "span-context" } as unknown as Context;
+      let withContext: Context | null = null;
+      const apiWithContextCapture: OpenTelemetryAPI = {
+        ...api,
+        trace: {
+          ...api.trace,
+          setSpan: () => spanContext,
+        },
+        context: {
+          ...api.context,
+          with: (context, fn) => {
+            withContext = context;
+            return fn();
+          },
+        },
+      };
+      const contextPropagation = new ContextPropagation(apiWithContextCapture, propagator);
+
+      const result = await contextPropagation.withSpanAsync(
+        "test",
+        () => Promise.resolve(withContext),
+        () => mockSpan,
+        () => {},
+      );
+
+      assertEquals(result, spanContext);
+      assertEquals(withContext, spanContext);
     });
 
     it("should end span with error when async function rejects", async () => {
