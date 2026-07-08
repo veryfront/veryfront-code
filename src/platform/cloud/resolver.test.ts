@@ -16,6 +16,7 @@ import {
   getVeryfrontCloudBootstrap,
   getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
+  resolveVeryfrontApiBaseUrlFromHostEnv,
 } from "./resolver.ts";
 
 const CLOUD_ENV_KEYS = [
@@ -145,6 +146,20 @@ describe("platform/cloud/resolver", () => {
         globals.__vfGetApiBaseUrlEnv = originalBridge;
       }
     }
+  });
+
+  it("normalizes API base URL host env values", () => {
+    setEnv("VERYFRONT_API_URL", " https://api.staging.veryfront.org/graphql/ ");
+    assertEquals(
+      resolveVeryfrontApiBaseUrlFromHostEnv(),
+      "https://api.staging.veryfront.org/api",
+    );
+
+    setEnv("VERYFRONT_API_BASE_URL", " http://veryfront-api.veryfront-staging.svc/ ");
+    assertEquals(
+      resolveVeryfrontApiBaseUrlFromHostEnv(),
+      "http://veryfront-api.veryfront-staging.svc",
+    );
   });
 
   it("treats scoped cloud context as sufficient runtime context even without projectSlug", () => {
