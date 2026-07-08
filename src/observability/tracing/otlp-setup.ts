@@ -142,7 +142,7 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
 /** Applies span. */
 export async function withSpan<T>(
   name: string,
-  fn: () => Promise<T>,
+  fn: (span: Span) => Promise<T>,
   attributes?: Record<string, string | number | boolean>,
 ): Promise<T> {
   const { tracer } = getTracingRuntime();
@@ -157,7 +157,7 @@ export async function withSpan<T>(
   const spanContext = shimTrace.setSpan(parentContext, span);
 
   try {
-    const result = await shimContext.with(spanContext, fn);
+    const result = await shimContext.with(spanContext, () => fn(span));
     span.setStatus({ code: SpanStatusCode.OK });
     return result;
   } catch (error) {
@@ -258,6 +258,18 @@ export function setSpanAttributes(
 
   const otelSpan = span as Span;
   for (const [key, value] of Object.entries(attributes)) otelSpan.setAttribute(key, value);
+}
+
+/** Adds an event to a span. */
+export function addSpanEvent(
+  span: unknown,
+  name: string,
+  attributes?: Record<string, string | number | boolean>,
+): void {
+  if (!span) return;
+
+  const otelSpan = span as Span;
+  otelSpan.addEvent(name, attributes);
 }
 
 /** Sets active span attributes. */

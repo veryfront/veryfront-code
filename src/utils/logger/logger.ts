@@ -60,6 +60,13 @@ export interface LogEntry {
   branch_id?: string;
   branch_name?: string;
   run_execution_id?: string;
+  run_id?: string;
+  agent_id?: string;
+  thread_id?: string;
+  schedule_id?: string;
+  schedule_name?: string;
+  tool_name?: string;
+  tool_call_id?: string;
   batch_id?: string;
   run_target?: string;
   task?: string;
@@ -266,6 +273,18 @@ function extractToEntryField(
   delete context[key];
 }
 
+function extractAliasToEntryField(
+  entry: LogEntry,
+  context: Record<string, unknown>,
+  sourceKey: string,
+  targetKey: keyof LogEntry,
+  coerce: (value: unknown) => LogEntry[keyof LogEntry],
+): void {
+  if (entry[targetKey] !== undefined || !(sourceKey in context)) return;
+  entry[targetKey] = coerce(context[sourceKey]) as never;
+  delete context[sourceKey];
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -343,6 +362,13 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
     extractToEntryField(entry, mergedContext, "run_execution_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "run_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "agent_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "thread_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "schedule_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "schedule_name", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "tool_name", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "tool_call_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "batch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "run_target", (v) => String(v));
     extractToEntryField(entry, mergedContext, "task", (v) => String(v));
@@ -355,6 +381,19 @@ class ConsoleLogger implements Logger {
     // Also extract camelCase variants so callers can use either convention
     extractToEntryField(entry, mergedContext, "userId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "conversationId", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "runId", "run_id", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "agentId", "agent_id", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "threadId", "thread_id", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "scheduleId", "schedule_id", (v) => String(v));
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "scheduleName",
+      "schedule_name",
+      (v) => String(v),
+    );
+    extractAliasToEntryField(entry, mergedContext, "toolName", "tool_name", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "toolCallId", "tool_call_id", (v) => String(v));
 
     // Emit snake_case aliases for camelCase fields (transition period)
     if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;

@@ -811,6 +811,37 @@ describe("logger", () => {
       }
     });
 
+    it("should promote runtime run and tool identifiers", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Runtime event", {
+            runId: "run_123",
+            agentId: "triage-sweeper",
+            threadId: "thread_123",
+            scheduleId: "sched_123",
+            scheduleName: "Triage sweep",
+            toolName: "query_loki",
+            toolCallId: "call_123",
+          });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.run_id, "run_123");
+          assertEquals(entry.agent_id, "triage-sweeper");
+          assertEquals(entry.thread_id, "thread_123");
+          assertEquals(entry.schedule_id, "sched_123");
+          assertEquals(entry.schedule_name, "Triage sweep");
+          assertEquals(entry.tool_name, "query_loki");
+          assertEquals(entry.tool_call_id, "call_123");
+          assertEquals(entry.context, undefined);
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("should not overwrite explicit snake_case with alias", () => {
       const { getOutput, restore } = captureConsoleLog();
 

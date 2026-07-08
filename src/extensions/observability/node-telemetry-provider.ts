@@ -37,6 +37,13 @@ export type NodeTelemetryLogRecord = {
   error?: unknown;
   trace_id?: string;
   span_id?: string;
+  run_id?: string;
+  agent_id?: string;
+  thread_id?: string;
+  schedule_id?: string;
+  schedule_name?: string;
+  tool_name?: string;
+  tool_call_id?: string;
 };
 
 /** Emits a structured logger record into the active telemetry pipeline. */

@@ -10,6 +10,7 @@ import {
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -33,6 +34,11 @@ import {
   type ToolExecutionContext,
   toolRegistry,
 } from "#veryfront/tool";
+import {
+  addSpanEvent,
+  setSpanAttributes,
+  withSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -261,6 +267,48 @@ function getStringProperty(value: Record<string, unknown>, keys: string[]): stri
     }
   }
   return undefined;
+}
+
+type InternalAgentRunTraceAttributes = Record<string, string | number | boolean | undefined>;
+
+function compactTraceAttributes(
+  attributes: InternalAgentRunTraceAttributes,
+): Record<string, string | number | boolean> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(([, value]) =>
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ),
+  ) as Record<string, string | number | boolean>;
+}
+
+function buildInternalAgentRunTraceAttributes(input: {
+  runInput: RuntimeRunAgentInput;
+  agent: Agent;
+  deps: RuntimeAgentStreamExecutionDeps;
+  status?: "running" | "completed" | "failed" | "cancelled";
+}): Record<string, string | number | boolean> {
+  const forwardedProps = input.runInput.forwardedProps;
+  const scheduleId = forwardedProps
+    ? getStringProperty(forwardedProps, ["schedule_id", "scheduleId"])
+    : undefined;
+  const scheduleName = forwardedProps
+    ? getStringProperty(forwardedProps, ["schedule_name", "scheduleName"])
+    : undefined;
+
+  return compactTraceAttributes({
+    "agent.id": input.agent.id,
+    "run.id": input.runInput.runId,
+    "thread.id": input.runInput.threadId,
+    "parent.run.id": input.runInput.parentRunId,
+    "project.id": input.deps.projectAgentSandbox?.projectId ?? undefined,
+    "schedule.id": scheduleId,
+    "schedule.name": scheduleName,
+    "run.trigger.kind": scheduleId ? "schedule" : undefined,
+    "run.trigger.id": scheduleId,
+    "agent.run.status": input.status,
+    "gen_ai.operation.name": "chat",
+    "gen_ai.agent.id": input.agent.id,
+  });
 }
 
 function getAgentSandboxConfig(
@@ -683,191 +731,256 @@ export async function createRuntimeAgentStreamResponse(
   let stopHeartbeat: (() => void) | undefined;
   const response = new ReadableStream<Uint8Array>({
     start: async (controller) => {
-      const state = createStreamTransformState();
-      const reader = runtimeStream.getReader();
-      const decoder = new TextDecoder();
-      let remainder = "";
-      let aborted = false;
-      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-      stopHeartbeat = () => {
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = undefined;
-        }
-      };
+      await withSpan(
+        "agent.run",
+        async (runSpan) => {
+          setSpanAttributes(
+            runSpan,
+            buildInternalAgentRunTraceAttributes({
+              runInput: input,
+              agent,
+              deps,
+              status: "running",
+            }),
+          );
+          addSpanEvent(runSpan, "agent.run.started");
+          const state = createStreamTransformState();
+          const reader = runtimeStream.getReader();
+          const decoder = new TextDecoder();
+          let remainder = "";
+          let aborted = false;
+          let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+          stopHeartbeat = () => {
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = undefined;
+            }
+          };
 
-      const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
-        const encodedEvent = formatAgUiEvent(event, payload);
-        if (!clientAttached) {
-          return;
-        }
+          const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
+            const encodedEvent = formatAgUiEvent(event, payload);
+            if (!clientAttached) {
+              return;
+            }
 
-        try {
-          controller.enqueue(encodedEvent);
-        } catch {
-          clientAttached = false;
-        }
-      };
-      const enqueueHeartbeatIfAttached = () => {
-        if (!clientAttached) {
-          return;
-        }
+            try {
+              controller.enqueue(encodedEvent);
+            } catch {
+              clientAttached = false;
+            }
+          };
+          const enqueueHeartbeatIfAttached = () => {
+            if (!clientAttached) {
+              return;
+            }
 
-        try {
-          controller.enqueue(INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME);
-        } catch {
-          clientAttached = false;
-        }
-      };
-      const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
-        if (
-          event !== "ToolCallStart" && event !== "ToolCallArgs" &&
-          event !== "ToolCallEnd"
-        ) {
-          return;
-        }
+            try {
+              controller.enqueue(INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME);
+            } catch {
+              clientAttached = false;
+            }
+          };
+          const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
+            if (
+              event !== "ToolCallStart" && event !== "ToolCallArgs" &&
+              event !== "ToolCallEnd"
+            ) {
+              return;
+            }
 
-        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
-        if (!toolCallId) {
-          return;
-        }
+            const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
+            if (!toolCallId) {
+              return;
+            }
 
-        deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
-      };
+            deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
+          };
 
-      const throwIfAborted = () => {
-        if (aborted || abortSignal.aborted) {
-          throw new AgentRunCancelledError();
-        }
-      };
+          const throwIfAborted = () => {
+            if (aborted || abortSignal.aborted) {
+              throw new AgentRunCancelledError();
+            }
+          };
 
-      const abortHandler = () => {
-        aborted = true;
-        logger.warn("Internal agent runtime stream aborted", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: agent.id,
-        });
-        reader.cancel(new AgentRunCancelledError()).catch((error) => {
-          logger.debug("Internal agent runtime reader cancellation failed during abort cleanup", {
-            runId: input.runId,
-            threadId: input.threadId,
-            agentId: agent.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      };
-
-      abortSignal.addEventListener("abort", abortHandler, { once: true });
-      enqueueIfAttached("RunStarted", {
-        runId: input.runId,
-        threadId: input.threadId,
-        agentId: agent.id,
-      });
-      heartbeatTimer = setInterval(
-        enqueueHeartbeatIfAttached,
-        INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
-      );
-
-      try {
-        while (true) {
-          throwIfAborted();
-
-          const { done, value } = await reader.read();
-          throwIfAborted();
-
-          if (done) {
-            logger.info("Internal agent runtime stream reader completed", {
+          const abortHandler = () => {
+            aborted = true;
+            logger.warn("Internal agent runtime stream aborted", {
               runId: input.runId,
               threadId: input.threadId,
               agentId: agent.id,
             });
-            break;
-          }
+            reader.cancel(new AgentRunCancelledError()).catch((error) => {
+              logger.debug(
+                "Internal agent runtime reader cancellation failed during abort cleanup",
+                {
+                  runId: input.runId,
+                  threadId: input.threadId,
+                  agentId: agent.id,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              );
+            });
+          };
 
-          remainder += decoder.decode(value, { stream: true });
-          const parsed = parseSseJsonEvents(remainder);
-          remainder = parsed.remainder;
+          abortSignal.addEventListener("abort", abortHandler, { once: true });
+          enqueueIfAttached("RunStarted", {
+            runId: input.runId,
+            threadId: input.threadId,
+            agentId: agent.id,
+          });
+          heartbeatTimer = setInterval(
+            enqueueHeartbeatIfAttached,
+            INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
+          );
 
-          for (const event of parsed.events) {
-            for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-              prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+          try {
+            while (true) {
+              throwIfAborted();
+
+              const { done, value } = await reader.read();
+              throwIfAborted();
+
+              if (done) {
+                logger.info("Internal agent runtime stream reader completed", {
+                  runId: input.runId,
+                  threadId: input.threadId,
+                  agentId: agent.id,
+                });
+                break;
+              }
+
+              remainder += decoder.decode(value, { stream: true });
+              const parsed = parseSseJsonEvents(remainder);
+              remainder = parsed.remainder;
+
+              for (const event of parsed.events) {
+                for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
+                  prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+                  enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+                }
+              }
+            }
+
+            throwIfAborted();
+
+            const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
+            for (const event of trailingEvents.events) {
+              for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
+                prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+                enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+              }
+            }
+
+            throwIfAborted();
+
+            for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
+            deps.sessionManager.completeRun(input.runId);
+            setSpanAttributes(runSpan, {
+              ...buildInternalAgentRunTraceAttributes({
+                runInput: input,
+                agent,
+                deps,
+                status: "completed",
+              }),
+              "agent.run.final_status": "completed",
+              "agent.run.saw_visible_output": state.sawVisibleOutput,
+              "agent.run.saw_terminal_error": state.sawTerminalError,
+              ...buildRuntimeUsageTraceAttributes(completedResponse?.usage),
+              ...(state.metadata.finishReason
+                ? { "gen_ai.response.finish_reasons": state.metadata.finishReason }
+                : {}),
+            });
+            addSpanEvent(runSpan, "agent.run.completed");
+            logger.info("Internal agent runtime stream finalized", {
+              runId: input.runId,
+              threadId: input.threadId,
+              agentId: agent.id,
+              sawVisibleOutput: state.sawVisibleOutput,
+              sawTerminalError: state.sawTerminalError,
+              finishReason: state.metadata.finishReason,
+            });
+          } catch (error) {
+            if (error instanceof AgentRunCancelledError) {
+              deps.sessionManager.cancelRun(input.runId);
+              setSpanAttributes(runSpan, {
+                ...buildInternalAgentRunTraceAttributes({
+                  runInput: input,
+                  agent,
+                  deps,
+                  status: "cancelled",
+                }),
+                "agent.run.final_status": "cancelled",
+                "error.type": "AgentRunCancelledError",
+                "error.message": error.message,
+              });
+              addSpanEvent(runSpan, "agent.run.cancelled");
+              logger.warn("Internal agent runtime stream cancelled", {
+                runId: input.runId,
+                threadId: input.threadId,
+                agentId: agent.id,
+                error: error.message,
+              });
+              enqueueIfAttached("RunError", {
+                code: "CANCELLED",
+                message: error.message,
+              });
+            } else {
+              deps.sessionManager.failRun(input.runId);
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              setSpanAttributes(runSpan, {
+                ...buildInternalAgentRunTraceAttributes({
+                  runInput: input,
+                  agent,
+                  deps,
+                  status: "failed",
+                }),
+                "agent.run.final_status": "failed",
+                "error.type": error instanceof Error ? error.name : "Error",
+                "error.message": errorMessage,
+              });
+              addSpanEvent(runSpan, "agent.run.failed");
+              logger.error("Internal agent runtime stream failed", {
+                runId: input.runId,
+                threadId: input.threadId,
+                agentId: agent.id,
+                error: errorMessage,
+              });
+              enqueueIfAttached("RunError", {
+                code: "RUNTIME_ERROR",
+                message: errorMessage,
+              });
+            }
+          } finally {
+            stopHeartbeat?.();
+            stopHeartbeat = undefined;
+            abortSignal.removeEventListener("abort", abortHandler);
+            if (clientAttached) {
+              controller.close();
+            }
+            await sandboxTools.closeSandbox?.().catch((cleanupError) => {
+              logger.warn("Internal agent runtime sandbox cleanup failed", {
+                runId: input.runId,
+                agentId: agent.id,
+                error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+              });
+            });
+            logger.debug("Internal agent runtime stream response closed", {
+              runId: input.runId,
+              threadId: input.threadId,
+              agentId: agent.id,
+              clientAttached,
+            });
           }
-        }
-
-        throwIfAborted();
-
-        const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
-        for (const event of trailingEvents.events) {
-          for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-            prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
-            enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
-          }
-        }
-
-        throwIfAborted();
-
-        for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
-          enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
-        }
-        deps.sessionManager.completeRun(input.runId);
-        logger.info("Internal agent runtime stream finalized", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: agent.id,
-          sawVisibleOutput: state.sawVisibleOutput,
-          sawTerminalError: state.sawTerminalError,
-          finishReason: state.metadata.finishReason,
-        });
-      } catch (error) {
-        if (error instanceof AgentRunCancelledError) {
-          deps.sessionManager.cancelRun(input.runId);
-          logger.warn("Internal agent runtime stream cancelled", {
-            runId: input.runId,
-            threadId: input.threadId,
-            agentId: agent.id,
-            error: error.message,
-          });
-          enqueueIfAttached("RunError", {
-            code: "CANCELLED",
-            message: error.message,
-          });
-        } else {
-          deps.sessionManager.failRun(input.runId);
-          logger.error("Internal agent runtime stream failed", {
-            runId: input.runId,
-            threadId: input.threadId,
-            agentId: agent.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          enqueueIfAttached("RunError", {
-            code: "RUNTIME_ERROR",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      } finally {
-        stopHeartbeat?.();
-        stopHeartbeat = undefined;
-        abortSignal.removeEventListener("abort", abortHandler);
-        if (clientAttached) {
-          controller.close();
-        }
-        await sandboxTools.closeSandbox?.().catch((cleanupError) => {
-          logger.warn("Internal agent runtime sandbox cleanup failed", {
-            runId: input.runId,
-            agentId: agent.id,
-            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-          });
-        });
-        logger.debug("Internal agent runtime stream response closed", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: agent.id,
-          clientAttached,
-        });
-      }
+        },
+        buildInternalAgentRunTraceAttributes({
+          runInput: input,
+          agent,
+          deps,
+          status: "running",
+        }),
+      );
     },
     cancel() {
       clientAttached = false;
