@@ -3,7 +3,7 @@ import {
   createOpenTelemetryServiceTracer,
   type ServiceTracerAttributes,
 } from "../../observability/tracing/service-tracer.ts";
-import { agentLogger, type Logger } from "../../utils/logger/index.ts";
+import { __registerLogRecordEmitter, agentLogger, type Logger } from "../../utils/logger/index.ts";
 import {
   type AgentServiceConfig,
   type AgentServiceConfigInput,
@@ -68,6 +68,7 @@ export function createNodeAgentServiceRuntimeInfrastructure(
         ...telemetryConfig,
         logger: options.telemetryLogger,
         processTarget: options.processTarget,
+        registerLogRecordEmitter: __registerLogRecordEmitter,
       }),
   };
 }

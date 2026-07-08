@@ -3,6 +3,7 @@ import {
   type NodeTelemetryInitializeOptions,
   type NodeTelemetryInstrumentationConfig,
   type NodeTelemetryLogger,
+  type NodeTelemetryLogRecordEmitter,
   type NodeTelemetryProcessTarget,
   type NodeTelemetryProvider,
   NodeTelemetryProviderName,
@@ -28,6 +29,17 @@ export type NodeHostedAgentServiceTelemetryConfig = {
   deploymentEnvironment: string;
   samplingRatio: number;
   exporterHeaders?: Record<string, string>;
+  tracesEnabled: boolean;
+  metricsEnabled: boolean;
+  logsEnabled: boolean;
+  tracesEndpoint?: string;
+  metricsEndpoint?: string;
+  logsEndpoint?: string;
+  tracesHeaders?: Record<string, string>;
+  metricsHeaders?: Record<string, string>;
+  logsHeaders?: Record<string, string>;
+  metricsExportIntervalMillis: number;
+  metricsTemporalityPreference: "delta" | "cumulative" | "lowmemory";
   instrumentation: NodeHostedAgentServiceInstrumentationConfig;
 };
 
@@ -65,6 +77,7 @@ export type InitializeNodeHostedAgentServiceTelemetryOptions =
     logger?: NodeHostedAgentServiceTelemetryLogger;
     processTarget?: NodeHostedAgentServiceTelemetryProcessTarget;
     telemetryProvider?: NodeTelemetryProvider;
+    registerLogRecordEmitter?: (emitter: NodeTelemetryLogRecordEmitter) => void;
   };
 
 /** Options accepted by initialize node agent service telemetry. */
@@ -77,6 +90,40 @@ function resolveEnabled(env: NodeHostedAgentServiceTelemetryEnv, defaultEnabled:
     return envValue !== "false" && envValue !== "0";
   }
   return defaultEnabled;
+}
+
+function isTruthySignalFlag(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  return value === "true" || value === "1";
+}
+
+function exporterIncludesOtlp(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === "none") return false;
+  return value.split(",").map((part) => part.trim()).includes("otlp");
+}
+
+function resolveTraceSignalEnabled(
+  env: NodeHostedAgentServiceTelemetryEnv,
+  defaultEnabled: boolean,
+): boolean {
+  const enabledFlag = isTruthySignalFlag(env.OTEL_TRACES_ENABLED);
+  if (enabledFlag !== undefined) return enabledFlag;
+  const exporterFlag = exporterIncludesOtlp(env.OTEL_TRACES_EXPORTER);
+  if (exporterFlag !== undefined) return exporterFlag;
+  return defaultEnabled;
+}
+
+function resolveMetricSignalEnabled(env: NodeHostedAgentServiceTelemetryEnv): boolean {
+  const enabledFlag = isTruthySignalFlag(env.OTEL_METRICS_ENABLED);
+  if (enabledFlag !== undefined) return enabledFlag;
+  return exporterIncludesOtlp(env.OTEL_METRICS_EXPORTER) ?? false;
+}
+
+function resolveLogSignalEnabled(env: NodeHostedAgentServiceTelemetryEnv): boolean {
+  const enabledFlag = isTruthySignalFlag(env.OTEL_LOGS_ENABLED);
+  if (enabledFlag !== undefined) return enabledFlag;
+  return exporterIncludesOtlp(env.OTEL_LOGS_EXPORTER) ?? false;
 }
 
 function resolveSamplingRatio(env: NodeHostedAgentServiceTelemetryEnv): number {
@@ -112,6 +159,47 @@ function parseExporterHeaders(headersEnv: string | undefined): Record<string, st
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
+function mergeHeaders(
+  base: Record<string, string> | undefined,
+  override: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!base && !override) return undefined;
+  return { ...(base ?? {}), ...(override ?? {}) };
+}
+
+function resolveSignalHeaders(
+  env: NodeHostedAgentServiceTelemetryEnv,
+  signal: "TRACES" | "METRICS" | "LOGS",
+): Record<string, string> | undefined {
+  return mergeHeaders(
+    parseExporterHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
+    parseExporterHeaders(env[`OTEL_EXPORTER_OTLP_${signal}_HEADERS`]),
+  );
+}
+
+function resolveOtlpSignalEndpoint(
+  endpoint: string | undefined,
+  signal: "traces" | "metrics" | "logs",
+): string | undefined {
+  if (!endpoint) return undefined;
+  const trimmed = endpoint.replace(/\/$/, "");
+  const suffix = `/v1/${signal}`;
+  return trimmed.endsWith(suffix) ? trimmed : `${trimmed}${suffix}`;
+}
+
+function resolveMetricsExportIntervalMillis(env: NodeHostedAgentServiceTelemetryEnv): number {
+  const value = Number.parseInt(env.OTEL_METRIC_EXPORT_INTERVAL ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : 60_000;
+}
+
+function resolveMetricsTemporalityPreference(
+  env: NodeHostedAgentServiceTelemetryEnv,
+): "delta" | "cumulative" | "lowmemory" {
+  const value = env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE?.toLowerCase();
+  if (value === "cumulative" || value === "lowmemory") return value;
+  return "delta";
+}
+
 function resolveInstrumentationConfig(
   env: NodeHostedAgentServiceTelemetryEnv,
 ): NodeHostedAgentServiceInstrumentationConfig {
@@ -127,14 +215,42 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
   options: ResolveNodeHostedAgentServiceTelemetryConfigOptions,
 ): NodeHostedAgentServiceTelemetryConfig {
   const defaultEnabled = options.defaultEnabled ?? options.env.NODE_ENV === "production";
+  const tracesEnabled = resolveTraceSignalEnabled(
+    options.env,
+    resolveEnabled(options.env, defaultEnabled),
+  );
+  const metricsEnabled = resolveMetricSignalEnabled(options.env);
+  const logsEnabled = resolveLogSignalEnabled(options.env);
+  const baseEndpoint = options.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const exporterHeaders = parseExporterHeaders(options.env.OTEL_EXPORTER_OTLP_HEADERS);
 
   return {
-    enabled: resolveEnabled(options.env, defaultEnabled),
+    enabled: tracesEnabled || metricsEnabled || logsEnabled,
     serviceName: options.env.OTEL_SERVICE_NAME ?? options.defaultServiceName,
     serviceVersion: options.env.npm_package_version ?? options.defaultServiceVersion ?? "0.1.0",
     deploymentEnvironment: resolveDeploymentEnvironment(options.env),
     samplingRatio: resolveSamplingRatio(options.env),
-    exporterHeaders: parseExporterHeaders(options.env.OTEL_EXPORTER_OTLP_HEADERS),
+    exporterHeaders,
+    tracesEnabled,
+    metricsEnabled,
+    logsEnabled,
+    tracesEndpoint: resolveOtlpSignalEndpoint(
+      options.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? baseEndpoint,
+      "traces",
+    ),
+    metricsEndpoint: resolveOtlpSignalEndpoint(
+      options.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ?? baseEndpoint,
+      "metrics",
+    ),
+    logsEndpoint: resolveOtlpSignalEndpoint(
+      options.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? baseEndpoint,
+      "logs",
+    ),
+    tracesHeaders: resolveSignalHeaders(options.env, "TRACES"),
+    metricsHeaders: resolveSignalHeaders(options.env, "METRICS"),
+    logsHeaders: resolveSignalHeaders(options.env, "LOGS"),
+    metricsExportIntervalMillis: resolveMetricsExportIntervalMillis(options.env),
+    metricsTemporalityPreference: resolveMetricsTemporalityPreference(options.env),
     instrumentation: resolveInstrumentationConfig(options.env),
   };
 }
@@ -203,9 +319,21 @@ export async function initializeNodeHostedAgentServiceOpenTelemetry(
       deploymentEnvironment: options.deploymentEnvironment,
       samplingRatio: options.samplingRatio,
       exporterHeaders: options.exporterHeaders,
+      tracesEnabled: options.tracesEnabled,
+      metricsEnabled: options.metricsEnabled,
+      logsEnabled: options.logsEnabled,
+      tracesEndpoint: options.tracesEndpoint,
+      metricsEndpoint: options.metricsEndpoint,
+      logsEndpoint: options.logsEndpoint,
+      tracesHeaders: options.tracesHeaders,
+      metricsHeaders: options.metricsHeaders,
+      logsHeaders: options.logsHeaders,
+      metricsExportIntervalMillis: options.metricsExportIntervalMillis,
+      metricsTemporalityPreference: options.metricsTemporalityPreference,
       instrumentation: options.instrumentation,
       logger: options.logger,
       processTarget: options.processTarget,
+      registerLogRecordEmitter: options.registerLogRecordEmitter,
     };
 
     return await telemetryProvider.initialize(initializeOptions);

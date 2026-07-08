@@ -45,6 +45,7 @@ import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
 import {
   buildAgentRunTraceAttributes,
   buildExecuteToolTraceAttributes,
+  buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
 } from "./trace-attributes.ts";
 import {
@@ -835,8 +836,10 @@ function setPrepareChatExecutionResultAttributes(
     upstreamParentRunId?: string;
     spawnedFromToolCallId?: string;
     runtimeKind: "framework";
+    forwardedProps?: Record<string, unknown>;
   },
 ): void {
+  const scheduleTraceAttributes = buildScheduleTraceAttributes(input.forwardedProps);
   const span = context.infrastructure.tracer.scope().active();
   span?.setAttributes(
     buildAgentRunTraceAttributes({
@@ -849,10 +852,17 @@ function setPrepareChatExecutionResultAttributes(
       parentConversationId: input.upstreamParentConversationId,
       parentRunId: input.upstreamParentRunId,
       toolCallId: input.spawnedFromToolCallId,
+      scheduleId: typeof scheduleTraceAttributes["schedule.id"] === "string"
+        ? scheduleTraceAttributes["schedule.id"]
+        : null,
+      scheduleName: typeof scheduleTraceAttributes["schedule.name"] === "string"
+        ? scheduleTraceAttributes["schedule.name"]
+        : null,
     }),
   );
   span?.setAttributes({
     "agent.runtime.kind": input.runtimeKind,
+    ...scheduleTraceAttributes,
   });
 }
 
@@ -969,6 +979,7 @@ async function prepareChatExecution(
     upstreamParentRunId,
     spawnedFromToolCallId,
     runtimeKind,
+    forwardedProps: req.forwardedProps,
   });
 
   return {
@@ -988,6 +999,7 @@ async function prepareChatExecution(
     upstreamParentConversationId,
     upstreamParentRunId,
     spawnedFromToolCallId,
+    traceAttributes: buildScheduleTraceAttributes(req.forwardedProps),
   };
 }
 

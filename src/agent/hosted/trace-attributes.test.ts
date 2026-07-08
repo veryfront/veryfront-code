@@ -6,6 +6,7 @@ import {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
   isAgentTraceAttributeValue,
 } from "../index.ts";
@@ -48,6 +49,8 @@ describe("agent/agent-trace-attributes", () => {
         parentConversationId: "conversation-parent",
         messageId: "message-1",
         toolCallId: "tool-call-1",
+        scheduleId: "schedule-1",
+        scheduleName: "Triage sweep",
       }),
       {
         "conversation.id": "conversation-1",
@@ -59,9 +62,29 @@ describe("agent/agent-trace-attributes", () => {
         "parent.conversation.id": "conversation-parent",
         "message.id": "message-1",
         "tool.call.id": "tool-call-1",
+        "schedule.id": "schedule-1",
+        "schedule.name": "Triage sweep",
+        "run.trigger.kind": "schedule",
+        "run.trigger.id": "schedule-1",
         "gen_ai.operation.name": "chat",
         "gen_ai.conversation.id": "conversation-1",
         "gen_ai.agent.id": "builder",
+      },
+    );
+  });
+
+  it("builds schedule trigger attributes from forwarded props", () => {
+    assertEquals(
+      buildScheduleTraceAttributes({
+        schedule_id: "schedule-1",
+        schedule_name: "Triage sweep",
+        unrelated: { nested: true },
+      }),
+      {
+        "schedule.id": "schedule-1",
+        "schedule.name": "Triage sweep",
+        "run.trigger.kind": "schedule",
+        "run.trigger.id": "schedule-1",
       },
     );
   });

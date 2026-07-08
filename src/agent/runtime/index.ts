@@ -35,6 +35,10 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/index.ts";
+import {
+  setActiveSpanAttributes as setOtelActiveSpanAttributes,
+  withSpan as withOtelSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
@@ -146,7 +150,12 @@ export {
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
-import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
+import {
+  executeConfiguredTool,
+  getAvailableTools,
+  isDynamicTool,
+  type ToolConfigEntry,
+} from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
@@ -248,6 +257,146 @@ function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): 
 
 function isSubmittedFormInputExecutionResult(toolName: string, result: unknown): boolean {
   return toolName === FORM_INPUT_TOOL_ID && containsSubmittedFormInputExecutionResult(result);
+}
+
+type RuntimeTraceAttributes = Record<string, string | number | boolean | undefined | null>;
+
+function compactRuntimeTraceAttributes(
+  attributes: RuntimeTraceAttributes,
+): Record<string, string | number | boolean> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(([, value]) =>
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ),
+  ) as Record<string, string | number | boolean>;
+}
+
+function buildRuntimeToolTraceAttributes(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  context?: ToolExecutionContext;
+  status?: "executing" | "completed" | "failed";
+  providerExecuted?: boolean;
+}): Record<string, string | number | boolean> {
+  return compactRuntimeTraceAttributes({
+    "agent.id": input.agentId,
+    "run.id": input.context?.runId,
+    "project.id": input.context?.projectId,
+    "project.slug": input.context?.projectSlug,
+    "tool.name": input.toolName,
+    "tool.call.id": input.toolCallId,
+    "tool.id": input.toolCallId,
+    "agent.tool.execution_mode": input.mode,
+    "agent.tool.status": input.status,
+    "agent.tool.provider_executed": input.providerExecuted,
+    "gen_ai.operation.name": "execute_tool",
+    "gen_ai.agent.id": input.agentId,
+    "gen_ai.tool.name": input.toolName,
+    "gen_ai.tool.type": "function",
+    "gen_ai.tool.call.id": input.toolCallId,
+  });
+}
+
+async function traceConfiguredToolExecution(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, unknown>;
+  toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
+  context: ToolExecutionContext;
+  allowedRemoteToolNames: string[] | undefined;
+  remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
+}): Promise<unknown> {
+  return await withOtelSpan(
+    "agent.tool_execute",
+    async () => {
+      setOtelActiveSpanAttributes(
+        buildRuntimeToolTraceAttributes({
+          mode: input.mode,
+          agentId: input.agentId,
+          toolName: input.toolName,
+          toolCallId: input.toolCallId,
+          context: input.context,
+          status: "executing",
+          providerExecuted: false,
+        }),
+      );
+      try {
+        const result = await executeConfiguredTool(
+          input.toolName,
+          input.args,
+          input.toolsConfig,
+          input.context,
+          input.allowedRemoteToolNames,
+          input.remoteToolSources,
+        );
+        setOtelActiveSpanAttributes(
+          buildRuntimeToolTraceAttributes({
+            mode: input.mode,
+            agentId: input.agentId,
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            context: input.context,
+            status: "completed",
+            providerExecuted: false,
+          }),
+        );
+        return result;
+      } catch (error) {
+        setOtelActiveSpanAttributes({
+          ...buildRuntimeToolTraceAttributes({
+            mode: input.mode,
+            agentId: input.agentId,
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            context: input.context,
+            status: "failed",
+            providerExecuted: false,
+          }),
+          "error.message": error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    },
+    buildRuntimeToolTraceAttributes({
+      mode: input.mode,
+      agentId: input.agentId,
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      context: input.context,
+      status: "executing",
+      providerExecuted: false,
+    }),
+  );
+}
+
+async function traceProviderExecutedTool(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  context?: ToolExecutionContext;
+}): Promise<void> {
+  await withOtelSpan(
+    "agent.tool_execute",
+    async () => {
+      setOtelActiveSpanAttributes(
+        buildRuntimeToolTraceAttributes({
+          ...input,
+          status: "completed",
+          providerExecuted: true,
+        }),
+      );
+    },
+    buildRuntimeToolTraceAttributes({
+      ...input,
+      status: "completed",
+      providerExecuted: true,
+    }),
+  );
 }
 
 function markSubmittedFormInputRuntimeContext(
@@ -793,6 +942,19 @@ export class AgentRuntime {
             setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
 
             if (generatedToolResult) {
+              if (generatedToolResult.providerExecuted === true) {
+                await traceProviderExecutedTool({
+                  mode: "generate",
+                  agentId: this.id,
+                  toolName: tc.toolName,
+                  toolCallId: tc.toolCallId,
+                  context: {
+                    toolCallId: tc.toolCallId,
+                    ...toolContext,
+                    agentId: this.id,
+                  },
+                });
+              }
               await persistGeneratedToolResult(generatedToolResult);
               toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
               toolCall.result = generatedToolResult.result;
@@ -851,14 +1013,17 @@ export class AgentRuntime {
                 // spreads so caller-supplied context cannot spoof it.
                 agentId: this.id,
               };
-              const result = await executeConfiguredTool(
-                tc.toolName,
-                toolCall.args,
-                this.config.tools,
-                executionContext,
+              const result = await traceConfiguredToolExecution({
+                mode: "generate",
+                agentId: this.id,
+                toolName: tc.toolName,
+                toolCallId: tc.toolCallId,
+                args: toolCall.args,
+                toolsConfig: this.config.tools,
+                context: executionContext,
                 allowedRemoteToolNames,
                 remoteToolSources,
-              );
+              });
               await this.notifyToolResult({
                 mode: "generate",
                 toolName: tc.toolName,
@@ -1287,6 +1452,17 @@ export class AgentRuntime {
         }
 
         if (tc.providerExecuted === true) {
+          await traceProviderExecutedTool({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            context: {
+              toolCallId: tc.id,
+              ...toolContext,
+              agentId: this.id,
+            },
+          });
           toolCall.status = "completed";
           toolCalls.push(toolCall);
           continue;
@@ -1356,14 +1532,17 @@ export class AgentRuntime {
             // spread so caller-supplied context cannot spoof it.
             agentId: this.id,
           };
-          const result = await executeConfiguredTool(
-            tc.name,
-            toolCall.args,
-            this.config.tools,
-            executionContext,
+          const result = await traceConfiguredToolExecution({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            args: toolCall.args,
+            toolsConfig: this.config.tools,
+            context: executionContext,
             allowedRemoteToolNames,
             remoteToolSources,
-          );
+          });
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
             mode: "stream",
