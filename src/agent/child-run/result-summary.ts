@@ -18,6 +18,17 @@ const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^first,? [^.?!]+[.?!]\s*/i,
 ];
 
+/** Summary metadata returned to parent runs after child delegation. */
+export type ChildRunResultSummary = {
+  text: string;
+  status?: "complete" | "truncated";
+  truncated?: boolean;
+  originalChars?: number;
+  returnedChars?: number;
+  omittedChars?: number;
+  limitChars?: number;
+};
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -39,18 +50,45 @@ export function summarizeChildRunResultText(
   text: string,
   maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
 ): string {
+  return summarizeChildRunResultTextWithMetadata(text, maxLength).text;
+}
+
+/** Summarize child run result text with machine-readable truncation metadata. */
+export function summarizeChildRunResultTextWithMetadata(
+  text: string,
+  maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
+): ChildRunResultSummary {
   const normalized = sanitizeMalformedToolTranscriptText(text);
 
   if (normalized.length <= maxLength) {
-    return normalized;
+    return {
+      text: normalized,
+      status: "complete",
+      truncated: false,
+      originalChars: normalized.length,
+      returnedChars: normalized.length,
+      omittedChars: 0,
+      limitChars: maxLength,
+    };
   }
 
-  return `${normalized.slice(0, maxLength)}… [truncated ${normalized.length - maxLength} chars]`;
+  const omittedChars = normalized.length - maxLength;
+  const summaryText = `${normalized.slice(0, maxLength)}… [truncated ${omittedChars} chars]`;
+
+  return {
+    text: summaryText,
+    status: "truncated",
+    truncated: true,
+    originalChars: normalized.length,
+    returnedChars: summaryText.length,
+    omittedChars,
+    limitChars: maxLength,
+  };
 }
 
 /** Builds child run result summary. */
-export function buildChildRunResultSummary(text: string): { text: string } {
-  return { text: summarizeChildRunResultText(text) };
+export function buildChildRunResultSummary(text: string): ChildRunResultSummary {
+  return summarizeChildRunResultTextWithMetadata(text);
 }
 
 /** Builds root owned child run result text. */
