@@ -110,14 +110,12 @@ For skills, directories containing `SKILL.md` are registered.
 | `agents/`    | AI agent definitions              | `veryfront/agent`                    |
 | `tools/`     | Tool definitions with Zod schemas | `veryfront/tool`                     |
 | `prompts/`   | Prompt templates                  | `veryfront/prompt`                   |
-| `work/`      | Business process definitions      | `veryfront/work`                     |
 | `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`                 |
 | `resources/` | MCP-exposable resources           | `veryfront/resource`                 |
 | `skills/`    | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
 
 TypeScript primitives are registered from their exported definitions. Agents can
-use the filename as the ID when no explicit ID is provided; Work definitions use
-the declared `id` so execution state can refer to stable acceptance criteria.
+use the filename as the ID when no explicit ID is provided.
 
 Agent discovery also supports `agents/assistant.md`. Use frontmatter for
 metadata and the markdown body for system instructions.
