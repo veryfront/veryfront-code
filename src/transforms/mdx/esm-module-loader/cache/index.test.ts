@@ -6,6 +6,7 @@ import {
   clearMdxEsmCacheNamespace,
   clearModulePathCache,
   getLocalFs,
+  getMdxEsmSsrCacheDir,
   getModulePathCache,
   invalidateMdxEsmModule,
   invalidateModulePaths,
@@ -29,30 +30,42 @@ describe("MDX module path cache", () => {
     const cacheBase = await makeTempDir({ prefix: "vf-mdx-namespace-clear-" });
     const projectId = "project/with spaces";
     const contentSourceId = "preview-main";
-    const cacheDir = join(
-      cacheBase,
-      "veryfront-mdx-esm",
-      encodeURIComponent(projectId),
-      encodeURIComponent(contentSourceId),
-    );
     const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
-    const cachedPath = join(cacheDir, "stale.mjs");
 
     try {
       await runWithCacheDir(cacheBase, async () => {
+        const cacheDir = join(
+          cacheBase,
+          "veryfront-mdx-esm",
+          encodeURIComponent(projectId),
+          encodeURIComponent(contentSourceId),
+        );
+        const ssrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+        const cachedPath = join(cacheDir, "stale.mjs");
+        const ssrCachedPath = join(ssrCacheDir, "stale-ssr.mjs");
+
         await getLocalFs().mkdir(cacheDir, { recursive: true });
+        await getLocalFs().mkdir(ssrCacheDir, { recursive: true });
         await writeTextFile(cachedPath, "export default function Stale() {}");
+        await writeTextFile(ssrCachedPath, "export default function StaleSSR() {}");
 
         const cache = await getModulePathCache(cacheDir);
         cache.set(cacheKey, cachedPath);
+        const ssrCache = await getModulePathCache(ssrCacheDir);
+        ssrCache.set(cacheKey, ssrCachedPath);
         verifiedModuleDeps.set(`${cachedPath}:${cacheKey}`, true);
+        verifiedModuleDeps.set(`${ssrCachedPath}:${cacheKey}`, true);
 
         await clearMdxEsmCacheNamespace(projectId, contentSourceId);
 
         assertEquals(await exists(cachedPath), false);
+        assertEquals(await exists(ssrCachedPath), false);
         assertEquals((await getModulePathCache(cacheDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(ssrCacheDir)).get(cacheKey), undefined);
         assertEquals(verifiedModuleDeps.get(`${cachedPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${ssrCachedPath}:${cacheKey}`), undefined);
         assertEquals(await exists(cacheDir), true);
+        assertEquals(await exists(ssrCacheDir), true);
       });
     } finally {
       await remove(cacheBase, { recursive: true });

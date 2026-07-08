@@ -4,12 +4,10 @@
  * Extracts and resolves /_vf_modules/* imports into file:// cache paths.
  */
 
-import { join } from "#veryfront/compat/path/index.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   createModuleFetcherContext,
   fetchAndCacheModule,
@@ -73,9 +71,7 @@ export async function resolveVfModuleImports(
     paths: imports.map((i) => i.path).slice(0, 5),
   });
 
-  const baseCacheDir = getMdxEsmCacheDir();
-  const projectKey = hashCodeHex(options.projectId);
-  const esmCacheDir = join(baseCacheDir, projectKey, options.contentSourceId);
+  const esmCacheDir = getMdxEsmSsrCacheDir(options.projectId, options.contentSourceId);
 
   const fetcherContext = createModuleFetcherContext(
     esmCacheDir,
