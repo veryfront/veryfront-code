@@ -58,7 +58,7 @@ import { serverLogger } from "#veryfront/utils";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
-  filterSharedRuntimeProjectEnv,
+  filterRuntimeProjectEnv,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
 
@@ -493,7 +493,7 @@ function buildAgentStreamEnv(input: {
 }): Record<string, string> {
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   return {
-    ...filterSharedRuntimeProjectEnv(input.envVars),
+    ...filterRuntimeProjectEnv(input.envVars),
     // Framework-owned values must override project env to keep request-scoped
     // credentials bound to trusted Veryfront endpoints and the current project.
     ...(input.proxyToken ? { VERYFRONT_API_TOKEN: input.proxyToken } : {}),

@@ -8,6 +8,8 @@ import {
   setGlobalMetricsAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { metrics } from "./index.ts";
 
 describe("metrics public SDK", () => {
@@ -336,6 +338,53 @@ describe("metrics public SDK", () => {
     assertEquals(
       (requests[0]?.init?.headers as Record<string, string>).Authorization,
       "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
+    );
+  });
+
+  it("uses project OTLP metrics config in dedicated runtimes", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-1",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(url), init });
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        await runWithProjectEnv({
+          OTEL_METRICS_ENABLED: "true",
+          OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://otlp.datadoghq.eu/v1/metrics",
+          OTEL_EXPORTER_OTLP_METRICS_HEADERS: "dd-api-key=project-key",
+          OTEL_SERVICE_NAME: "veryfront-ops-agent",
+        }, async () => {
+          metrics.counter("vf_eval_result_total", 1, { project_id: "project-123" });
+          await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.url, "https://otlp.datadoghq.eu/v1/metrics");
+    assertEquals(
+      (requests[0]?.init?.headers as Record<string, string>)["dd-api-key"],
+      "project-key",
+    );
+
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    assertEquals(
+      body.resourceMetrics[0].resource.attributes.find(
+        (attr: { key: string }) => attr.key === "service.name",
+      ).value.stringValue,
+      "veryfront-ops-agent",
     );
   });
 
