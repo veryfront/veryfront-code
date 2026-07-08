@@ -134,22 +134,6 @@ function isToolCallsFinishReason(
     (typeof finishReason === "object" && finishReason?.unified === "tool-calls");
 }
 
-function hasGatewayUsageMetadata(usage: RuntimeUsage | undefined): boolean {
-  return usage?.billableInputTokens !== undefined ||
-    usage?.billableOutputTokens !== undefined ||
-    usage?.providerInputCostUsd !== undefined ||
-    usage?.providerOutputCostUsd !== undefined ||
-    usage?.providerCostUsd !== undefined ||
-    usage?.veryfrontInputChargeUsd !== undefined ||
-    usage?.veryfrontOutputChargeUsd !== undefined ||
-    usage?.veryfrontChargeUsd !== undefined ||
-    usage?.veryfrontBilledUsd !== undefined ||
-    usage?.costCredits !== undefined ||
-    usage?.costSource !== undefined ||
-    usage?.billingMode !== undefined ||
-    usage?.usageCaptureStatus !== undefined;
-}
-
 async function readStreamChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs?: number,
@@ -501,14 +485,6 @@ export async function* streamAnthropicCompatibleParts(
         if (isToolCallsFinishReason(finishReason)) {
           clientToolUseIdleDeadlineMs = null;
           clientToolUseTerminalDeadlineMs ??= Date.now() + trailingUsageGraceMs;
-          if (hasGatewayUsageMetadata(usage)) {
-            await cancelStreamReader(
-              reader,
-              "Finished Anthropic tool-use turn after gateway usage metadata",
-            );
-            yield buildFinishPart();
-            return;
-          }
         } else {
           clientToolUseIdleDeadlineMs ??= Date.now() + trailingUsageGraceMs;
         }
