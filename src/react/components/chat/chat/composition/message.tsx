@@ -82,13 +82,14 @@ export interface MessageRootProps {
   feedback?: FeedbackValue | null;
   /** Regenerate this turn — surfaces the retry button in `Message.Actions`. */
   onReload?: () => void;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
-const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
-  function MessageRoot(
-    { message, isStreaming = false, children, className, ...overrides },
-    ref,
-  ) {
+function MessageRoot(
+  { message, isStreaming = false, children, className, ref, ...overrides }: MessageRootProps,
+): React.ReactElement {
+  {
     const chat = useChatContextOptional();
     const role = message.role as MessageContextValue["role"];
     const answerParts = React.useMemo(
@@ -189,8 +190,8 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
         </MessageItem>
       </MessageContextProvider>
     );
-  },
-);
+  }
+}
 MessageRoot.displayName = "Message.Root";
 
 // ---------------------------------------------------------------------------
@@ -581,20 +582,29 @@ export interface MessageActionProps
   asChild?: boolean;
   /** Runs before the default action; call `next()` to invoke it (or skip it). */
   onClick?: (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Internal button shared by every action sub-part. */
-const ActionButton = React.forwardRef<
-  HTMLButtonElement,
-  MessageActionProps & {
+function ActionButton(
+  {
+    icon,
+    asChild,
+    onClick,
+    className,
+    children,
+    label,
+    defaultIcon,
+    action,
+    ref,
+    ...props
+  }: MessageActionProps & {
     label: string;
     defaultIcon: React.ReactNode;
     action: () => void;
-  }
->(function ActionButton(
-  { icon, asChild, onClick, className, children, label, defaultIcon, action, ...props },
-  ref,
-) {
+  },
+): React.ReactElement {
   const handleClick = (e: React.MouseEvent<HTMLElement>) => onClick ? onClick(e, action) : action();
 
   if (asChild) {
@@ -622,63 +632,61 @@ const ActionButton = React.forwardRef<
       {icon ?? defaultIcon}
     </button>
   );
-});
+}
 ActionButton.displayName = "Message.ActionButton";
 
 /** Copy the message text. Reads `onCopy`/`copied`/`textContent` from context. */
-export const MessageCopyAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
-  function MessageCopyAction(props, ref) {
-    const { onCopy, copied, textContent } = useMessageContext();
-    if (!textContent) return null;
-    return (
-      <ActionButton
-        ref={ref}
-        {...props}
-        label={copied ? "Copied!" : "Copy to clipboard"}
-        defaultIcon={copied
-          ? <CheckIcon className="size-3.5" />
-          : <CopyIcon className="size-3.5" />}
-        action={() => void onCopy()}
-      />
-    );
-  },
-);
+export function MessageCopyAction(
+  props: MessageActionProps,
+): React.ReactElement | null {
+  const { onCopy, copied, textContent } = useMessageContext();
+  if (!textContent) return null;
+  return (
+    <ActionButton
+      ref={props.ref}
+      {...props}
+      label={copied ? "Copied!" : "Copy to clipboard"}
+      defaultIcon={copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      action={() => void onCopy()}
+    />
+  );
+}
 MessageCopyAction.displayName = "Message.CopyAction";
 
 /** Regenerate this turn. Renders only when `onRegenerate` is available. */
-export const MessageRegenerateAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
-  function MessageRegenerateAction(props, ref) {
-    const { onRegenerate } = useMessageContext();
-    if (!onRegenerate) return null;
-    return (
-      <ActionButton
-        ref={ref}
-        {...props}
-        label="Regenerate response"
-        defaultIcon={<RefreshCwIcon className="size-3.5" />}
-        action={onRegenerate}
-      />
-    );
-  },
-);
+export function MessageRegenerateAction(
+  props: MessageActionProps,
+): React.ReactElement | null {
+  const { onRegenerate } = useMessageContext();
+  if (!onRegenerate) return null;
+  return (
+    <ActionButton
+      ref={props.ref}
+      {...props}
+      label="Regenerate response"
+      defaultIcon={<RefreshCwIcon className="size-3.5" />}
+      action={onRegenerate}
+    />
+  );
+}
 MessageRegenerateAction.displayName = "Message.RegenerateAction";
 
 /** Edit this message. Renders only when `onEdit` is available. */
-export const MessageEditAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
-  function MessageEditAction(props, ref) {
-    const { onEdit, textContent } = useMessageContext();
-    if (!onEdit || !textContent) return null;
-    return (
-      <ActionButton
-        ref={ref}
-        {...props}
-        label="Edit message"
-        defaultIcon={<PencilIcon className="size-3.5" />}
-        action={() => onEdit(textContent)}
-      />
-    );
-  },
-);
+export function MessageEditAction(
+  props: MessageActionProps,
+): React.ReactElement | null {
+  const { onEdit, textContent } = useMessageContext();
+  if (!onEdit || !textContent) return null;
+  return (
+    <ActionButton
+      ref={props.ref}
+      {...props}
+      label="Edit message"
+      defaultIcon={<PencilIcon className="size-3.5" />}
+      action={() => onEdit(textContent)}
+    />
+  );
+}
 MessageEditAction.displayName = "Message.EditAction";
 
 /** Props accepted by `<Message.Actions>`. */
@@ -936,16 +944,16 @@ function MessageDefault(
   );
 }
 
-const MessageComponent = React.forwardRef<HTMLDivElement, MessageProps>(
-  function Message({ children, showSources, showSteps, ...root }, ref) {
-    return (
-      <MessageRoot ref={ref} {...root}>
-        {children ??
-          <MessageDefault showSources={showSources} showSteps={showSteps} />}
-      </MessageRoot>
-    );
-  },
-);
+function MessageComponent(
+  { children, showSources, showSteps, ref, ...root }: MessageProps,
+): React.ReactElement {
+  return (
+    <MessageRoot ref={ref} {...root}>
+      {children ??
+        <MessageDefault showSources={showSources} showSteps={showSteps} />}
+    </MessageRoot>
+  );
+}
 MessageComponent.displayName = "Message";
 
 /**

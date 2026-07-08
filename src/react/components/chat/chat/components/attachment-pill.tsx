@@ -53,6 +53,8 @@ export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement
   bordered?: boolean;
   /** Compose your own pill; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -200,10 +202,7 @@ export function useAttachmentPill(): AttachmentPillContextValue {
  * `AttachmentPill.Root` — context provider + the chip wrapper. No children
  * renders the default anatomy; pass children to recompose.
  */
-const AttachmentPillRoot = React.forwardRef<
-  HTMLDivElement,
-  AttachmentPillProps
->(function AttachmentPill({
+function AttachmentPillRoot({
   attachment,
   onRemove,
   onRetry,
@@ -211,8 +210,9 @@ const AttachmentPillRoot = React.forwardRef<
   bordered = true,
   className,
   children,
+  ref,
   ...props
-}, ref): React.ReactElement {
+}: AttachmentPillProps): React.ReactElement {
   const mediaType = attachment.type ?? "";
   const ext = getExtension(attachment.name) ||
     mediaType.split("/").pop()?.toLowerCase() || "";
@@ -304,7 +304,7 @@ const AttachmentPillRoot = React.forwardRef<
       </div>
     </AttachmentPillContext.Provider>
   );
-});
+}
 AttachmentPillRoot.displayName = "AttachmentPill.Root";
 
 /**

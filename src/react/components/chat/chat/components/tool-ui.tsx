@@ -241,6 +241,8 @@ export interface ToolCallProps {
   renderSkill?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
   /** Compose your own card; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -248,65 +250,63 @@ export interface ToolCallProps {
  * the default anatomy (`Trigger` + `Body`); pass children to recompose. Skill /
  * compact tools short-circuit to the single-line row (not composable).
  */
-const ToolCallRoot = React.forwardRef<HTMLDivElement, ToolCallProps>(
-  function ToolCall(
-    { tool, className, icon, variant, defaultExpanded, onToggle, renderSkill, children },
-    ref,
-  ) {
-    const hasOutput = hasVisibleToolOutput(tool.output);
-    const hasError = Boolean(tool.errorText);
-    // Collapse tool cards by default. Fast server-side tools (e.g.
-    // `search_knowledge`) resolve near-instantly and otherwise stack up
-    // expanded, burying the assistant's actual reply. The trigger row still
-    // shows the tool name + status badge, and the chevron expands on demand.
-    // Errors stay open so failures aren't hidden behind a click.
-    const shouldExpandByDefault = hasError;
-    const [isExpanded, setIsExpanded] = React.useState(
-      defaultExpanded ?? shouldExpandByDefault,
-    );
+function ToolCallRoot(
+  { tool, className, icon, variant, defaultExpanded, onToggle, renderSkill, children, ref }:
+    ToolCallProps,
+): React.ReactElement {
+  const hasOutput = hasVisibleToolOutput(tool.output);
+  const hasError = Boolean(tool.errorText);
+  // Collapse tool cards by default. Fast server-side tools (e.g.
+  // `search_knowledge`) resolve near-instantly and otherwise stack up
+  // expanded, burying the assistant's actual reply. The trigger row still
+  // shows the tool name + status badge, and the chevron expands on demand.
+  // Errors stay open so failures aren't hidden behind a click.
+  const shouldExpandByDefault = hasError;
+  const [isExpanded, setIsExpanded] = React.useState(
+    defaultExpanded ?? shouldExpandByDefault,
+  );
 
-    // Compact row for skill tools (or when forced) — a presentation variant.
-    const isCompact = variant === "compact" ||
-      (variant !== "card" && isSkillToolPart(tool));
-    if (isCompact) {
-      if (renderSkill) return <>{renderSkill(tool)}</>;
-      return <SkillTool {...getSkillToolProps(tool)} />;
-    }
+  // Compact row for skill tools (or when forced) — a presentation variant.
+  const isCompact = variant === "compact" ||
+    (variant !== "card" && isSkillToolPart(tool));
+  if (isCompact) {
+    if (renderSkill) return <>{renderSkill(tool)}</>;
+    return <SkillTool {...getSkillToolProps(tool)} />;
+  }
 
-    const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
-      const next = !isExpanded;
-      setIsExpanded(next);
-      onToggle?.(next, e);
-    };
+  const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const next = !isExpanded;
+    setIsExpanded(next);
+    onToggle?.(next, e);
+  };
 
-    const context: ToolCallContextValue = {
-      tool,
-      isExpanded,
-      toggle,
-      hasOutput,
-      hasError,
-    };
+  const context: ToolCallContextValue = {
+    tool,
+    isExpanded,
+    toggle,
+    hasOutput,
+    hasError,
+  };
 
-    return (
-      <ToolCallContext.Provider value={context}>
-        <div
-          ref={ref}
-          className={cn(
-            "not-prose w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-2.5",
-            className,
-          )}
-        >
-          {children ?? (
-            <>
-              <ToolCallTrigger icon={icon} />
-              <ToolCallBody />
-            </>
-          )}
-        </div>
-      </ToolCallContext.Provider>
-    );
-  },
-);
+  return (
+    <ToolCallContext.Provider value={context}>
+      <div
+        ref={ref}
+        className={cn(
+          "not-prose w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-2.5",
+          className,
+        )}
+      >
+        {children ?? (
+          <>
+            <ToolCallTrigger icon={icon} />
+            <ToolCallBody />
+          </>
+        )}
+      </div>
+    </ToolCallContext.Provider>
+  );
+}
 ToolCallRoot.displayName = "ToolCall.Root";
 
 /** Props for `ToolCall.Trigger` — the header button. */

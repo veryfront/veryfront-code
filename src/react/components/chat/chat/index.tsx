@@ -489,6 +489,9 @@ export interface ChatProps {
   /** @internal Hide the built-in TabSwitcher when rendered externally */
   hideTabSwitcher?: boolean;
   children?: React.ReactNode;
+
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,283 +503,281 @@ export interface ChatProps {
 // ---------------------------------------------------------------------------
 
 /** Render the controlled chat (caller supplies `messages`/`input`). */
-const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
-  function ControlledChat(
-    {
-      messages = [],
-      input = "",
-      onChange = () => {},
-      onSubmit,
-      sendMessage,
-      stop,
-      reload,
-      enableVoice = false,
-      onVoice,
-      setInput,
-      isLoading,
-      error,
-      placeholder = "Type a message...",
-      maxHeight = "100%",
-      className,
-      theme: userTheme,
-      renderMessage,
-      renderTool,
-      suggestions,
-      onSuggestionClick,
-      emptyState,
-      initializing = false,
-      skeleton,
-      agent,
-      showScrollButton = false,
-      showMessageActions = true,
-      models,
-      model,
-      activeModel,
-      onModelChange,
-      inferenceMode,
-      showSources = false,
-      onSourceClick,
-      enableAttachments = true,
-      uploadApi,
-      onAttach,
-      onSelectAttachment,
-      onDrop,
-      attachAccept,
-      attachments,
-      onRemoveAttachment,
-      showExport = false,
-      onFeedback,
-      editMessage,
-      getBranches,
-      switchBranch,
-      showSteps = false,
-      showTabs = false,
-      activeTab: controlledTab,
-      onTabChange: controlledTabChange,
-      uploads,
-      onRemoveUpload,
-      quickActions,
-      onQuickAction,
-      toolbarStart,
-      hideTabSwitcher = false,
-      children,
-    },
+function ControlledChat(
+  {
+    messages = [],
+    input = "",
+    onChange = () => {},
+    onSubmit,
+    sendMessage,
+    stop,
+    reload,
+    enableVoice = false,
+    onVoice,
+    setInput,
+    isLoading,
+    error,
+    placeholder = "Type a message...",
+    maxHeight = "100%",
+    className,
+    theme: userTheme,
+    renderMessage,
+    renderTool,
+    suggestions,
+    onSuggestionClick,
+    emptyState,
+    initializing = false,
+    skeleton,
+    agent,
+    showScrollButton = false,
+    showMessageActions = true,
+    models,
+    model,
+    activeModel,
+    onModelChange,
+    inferenceMode,
+    showSources = false,
+    onSourceClick,
+    enableAttachments = true,
+    uploadApi,
+    onAttach,
+    onSelectAttachment,
+    onDrop,
+    attachAccept,
+    attachments,
+    onRemoveAttachment,
+    showExport = false,
+    onFeedback,
+    editMessage,
+    getBranches,
+    switchBranch,
+    showSteps = false,
+    showTabs = false,
+    activeTab: controlledTab,
+    onTabChange: controlledTabChange,
+    uploads,
+    onRemoveUpload,
+    quickActions,
+    onQuickAction,
+    toolbarStart,
+    hideTabSwitcher = false,
+    children,
     ref,
-  ): React.ReactElement {
-    const theme = React.useMemo(
-      () => mergeThemes(defaultChatTheme, userTheme),
-      [
-        userTheme,
-      ],
-    );
+  }: ChatProps,
+): React.ReactElement {
+  const theme = React.useMemo(
+    () => mergeThemes(defaultChatTheme, userTheme),
+    [
+      userTheme,
+    ],
+  );
 
-    // --- Attachments (batteries-included) ---
-    // The composer's `+` menu and drag-to-attach are on by default: when the
-    // caller wires none of the attachment props, `<Chat>` manages the pending
-    // files itself so `<Chat />` "just works". Pass any attachment prop to take
-    // control; pass `enableAttachments={false}` to hide the control entirely.
-    const isAttachControlled = onAttach !== undefined ||
-      onDrop !== undefined ||
-      attachments !== undefined ||
-      onRemoveAttachment !== undefined ||
-      onSelectAttachment !== undefined;
-    // When the caller wires no attachment props, `<Chat>` self-manages pending
-    // files through `useUpload` — the SAME hook app-mode uses — so drag/`+`
-    // uploads get an instant thumbnail (`preview`) and a resolved `url` (base64
-    // `data:` by default, or a durable POST when `uploadApi` is set). The old
-    // path only recorded name/size, so pills had no preview and never sent.
-    const upload = useUpload({ api: uploadApi });
-    const manageAttachments = enableAttachments && !isAttachControlled;
+  // --- Attachments (batteries-included) ---
+  // The composer's `+` menu and drag-to-attach are on by default: when the
+  // caller wires none of the attachment props, `<Chat>` manages the pending
+  // files itself so `<Chat />` "just works". Pass any attachment prop to take
+  // control; pass `enableAttachments={false}` to hide the control entirely.
+  const isAttachControlled = onAttach !== undefined ||
+    onDrop !== undefined ||
+    attachments !== undefined ||
+    onRemoveAttachment !== undefined ||
+    onSelectAttachment !== undefined;
+  // When the caller wires no attachment props, `<Chat>` self-manages pending
+  // files through `useUpload` — the SAME hook app-mode uses — so drag/`+`
+  // uploads get an instant thumbnail (`preview`) and a resolved `url` (base64
+  // `data:` by default, or a durable POST when `uploadApi` is set). The old
+  // path only recorded name/size, so pills had no preview and never sent.
+  const upload = useUpload({ api: uploadApi });
+  const manageAttachments = enableAttachments && !isAttachControlled;
 
-    const effectiveOnAttach = !enableAttachments
-      ? undefined
-      : isAttachControlled
-      ? onAttach
-      : upload.upload;
-    const effectiveOnDrop = !enableAttachments
-      ? undefined
-      : isAttachControlled
-      ? onDrop
-      : upload.upload;
-    const effectiveAttachments = isAttachControlled ? attachments : upload.attachments;
-    const effectiveOnRemove = !enableAttachments
-      ? undefined
-      : isAttachControlled
-      ? onRemoveAttachment
-      : upload.remove;
+  const effectiveOnAttach = !enableAttachments
+    ? undefined
+    : isAttachControlled
+    ? onAttach
+    : upload.upload;
+  const effectiveOnDrop = !enableAttachments
+    ? undefined
+    : isAttachControlled
+    ? onDrop
+    : upload.upload;
+  const effectiveAttachments = isAttachControlled ? attachments : upload.attachments;
+  const effectiveOnRemove = !enableAttachments
+    ? undefined
+    : isAttachControlled
+    ? onRemoveAttachment
+    : upload.remove;
 
-    // Self-managed attachments must ride along on submit: the caller's
-    // `onSubmit` only carries the input text, so fold the uploaded files into
-    // `sendMessage({ text, files })` (then clear). Falls back to `onSubmit` for
-    // a text-only turn, when the caller controls attachments, or when no
-    // `sendMessage` is available.
-    const handleSubmit = React.useCallback((e?: React.FormEvent) => {
-      if (manageAttachments && sendMessage) {
-        // Wait for pending uploads: sending now would carry only the resolved
-        // files and silently drop the one still in flight.
-        if (hasPendingAttachments(upload.attachments)) {
-          e?.preventDefault();
-          return;
-        }
-        const files = attachmentsToFileParts(upload.attachments);
-        if (files.length > 0) {
-          e?.preventDefault();
-          void sendMessage({ text: input.trim(), files });
-          setInput?.("");
-          upload.clear();
-          return;
-        }
+  // Self-managed attachments must ride along on submit: the caller's
+  // `onSubmit` only carries the input text, so fold the uploaded files into
+  // `sendMessage({ text, files })` (then clear). Falls back to `onSubmit` for
+  // a text-only turn, when the caller controls attachments, or when no
+  // `sendMessage` is available.
+  const handleSubmit = React.useCallback((e?: React.FormEvent) => {
+    if (manageAttachments && sendMessage) {
+      // Wait for pending uploads: sending now would carry only the resolved
+      // files and silently drop the one still in flight.
+      if (hasPendingAttachments(upload.attachments)) {
+        e?.preventDefault();
+        return;
       }
-      onSubmit?.(e);
-    }, [manageAttachments, sendMessage, upload, input, setInput, onSubmit]);
+      const files = attachmentsToFileParts(upload.attachments);
+      if (files.length > 0) {
+        e?.preventDefault();
+        void sendMessage({ text: input.trim(), files });
+        setInput?.("");
+        upload.clear();
+        return;
+      }
+    }
+    onSubmit?.(e);
+  }, [manageAttachments, sendMessage, upload, input, setInput, onSubmit]);
 
-    // --- Tab state ---
-    const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
-    const currentTab = controlledTab ?? internalTab;
-    const handleTabChange = controlledTabChange ?? setInternalTab;
+  // --- Tab state ---
+  const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
+  const currentTab = controlledTab ?? internalTab;
+  const handleTabChange = controlledTabChange ?? setInternalTab;
 
-    // --- Voice ---
-    const voice = useVoiceInput({
-      onTranscript: (transcript, isFinal) => {
-        if (!isFinal || !setInput) return;
-        setInput(transcript);
-      },
-    });
+  // --- Voice ---
+  const voice = useVoiceInput({
+    onTranscript: (transcript, isFinal) => {
+      if (!isFinal || !setInput) return;
+      setInput(transcript);
+    },
+  });
 
-    const voiceHandler = React.useMemo(() => {
-      if (onVoice) return onVoice;
-      if (enableVoice && voice.isSupported && setInput) return voice.toggle;
-      return undefined;
-    }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
+  const voiceHandler = React.useMemo(() => {
+    if (onVoice) return onVoice;
+    if (enableVoice && voice.isSupported && setInput) return voice.toggle;
+    return undefined;
+  }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
 
-    const isEmpty = messages.length === 0;
-    const isDocsTab = showTabs && currentTab === "attachments";
+  const isEmpty = messages.length === 0;
+  const isDocsTab = showTabs && currentTab === "attachments";
 
-    return (
-      <ChatRoot
-        ref={ref}
-        messages={messages}
-        input={input}
-        isLoading={isLoading}
-        error={error}
-        setInput={setInput}
-        onSubmit={handleSubmit}
-        onStop={stop}
-        onReload={reload}
-        model={model}
-        models={models}
-        onModelChange={onModelChange}
-        agent={agent}
-        attachments={effectiveAttachments}
-        onAttach={effectiveOnAttach}
-        onRemoveAttachment={effectiveOnRemove}
-        editMessage={editMessage}
-        getBranches={getBranches}
-        switchBranch={switchBranch}
-        onFeedback={onFeedback}
-        showSources={showSources}
-        onSourceClick={onSourceClick}
-        theme={userTheme}
-        maxHeight={maxHeight}
-        className={className}
-      >
-        {showTabs && !hideTabSwitcher && (
-          <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />
+  return (
+    <ChatRoot
+      ref={ref}
+      messages={messages}
+      input={input}
+      isLoading={isLoading}
+      error={error}
+      setInput={setInput}
+      onSubmit={handleSubmit}
+      onStop={stop}
+      onReload={reload}
+      model={model}
+      models={models}
+      onModelChange={onModelChange}
+      agent={agent}
+      attachments={effectiveAttachments}
+      onAttach={effectiveOnAttach}
+      onRemoveAttachment={effectiveOnRemove}
+      editMessage={editMessage}
+      getBranches={getBranches}
+      switchBranch={switchBranch}
+      onFeedback={onFeedback}
+      showSources={showSources}
+      onSourceClick={onSourceClick}
+      theme={userTheme}
+      maxHeight={maxHeight}
+      className={className}
+    >
+      {showTabs && !hideTabSwitcher && (
+        <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />
+      )}
+
+      {isDocsTab
+        ? (
+          <AttachmentsPanel
+            uploads={uploads}
+            onRemoveUpload={onRemoveUpload}
+            onAttach={effectiveOnAttach}
+            attachAccept={attachAccept}
+            onClose={() => handleTabChange("chat")}
+            className="flex-1 min-h-0"
+          />
+        )
+        : isEmpty && (isLoading || initializing)
+        // Thread still loading its history (or agent metadata still
+        // resolving) → skeleton, not an idle placeholder.
+        ? (skeleton ?? <ChatMessagesSkeleton />)
+        : isEmpty && emptyState
+        // Idle hero is opt-in: only rendered when the consumer supplies an
+        // `emptyState`. Otherwise an empty thread is just a blank canvas +
+        // composer — no "What can I help with?" placeholder.
+        ? (
+          <ChatEmpty
+            icon={emptyState.icon}
+            title={emptyState.title}
+            description={emptyState.description}
+            suggestions={suggestions}
+            onSuggestionClick={onSuggestionClick}
+          />
+        )
+        : (
+          <ChatMessageList
+            messages={messages}
+            isLoading={isLoading}
+            theme={theme}
+            renderMessage={renderMessage}
+            renderTool={renderTool}
+            model={activeModel || model}
+            showMessageActions={showMessageActions}
+            showSources={showSources}
+            showSteps={showSteps}
+            showScrollButton={showScrollButton}
+            onSourceClick={onSourceClick}
+            inferenceMode={inferenceMode}
+            editMessage={editMessage}
+            getBranches={getBranches}
+            switchBranch={switchBranch}
+            onFeedback={onFeedback}
+          />
         )}
 
-        {isDocsTab
-          ? (
-            <AttachmentsPanel
-              uploads={uploads}
-              onRemoveUpload={onRemoveUpload}
-              onAttach={effectiveOnAttach}
-              attachAccept={attachAccept}
-              onClose={() => handleTabChange("chat")}
-              className="flex-1 min-h-0"
-            />
-          )
-          : isEmpty && (isLoading || initializing)
-          // Thread still loading its history (or agent metadata still
-          // resolving) → skeleton, not an idle placeholder.
-          ? (skeleton ?? <ChatMessagesSkeleton />)
-          : isEmpty && emptyState
-          // Idle hero is opt-in: only rendered when the consumer supplies an
-          // `emptyState`. Otherwise an empty thread is just a blank canvas +
-          // composer — no "What can I help with?" placeholder.
-          ? (
-            <ChatEmpty
-              icon={emptyState.icon}
-              title={emptyState.title}
-              description={emptyState.description}
-              suggestions={suggestions}
-              onSuggestionClick={onSuggestionClick}
-            />
-          )
-          : (
-            <ChatMessageList
-              messages={messages}
-              isLoading={isLoading}
-              theme={theme}
-              renderMessage={renderMessage}
-              renderTool={renderTool}
-              model={activeModel || model}
-              showMessageActions={showMessageActions}
-              showSources={showSources}
-              showSteps={showSteps}
-              showScrollButton={showScrollButton}
-              onSourceClick={onSourceClick}
-              inferenceMode={inferenceMode}
-              editMessage={editMessage}
-              getBranches={getBranches}
-              switchBranch={switchBranch}
-              onFeedback={onFeedback}
+      {error && <ErrorBanner error={error} onRetry={reload} />}
+
+      {!isDocsTab && (
+        <ChatInput
+          input={voice.isListening ? voice.transcript || input : input}
+          onChange={onChange}
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+          placeholder={voice.isListening ? "Listening..." : placeholder}
+          theme={theme}
+          stop={voice.isListening ? undefined : stop}
+          onVoice={voiceHandler}
+          isListening={voice.isListening}
+          transcript={voice.transcript}
+          models={models}
+          model={model}
+          onModelChange={onModelChange}
+          onAttach={effectiveOnAttach}
+          onSelectAttachment={onSelectAttachment}
+          onDrop={effectiveOnDrop}
+          attachAccept={attachAccept}
+          attachments={effectiveAttachments}
+          onRemoveAttachment={effectiveOnRemove}
+          showExport={showExport}
+          messages={messages}
+          toolbarStart={toolbarStart}
+        >
+          {inferenceMode && inferenceMode !== "cloud" && (
+            <InferenceBadge inferenceMode={inferenceMode} />
+          )}
+          {isEmpty && quickActions && quickActions.length > 0 && (
+            <QuickActionsComponent
+              actions={quickActions}
+              onActionClick={onQuickAction}
             />
           )}
+        </ChatInput>
+      )}
 
-        {error && <ErrorBanner error={error} onRetry={reload} />}
-
-        {!isDocsTab && (
-          <ChatInput
-            input={voice.isListening ? voice.transcript || input : input}
-            onChange={onChange}
-            onSubmit={handleSubmit}
-            isLoading={isLoading}
-            placeholder={voice.isListening ? "Listening..." : placeholder}
-            theme={theme}
-            stop={voice.isListening ? undefined : stop}
-            onVoice={voiceHandler}
-            isListening={voice.isListening}
-            transcript={voice.transcript}
-            models={models}
-            model={model}
-            onModelChange={onModelChange}
-            onAttach={effectiveOnAttach}
-            onSelectAttachment={onSelectAttachment}
-            onDrop={effectiveOnDrop}
-            attachAccept={attachAccept}
-            attachments={effectiveAttachments}
-            onRemoveAttachment={effectiveOnRemove}
-            showExport={showExport}
-            messages={messages}
-            toolbarStart={toolbarStart}
-          >
-            {inferenceMode && inferenceMode !== "cloud" && (
-              <InferenceBadge inferenceMode={inferenceMode} />
-            )}
-            {isEmpty && quickActions && quickActions.length > 0 && (
-              <QuickActionsComponent
-                actions={quickActions}
-                onActionClick={onQuickAction}
-              />
-            )}
-          </ChatInput>
-        )}
-
-        {children}
-      </ChatRoot>
-    );
-  },
-);
+      {children}
+    </ChatRoot>
+  );
+}
 ControlledChat.displayName = "ControlledChat";
 
 // ---------------------------------------------------------------------------
@@ -833,206 +834,204 @@ function hasPendingAttachments(items: AttachmentInfo[]): boolean {
   return items.some((a) => a.state === "uploading" || a.state === "processing");
 }
 
-const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
-  function UncontrolledChat(
-    {
-      agentId,
-      api = "/api/ag-ui",
-      initialMessages,
-      onError,
-      onUpdate,
-      models,
-      suggestions: suggestionsProp,
-      onSuggestionClick,
-      emptyState,
-      // App mode defaults the scroll-to-bottom button on (batteries-included).
-      showScrollButton = true,
-      // Attachments: default-wired through `useUpload` unless the caller
-      // controls them. With no `uploadApi`, files inline as base64 `data:` URLs
-      // (guest mode — zero backend). Set `uploadApi` to POST to a durable
-      // upload endpoint (multipart `file` → `{ url }`) for real users + a project.
-      uploadApi,
-      enableAttachments = true,
-      onAttach: userOnAttach,
-      onDrop: userOnDrop,
-      attachments: userAttachments,
-      onRemoveAttachment: userOnRemoveAttachment,
-      onSubmit: userOnSubmit,
-      ...rest
-    },
+function UncontrolledChat(
+  {
+    agentId,
+    api = "/api/ag-ui",
+    initialMessages,
+    onError,
+    onUpdate,
+    models,
+    suggestions: suggestionsProp,
+    onSuggestionClick,
+    emptyState,
+    // App mode defaults the scroll-to-bottom button on (batteries-included).
+    showScrollButton = true,
+    // Attachments: default-wired through `useUpload` unless the caller
+    // controls them. With no `uploadApi`, files inline as base64 `data:` URLs
+    // (guest mode — zero backend). Set `uploadApi` to POST to a durable
+    // upload endpoint (multipart `file` → `{ url }`) for real users + a project.
+    uploadApi,
+    enableAttachments = true,
+    onAttach: userOnAttach,
+    onDrop: userOnDrop,
+    attachments: userAttachments,
+    onRemoveAttachment: userOnRemoveAttachment,
+    onSubmit: userOnSubmit,
     ref,
-  ): React.ReactElement {
-    // Inside a `ConversationsProvider`, bind to the active conversation — seed
-    // from its messages/agent and persist changes back. No props: the context
-    // carries it, so standalone `<Chat>` (no provider) is unchanged. `active`
-    // must match `activeId` so we never seed from a still-loading thread.
-    const conversations = useConversationsContextOptional();
-    const bound = conversations?.active && conversations.active.id === conversations.activeId
-      ? conversations.active
-      : null;
-    const resolvedAgentId = bound?.agentId ?? agentId;
+    ...rest
+  }: ChatProps,
+): React.ReactElement {
+  // Inside a `ConversationsProvider`, bind to the active conversation — seed
+  // from its messages/agent and persist changes back. No props: the context
+  // carries it, so standalone `<Chat>` (no provider) is unchanged. `active`
+  // must match `activeId` so we never seed from a still-loading thread.
+  const conversations = useConversationsContextOptional();
+  const bound = conversations?.active && conversations.active.id === conversations.activeId
+    ? conversations.active
+    : null;
+  const resolvedAgentId = bound?.agentId ?? agentId;
 
-    const chat = useChat({
-      api,
-      initialMessages: bound ? bound.messages : initialMessages,
-      onError,
-      body: resolvedAgentId ? { agentId: resolvedAgentId } : undefined,
+  const chat = useChat({
+    api,
+    initialMessages: bound ? bound.messages : initialMessages,
+    onError,
+    body: resolvedAgentId ? { agentId: resolvedAgentId } : undefined,
+  });
+  const { agent, error: agentError } = useAgentMetadata(resolvedAgentId);
+
+  // --- Persistence sink (explicit prop → provider default → ephemeral) ------
+  // Resolve WHERE the live thread persists: an explicit `onUpdate` wins, else
+  // a surrounding `ConversationsProvider`'s `save`, else nothing. The sink
+  // takes the whole updated conversation; `<Chat>` owns building it (title
+  // included) so `useConversations` stays dumb about titling and `useChat`
+  // never touches the store.
+  const persist = onUpdate ?? conversations?.save;
+
+  // Identity for the emitted conversation: in a provider we ride the bound
+  // conversation (id/agentId/createdAt); standalone (explicit `onUpdate`, no
+  // provider) we mint one stable id so updates target a single record.
+  const syntheticRef = React.useRef<Conversation | null>(null);
+  const persistRef = React.useRef(persist);
+  persistRef.current = persist;
+  const boundRef = React.useRef(bound);
+  boundRef.current = bound;
+  const agentIdRef = React.useRef(resolvedAgentId);
+  agentIdRef.current = resolvedAgentId;
+
+  // Emit the whole conversation when the live messages change. Keyed on
+  // `chat.messages` + `boundId` only (sink/identity read via refs) so the
+  // save→setActive round-trip inside a provider can't feed a render loop.
+  // Seeded with the mount-time messages so merely *opening* a thread never
+  // re-saves it (a fresh `updatedAt` would jump it to the top of the sidebar).
+  const boundId = bound?.id;
+  const lastEmittedRef = React.useRef<ChatMessage[] | null>(null);
+  if (lastEmittedRef.current === null) lastEmittedRef.current = chat.messages;
+  React.useEffect(() => {
+    const sink = persistRef.current;
+    if (!sink) return;
+    if (chat.messages === lastEmittedRef.current) return;
+    lastEmittedRef.current = chat.messages;
+    let base = boundRef.current;
+    if (!base) {
+      syntheticRef.current ??= createEmptyConversation({ agentId: agentIdRef.current });
+      base = syntheticRef.current;
+    }
+    const keepTitle = base.title !== "" && base.title !== DEFAULT_CONVERSATION_TITLE;
+    const title = keepTitle ? base.title : (deriveTitle(chat.messages) || base.title);
+    const conversation: Conversation = {
+      ...base,
+      messages: chat.messages,
+      title,
+      updatedAt: Date.now(),
+    };
+    // Fold the derived title back onto the synthetic identity so later emits
+    // don't re-derive it every keystroke of a streamed reply.
+    if (base === syntheticRef.current) syntheticRef.current = conversation;
+    sink(conversation);
+  }, [chat.messages, boundId]);
+
+  // App mode owns the loading signal: from the very first paint until the
+  // agent resolves (or errors) we render the skeleton — never flash an idle
+  // placeholder first. Keyed off "agent not yet here" rather than the hook's
+  // `isLoading` flag so there's no one-frame gap on mount. Works out of the
+  // box — no `isLoading` wiring from the consumer.
+  const agentInitializing = Boolean(resolvedAgentId) && !agent && !agentError;
+
+  // Agent-driven empty state: avatar + name + description, shown once the
+  // agent resolves (the skeleton covers the load, so the generic
+  // "What can I help with?" placeholder never flashes). A consumer-supplied
+  // `emptyState` still wins.
+  const derivedEmptyState = React.useMemo(() => {
+    if (emptyState) return emptyState;
+    if (!agent) return undefined;
+    return {
+      icon: (
+        <AgentAvatar
+          name={agent.name}
+          avatarUrl={agent.avatarUrl ?? undefined}
+          className="size-12"
+        />
+      ),
+      title: agent.name,
+      description: agent.description ?? undefined,
+    };
+  }, [emptyState, agent]);
+
+  // Chips show the short `title`; the click sends the full `prompt`.
+  const suggestionItems = React.useMemo(
+    () => agentSuggestionItems(agent?.suggestions),
+    [agent],
+  );
+  const derivedSuggestions = suggestionsProp ??
+    (suggestionItems.length > 0 ? suggestionItems.map((s) => s.label) : undefined);
+
+  const handleSuggestion = onSuggestionClick ??
+    ((label: string) => {
+      const item = suggestionItems.find((s) => s.label === label);
+      void chat.sendMessage({ text: item?.prompt ?? label });
     });
-    const { agent, error: agentError } = useAgentMetadata(resolvedAgentId);
 
-    // --- Persistence sink (explicit prop → provider default → ephemeral) ------
-    // Resolve WHERE the live thread persists: an explicit `onUpdate` wins, else
-    // a surrounding `ConversationsProvider`'s `save`, else nothing. The sink
-    // takes the whole updated conversation; `<Chat>` owns building it (title
-    // included) so `useConversations` stays dumb about titling and `useChat`
-    // never touches the store.
-    const persist = onUpdate ?? conversations?.save;
+  // Batteries-included attachments: unless the caller controls them, files
+  // uploaded via the `+` menu / drag land here, ride along on submit as
+  // `file` parts, and clear once sent.
+  const upload = useUpload({ api: uploadApi });
+  const attachControlled = userOnAttach !== undefined ||
+    userOnDrop !== undefined ||
+    userAttachments !== undefined ||
+    userOnRemoveAttachment !== undefined;
+  const manageAttachments = enableAttachments && !attachControlled;
 
-    // Identity for the emitted conversation: in a provider we ride the bound
-    // conversation (id/agentId/createdAt); standalone (explicit `onUpdate`, no
-    // provider) we mint one stable id so updates target a single record.
-    const syntheticRef = React.useRef<Conversation | null>(null);
-    const persistRef = React.useRef(persist);
-    persistRef.current = persist;
-    const boundRef = React.useRef(bound);
-    boundRef.current = bound;
-    const agentIdRef = React.useRef(resolvedAgentId);
-    agentIdRef.current = resolvedAgentId;
+  const submitWithAttachments = React.useCallback((e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (chat.isLoading) return;
+    // Never send while a file is still uploading: the fold below only
+    // carries resolved urls, so submitting now would silently drop the
+    // pending attachment (and `clear()` would abort its upload).
+    if (hasPendingAttachments(upload.attachments)) return;
+    const text = chat.input.trim();
+    const files = attachmentsToFileParts(upload.attachments);
+    if (!text && files.length === 0) return;
+    chat.setInput("");
+    upload.clear();
+    void chat.sendMessage({ text, files });
+  }, [chat, upload]);
 
-    // Emit the whole conversation when the live messages change. Keyed on
-    // `chat.messages` + `boundId` only (sink/identity read via refs) so the
-    // save→setActive round-trip inside a provider can't feed a render loop.
-    // Seeded with the mount-time messages so merely *opening* a thread never
-    // re-saves it (a fresh `updatedAt` would jump it to the top of the sidebar).
-    const boundId = bound?.id;
-    const lastEmittedRef = React.useRef<ChatMessage[] | null>(null);
-    if (lastEmittedRef.current === null) lastEmittedRef.current = chat.messages;
-    React.useEffect(() => {
-      const sink = persistRef.current;
-      if (!sink) return;
-      if (chat.messages === lastEmittedRef.current) return;
-      lastEmittedRef.current = chat.messages;
-      let base = boundRef.current;
-      if (!base) {
-        syntheticRef.current ??= createEmptyConversation({ agentId: agentIdRef.current });
-        base = syntheticRef.current;
-      }
-      const keepTitle = base.title !== "" && base.title !== DEFAULT_CONVERSATION_TITLE;
-      const title = keepTitle ? base.title : (deriveTitle(chat.messages) || base.title);
-      const conversation: Conversation = {
-        ...base,
-        messages: chat.messages,
-        title,
-        updatedAt: Date.now(),
-      };
-      // Fold the derived title back onto the synthetic identity so later emits
-      // don't re-derive it every keystroke of a streamed reply.
-      if (base === syntheticRef.current) syntheticRef.current = conversation;
-      sink(conversation);
-    }, [chat.messages, boundId]);
-
-    // App mode owns the loading signal: from the very first paint until the
-    // agent resolves (or errors) we render the skeleton — never flash an idle
-    // placeholder first. Keyed off "agent not yet here" rather than the hook's
-    // `isLoading` flag so there's no one-frame gap on mount. Works out of the
-    // box — no `isLoading` wiring from the consumer.
-    const agentInitializing = Boolean(resolvedAgentId) && !agent && !agentError;
-
-    // Agent-driven empty state: avatar + name + description, shown once the
-    // agent resolves (the skeleton covers the load, so the generic
-    // "What can I help with?" placeholder never flashes). A consumer-supplied
-    // `emptyState` still wins.
-    const derivedEmptyState = React.useMemo(() => {
-      if (emptyState) return emptyState;
-      if (!agent) return undefined;
-      return {
-        icon: (
-          <AgentAvatar
-            name={agent.name}
-            avatarUrl={agent.avatarUrl ?? undefined}
-            className="size-12"
-          />
-        ),
-        title: agent.name,
-        description: agent.description ?? undefined,
-      };
-    }, [emptyState, agent]);
-
-    // Chips show the short `title`; the click sends the full `prompt`.
-    const suggestionItems = React.useMemo(
-      () => agentSuggestionItems(agent?.suggestions),
-      [agent],
-    );
-    const derivedSuggestions = suggestionsProp ??
-      (suggestionItems.length > 0 ? suggestionItems.map((s) => s.label) : undefined);
-
-    const handleSuggestion = onSuggestionClick ??
-      ((label: string) => {
-        const item = suggestionItems.find((s) => s.label === label);
-        void chat.sendMessage({ text: item?.prompt ?? label });
-      });
-
-    // Batteries-included attachments: unless the caller controls them, files
-    // uploaded via the `+` menu / drag land here, ride along on submit as
-    // `file` parts, and clear once sent.
-    const upload = useUpload({ api: uploadApi });
-    const attachControlled = userOnAttach !== undefined ||
-      userOnDrop !== undefined ||
-      userAttachments !== undefined ||
-      userOnRemoveAttachment !== undefined;
-    const manageAttachments = enableAttachments && !attachControlled;
-
-    const submitWithAttachments = React.useCallback((e?: React.FormEvent) => {
-      e?.preventDefault();
-      if (chat.isLoading) return;
-      // Never send while a file is still uploading: the fold below only
-      // carries resolved urls, so submitting now would silently drop the
-      // pending attachment (and `clear()` would abort its upload).
-      if (hasPendingAttachments(upload.attachments)) return;
-      const text = chat.input.trim();
-      const files = attachmentsToFileParts(upload.attachments);
-      if (!text && files.length === 0) return;
-      chat.setInput("");
-      upload.clear();
-      void chat.sendMessage({ text, files });
-    }, [chat, upload]);
-
-    return (
-      <ControlledChat
-        ref={ref}
-        messages={chat.messages}
-        input={chat.input}
-        onChange={chat.onChange}
-        onSubmit={manageAttachments ? submitWithAttachments : (userOnSubmit ?? chat.onSubmit)}
-        stop={chat.stop}
-        reload={() => void chat.reload()}
-        setInput={chat.setInput}
-        isLoading={chat.isLoading}
-        error={chat.error}
-        model={chat.model}
-        activeModel={chat.activeModel}
-        onModelChange={chat.onModelChange}
-        inferenceMode={chat.inferenceMode}
-        models={models}
-        editMessage={chat.editMessage}
-        getBranches={chat.getBranches}
-        switchBranch={chat.switchBranch}
-        emptyState={derivedEmptyState}
-        agent={agent ? { name: agent.name, avatarUrl: agent.avatarUrl ?? undefined } : undefined}
-        initializing={agentInitializing}
-        suggestions={derivedSuggestions}
-        onSuggestionClick={handleSuggestion}
-        showScrollButton={showScrollButton}
-        enableAttachments={enableAttachments}
-        onAttach={manageAttachments ? upload.upload : userOnAttach}
-        onDrop={manageAttachments ? upload.upload : userOnDrop}
-        attachments={manageAttachments ? upload.attachments : userAttachments}
-        onRemoveAttachment={manageAttachments ? upload.remove : userOnRemoveAttachment}
-        {...rest}
-      />
-    );
-  },
-);
+  return (
+    <ControlledChat
+      ref={ref}
+      messages={chat.messages}
+      input={chat.input}
+      onChange={chat.onChange}
+      onSubmit={manageAttachments ? submitWithAttachments : (userOnSubmit ?? chat.onSubmit)}
+      stop={chat.stop}
+      reload={() => void chat.reload()}
+      setInput={chat.setInput}
+      isLoading={chat.isLoading}
+      error={chat.error}
+      model={chat.model}
+      activeModel={chat.activeModel}
+      onModelChange={chat.onModelChange}
+      inferenceMode={chat.inferenceMode}
+      models={models}
+      editMessage={chat.editMessage}
+      getBranches={chat.getBranches}
+      switchBranch={chat.switchBranch}
+      emptyState={derivedEmptyState}
+      agent={agent ? { name: agent.name, avatarUrl: agent.avatarUrl ?? undefined } : undefined}
+      initializing={agentInitializing}
+      suggestions={derivedSuggestions}
+      onSuggestionClick={handleSuggestion}
+      showScrollButton={showScrollButton}
+      enableAttachments={enableAttachments}
+      onAttach={manageAttachments ? upload.upload : userOnAttach}
+      onDrop={manageAttachments ? upload.upload : userOnDrop}
+      attachments={manageAttachments ? upload.attachments : userAttachments}
+      onRemoveAttachment={manageAttachments ? upload.remove : userOnRemoveAttachment}
+      {...rest}
+    />
+  );
+}
 UncontrolledChat.displayName = "UncontrolledChat";
 
 /**
@@ -1042,21 +1041,19 @@ UncontrolledChat.displayName = "UncontrolledChat";
  * while the active thread's messages load from the store. No provider → renders
  * `UncontrolledChat` unchanged.
  */
-const ConversationBoundChat = React.forwardRef<HTMLDivElement, ChatProps>(
-  function ConversationBoundChat(props, ref): React.ReactElement {
-    const conversations = useConversationsContextOptional();
-    if (!conversations || conversations.activeId == null) {
-      return <UncontrolledChat ref={ref} {...props} />;
-    }
-    const { active, activeId } = conversations;
-    // Wait for the active thread's messages before mounting, so `useChat` seeds
-    // from the right thread rather than a still-loading one.
-    if (active?.id !== activeId) {
-      return <>{props.skeleton ?? <ChatMessagesSkeleton />}</>;
-    }
-    return <UncontrolledChat key={activeId} ref={ref} {...props} />;
-  },
-);
+function ConversationBoundChat(props: ChatProps): React.ReactElement {
+  const conversations = useConversationsContextOptional();
+  if (!conversations || conversations.activeId == null) {
+    return <UncontrolledChat ref={props.ref} {...props} />;
+  }
+  const { active, activeId } = conversations;
+  // Wait for the active thread's messages before mounting, so `useChat` seeds
+  // from the right thread rather than a still-loading one.
+  if (active?.id !== activeId) {
+    return <>{props.skeleton ?? <ChatMessagesSkeleton />}</>;
+  }
+  return <UncontrolledChat key={activeId} ref={props.ref} {...props} />;
+}
 ConversationBoundChat.displayName = "ConversationBoundChat";
 
 /**
@@ -1103,18 +1100,15 @@ function resolveControlledProps(props: ChatProps): ChatProps {
  * - **Controlled mode:** pass `chat={useChat()}` (preferred) or the legacy
  *   flat `messages` + `input` props to drive it yourself.
  */
-const ChatBase = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
-  props,
-  ref,
-): React.ReactElement {
+function ChatBase(props: ChatProps): React.ReactElement {
   // Controlled when the caller supplies a `chat` session (or the legacy flat
   // message/input state); otherwise the component self-drives (app mode).
   const isControlled = props.chat !== undefined ||
     (props.messages !== undefined && props.input !== undefined);
   return isControlled
-    ? <ControlledChat ref={ref} {...resolveControlledProps(props)} />
-    : <ConversationBoundChat ref={ref} {...props} />;
-});
+    ? <ControlledChat ref={props.ref} {...resolveControlledProps(props)} />
+    : <ConversationBoundChat ref={props.ref} {...props} />;
+}
 ChatBase.displayName = "Chat";
 
 // ---------------------------------------------------------------------------

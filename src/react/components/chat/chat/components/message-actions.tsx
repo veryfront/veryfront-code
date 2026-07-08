@@ -29,6 +29,8 @@ export interface MessageActionBarProps {
   onEdit?: (content: string) => void;
   /** When provided, renders a regenerate button that calls this handler. */
   onRegenerate?: () => void;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -39,62 +41,56 @@ export interface MessageActionBarProps {
  *
  * Renamed from `MessageActions` to end the collision with `Message.Actions`.
  */
-export const MessageActionBar = React.forwardRef<
-  HTMLDivElement,
-  MessageActionBarProps
->(
-  function MessageActionBar(
-    { content, className, icons, onCopy, onEdit, onRegenerate },
-    ref,
-  ) {
-    const { copied, copy } = useClipboard();
-    const doCopy = React.useCallback(() => void copy(content), [copy, content]);
+export function MessageActionBar(
+  { content, className, icons, onCopy, onEdit, onRegenerate, ref }: MessageActionBarProps,
+): React.ReactElement {
+  const { copied, copy } = useClipboard();
+  const doCopy = React.useCallback(() => void copy(content), [copy, content]);
 
-    return (
-      <div
-        ref={ref}
-        className={cn(
-          // No vertical margin here — the footer row owns spacing/alignment so
-          // the buttons stay centered with the token count beside them.
-          "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
-          className,
-        )}
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        // No vertical margin here — the footer row owns spacing/alignment so
+        // the buttons stay centered with the token count beside them.
+        "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={(e) => (onCopy ? onCopy(e, doCopy) : doCopy())}
+        className={ACTION_BUTTON}
+        title={copied ? "Copied!" : "Copy to clipboard"}
+        aria-label={copied ? "Copied!" : "Copy to clipboard"}
       >
+        {copied
+          ? (icons?.copied ?? <CheckIcon className="size-3.5" />)
+          : (icons?.copy ?? <CopyIcon className="size-3.5" />)}
+      </button>
+      {onRegenerate && (
         <button
           type="button"
-          onClick={(e) => (onCopy ? onCopy(e, doCopy) : doCopy())}
+          onClick={onRegenerate}
           className={ACTION_BUTTON}
-          title={copied ? "Copied!" : "Copy to clipboard"}
-          aria-label={copied ? "Copied!" : "Copy to clipboard"}
+          title="Regenerate response"
+          aria-label="Regenerate response"
         >
-          {copied
-            ? (icons?.copied ?? <CheckIcon className="size-3.5" />)
-            : (icons?.copy ?? <CopyIcon className="size-3.5" />)}
+          {icons?.regenerate ?? <RefreshCwIcon className="size-3.5" />}
         </button>
-        {onRegenerate && (
-          <button
-            type="button"
-            onClick={onRegenerate}
-            className={ACTION_BUTTON}
-            title="Regenerate response"
-            aria-label="Regenerate response"
-          >
-            {icons?.regenerate ?? <RefreshCwIcon className="size-3.5" />}
-          </button>
-        )}
-        {onEdit && (
-          <button
-            type="button"
-            onClick={() => onEdit(content)}
-            className={ACTION_BUTTON}
-            title="Edit message"
-            aria-label="Edit message"
-          >
-            {icons?.edit ?? <PencilIcon className="size-3.5" />}
-          </button>
-        )}
-      </div>
-    );
-  },
-);
+      )}
+      {onEdit && (
+        <button
+          type="button"
+          onClick={() => onEdit(content)}
+          className={ACTION_BUTTON}
+          title="Edit message"
+          aria-label="Edit message"
+        >
+          {icons?.edit ?? <PencilIcon className="size-3.5" />}
+        </button>
+      )}
+    </div>
+  );
+}
 MessageActionBar.displayName = "MessageActionBar";

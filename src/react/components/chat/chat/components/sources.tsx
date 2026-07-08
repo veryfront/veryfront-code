@@ -51,6 +51,8 @@ export interface SourcesProps {
   renderPill?: (source: Source, index: number) => React.ReactNode;
   /** Compose your own row; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: `ref` is a regular prop, forwarded to the row wrapper. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -58,27 +60,24 @@ export interface SourcesProps {
  * default anatomy (`List` of `Pill`s); pass children to recompose. Renders
  * nothing when the source list is empty.
  */
-const SourcesRoot = React.forwardRef<HTMLDivElement, SourcesProps>(
-  function Sources(
-    { sources, className, onSourceClick, renderPill, children },
-    ref,
-  ) {
-    if (sources.length === 0) return null;
+function SourcesRoot(
+  { sources, className, onSourceClick, renderPill, children, ref }: SourcesProps,
+): React.ReactElement | null {
+  if (sources.length === 0) return null;
 
-    const context: SourcesContextValue = { sources, onSourceClick };
+  const context: SourcesContextValue = { sources, onSourceClick };
 
-    return (
-      <SourcesContext.Provider value={context}>
-        <div
-          ref={ref}
-          className={cn("mt-1", className)}
-        >
-          {children ?? <SourcesList renderPill={renderPill} />}
-        </div>
-      </SourcesContext.Provider>
-    );
-  },
-);
+  return (
+    <SourcesContext.Provider value={context}>
+      <div
+        ref={ref}
+        className={cn("mt-1", className)}
+      >
+        {children ?? <SourcesList renderPill={renderPill} />}
+      </div>
+    </SourcesContext.Provider>
+  );
+}
 SourcesRoot.displayName = "Sources.Root";
 
 /** Props for `Sources.List` — the flex-wrap row of pills. */

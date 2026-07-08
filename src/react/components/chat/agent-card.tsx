@@ -50,6 +50,9 @@ export interface AgentCardProps {
   renderTool?: (toolCall: ToolCall) => React.ReactNode;
   /** Compose your own card; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Map the agent status to a `Status` dot colour, label, and pulse. */
@@ -133,55 +136,53 @@ export function useAgentCard(): AgentCardContextValue {
  * the default anatomy (`Header` + `Reasoning` + `Tools` + `Body`); pass children
  * to recompose.
  */
-const AgentCardRoot = React.forwardRef<HTMLDivElement, AgentCardProps>(
-  function AgentCard(
-    {
-      name = "Agent",
-      avatarUrl,
-      messages,
-      toolCalls = [],
-      status,
-      thinking,
-      className,
-      renderTool,
-      children,
-    },
+function AgentCardRoot(
+  {
+    name = "Agent",
+    avatarUrl,
+    messages,
+    toolCalls = [],
+    status,
+    thinking,
+    className,
+    renderTool,
+    children,
     ref,
-  ) {
-    const presentation = statusPresentation(status);
+  }: AgentCardProps,
+): React.ReactElement {
+  const presentation = statusPresentation(status);
 
-    const context: AgentCardContextValue = {
-      name,
-      avatarUrl,
-      messages,
-      toolCalls,
-      status,
-      thinking,
-      renderTool,
-      presentation,
-    };
+  const context: AgentCardContextValue = {
+    name,
+    avatarUrl,
+    messages,
+    toolCalls,
+    status,
+    thinking,
+    renderTool,
+    presentation,
+  };
 
-    return (
-      <AgentCardContext.Provider value={context}>
-        <Card
-          ref={ref}
-          surface="outline"
-          padding="md"
-          className={cn("flex flex-col gap-3", className)}
-        >
-          {children ?? (
-            <>
-              <AgentCardHeader />
-              <AgentCardReasoning />
-              <AgentCardTools />
-              <AgentCardBody />
-            </>
-          )}
-        </Card>
-      </AgentCardContext.Provider>
-    );
-  },
-);
+  return (
+    <AgentCardContext.Provider value={context}>
+      <Card
+        ref={ref}
+        surface="outline"
+        padding="md"
+        className={cn("flex flex-col gap-3", className)}
+      >
+        {children ?? (
+          <>
+            <AgentCardHeader />
+            <AgentCardReasoning />
+            <AgentCardTools />
+            <AgentCardBody />
+          </>
+        )}
+      </Card>
+    </AgentCardContext.Provider>
+  );
+}
 AgentCardRoot.displayName = "AgentCard.Root";
 
 /**

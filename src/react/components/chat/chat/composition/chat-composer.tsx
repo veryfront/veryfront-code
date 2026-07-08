@@ -135,87 +135,89 @@ export interface ChatInputActionProps {
   className?: string;
   asChild?: boolean;
   onClick?: WrapClick;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Send button — shows when there is input (and not streaming). */
-export const ChatInputSend = React.forwardRef<HTMLButtonElement, ChatInputActionProps>(
-  function ChatInputSend({ icon, className, asChild, onClick }, ref) {
-    const c = useComposerContext();
-    if (c.isLoading) return null;
-    if (!c.canSubmit && c.onVoice) return null;
-    const run = () => c.onSubmit();
-    const Comp = asChild ? Slot : Button;
-    return (
-      <Comp
-        ref={ref}
-        type="button"
-        variant="icon-primary"
-        on="card"
-        size="icon-lg"
-        aria-label="Send"
-        disabled={!c.canSubmit}
-        onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-        className={cn("shrink-0", className)}
-      >
-        {icon ?? <ArrowUpIcon />}
-      </Comp>
-    );
-  },
-);
+export function ChatInputSend(
+  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  if (c.isLoading) return null;
+  if (!c.canSubmit && c.onVoice) return null;
+  const run = () => c.onSubmit();
+  const Comp = asChild ? Slot : Button;
+  return (
+    <Comp
+      ref={ref}
+      type="button"
+      variant="icon-primary"
+      on="card"
+      size="icon-lg"
+      aria-label="Send"
+      disabled={!c.canSubmit}
+      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <ArrowUpIcon />}
+    </Comp>
+  );
+}
 ChatInputSend.displayName = "ChatInput.Send";
 
 /** Stop button — shows while streaming. */
-export const ChatInputStop = React.forwardRef<HTMLButtonElement, ChatInputActionProps>(
-  function ChatInputStop({ icon, className, asChild, onClick }, ref) {
-    const c = useComposerContext();
-    if (!c.isLoading) return null;
-    const run = () => c.onStop?.();
-    const Comp = asChild ? Slot : Button;
-    return (
-      <Comp
-        ref={ref}
-        type="button"
-        variant="icon-ghost"
-        size="icon-lg"
-        aria-label="Stop"
-        onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-        className={cn("shrink-0", className)}
-      >
-        {icon ?? <StopIcon />}
-      </Comp>
-    );
-  },
-);
+export function ChatInputStop(
+  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  if (!c.isLoading) return null;
+  const run = () => c.onStop?.();
+  const Comp = asChild ? Slot : Button;
+  return (
+    <Comp
+      ref={ref}
+      type="button"
+      variant="icon-ghost"
+      size="icon-lg"
+      aria-label="Stop"
+      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <StopIcon />}
+    </Comp>
+  );
+}
 ChatInputStop.displayName = "ChatInput.Stop";
 
 /** Voice button — shows when the field is empty and voice is available. */
-export const ChatInputVoice = React.forwardRef<HTMLButtonElement, ChatInputActionProps>(
-  function ChatInputVoice({ icon, className, asChild, onClick }, ref) {
-    const c = useComposerContext();
-    if (c.isLoading || c.canSubmit || !c.onVoice) return null;
-    const run = () => c.onVoice?.();
-    const Comp = asChild ? Slot : Button;
-    return (
-      <Comp
-        ref={ref}
-        type="button"
-        variant="icon-ghost"
-        on="card"
-        size="icon-lg"
-        aria-label="Voice input"
-        aria-pressed={c.isListening}
-        onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-        className={cn(
-          "shrink-0",
-          c.isListening && "bg-[var(--primary)] text-[var(--secondary)]",
-          className,
-        )}
-      >
-        {icon ?? <MicGlyph />}
-      </Comp>
-    );
-  },
-);
+export function ChatInputVoice(
+  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  if (c.isLoading || c.canSubmit || !c.onVoice) return null;
+  const run = () => c.onVoice?.();
+  const Comp = asChild ? Slot : Button;
+  return (
+    <Comp
+      ref={ref}
+      type="button"
+      variant="icon-ghost"
+      on="card"
+      size="icon-lg"
+      aria-label="Voice input"
+      aria-pressed={c.isListening}
+      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
+      className={cn(
+        "shrink-0",
+        c.isListening && "bg-[var(--primary)] text-[var(--secondary)]",
+        className,
+      )}
+    >
+      {icon ?? <MicGlyph />}
+    </Comp>
+  );
+}
 ChatInputVoice.displayName = "ChatInput.Voice";
 
 /** Model selector — shows when models are configured. */
@@ -369,6 +371,8 @@ export interface ChatInputProps {
 
   className?: string;
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Composer state the context is built from (shared by `ChatInput` + `ChatInput.Root`). */
@@ -446,6 +450,8 @@ function useComposerValue(p: ComposerStateProps): ComposerContextValue {
 export interface ChatInputRootProps extends ComposerStateProps {
   className?: string;
   children: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -454,54 +460,54 @@ export interface ChatInputRootProps extends ComposerStateProps {
  * `ChatInput.Field` + the toolbar sub-parts yourself (like `Message.Root`). The
  * default `<ChatInput>` is exactly this Root plus the standard body.
  */
-export const ChatInputRoot = React.forwardRef<HTMLDivElement, ChatInputRootProps>(
-  function ChatInputRoot({ className, children, ...state }, ref) {
-    const ctxValue = useComposerValue(state);
-    return (
-      <ComposerContextProvider value={ctxValue}>
-        <div ref={ref} className={cn("flex-shrink-0 pb-6 pt-2", className)}>
-          <div className="mx-auto w-full max-w-[850px] px-4">{children}</div>
-        </div>
-      </ComposerContextProvider>
-    );
-  },
-);
+export function ChatInputRoot(
+  { className, children, ref, ...state }: ChatInputRootProps,
+): React.ReactElement {
+  const ctxValue = useComposerValue(state);
+  return (
+    <ComposerContextProvider value={ctxValue}>
+      <div ref={ref} className={cn("flex-shrink-0 pb-6 pt-2", className)}>
+        <div className="mx-auto w-full max-w-[850px] px-4">{children}</div>
+      </div>
+    </ComposerContextProvider>
+  );
+}
 ChatInputRoot.displayName = "ChatInput.Root";
 
 /** Render the composer. */
-const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
-  function ChatInput(
-    {
-      input,
-      onChange,
-      onSubmit,
-      isLoading = false,
-      placeholder = "Type a message...",
-      theme,
-      stop,
-      onVoice,
-      isListening = false,
-      transcript,
-      models,
-      model,
-      onModelChange,
-      toolbarStart,
-      onAttach,
-      onSelectAttachment,
-      onDrop,
-      attachAccept,
-      attachments,
-      onRemoveAttachment,
-      showExport = false,
-      messages,
-      icons,
-      onAttachClick,
-      onExportClick,
-      className,
-      children,
-    },
+function ChatInputBase(
+  {
+    input,
+    onChange,
+    onSubmit,
+    isLoading = false,
+    placeholder = "Type a message...",
+    theme,
+    stop,
+    onVoice,
+    isListening = false,
+    transcript,
+    models,
+    model,
+    onModelChange,
+    toolbarStart,
+    onAttach,
+    onSelectAttachment,
+    onDrop,
+    attachAccept,
+    attachments,
+    onRemoveAttachment,
+    showExport = false,
+    messages,
+    icons,
+    onAttachClick,
+    onExportClick,
+    className,
+    children,
     ref,
-  ) {
+  }: ChatInputProps,
+): React.ReactElement {
+  {
     // Return focus to the editor after attaching (menu pick or drop) so the
     // user can keep typing without clicking back into the field.
     const fieldContainerRef = React.useRef<HTMLDivElement>(null);
@@ -625,8 +631,8 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
         </div>
       </ComposerContextProvider>
     );
-  },
-);
+  }
+}
 ChatInputBase.displayName = "ChatInput";
 
 /**

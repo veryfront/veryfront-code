@@ -26,14 +26,14 @@ export function BatteriesDemo(): React.ReactElement {
 /** Compound — arrange the blocks yourself; each leaf individually addressable. */
 export function ComposedDemo(): React.ReactElement {
   return (
-    <Chat.Root messages={messages}>
+    <Chat.Root messages={messages} input="">
       <Chat.Empty title="Ask anything">
         <Suggestions>
           <Suggestion suggestion="Summarize this page" />
         </Suggestions>
       </Chat.Empty>
       <Chat.MessageList messages={messages} />
-      <Chat.Input placeholder="Ask Veryfront" />
+      <Chat.Input input="" onChange={() => {}} placeholder="Ask Veryfront" />
     </Chat.Root>
   );
 }

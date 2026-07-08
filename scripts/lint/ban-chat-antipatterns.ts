@@ -25,7 +25,8 @@ const SCAN_ROOT = "src/react/components/chat";
 
 // Lower each baseline when you burn violations down. Raising one means a new
 // anti-pattern is being added — compose instead.
-export const FORWARDREF_BASELINE = 29;
+// E2 complete: chat no longer uses forwardRef (React 19 `ref` prop). Locked at 0.
+export const FORWARDREF_BASELINE = 0;
 export const FEATURE_TOGGLE_BASELINE = 29;
 export const PASSTHROUGH_BASELINE = 14;
 
