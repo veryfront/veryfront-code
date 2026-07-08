@@ -448,6 +448,31 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.response!.status, 101);
     });
 
+    it("disables runtime idle timeout for upstream HMR WebSocket upgrades", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+      let upgradeOptions: unknown;
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: (_request: Request, options?: unknown) => {
+            upgradeOptions = options;
+            return {
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            };
+          },
+        }),
+      });
+
+      await handler.handle(req, ctx);
+
+      assertEquals(upgradeOptions, { idleTimeout: 0 });
+    });
+
     it("preserves data from structurally compatible message events", async () => {
       const handler = new HMRHandler();
       const mock = createMockSocket();

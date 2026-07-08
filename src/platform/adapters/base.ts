@@ -81,8 +81,14 @@ export interface RuntimeCapabilities {
   writableFs: boolean;
 }
 
+export interface WebSocketUpgradeOptions {
+  protocol?: string;
+  headers?: Headers | Record<string, string>;
+  idleTimeout?: number;
+}
+
 export interface ServerAdapter {
-  upgradeWebSocket(request: Request): WebSocketUpgrade;
+  upgradeWebSocket(request: Request, options?: WebSocketUpgradeOptions): WebSocketUpgrade;
 }
 
 export interface WebSocketConnection {
