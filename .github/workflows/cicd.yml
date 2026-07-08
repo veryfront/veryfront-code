@@ -164,7 +164,7 @@ jobs:
 
           for attempt in 1 2 3; do
             wait_for_apt_locks
-            deno run -A npm:playwright install --with-deps chromium && exit 0
+            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
@@ -223,7 +223,7 @@ jobs:
 
           for attempt in 1 2 3; do
             wait_for_apt_locks
-            deno run -A npm:playwright install --with-deps chromium && exit 0
+            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
