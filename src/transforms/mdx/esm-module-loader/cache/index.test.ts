@@ -73,6 +73,49 @@ describe("MDX module path cache", () => {
     }
   });
 
+  it("does not delete slash-containing sibling SSR namespaces when clearing a prefix source", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-namespace-slash-isolation-" });
+    const projectId = "project-slash-source";
+    const parentSourceId = "preview-feature";
+    const childSourceId = "preview-feature/refactor";
+    const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const parentCacheDir = getMdxEsmSsrCacheDir(projectId, parentSourceId);
+        const childCacheDir = getMdxEsmSsrCacheDir(projectId, childSourceId);
+        const parentCachedPath = join(parentCacheDir, "parent.mjs");
+        const childCachedPath = join(childCacheDir, "child.mjs");
+
+        await getLocalFs().mkdir(parentCacheDir, { recursive: true });
+        await getLocalFs().mkdir(childCacheDir, { recursive: true });
+        await writeTextFile(parentCachedPath, "export default 'parent';");
+        await writeTextFile(childCachedPath, "export default 'child';");
+
+        const parentCache = await getModulePathCache(parentCacheDir);
+        parentCache.set(cacheKey, parentCachedPath);
+        const childCache = await getModulePathCache(childCacheDir);
+        childCache.set(cacheKey, childCachedPath);
+        verifiedModuleDeps.set(`${parentCachedPath}:${cacheKey}`, true);
+        verifiedModuleDeps.set(`${childCachedPath}:${cacheKey}`, true);
+
+        await clearMdxEsmCacheNamespace(projectId, parentSourceId);
+
+        assertEquals(await exists(parentCachedPath), false);
+        assertEquals(await exists(childCachedPath), true);
+        assertEquals((await getModulePathCache(parentCacheDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(childCacheDir)).get(cacheKey), childCachedPath);
+        assertEquals(verifiedModuleDeps.get(`${parentCachedPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${childCachedPath}:${cacheKey}`), true);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
   it("isolates per cache dir", async () => {
     clearModulePathCache();
 

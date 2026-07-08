@@ -151,7 +151,7 @@ const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
 
 export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
-  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), hashCodeHex(contentSourceId));
 }
 
 function getModulePathCacheEntryCount(): number {

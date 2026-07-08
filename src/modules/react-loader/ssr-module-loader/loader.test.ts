@@ -20,10 +20,10 @@ import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   clearModulePathCache,
+  getMdxEsmSsrCacheDir,
   getModulePathCache,
   verifiedModuleDeps,
   waitForDiskCleanup,
@@ -357,7 +357,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const projectId = "project-verified-mdx-stale-test";
     const contentSourceId = "preview-main";
 
-    const mdxCacheDir = join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
     const mdxComponentDir = join(mdxCacheDir, "components");
 
     try {
@@ -441,7 +441,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const projectId = "project-cold-mdx-stale-test";
     const contentSourceId = "preview-main";
 
-    const mdxCacheDir = join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
     const mdxComponentDir = join(mdxCacheDir, "components");
 
     try {
@@ -532,7 +532,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const projectId = "project-branch-mdx-stale-test";
     const contentSourceId = "preview-feature/refactor";
 
-    const mdxCacheDir = join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
     const mdxComponentDir = join(mdxCacheDir, "components");
 
     try {
@@ -643,7 +643,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
 
-      const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
+      const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
       const childPath = join(vfmodDir, "vfmod-child.mjs");
       const cachedTempPath = join(projectDir, `recover-vfmod-${crypto.randomUUID()}.mjs`);
 
@@ -681,7 +681,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(globalModuleCache.has(filePathCacheKey), true);
     } finally {
       __injectCachesForTests(null);
-      await remove(join(getMdxEsmCacheDir(), projectId, contentSourceId), { recursive: true })
+      await remove(getMdxEsmSsrCacheDir(projectId, contentSourceId), { recursive: true })
         .catch(() => {});
       await remove(projectDir, { recursive: true });
     }
