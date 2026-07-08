@@ -22,6 +22,11 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
 import { findStaticImportFromSpans } from "../utils/source-spans.ts";
+import {
+  formatCacheVersionSegment,
+  isCacheVersionSegment,
+} from "#veryfront/utils/cache-version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
 
@@ -151,6 +156,15 @@ const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
 
 export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
+  return join(
+    getMdxEsmCacheDir(),
+    formatCacheVersionSegment(RUNTIME_VERSION),
+    hashCodeHex(projectId),
+    hashCodeHex(contentSourceId),
+  );
+}
+
+function getLegacyHashedMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
   return join(getMdxEsmCacheDir(), hashCodeHex(projectId), hashCodeHex(contentSourceId));
 }
 
@@ -161,6 +175,7 @@ function getLegacyRawMdxEsmSsrCacheDir(projectId: string, contentSourceId: strin
 export function getMdxEsmSsrCacheDirs(projectId: string, contentSourceId: string): string[] {
   return [
     getMdxEsmSsrCacheDir(projectId, contentSourceId),
+    getLegacyHashedMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId),
   ].filter((cacheDir, index, cacheDirs) => cacheDirs.indexOf(cacheDir) === index);
 }
@@ -367,10 +382,16 @@ function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
   const prefix = baseCacheDir.endsWith("/") ? baseCacheDir : `${baseCacheDir}/`;
   if (!cachedPath.startsWith(prefix)) return null;
 
-  const [projectKey, sourceKey] = cachedPath.slice(prefix.length).split("/");
+  const parts = cachedPath.slice(prefix.length).split("/");
+  const [maybeVersionKey, maybeProjectKey, maybeSourceKey] = parts;
+  const hasVersionSegment = isCacheVersionSegment(maybeVersionKey);
+  const projectKey = hasVersionSegment ? maybeProjectKey : maybeVersionKey;
+  const sourceKey = hasVersionSegment ? maybeSourceKey : maybeProjectKey;
   if (!projectKey || !sourceKey) return null;
 
-  return join(baseCacheDir, projectKey, sourceKey);
+  return hasVersionSegment
+    ? join(baseCacheDir, maybeVersionKey!, projectKey, sourceKey)
+    : join(baseCacheDir, projectKey, sourceKey);
 }
 
 function isSameOrDescendantPath(path: string, parentPath: string): boolean {
@@ -429,7 +450,12 @@ export async function invalidateMdxEsmModuleForCachedPath(
   reactVersion = REACT_DEFAULT_VERSION,
   cacheDirs: string | string[] | null = getMdxEsmCacheDirForCachedPath(cachedPath),
 ): Promise<boolean> {
-  const candidateDirs = Array.isArray(cacheDirs) ? cacheDirs : cacheDirs ? [cacheDirs] : [];
+  const derivedCacheDir = getMdxEsmCacheDirForCachedPath(cachedPath);
+  const configuredDirs = Array.isArray(cacheDirs) ? cacheDirs : cacheDirs ? [cacheDirs] : [];
+  const candidateDirs = [
+    ...(derivedCacheDir ? [derivedCacheDir] : []),
+    ...configuredDirs,
+  ].filter((cacheDir, index, dirs) => dirs.indexOf(cacheDir) === index);
   if (candidateDirs.length === 0) return false;
 
   for (const cacheDir of candidateDirs) {

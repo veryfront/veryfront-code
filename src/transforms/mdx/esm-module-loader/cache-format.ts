@@ -1,7 +1,7 @@
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import {
   resolveVeryfrontModuleTarget,
   resolveVeryfrontModuleUrl,
@@ -120,7 +120,7 @@ function buildMdxEsmCacheSchemaSample() {
       "veryfront/router": "./src/react/runtime/core.ts",
       "veryfront/context": "./src/react/runtime/core.ts",
     }),
-    frameworkVersion: VERSION,
+    frameworkVersion: RUNTIME_VERSION,
   };
 }
 

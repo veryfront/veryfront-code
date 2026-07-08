@@ -8,7 +8,7 @@ import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
 import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -164,12 +164,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -227,12 +227,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -303,12 +303,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -370,12 +370,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -454,12 +454,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -545,12 +545,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -633,12 +633,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -705,12 +705,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -881,12 +881,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -951,7 +951,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
