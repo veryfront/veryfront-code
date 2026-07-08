@@ -1,4 +1,5 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
@@ -35,6 +36,10 @@ import {
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
+
+function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
+  return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
+}
 
 interface WebSocketDeps {
   apiBaseUrl: string;
@@ -152,7 +157,7 @@ export class WebSocketManager {
     logger.debug(
       "Connecting to WebSocket",
       this.getConnectionLogContext({
-        url,
+        url: sanitizeWebSocketLogUrl(url),
         consecutiveFailures: this.wsConsecutiveFailures,
       }),
     );
@@ -166,6 +171,7 @@ export class WebSocketManager {
       this.wsErrorLogged = false;
 
       this.ws.onopen = () => {
+        const recoveredFailures = this.wsConsecutiveFailures;
         this.wsConsecutiveFailures = 0;
         logger.debug(
           "WebSocket connected to events channel",
@@ -175,6 +181,18 @@ export class WebSocketManager {
             ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
           }),
         );
+        if (recoveredFailures > 0) {
+          logger.info(
+            "WebSocket reconnect recovered",
+            this.getConnectionLogContext({
+              projectId,
+              project_id: projectId,
+              connectionId: this.wsConnectionId,
+              consecutiveFailures: recoveredFailures,
+              ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
+            }),
+          );
+        }
         this.wsLastPong = Date.now();
         this.startHeartbeat(projectId);
       };
@@ -185,7 +203,9 @@ export class WebSocketManager {
         this.handlePokeMessage(event);
       };
 
-      this.ws.onclose = () => {
+      this.ws.onclose = (event) => {
+        const connectionId = this.wsConnectionId;
+        const url = this.ws?.url;
         this.wsConnectionId = null;
         this.cleanupTimers();
 
@@ -193,12 +213,19 @@ export class WebSocketManager {
 
         this.wsConsecutiveFailures++;
         const delay = this.getReconnectDelay();
-        logger.debug(
-          "WebSocket closed, reconnecting",
+        logger.warn(
+          "WebSocket reconnect scheduled after close",
           this.getConnectionLogContext({
+            projectId,
+            project_id: projectId,
+            connectionId,
+            url: sanitizeWebSocketLogUrl(url),
             delayMs: delay,
             totalPokesReceived: this.pokeMetrics.received,
             consecutiveFailures: this.wsConsecutiveFailures,
+            closeCode: event.code,
+            closeReason: event.reason,
+            wasClean: event.wasClean,
           }),
         );
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
@@ -212,7 +239,7 @@ export class WebSocketManager {
             "WebSocket error",
             this.getConnectionLogContext({
               type: event.type,
-              url: (event.target as WebSocket)?.url,
+              url: sanitizeWebSocketLogUrl((event.target as WebSocket)?.url),
               readyState: (event.target as WebSocket)?.readyState,
               consecutiveFailures: this.wsConsecutiveFailures,
             }),
