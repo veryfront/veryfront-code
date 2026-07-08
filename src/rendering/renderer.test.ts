@@ -12,6 +12,7 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
+import { projectRenderCounts } from "./renderer-concurrency.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -496,6 +497,67 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(renderedSlugs, ["/"]);
     assertEquals(getAllPagesCalls, 0);
     assertEquals(store.data.size, 0);
+  });
+
+  it("deduplicates identical cacheable render misses before taking project slots", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let renderCalls = 0;
+    let releaseRender!: () => void;
+    const renderGate = new Promise<void>((resolve) => {
+      releaseRender = resolve;
+    });
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (slug) => {
+          renderCalls++;
+          await renderGate;
+          return {
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          };
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const renders = Array.from(
+      { length: 11 },
+      () =>
+        renderer.renderPage("/burst", ctx, {
+          environment: "production",
+          releaseId: "rel-1",
+          releaseAssetManifest: null,
+        }),
+    );
+
+    for (let i = 0; i < 20 && renderCalls === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    releaseRender();
+    const results = await Promise.all(renders);
+
+    assertEquals(results.length, 11);
+    assertEquals(renderCalls, 1);
+    assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
   });
 });
 
