@@ -98,6 +98,9 @@ function mergeObservabilityConfig(
   fileConfig: VeryfrontConfig,
   env: EnvironmentConfig,
 ): VeryfrontConfig["observability"] {
+  const tracingServiceName = fileConfig.observability?.tracing?.serviceName ||
+    env.otelServiceName;
+
   if (env.proxyMode) {
     return {
       tracing: {
@@ -117,7 +120,7 @@ function mergeObservabilityConfig(
       ...fileConfig.observability?.tracing,
       enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
       endpoint: env.otelEndpoint || fileConfig.observability?.tracing?.endpoint,
-      serviceName: env.otelServiceName || fileConfig.observability?.tracing?.serviceName,
+      serviceName: tracingServiceName,
     },
     metrics: {
       ...fileConfig.observability?.metrics,
