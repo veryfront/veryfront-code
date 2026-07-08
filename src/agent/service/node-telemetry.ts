@@ -8,6 +8,7 @@ import {
   type NodeTelemetryProvider,
   NodeTelemetryProviderName,
 } from "#veryfront/extensions/observability/index.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 
 /** Public API contract for node hosted agent service telemetry env. */
 export type NodeHostedAgentServiceTelemetryEnv = Record<string, string | undefined>;
@@ -132,8 +133,50 @@ function resolveSamplingRatio(env: NodeHostedAgentServiceTelemetryEnv): number {
   return Math.min(Math.max(ratio, 0), 1);
 }
 
+function parseResourceAttributes(value: string | undefined): Record<string, string> {
+  if (!value) return {};
+
+  const attributes: Record<string, string> = {};
+  for (const part of value.split(",")) {
+    const [rawKey, ...rawValueParts] = part.split("=");
+    const key = rawKey?.trim();
+    if (!key || rawValueParts.length === 0) continue;
+    const rawValue = rawValueParts.join("=").trim();
+    attributes[key] = rawValue;
+  }
+  return attributes;
+}
+
+function resolveServiceName(
+  env: NodeHostedAgentServiceTelemetryEnv,
+  defaultServiceName: string,
+): string {
+  const resourceAttributes = parseResourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES);
+  return env.OTEL_SERVICE_NAME ?? resourceAttributes["service.name"] ?? env.DD_SERVICE ??
+    defaultServiceName;
+}
+
+function resolveServiceVersion(
+  env: NodeHostedAgentServiceTelemetryEnv,
+  defaultServiceVersion: string | undefined,
+): string {
+  const resourceAttributes = parseResourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES);
+  return resourceAttributes["service.version"] ??
+    env.OTEL_SERVICE_VERSION ??
+    env.DD_VERSION ??
+    env.VERYFRONT_VERSION ??
+    env.RELEASE_VERSION ??
+    env.npm_package_version ??
+    defaultServiceVersion ??
+    VERSION;
+}
+
 function resolveDeploymentEnvironment(env: NodeHostedAgentServiceTelemetryEnv): string {
-  return env.OTEL_DEPLOYMENT_ENVIRONMENT ??
+  const resourceAttributes = parseResourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES);
+  return resourceAttributes["deployment.environment.name"] ??
+    resourceAttributes["deployment.environment"] ??
+    env.OTEL_DEPLOYMENT_ENVIRONMENT ??
+    env.DD_ENV ??
     env.APP_ENVIRONMENT ??
     env.VERYFRONT_ENVIRONMENT ??
     env.NODE_ENV ??
@@ -226,8 +269,8 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
 
   return {
     enabled: tracesEnabled || metricsEnabled || logsEnabled,
-    serviceName: options.env.OTEL_SERVICE_NAME ?? options.defaultServiceName,
-    serviceVersion: options.env.npm_package_version ?? options.defaultServiceVersion ?? "0.1.0",
+    serviceName: resolveServiceName(options.env, options.defaultServiceName),
+    serviceVersion: resolveServiceVersion(options.env, options.defaultServiceVersion),
     deploymentEnvironment: resolveDeploymentEnvironment(options.env),
     samplingRatio: resolveSamplingRatio(options.env),
     exporterHeaders,

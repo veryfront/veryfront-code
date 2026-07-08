@@ -27,6 +27,7 @@ import {
   sanitizeSerializedError,
   sanitizeUrlCredentials,
 } from "#veryfront/utils/logger/redact.ts";
+import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -1064,6 +1065,7 @@ export function processStream(
                 : {}),
             };
             callbacks?.onUsage?.(state.usage);
+            setActiveSpanAttributes(buildRuntimeUsageTraceAttributes(state.usage));
           }
           break;
         }

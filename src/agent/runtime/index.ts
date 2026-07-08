@@ -32,12 +32,9 @@ import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
+  setActiveSpanAttributes as setOtelActiveSpanAttributes,
   setSpanAttributes,
   withSpan,
-} from "#veryfront/observability/tracing/index.ts";
-import {
-  setActiveSpanAttributes as setOtelActiveSpanAttributes,
-  withSpan as withOtelSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
@@ -166,6 +163,7 @@ import {
   extractSkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
+import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -261,6 +259,16 @@ function isSubmittedFormInputExecutionResult(toolName: string, result: unknown):
 
 type RuntimeTraceAttributes = Record<string, string | number | boolean | undefined | null>;
 
+function estimateSerializedSizeBytes(value: unknown): number | undefined {
+  try {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (serialized === undefined) return undefined;
+    return new TextEncoder().encode(serialized).length;
+  } catch {
+    return undefined;
+  }
+}
+
 function compactRuntimeTraceAttributes(
   attributes: RuntimeTraceAttributes,
 ): Record<string, string | number | boolean> {
@@ -277,8 +285,12 @@ function buildRuntimeToolTraceAttributes(input: {
   toolName: string;
   toolCallId: string;
   context?: ToolExecutionContext;
-  status?: "executing" | "completed" | "failed";
+  status?: "executing" | "completed" | "failed" | "blocked";
   providerExecuted?: boolean;
+  inputSizeBytes?: number;
+  outputSizeBytes?: number;
+  errorType?: string;
+  errorMessage?: string;
 }): Record<string, string | number | boolean> {
   return compactRuntimeTraceAttributes({
     "agent.id": input.agentId,
@@ -288,14 +300,22 @@ function buildRuntimeToolTraceAttributes(input: {
     "tool.name": input.toolName,
     "tool.call.id": input.toolCallId,
     "tool.id": input.toolCallId,
+    "tool.status": input.status,
+    "tool.provider_executed": input.providerExecuted,
+    "tool.input.size_bytes": input.inputSizeBytes,
+    "tool.output.size_bytes": input.outputSizeBytes,
     "agent.tool.execution_mode": input.mode,
     "agent.tool.status": input.status,
     "agent.tool.provider_executed": input.providerExecuted,
+    "agent.tool.input.size_bytes": input.inputSizeBytes,
+    "agent.tool.output.size_bytes": input.outputSizeBytes,
     "gen_ai.operation.name": "execute_tool",
     "gen_ai.agent.id": input.agentId,
     "gen_ai.tool.name": input.toolName,
     "gen_ai.tool.type": "function",
     "gen_ai.tool.call.id": input.toolCallId,
+    "error.type": input.errorType,
+    "error.message": input.errorMessage,
   });
 }
 
@@ -310,7 +330,8 @@ async function traceConfiguredToolExecution(input: {
   allowedRemoteToolNames: string[] | undefined;
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
 }): Promise<unknown> {
-  return await withOtelSpan(
+  const inputSizeBytes = estimateSerializedSizeBytes(input.args);
+  return await withSpan(
     "agent.tool_execute",
     async () => {
       setOtelActiveSpanAttributes(
@@ -322,6 +343,7 @@ async function traceConfiguredToolExecution(input: {
           context: input.context,
           status: "executing",
           providerExecuted: false,
+          inputSizeBytes,
         }),
       );
       try {
@@ -342,10 +364,13 @@ async function traceConfiguredToolExecution(input: {
             context: input.context,
             status: "completed",
             providerExecuted: false,
+            inputSizeBytes,
+            outputSizeBytes: estimateSerializedSizeBytes(result),
           }),
         );
         return result;
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         setOtelActiveSpanAttributes({
           ...buildRuntimeToolTraceAttributes({
             mode: input.mode,
@@ -355,8 +380,10 @@ async function traceConfiguredToolExecution(input: {
             context: input.context,
             status: "failed",
             providerExecuted: false,
+            inputSizeBytes,
+            errorType: error instanceof Error ? error.name : "Error",
+            errorMessage,
           }),
-          "error.message": error instanceof Error ? error.message : String(error),
         });
         throw error;
       }
@@ -369,6 +396,7 @@ async function traceConfiguredToolExecution(input: {
       context: input.context,
       status: "executing",
       providerExecuted: false,
+      inputSizeBytes,
     }),
   );
 }
@@ -379,22 +407,35 @@ async function traceProviderExecutedTool(input: {
   toolName: string;
   toolCallId: string;
   context?: ToolExecutionContext;
+  args?: unknown;
+  result?: unknown;
+  isError?: boolean;
 }): Promise<void> {
-  await withOtelSpan(
+  const status = input.isError === true ? "failed" : "completed";
+  const errorMessage = input.isError === true ? stringifyToolError(input.result) : undefined;
+  await withSpan(
     "agent.tool_execute",
     async () => {
       setOtelActiveSpanAttributes(
         buildRuntimeToolTraceAttributes({
           ...input,
-          status: "completed",
+          status,
           providerExecuted: true,
+          inputSizeBytes: estimateSerializedSizeBytes(input.args),
+          outputSizeBytes: estimateSerializedSizeBytes(input.result),
+          errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
+          errorMessage,
         }),
       );
     },
     buildRuntimeToolTraceAttributes({
       ...input,
-      status: "completed",
+      status,
       providerExecuted: true,
+      inputSizeBytes: estimateSerializedSizeBytes(input.args),
+      outputSizeBytes: estimateSerializedSizeBytes(input.result),
+      errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
+      errorMessage,
     }),
   );
 }
@@ -824,7 +865,7 @@ export class AgentRuntime {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
-          return generateText({
+          const result = await generateText({
             model: languageModel,
             system: currentSystemPrompt,
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
@@ -839,6 +880,8 @@ export class AgentRuntime {
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
           });
+          setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
+          return result;
         });
 
         // Accumulate usage
@@ -869,6 +912,7 @@ export class AgentRuntime {
             billingMode: response.usage.billingMode,
             usageCaptureStatus: response.usage.usageCaptureStatus,
           });
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
         }
 
         const assistantParts: MessagePart[] = [];
@@ -914,6 +958,7 @@ export class AgentRuntime {
           }
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
           return {
             text: response.text,
             messages: currentMessages,
@@ -939,7 +984,21 @@ export class AgentRuntime {
           const generatedToolResult = generatedToolResults.get(tc.toolCallId);
 
           await withSpan("agent.tool_execute", async (toolSpan) => {
-            setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
+            const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
+            setSpanAttributes(
+              toolSpan,
+              compactRuntimeTraceAttributes({
+                "tool.name": tc.toolName,
+                "tool.call.id": tc.toolCallId,
+                "tool.id": tc.toolCallId,
+                "tool.status": "executing",
+                "tool.input.size_bytes": inputSizeBytes,
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": tc.toolName,
+                "gen_ai.tool.type": "function",
+                "gen_ai.tool.call.id": tc.toolCallId,
+              }),
+            );
 
             if (generatedToolResult) {
               if (generatedToolResult.providerExecuted === true) {
@@ -953,6 +1012,9 @@ export class AgentRuntime {
                     ...toolContext,
                     agentId: this.id,
                   },
+                  args: tc.input,
+                  result: generatedToolResult.result,
+                  isError: generatedToolResult.isError === true,
                 });
               }
               await persistGeneratedToolResult(generatedToolResult);
@@ -961,6 +1023,21 @@ export class AgentRuntime {
               toolCall.error = generatedToolResult.isError === true
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
+                  "tool.provider_executed": generatedToolResult.providerExecuted === true,
+                  "tool.output.size_bytes": estimateSerializedSizeBytes(generatedToolResult.result),
+                  ...(toolCall.error
+                    ? {
+                      error: true,
+                      "error.type": "ProviderExecutedToolError",
+                      "error.message": toolCall.error,
+                    }
+                    : {}),
+                }),
+              );
               toolCalls.push(toolCall);
               return;
             }
@@ -977,6 +1054,12 @@ export class AgentRuntime {
             if (!policyCheck.allowed) {
               toolCall.status = "error";
               toolCall.error = policyCheck.error;
+              setSpanAttributes(toolSpan, {
+                "tool.status": "blocked",
+                error: true,
+                "error.type": "ToolPolicyBlocked",
+                "error.message": policyCheck.error,
+              });
 
               const errorMessage: Message = {
                 id: `tool_error_${tc.toolCallId}`,
@@ -1036,6 +1119,14 @@ export class AgentRuntime {
               toolCall.status = "completed";
               toolCall.result = result;
               toolCall.executionTime = Date.now() - startTime;
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.status": "completed",
+                  "tool.provider_executed": false,
+                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                }),
+              );
 
               // Track skill policy from load_skill results
               if (tc.toolName === LOAD_SKILL_TOOL_ID) {
@@ -1067,7 +1158,12 @@ export class AgentRuntime {
             } catch (error) {
               toolCall.status = "error";
               toolCall.error = error instanceof Error ? error.message : String(error);
-              setSpanAttributes(toolSpan, { error: true, "error.message": toolCall.error });
+              setSpanAttributes(toolSpan, {
+                "tool.status": "failed",
+                error: true,
+                "error.type": error instanceof Error ? error.name : "Error",
+                "error.message": toolCall.error,
+              });
 
               const errorMessage = createToolErrorMessage(
                 tc.toolCallId,
@@ -1085,6 +1181,7 @@ export class AgentRuntime {
 
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
+      setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
 
       const lastMsg = currentMessages[currentMessages.length - 1];
       return {
@@ -1462,6 +1559,7 @@ export class AgentRuntime {
               ...toolContext,
               agentId: this.id,
             },
+            args: toolCall.args,
           });
           toolCall.status = "completed";
           toolCalls.push(toolCall);

@@ -22,6 +22,7 @@ import type {
   SpanData,
   TracingExporter,
 } from "veryfront/extensions/observability";
+import { VERSION } from "veryfront/utils";
 
 /**
  * The TracerProvider interface as expected by the core shim.
@@ -183,6 +184,7 @@ type EnvReader = (name: string) => string | undefined;
 export interface ResolvedOtlpExtensionConfig {
   serviceName: string;
   serviceVersion: string;
+  deploymentEnvironment: string;
   headers: Record<string, string>;
   tracesHeaders: Record<string, string>;
   metricsHeaders: Record<string, string>;
@@ -227,6 +229,51 @@ function parseHeaders(headerInput: string | Record<string, string> | undefined):
   return result;
 }
 
+function parseResourceAttributes(value: string | undefined): Record<string, string> {
+  if (!value) return {};
+
+  const attributes: Record<string, string> = {};
+  for (const part of value.split(",")) {
+    const [rawKey, ...rawValueParts] = part.split("=");
+    const key = rawKey?.trim();
+    if (!key || rawValueParts.length === 0) continue;
+    attributes[key] = rawValueParts.join("=").trim();
+  }
+  return attributes;
+}
+
+function resolveServiceName(read: EnvReader, resourceAttributes: Record<string, string>): string {
+  return read("OTEL_SERVICE_NAME") ?? resourceAttributes["service.name"] ??
+    read("DD_SERVICE") ?? "veryfront";
+}
+
+function resolveServiceVersion(
+  read: EnvReader,
+  resourceAttributes: Record<string, string>,
+): string {
+  return resourceAttributes["service.version"] ??
+    read("OTEL_SERVICE_VERSION") ??
+    read("DD_VERSION") ??
+    read("VERYFRONT_VERSION") ??
+    read("RELEASE_VERSION") ??
+    read("npm_package_version") ??
+    VERSION;
+}
+
+function resolveDeploymentEnvironment(
+  read: EnvReader,
+  resourceAttributes: Record<string, string>,
+): string {
+  return resourceAttributes["deployment.environment.name"] ??
+    resourceAttributes["deployment.environment"] ??
+    read("OTEL_DEPLOYMENT_ENVIRONMENT") ??
+    read("DD_ENV") ??
+    read("APP_ENVIRONMENT") ??
+    read("VERYFRONT_ENVIRONMENT") ??
+    read("NODE_ENV") ??
+    "development";
+}
+
 function headersOrDefault(
   signalHeaders: Record<string, string> | undefined,
   defaultHeaders: Record<string, string> | undefined,
@@ -261,7 +308,90 @@ function logSeverityNumber(
   }
 }
 
-function logAttributes(record: NodeTelemetryLogRecord): Record<string, string | number | boolean> {
+const TRACE_ID_LOG_ALIASES = ["trace.id", "otel.trace_id"] as const;
+const SPAN_ID_LOG_ALIASES = ["span.id", "otel.span_id"] as const;
+const PROJECT_ID_LOG_ALIASES = ["project.id"] as const;
+const RUN_ID_LOG_ALIASES = ["run.id"] as const;
+const AGENT_ID_LOG_ALIASES = ["agent.id", "gen_ai.agent.id"] as const;
+const THREAD_ID_LOG_ALIASES = ["thread.id"] as const;
+const SCHEDULE_ID_LOG_ALIASES = ["schedule.id", "run.trigger.id"] as const;
+const SCHEDULE_NAME_LOG_ALIASES = ["schedule.name"] as const;
+const TOOL_NAME_LOG_ALIASES = ["tool.name", "gen_ai.tool.name"] as const;
+const TOOL_CALL_ID_LOG_ALIASES = ["tool.call.id", "gen_ai.tool.call.id"] as const;
+
+const LOG_ATTRIBUTE_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  trace_id: TRACE_ID_LOG_ALIASES,
+  span_id: SPAN_ID_LOG_ALIASES,
+  project_id: PROJECT_ID_LOG_ALIASES,
+  run_id: RUN_ID_LOG_ALIASES,
+  agent_id: AGENT_ID_LOG_ALIASES,
+  thread_id: THREAD_ID_LOG_ALIASES,
+  schedule_id: SCHEDULE_ID_LOG_ALIASES,
+  schedule_name: SCHEDULE_NAME_LOG_ALIASES,
+  tool_name: TOOL_NAME_LOG_ALIASES,
+  tool_call_id: TOOL_CALL_ID_LOG_ALIASES,
+};
+
+const CONTEXT_LOG_ATTRIBUTE_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  traceId: TRACE_ID_LOG_ALIASES,
+  trace_id: TRACE_ID_LOG_ALIASES,
+  spanId: SPAN_ID_LOG_ALIASES,
+  span_id: SPAN_ID_LOG_ALIASES,
+  projectId: PROJECT_ID_LOG_ALIASES,
+  project_id: PROJECT_ID_LOG_ALIASES,
+  runId: RUN_ID_LOG_ALIASES,
+  run_id: RUN_ID_LOG_ALIASES,
+  agentId: AGENT_ID_LOG_ALIASES,
+  agent_id: AGENT_ID_LOG_ALIASES,
+  threadId: THREAD_ID_LOG_ALIASES,
+  thread_id: THREAD_ID_LOG_ALIASES,
+  scheduleId: SCHEDULE_ID_LOG_ALIASES,
+  schedule_id: SCHEDULE_ID_LOG_ALIASES,
+  scheduleName: SCHEDULE_NAME_LOG_ALIASES,
+  schedule_name: SCHEDULE_NAME_LOG_ALIASES,
+  toolName: TOOL_NAME_LOG_ALIASES,
+  tool_name: TOOL_NAME_LOG_ALIASES,
+  toolCallId: TOOL_CALL_ID_LOG_ALIASES,
+  tool_call_id: TOOL_CALL_ID_LOG_ALIASES,
+};
+
+function isLogAttributeValue(value: unknown): value is string | number | boolean {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function hexToUnsignedDecimal(value: string | undefined): string | undefined {
+  const normalized = value?.trim().replace(/^0x/, "");
+  if (!normalized || !/^[0-9a-f]+$/i.test(normalized)) return undefined;
+  try {
+    return BigInt(`0x${normalized}`).toString(10);
+  } catch {
+    return undefined;
+  }
+}
+
+function addLogAttributeAliases(
+  attributes: Record<string, string | number | boolean>,
+  key: string,
+  value: string | number | boolean,
+): void {
+  const aliases = LOG_ATTRIBUTE_ALIASES[key] ?? CONTEXT_LOG_ATTRIBUTE_ALIASES[key];
+  for (const alias of aliases ?? []) {
+    attributes[alias] ??= value;
+  }
+
+  if (key === "trace_id" || key === "traceId") {
+    const traceId = typeof value === "string" ? value : String(value);
+    attributes["dd.trace_id"] ??= hexToUnsignedDecimal(traceId.slice(-16)) ?? traceId;
+  }
+  if (key === "span_id" || key === "spanId") {
+    const spanId = typeof value === "string" ? value : String(value);
+    attributes["dd.span_id"] ??= hexToUnsignedDecimal(spanId) ?? spanId;
+  }
+}
+
+export function logAttributes(
+  record: NodeTelemetryLogRecord,
+): Record<string, string | number | boolean> {
   const attributes: Record<string, string | number | boolean> = {};
   for (const [key, value] of Object.entries(record)) {
     if (
@@ -273,15 +403,17 @@ function logAttributes(record: NodeTelemetryLogRecord): Record<string, string | 
     ) {
       continue;
     }
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    if (isLogAttributeValue(value)) {
       attributes[key] = value;
+      addLogAttributeAliases(attributes, key, value);
     }
   }
 
   if (record.context) {
     for (const [key, value] of Object.entries(record.context)) {
-      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      if (isLogAttributeValue(value)) {
         attributes[`context.${key}`] = value;
+        addLogAttributeAliases(attributes, key, value);
       }
     }
   }
@@ -343,6 +475,7 @@ function resolveMetricsTemporalityPreference(
 export function resolveOtlpExtensionConfig(
   read: EnvReader = readEnv,
 ): ResolvedOtlpExtensionConfig {
+  const resourceAttributes = parseResourceAttributes(read("OTEL_RESOURCE_ATTRIBUTES"));
   const endpoint = read("OTEL_EXPORTER_OTLP_ENDPOINT");
   const tracesEndpoint = read("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ?? endpoint;
   const metricsEndpoint = read("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ?? endpoint;
@@ -366,8 +499,9 @@ export function resolveOtlpExtensionConfig(
   );
 
   return {
-    serviceName: read("OTEL_SERVICE_NAME") ?? "veryfront",
-    serviceVersion: "0.1.0",
+    serviceName: resolveServiceName(read, resourceAttributes),
+    serviceVersion: resolveServiceVersion(read, resourceAttributes),
+    deploymentEnvironment: resolveDeploymentEnvironment(read, resourceAttributes),
     headers,
     tracesHeaders,
     metricsHeaders,
@@ -410,6 +544,8 @@ class OtlpTracingExporter implements TracingExporter {
     const resource = otel.resources.resourceFromAttributes({
       [otel.semanticConventions.ATTR_SERVICE_NAME]: cfg.serviceName,
       [otel.semanticConventions.ATTR_SERVICE_VERSION]: cfg.serviceVersion,
+      "deployment.environment": cfg.deploymentEnvironment,
+      "deployment.environment.name": cfg.deploymentEnvironment,
     });
 
     if (cfg.tracesEnabled) {
@@ -601,6 +737,7 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
       "service.name": options.serviceName,
       "service.version": options.serviceVersion,
       "deployment.environment": options.deploymentEnvironment,
+      "deployment.environment.name": options.deploymentEnvironment,
     });
 
     const spanProcessors = tracesEnabled
@@ -752,7 +889,18 @@ const extOpenTelemetry: ExtensionFactory = () => {
           "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
           "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
           "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+          "OTEL_RESOURCE_ATTRIBUTES",
           "OTEL_SERVICE_NAME",
+          "OTEL_SERVICE_VERSION",
+          "OTEL_DEPLOYMENT_ENVIRONMENT",
+          "DD_SERVICE",
+          "DD_VERSION",
+          "DD_ENV",
+          "VERYFRONT_VERSION",
+          "RELEASE_VERSION",
+          "APP_ENVIRONMENT",
+          "VERYFRONT_ENVIRONMENT",
+          "NODE_ENV",
           "OTEL_TRACES_ENABLED",
           "OTEL_METRICS_ENABLED",
           "OTEL_LOGS_ENABLED",

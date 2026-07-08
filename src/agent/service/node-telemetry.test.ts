@@ -5,6 +5,7 @@ import {
   resolveNodeAgentServiceTelemetryConfig,
   resolveNodeHostedAgentServiceTelemetryConfig,
 } from "./node-telemetry.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 
 describe("agent/node-agent-service-telemetry", () => {
   it("exposes a node agent service telemetry resolver alias without the hosted prefix", () => {
@@ -27,7 +28,7 @@ describe("agent/node-agent-service-telemetry", () => {
     assertEquals(config, {
       enabled: true,
       serviceName: "agent-service",
-      serviceVersion: "0.1.0",
+      serviceVersion: VERSION,
       deploymentEnvironment: "production",
       samplingRatio: 1,
       exporterHeaders: undefined,
@@ -48,6 +49,21 @@ describe("agent/node-agent-service-telemetry", () => {
         fs: false,
       },
     });
+  });
+
+  it("uses OpenTelemetry resource attributes for Datadog service tags", () => {
+    const config = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        NODE_ENV: "test",
+        OTEL_RESOURCE_ATTRIBUTES:
+          "service.name=resource-agent,service.version=9.9.9,deployment.environment.name=staging-eu",
+      },
+      defaultServiceName: "agent-service",
+    });
+
+    assertEquals(config.serviceName, "resource-agent");
+    assertEquals(config.serviceVersion, "9.9.9");
+    assertEquals(config.deploymentEnvironment, "staging-eu");
   });
 
   it("honors explicit enable flags, headers, sampling, and instrumentation overrides", () => {
