@@ -388,6 +388,44 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("routes dedicated runtime host OTLP metrics through the internal API proxy without project env", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-1",
+      OTEL_METRICS_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example/otlp",
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic external-secret",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(url), init });
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        metrics.counter("vf_runtime_metric_total", 1, { source: "host" });
+        await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    assertEquals(requests.length, 1);
+    assertEquals(
+      requests[0]?.url,
+      "http://veryfront-api:80/internal/metrics/otlp/v1/metrics",
+    );
+    assertEquals(
+      (requests[0]?.init?.headers as Record<string, string>).Authorization,
+      "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
+    );
+  });
+
   it("exports direct histograms with cumulative temporality", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];

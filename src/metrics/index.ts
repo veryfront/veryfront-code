@@ -22,6 +22,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
 export type MetricAttributes = Record<string, MetricAttributeValue>;
@@ -158,8 +159,21 @@ function readHostEnv(name: string): string | undefined {
   return getHostEnv(name);
 }
 
+function readProjectEnv(name: string): string | undefined {
+  return isProjectEnvActive() ? getEnv(name) : undefined;
+}
+
 function isDedicatedRuntime(): boolean {
   return Boolean(readHostEnv("SERVER_ID") && readHostEnv("ENVIRONMENT_IDS"));
+}
+
+function resolveProjectOtlpMetricsUrl(): string | null {
+  if (readProjectEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  const endpoint = readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ??
+    readProjectEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+  if (!endpoint) return null;
+  const trimmed = endpoint.replace(/\/$/, "");
+  return trimmed.endsWith("/v1/metrics") ? trimmed : `${trimmed}/v1/metrics`;
 }
 
 function resolveOtlpMetricsUrl(): string | null {
@@ -203,13 +217,13 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
 }
 
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
-  const otlpUrl = resolveOtlpMetricsUrl();
-  if (isDedicatedRuntime() && otlpUrl) {
+  const projectOtlpUrl = resolveProjectOtlpMetricsUrl();
+  if (isDedicatedRuntime() && projectOtlpUrl) {
     return {
-      url: otlpUrl,
+      url: projectOtlpUrl,
       headers: parseHeaders(
-        readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
-          readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+        readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
+          readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
     };
   }
@@ -227,6 +241,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
     };
   }
 
+  const otlpUrl = resolveOtlpMetricsUrl();
   if (!otlpUrl) return null;
   return {
     url: otlpUrl,
