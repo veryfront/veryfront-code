@@ -542,6 +542,7 @@ export {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
   isAgentTraceAttributeValue,
 } from "./hosted/trace-attributes.ts";

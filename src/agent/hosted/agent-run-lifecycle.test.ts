@@ -80,6 +80,12 @@ describe("hosted-agent-run-lifecycle", () => {
       upstreamParentConversationId: "parent-conversation-1",
       upstreamParentRunId: "parent-run-1",
       spawnedFromToolCallId: "tool-call-1",
+      traceAttributes: {
+        "schedule.id": "schedule-1",
+        "schedule.name": "Triage sweep",
+        "run.trigger.kind": "schedule",
+        "run.trigger.id": "schedule-1",
+      },
     });
 
     assertEquals(span.attributes["conversation.id"], "conversation-1");
@@ -89,6 +95,10 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["parent.conversation.id"], "parent-conversation-1");
     assertEquals(span.attributes["parent.run.id"], "parent-run-1");
     assertEquals(span.attributes["tool.call.id"], "tool-call-1");
+    assertEquals(span.attributes["schedule.id"], "schedule-1");
+    assertEquals(span.attributes["schedule.name"], "Triage sweep");
+    assertEquals(span.attributes["run.trigger.kind"], "schedule");
+    assertEquals(span.attributes["run.trigger.id"], "schedule-1");
     assertEquals(span.attributes["gen_ai.operation.name"], "chat");
 
     const value = controller.withContext(() => "ok");

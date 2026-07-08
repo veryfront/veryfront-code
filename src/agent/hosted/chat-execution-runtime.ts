@@ -148,6 +148,7 @@ export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
   upstreamParentConversationId?: string;
   upstreamParentRunId?: string;
   spawnedFromToolCallId?: string;
+  traceAttributes?: Parameters<HostedAgentRunSpanController["setAttributes"]>[0];
   tracer: HostedAgentRunTracer;
   resolveProvider: (modelId: string) => string;
   traceStream?: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"];
@@ -413,6 +414,7 @@ export async function createBootstrappedHostedChatExecutionRuntime(
     upstreamParentConversationId: input.upstreamParentConversationId,
     upstreamParentRunId: input.upstreamParentRunId,
     spawnedFromToolCallId: input.spawnedFromToolCallId,
+    traceAttributes: input.traceAttributes,
   });
 
   try {

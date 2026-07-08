@@ -60,16 +60,24 @@ describe("ext-observability-opentelemetry config helpers", () => {
     const config = resolveOtlpExtensionConfig(env({
       OTEL_TRACES_ENABLED: "false",
       OTEL_METRICS_ENABLED: "true",
+      OTEL_LOGS_EXPORTER: "otlp",
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example/otlp",
+      OTEL_EXPORTER_OTLP_LOGS_HEADERS: "x-log-route=logs",
       OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic platform-token",
       OTEL_SERVICE_NAME: "veryfront-server",
     }));
 
     assertEquals(config.tracesEnabled, false);
     assertEquals(config.metricsEnabled, true);
+    assertEquals(config.logsEnabled, true);
     assertEquals(config.tracesUrl, "https://collector.example/otlp/v1/traces");
     assertEquals(config.metricsUrl, "https://collector.example/otlp/v1/metrics");
+    assertEquals(config.logsUrl, "https://collector.example/otlp/v1/logs");
     assertEquals(config.headers, { Authorization: "Basic platform-token" });
+    assertEquals(config.logsHeaders, {
+      Authorization: "Basic platform-token",
+      "x-log-route": "logs",
+    });
     assertEquals(config.serviceName, "veryfront-server");
   });
 

@@ -24,6 +24,10 @@ function compactTraceAttributes(attributes: AgentTraceAttributes): AgentTraceAtt
   );
 }
 
+function getNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
 function isAgentTraceAttributePrimitive(value: unknown): value is TracePrimitive {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
@@ -50,6 +54,23 @@ export function filterAgentTraceAttributes(
   }
 
   return traceAttributes;
+}
+
+/** Builds schedule trigger trace attributes from schedule forwarded props. */
+export function buildScheduleTraceAttributes(
+  forwardedProps?: Record<string, unknown>,
+): AgentTraceAttributes {
+  const scheduleId = getNonEmptyString(forwardedProps?.schedule_id) ??
+    getNonEmptyString(forwardedProps?.scheduleId);
+  const scheduleName = getNonEmptyString(forwardedProps?.schedule_name) ??
+    getNonEmptyString(forwardedProps?.scheduleName);
+
+  return compactTraceAttributes({
+    "schedule.id": scheduleId,
+    "schedule.name": scheduleName,
+    "run.trigger.kind": scheduleId ? "schedule" : undefined,
+    "run.trigger.id": scheduleId,
+  });
 }
 
 function resolveGenAiProviderName(modelId: string | null | undefined): string | null {
@@ -107,6 +128,8 @@ export function buildAgentRunTraceAttributes(input: {
   parentConversationId?: string | null;
   messageId?: string | null;
   toolCallId?: string | null;
+  scheduleId?: string | null;
+  scheduleName?: string | null;
 }): AgentTraceAttributes {
   return compactTraceAttributes({
     "conversation.id": input.conversationId,
@@ -118,6 +141,10 @@ export function buildAgentRunTraceAttributes(input: {
     "parent.conversation.id": input.parentConversationId,
     "message.id": input.messageId,
     "tool.call.id": input.toolCallId,
+    "schedule.id": input.scheduleId,
+    "schedule.name": input.scheduleName,
+    "run.trigger.kind": input.scheduleId ? "schedule" : undefined,
+    "run.trigger.id": input.scheduleId,
     "gen_ai.operation.name": input.operationName,
     "gen_ai.conversation.id": input.conversationId,
     "gen_ai.agent.id": input.agentId,

@@ -105,6 +105,8 @@ type ConsoleLoggerOptions = {
   injectTraceContext?: boolean;
 };
 
+type LogRecordEmitter = (entry: LogEntry) => void;
+
 // ---- Config helpers (must be declared before the eager init below) ----
 
 const LOG_LEVEL_MAP: Readonly<Record<string, LogLevel>> = {
@@ -159,6 +161,8 @@ let loggerConfig: LoggerConfig = {
   format: getDefaultFormat(),
 };
 
+let logRecordEmitter: LogRecordEmitter | null = null;
+
 /**
  * Re-read logger configuration from environment variables.
  * Call after loading .env files so the logger picks up any overrides.
@@ -172,6 +176,16 @@ export function refreshLoggerConfig(): void {
 
 /** @internal Alias kept for tests. */
 export const __resetLoggerConfigForTests = refreshLoggerConfig;
+
+/** Register a process-level structured log emitter, for example an OTel bridge. */
+export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): void {
+  logRecordEmitter = emitter;
+}
+
+/** Reset the process-level structured log emitter. Only intended for tests. */
+export function __resetLogRecordEmitterForTests(): void {
+  logRecordEmitter = null;
+}
 
 function resolveLoggerConfig(): LoggerConfig {
   return loggerConfig;
@@ -279,7 +293,7 @@ class ConsoleLogger implements Logger {
     return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
   }
 
-  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
+  private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
     const { context, error } = extractContext(args);
     const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
 
@@ -362,6 +376,11 @@ class ConsoleLogger implements Logger {
     // URIs, ?access_token= URLs, userinfo) before emission (#1989).
     if (error) entry.error = sanitizeSerializedError(error);
 
+    return entry;
+  }
+
+  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
+    const entry = this.createEntry(level, message, args);
     return JSON.stringify(entry);
   }
 
@@ -395,9 +414,21 @@ class ConsoleLogger implements Logger {
     const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
     if (resolvedLevel > logLevel) return;
 
+    let entry: LogEntry | undefined;
     const line = resolvedFormat === "json"
-      ? this.formatJson(level, message, args)
+      ? (() => {
+        entry = this.createEntry(level, message, args);
+        return JSON.stringify(entry);
+      })()
       : this.formatTextLine(level, message, args);
+
+    if (logRecordEmitter) {
+      try {
+        logRecordEmitter(entry ?? this.createEntry(level, message, args));
+      } catch (_) {
+        /* do not let telemetry export failures affect application logging */
+      }
+    }
 
     consoleFn(line);
   }

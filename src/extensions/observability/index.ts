@@ -9,6 +9,8 @@ export type {
   NodeTelemetryInitializeOptions,
   NodeTelemetryInstrumentationConfig,
   NodeTelemetryLogger,
+  NodeTelemetryLogRecord,
+  NodeTelemetryLogRecordEmitter,
   NodeTelemetryProcessTarget,
   NodeTelemetryProvider,
 } from "./node-telemetry-provider.ts";
