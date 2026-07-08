@@ -285,8 +285,8 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       resetState();
 
       const baseCacheDir = getMdxEsmCacheDir();
-      const key1 = `${baseCacheDir}|${hashCodeHex("project-1")}|preview-main`;
-      const key2 = `${baseCacheDir}|${hashCodeHex("project-2")}|preview-main`;
+      const key1 = `${baseCacheDir}|${hashCodeHex("project-1")}|${hashCodeHex("preview-main")}`;
+      const key2 = `${baseCacheDir}|${hashCodeHex("project-2")}|${hashCodeHex("preview-main")}`;
 
       globalTmpDirs.set(key1, "/tmp/proj1");
       globalTmpDirs.set(key2, "/tmp/proj2");
