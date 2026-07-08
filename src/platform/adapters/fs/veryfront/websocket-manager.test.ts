@@ -50,7 +50,7 @@ class MockWebSocket {
 }
 
 function captureConsoleMethod(
-  method: "debug" | "warn",
+  method: "debug" | "log" | "warn",
 ): { getOutput: () => string; reset: () => void; restore: () => void } {
   const original = console[method];
   let capturedOutput = "";
@@ -418,6 +418,7 @@ describe("WebSocketManager", () => {
 
   it("should include projectSlug in connection lifecycle logs", () => {
     const debugCapture = captureConsoleMethod("debug");
+    const logCapture = captureConsoleMethod("log");
     const warnCapture = captureConsoleMethod("warn");
 
     try {
@@ -438,12 +439,48 @@ describe("WebSocketManager", () => {
         debugCapture.reset();
         socket.emitClose();
 
-        const closeEntry = JSON.parse(debugCapture.getOutput()) as {
+        const closeEntry = JSON.parse(warnCapture.getOutput()) as {
           message: string;
           projectSlug?: string;
+          project_id?: string;
+          context?: {
+            delayMs?: number;
+            consecutiveFailures?: number;
+            projectId?: string;
+            url?: string;
+          };
         };
-        assertEquals(closeEntry.message, "WebSocket closed, reconnecting");
+        assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
         assertEquals(closeEntry.projectSlug, "test-project");
+        assertEquals(closeEntry.project_id, "project-1");
+        assertEquals(closeEntry.context?.projectId, "project-1");
+        assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
+        assertEquals(closeEntry.context?.delayMs, 5000);
+        assertEquals(closeEntry.context?.consecutiveFailures, 1);
+
+        logCapture.reset();
+        runOnlyScheduledTimer();
+        const reconnectedSocket = MockWebSocket.instances[1];
+        assertExists(reconnectedSocket);
+        reconnectedSocket.onopen?.call(
+          reconnectedSocket as unknown as WebSocket,
+          new Event("open"),
+        );
+
+        const recoveryEntry = JSON.parse(logCapture.getOutput()) as {
+          message: string;
+          projectSlug?: string;
+          project_id?: string;
+          context?: {
+            consecutiveFailures?: number;
+            projectId?: string;
+          };
+        };
+        assertEquals(recoveryEntry.message, "WebSocket reconnect recovered");
+        assertEquals(recoveryEntry.projectSlug, "test-project");
+        assertEquals(recoveryEntry.project_id, "project-1");
+        assertEquals(recoveryEntry.context?.projectId, "project-1");
+        assertEquals(recoveryEntry.context?.consecutiveFailures, 1);
 
         warnCapture.reset();
         socket.onerror?.call(socket as unknown as WebSocket, new Event("error"));
@@ -459,6 +496,7 @@ describe("WebSocketManager", () => {
       });
     } finally {
       debugCapture.restore();
+      logCapture.restore();
       warnCapture.restore();
     }
   });

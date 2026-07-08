@@ -166,6 +166,7 @@ export class WebSocketManager {
       this.wsErrorLogged = false;
 
       this.ws.onopen = () => {
+        const recoveredFailures = this.wsConsecutiveFailures;
         this.wsConsecutiveFailures = 0;
         logger.debug(
           "WebSocket connected to events channel",
@@ -175,6 +176,18 @@ export class WebSocketManager {
             ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
           }),
         );
+        if (recoveredFailures > 0) {
+          logger.info(
+            "WebSocket reconnect recovered",
+            this.getConnectionLogContext({
+              projectId,
+              project_id: projectId,
+              connectionId: this.wsConnectionId,
+              consecutiveFailures: recoveredFailures,
+              ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
+            }),
+          );
+        }
         this.wsLastPong = Date.now();
         this.startHeartbeat(projectId);
       };
@@ -185,7 +198,9 @@ export class WebSocketManager {
         this.handlePokeMessage(event);
       };
 
-      this.ws.onclose = () => {
+      this.ws.onclose = (event) => {
+        const connectionId = this.wsConnectionId;
+        const url = this.ws?.url;
         this.wsConnectionId = null;
         this.cleanupTimers();
 
@@ -193,12 +208,19 @@ export class WebSocketManager {
 
         this.wsConsecutiveFailures++;
         const delay = this.getReconnectDelay();
-        logger.debug(
-          "WebSocket closed, reconnecting",
+        logger.warn(
+          "WebSocket reconnect scheduled after close",
           this.getConnectionLogContext({
+            projectId,
+            project_id: projectId,
+            connectionId,
+            url,
             delayMs: delay,
             totalPokesReceived: this.pokeMetrics.received,
             consecutiveFailures: this.wsConsecutiveFailures,
+            closeCode: event.code,
+            closeReason: event.reason,
+            wasClean: event.wasClean,
           }),
         );
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
