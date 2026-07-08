@@ -31,6 +31,29 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.size, 0);
     });
 
+    it("does not rewrite private import-map aliases to esm.sh fragments", async () => {
+      const code = `import { load } from "#std/dotenv.ts";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        "https://esm.sh/?external=react&target=es2022",
+        defaultOptions,
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-std.mjs";
+        },
+      );
+
+      assertEquals(result.size, 0);
+      assertEquals(cacheCalls, []);
+    });
+
+    it("returns empty map for jsr: specifiers", async () => {
+      const code = `import { load } from "jsr:@std/dotenv@0.225.6";`;
+      const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
+      assertEquals(result.size, 0);
+    });
+
     it("rewrites npm: specifiers when cache returns a path", async () => {
       const code = `import React from "npm:react@18";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-12345.mjs";
