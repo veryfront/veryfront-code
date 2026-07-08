@@ -32,7 +32,7 @@ describe("veryfront/ui module boundary", () => {
       const source = await Deno.readTextFile(entry.path);
       for (const match of source.matchAll(CHAT_IMPORT)) {
         const specifier = match[1];
-        if (referencesChat(specifier)) {
+        if (specifier && referencesChat(specifier)) {
           offenders.push(`${entry.name} -> ${specifier}`);
         }
       }

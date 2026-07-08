@@ -10,6 +10,13 @@
  * against — `chat` re-exports `generateTokenCSS` from here (via its `theme.ts`)
  * so there is a single source of truth for the token vocabulary.
  *
+ * NOTE (compat contract): the scope selector is `[data-vf-chat]`, a
+ * deliberately-retained name inherited from when these primitives lived in
+ * `chat/ui`. It is the *shared* theming attribute both layers set, so keeping it
+ * avoids a breaking DOM/CSS change for existing chat consumers. A future,
+ * separately-versioned change should migrate this to a neutral `[data-vf-ui]`
+ * (with a compat alias) — tracked in the chat-composition plan, not here.
+ *
  * @module react/components/ui/design-tokens
  */
 

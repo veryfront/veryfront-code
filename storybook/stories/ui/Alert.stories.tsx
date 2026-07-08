@@ -105,7 +105,7 @@ export const Variants: Story = {
   AlertContent,
   AlertIcon,
 } from "veryfront/ui";
-import { InfoIcon } from "veryfront/chat/icons";
+import { InfoIcon } from "veryfront/ui/icons";
 
 <Alert>
   <AlertIcon>
@@ -167,7 +167,7 @@ export const WithAction: Story = {
   AlertContent,
   AlertIcon,
 } from "veryfront/ui";
-import { XCircleIcon } from "veryfront/chat/icons";
+import { XCircleIcon } from "veryfront/ui/icons";
 
 <Alert variant="error">
   <AlertIcon>

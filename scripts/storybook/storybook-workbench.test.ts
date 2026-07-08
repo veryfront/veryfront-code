@@ -328,6 +328,26 @@ describe("Storybook UI workbench", () => {
     );
   });
 
+  it("teaches the canonical `veryfront/ui` import in every UI story", async () => {
+    // The primitives are published from `veryfront/ui`; a `UI/*` story must not
+    // import them from (or advertise) `veryfront/chat` — even for re-exported
+    // leaves like CodeBlock. Guards the regression fixed in PR #2798 review.
+    const offenders: string[] = [];
+    for await (const path of storyFiles("storybook/stories/ui")) {
+      const source = await readText(path);
+      if (/veryfront\/chat/.test(source)) {
+        offenders.push(path);
+      }
+    }
+    assertEquals(
+      offenders,
+      [],
+      `UI stories must import/advertise \`veryfront/ui\`, not \`veryfront/chat\`:\n  - ${
+        offenders.join("\n  - ")
+      }`,
+    );
+  });
+
   it("ports Studio styling without importing Studio-only UI dependencies", async () => {
     const sourceFiles = [
       "src/react/components/chat/theme.ts",
