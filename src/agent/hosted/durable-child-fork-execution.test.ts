@@ -5,6 +5,7 @@ import {
   buildChildRunExecutionSnapshot,
   type ChildRunExecutionResult,
 } from "../child-run/execution-snapshot.ts";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import type { ConversationRunTargets } from "../conversation/durable.ts";
 import {
   buildHostedDurableChildInvokeFailureResult,
@@ -88,11 +89,11 @@ function getPublicId(value: unknown): string {
   return value.public_id;
 }
 
-function baseSuccessResult(): ChildRunExecutionResult {
+function baseSuccessResult(): ChildRunExecutionResult & { success: true } {
   return {
     success: true,
     description: "Inspect logs",
-    summary: { text: "Found logs" },
+    summary: buildChildRunResultSummary("Found logs"),
     steps: 2,
     toolCalls: [],
     toolResults: [],
@@ -131,7 +132,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         ok: false,
         status: "failed",
         text: "invoke_agent failed: setup failed",
-        summary: { text: "invoke_agent failed: setup failed" },
+        summary: buildChildRunResultSummary("invoke_agent failed: setup failed"),
         childConversationId: CHILD_CONVERSATION_ID,
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
@@ -152,7 +153,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         ok: false,
         status: "failed",
         text: "invoke_agent failed: child failed",
-        summary: { text: "invoke_agent failed: child failed" },
+        summary: buildChildRunResultSummary("invoke_agent failed: child failed"),
         childConversationId: CHILD_CONVERSATION_ID,
         childRunId: "run_child_1",
         childMessageId: CHILD_MESSAGE_ID,
@@ -174,7 +175,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         ok: true,
         status: "completed",
         text: "Found logs",
-        summary: { text: "Found logs" },
+        summary: buildChildRunResultSummary("Found logs"),
         steps: 2,
         toolCalls: [],
         toolResults: [],
@@ -258,7 +259,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         ok: true,
         status: "completed",
         text: "Title: Example Content",
-        summary: { text: "Title: Example Content" },
+        summary: buildChildRunResultSummary("Title: Example Content"),
         steps: 2,
         toolCalls: [],
         toolResults: [],
@@ -359,7 +360,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         ok: false,
         status: "failed",
         text: "invoke_agent failed: setup failed",
-        summary: { text: "invoke_agent failed: setup failed" },
+        summary: buildChildRunResultSummary("invoke_agent failed: setup failed"),
         childConversationId: CHILD_CONVERSATION_ID,
         childRunId: "run_child_1",
         childMessageId: CHILD_MESSAGE_ID,
@@ -508,7 +509,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       {
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
-        forkInput: { description: "Inspect logs", prompt: "Find logs" },
+        forkInput: { description: "Inspect logs", prompt: "Find logs", context: {} },
         executionOptions: { toolCallId: "tool-call-1" },
         childAgentId: "invoke-agent-child",
         getProjectId: () => PROJECT_ID,
