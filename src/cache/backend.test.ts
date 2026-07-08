@@ -995,8 +995,6 @@ Deno.test({
 Deno.test({
   name:
     "createCacheBackend auto-selects API backend from host API base URL under project env isolation",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const { createCacheBackend } = await importBackend();
     const globals = globalThis as Record<string, unknown>;
