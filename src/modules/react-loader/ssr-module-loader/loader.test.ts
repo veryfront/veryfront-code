@@ -18,6 +18,7 @@ import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cach
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
 function hashAsLoader(source: string, filePath: string, projectDir: string): string {
@@ -44,6 +45,54 @@ class FakeDistributedCache implements CacheBackend {
     this.values.delete(key);
     return Promise.resolve();
   }
+}
+
+function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapter {
+  const normalize = (path: string) => path.replace(/^\/app\/+/, "");
+
+  return {
+    id: "deno",
+    name: "proxy-project-test",
+    capabilities: denoAdapter.capabilities,
+    fs: {
+      async readFile(path: string): Promise<string> {
+        const normalized = normalize(path);
+        const content = files[normalized];
+        if (content == null) throw new Error(`File not found: ${path}`);
+        return content;
+      },
+      async writeFile(): Promise<void> {
+        throw new Error("writeFile is not supported in this test adapter");
+      },
+      async exists(path: string): Promise<boolean> {
+        return files[normalize(path)] != null;
+      },
+      async *readDir(): AsyncIterableIterator<never> {},
+      async stat(path: string) {
+        const content = files[normalize(path)];
+        if (content == null) throw new Error(`File not found: ${path}`);
+        return {
+          size: content.length,
+          mtime: new Date(0),
+          isDirectory: false,
+          isFile: true,
+          isSymlink: false,
+        };
+      },
+      async mkdir(): Promise<void> {},
+      async remove(): Promise<void> {},
+      async makeTempDir(prefix: string): Promise<string> {
+        return await makeTempDir({ prefix });
+      },
+      watch: denoAdapter.fs.watch.bind(denoAdapter.fs),
+      async resolveFile(): Promise<string | null> {
+        return null;
+      },
+    },
+    env: denoAdapter.env,
+    server: denoAdapter.server,
+    serve: denoAdapter.serve.bind(denoAdapter),
+  };
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -369,6 +418,36 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     } finally {
       await remove(projectDir, { recursive: true });
     }
+  });
+
+  it("loads project-relative dependencies through the runtime adapter for proxy project paths", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = "/app";
+    const filePath = "/app/app/layout.tsx";
+    const adapter = createProxyProjectAdapter({
+      "app/runtime-registry.ts": `export const registered = true;`,
+    });
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId: "project-proxy-adapter-deps",
+      contentSourceId: "release-1",
+      adapter,
+      dev: true,
+    });
+
+    const component = await loader.loadModule(
+      filePath,
+      [
+        `import "./runtime-registry.ts";`,
+        `export default function RootLayout() {`,
+        `  return null;`,
+        `}`,
+      ].join("\n"),
+    );
+
+    assertEquals(component.name, "RootLayout");
   });
 
   it("invalidates stale cache entries with unresolved _vf_modules imports and retransforms", async () => {

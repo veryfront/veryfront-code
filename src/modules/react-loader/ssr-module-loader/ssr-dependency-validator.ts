@@ -154,9 +154,7 @@ export class SSRDependencyValidator {
       await Promise.all(
         batch.map(async (imp) => {
           try {
-            const depSource = imp.absolutePath.startsWith("/")
-              ? await localFs.readTextFile(imp.absolutePath)
-              : await this.adapter.fs.readFile(imp.absolutePath);
+            const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
 
             await this.transformWithDependencies(
               imp.absolutePath,
@@ -185,5 +183,26 @@ export class SSRDependencyValidator {
     }
 
     return importPathMap;
+  }
+
+  private isProjectAbsolutePath(path: string): boolean {
+    const projectDir = this.projectDir.replace(/\/+$/, "");
+    if (!projectDir || projectDir === "/") return false;
+    return path === projectDir || path.startsWith(`${projectDir}/`);
+  }
+
+  private readLocalImportSource(
+    path: string,
+    localFs: ReturnType<typeof createFileSystem>,
+  ): Promise<string> {
+    if (!path.startsWith("/")) {
+      return this.adapter.fs.readFile(path);
+    }
+
+    if (this.isProjectAbsolutePath(path)) {
+      return this.adapter.fs.readFile(path);
+    }
+
+    return localFs.readTextFile(path);
   }
 }
