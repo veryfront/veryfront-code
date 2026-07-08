@@ -294,60 +294,15 @@ export class Renderer {
           return cacheResult.cachedResult;
         }
 
-        if (!(await acquireProjectSlot(effectiveCtx.projectId))) {
-          const activeCount = projectRenderCounts.get(effectiveCtx.projectId) ?? 0;
-          logger.error("Per-project render limit reached", {
-            slug,
-            projectId: effectiveCtx.projectId,
-            activeRenders: activeCount,
-            limit: RENDER_PER_PROJECT_LIMIT,
-          });
-          throw SERVICE_OVERLOADED.create({
-            detail:
-              `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
-            context: {
-              slug,
-              projectId: ctx.projectId,
-              activeRenders: activeCount,
-              limit: RENDER_PER_PROJECT_LIMIT,
-            },
-          });
-        }
-
-        const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
-        if (!acquired) {
-          await releaseProjectSlot(effectiveCtx.projectId);
-          logger.error("Render capacity exceeded - service overloaded", {
-            slug,
-            projectId: effectiveCtx.projectId,
-            waiting: renderSemaphore.waiting,
-            available: renderSemaphore.available,
-          });
-          throw SERVICE_OVERLOADED.create({
-            detail:
-              `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-            context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-          });
-        }
-
-        let renderedSuccessfully = false;
-        try {
-          const result = await this.doRenderPage(
-            slug,
-            effectiveCtx,
-            effectiveOptions,
-            startTime,
-            cacheKey,
-          );
-          renderedSuccessfully = true;
-          return result;
-        } finally {
-          renderSemaphore.release();
-          await releaseProjectSlot(effectiveCtx.projectId);
-          if (renderedSuccessfully) {
-            this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
-          }
-        }
+        const result = await this.doRenderPage(
+          slug,
+          effectiveCtx,
+          effectiveOptions,
+          startTime,
+          cacheKey,
+        );
+        this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+        return result;
       },
       {
         "renderer.slug": slug,
@@ -571,24 +526,8 @@ export class Renderer {
     const isFollower = cacheKey !== null ? this.renderFlight.has(flightKey) : false;
 
     const runRender = async () => {
-      const services = this.createServicesForContext(ctx, options?.colorScheme);
-
-      let result: RenderResult;
       try {
-        result = await withTimeoutThrow(
-          services.pipeline.renderPage(slug, {
-            ...options,
-            delivery: "string",
-            projectId: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            environment: ctx.environment,
-            contentSourceId: ctx.contentSourceId,
-            skipCacheCheck: true,
-            skipCachePersist: true,
-          }),
-          RENDER_PIPELINE_TIMEOUT_MS,
-          `Render pipeline for ${ctx.projectId}:${slug}`,
-        );
+        return await this.runRenderWithCapacity(slug, ctx, options, startTime, cacheKey);
       } catch (error) {
         if (error instanceof TimeoutError) {
           logger.error("Render pipeline timeout - aborting", {
@@ -599,25 +538,6 @@ export class Renderer {
         }
         throw error;
       }
-
-      if (cacheKey !== null) {
-        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
-      }
-
-      logger.debug("Render complete (leader)", {
-        slug,
-        projectId: ctx.projectId,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
-        htmlLength: result.html?.length ?? 0,
-      });
-
-      return {
-        html: result.html,
-        frontmatter: result.frontmatter,
-        headings: result.headings,
-        ssrHash: result.ssrHash,
-        pageModule: result.pageModule,
-      };
     };
 
     const cachedData = cacheKey !== null
@@ -641,6 +561,90 @@ export class Renderer {
       pageModule: cachedData.pageModule,
       stream: null,
     };
+  }
+
+  private async runRenderWithCapacity(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    startTime: number,
+    cacheKey: string | null,
+  ): Promise<CachedRenderData> {
+    if (!(await acquireProjectSlot(ctx.projectId))) {
+      const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
+      logger.error("Per-project render limit reached", {
+        slug,
+        projectId: ctx.projectId,
+        activeRenders: activeCount,
+        limit: RENDER_PER_PROJECT_LIMIT,
+      });
+      throw SERVICE_OVERLOADED.create({
+        detail:
+          `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
+        context: {
+          slug,
+          projectId: ctx.projectId,
+          activeRenders: activeCount,
+          limit: RENDER_PER_PROJECT_LIMIT,
+        },
+      });
+    }
+
+    const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
+    if (!acquired) {
+      await releaseProjectSlot(ctx.projectId);
+      logger.error("Render capacity exceeded - service overloaded", {
+        slug,
+        projectId: ctx.projectId,
+        waiting: renderSemaphore.waiting,
+        available: renderSemaphore.available,
+      });
+      throw SERVICE_OVERLOADED.create({
+        detail:
+          `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+        context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+      });
+    }
+
+    try {
+      const services = this.createServicesForContext(ctx, options?.colorScheme);
+      const result = await withTimeoutThrow(
+        services.pipeline.renderPage(slug, {
+          ...options,
+          delivery: "string",
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          environment: ctx.environment,
+          contentSourceId: ctx.contentSourceId,
+          skipCacheCheck: true,
+          skipCachePersist: true,
+        }),
+        RENDER_PIPELINE_TIMEOUT_MS,
+        `Render pipeline for ${ctx.projectId}:${slug}`,
+      );
+
+      if (cacheKey !== null) {
+        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
+      }
+
+      logger.debug("Render complete (leader)", {
+        slug,
+        projectId: ctx.projectId,
+        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        htmlLength: result.html?.length ?? 0,
+      });
+
+      return {
+        html: result.html,
+        frontmatter: result.frontmatter,
+        headings: result.headings,
+        ssrHash: result.ssrHash,
+        pageModule: result.pageModule,
+      };
+    } finally {
+      renderSemaphore.release();
+      await releaseProjectSlot(ctx.projectId);
+    }
   }
 
   resolvePageData(
