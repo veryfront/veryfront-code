@@ -537,11 +537,10 @@ export class SSRModuleLoader {
       }
 
       if (parseResult.imports.length > 0) {
-        const preflightFs = createFileSystem();
         const { validImports, missingImports: preflightMissing } = await preflightLocalImports(
           parseResult.imports,
           filePath,
-          preflightFs,
+          this.options.adapter.fs,
         );
 
         if (preflightMissing.length > 0) {
