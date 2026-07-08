@@ -28,6 +28,7 @@ import { isProxyTrusted } from "../../utils/proxy-trust.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("hmr-handler");
+const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
 
 // Re-export the interface so external consumers can still access it from this module
 export type { HMRClientInfo } from "./hmr-client-manager.ts";
@@ -160,7 +161,10 @@ export class HMRHandler extends BaseHandler {
     }
 
     try {
-      const { socket, response } = ctx.adapter.server.upgradeWebSocket(req);
+      const { socket, response } = ctx.adapter.server.upgradeWebSocket(
+        req,
+        HMR_WEBSOCKET_UPGRADE_OPTIONS,
+      );
 
       const now = Date.now();
       const clientId = crypto.randomUUID().slice(0, 8);
