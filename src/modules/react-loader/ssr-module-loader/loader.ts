@@ -47,6 +47,7 @@ import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   getMdxEsmSsrCacheDir,
+  getMdxEsmSsrCacheDirs,
   invalidateMdxEsmModuleForCachedPath,
   lookupMdxEsmCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
@@ -283,8 +284,8 @@ export class SSRModuleLoader {
     cacheEntry: ModuleCacheEntry,
   ): Promise<void> {
     const { contentSourceId, projectId } = this.options;
-    const mdxCacheDir = projectId && contentSourceId
-      ? getMdxEsmSsrCacheDir(projectId, contentSourceId)
+    const mdxCacheDirs = projectId && contentSourceId
+      ? getMdxEsmSsrCacheDirs(projectId, contentSourceId)
       : undefined;
 
     await invalidateMdxEsmModuleForCachedPath(
@@ -292,7 +293,7 @@ export class SSRModuleLoader {
       filePath,
       this.options.projectDir,
       this.options.reactVersion,
-      mdxCacheDir,
+      mdxCacheDirs,
     );
   }
 

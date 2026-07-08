@@ -154,6 +154,17 @@ export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string)
   return join(getMdxEsmCacheDir(), hashCodeHex(projectId), hashCodeHex(contentSourceId));
 }
 
+function getLegacyRawMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
+  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+}
+
+export function getMdxEsmSsrCacheDirs(projectId: string, contentSourceId: string): string[] {
+  return [
+    getMdxEsmSsrCacheDir(projectId, contentSourceId),
+    getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId),
+  ].filter((cacheDir, index, cacheDirs) => cacheDirs.indexOf(cacheDir) === index);
+}
+
 function getModulePathCacheEntryCount(): number {
   let entries = 0;
   for (const cache of modulePathCaches.values()) entries += cache.size;
@@ -362,6 +373,12 @@ function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
   return join(baseCacheDir, projectKey, sourceKey);
 }
 
+function isSameOrDescendantPath(path: string, parentPath: string): boolean {
+  const normalizedParent = parentPath.replace(/\/+$/, "");
+  const normalizedPath = path.replace(/\/+$/, "");
+  return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
+}
+
 function invalidateMdxEsmModuleFromCache(
   cacheDir: string,
   cache: Map<string, string>,
@@ -410,19 +427,25 @@ export async function invalidateMdxEsmModuleForCachedPath(
   filePath: string,
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
-  cacheDir = getMdxEsmCacheDirForCachedPath(cachedPath),
+  cacheDirs: string | string[] | null = getMdxEsmCacheDirForCachedPath(cachedPath),
 ): Promise<boolean> {
-  if (!cacheDir) return false;
+  const candidateDirs = Array.isArray(cacheDirs) ? cacheDirs : cacheDirs ? [cacheDirs] : [];
+  if (candidateDirs.length === 0) return false;
 
-  const cache = await getModulePathCache(cacheDir);
-  return invalidateMdxEsmModuleFromCache(
-    cacheDir,
-    cache,
-    filePath,
-    projectDir,
-    reactVersion,
-    cachedPath,
-  );
+  for (const cacheDir of candidateDirs) {
+    const cache = await getModulePathCache(cacheDir);
+    const invalidated = invalidateMdxEsmModuleFromCache(
+      cacheDir,
+      cache,
+      filePath,
+      projectDir,
+      reactVersion,
+      cachedPath,
+    );
+    if (invalidated) return true;
+  }
+
+  return false;
 }
 
 function extractNormalizedCachedModulePath(cachedKey: string): string {
@@ -456,26 +479,39 @@ export async function clearMdxEsmCacheNamespace(
     encodeURIComponent(projectId),
     encodeURIComponent(contentSourceId),
   );
-  const cacheDirs = new Set([
+  const currentSsrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+  const cacheDirs = new Set([encodedCacheDir, currentSsrCacheDir]);
+  const removeDirs = new Set([
     encodedCacheDir,
-    getMdxEsmSsrCacheDir(projectId, contentSourceId),
+    currentSsrCacheDir,
+    ...getMdxEsmSsrCacheDirs(projectId, contentSourceId),
   ]);
+  const affectedCacheDirs = new Set(removeDirs);
 
-  for (const cacheDir of cacheDirs) {
+  for (const loadedCacheDir of modulePathCaches.keys()) {
+    for (const cacheDir of removeDirs) {
+      if (isSameOrDescendantPath(loadedCacheDir, cacheDir)) {
+        affectedCacheDirs.add(loadedCacheDir);
+        break;
+      }
+    }
+  }
+
+  for (const cacheDir of affectedCacheDirs) {
     modulePathCaches.delete(cacheDir);
     modulePathCacheLoaded.delete(cacheDir);
   }
 
   for (const key of Array.from(verifiedModuleDeps.keys())) {
-    for (const cacheDir of cacheDirs) {
-      if (String(key).startsWith(cacheDir)) {
+    for (const cacheDir of removeDirs) {
+      if (isSameOrDescendantPath(String(key), cacheDir)) {
         verifiedModuleDeps.delete(key);
         break;
       }
     }
   }
 
-  for (const cacheDir of cacheDirs) {
+  for (const cacheDir of removeDirs) {
     try {
       await getLocalFs().remove(cacheDir, { recursive: true });
     } catch (error) {
@@ -486,6 +522,8 @@ export async function clearMdxEsmCacheNamespace(
         });
       }
     }
+
+    if (!cacheDirs.has(cacheDir)) continue;
 
     try {
       await getLocalFs().mkdir(cacheDir, { recursive: true });
