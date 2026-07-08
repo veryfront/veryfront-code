@@ -311,11 +311,10 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(EXTRACTION_TIMEOUT_MS, 10 * 60_000);
   });
 
-  it("requests markdown extraction for rich document types", () => {
+  it("requests markdown extraction for rich non-PDF document types and plain text for PDFs", () => {
     assertEquals(extractionConfigForMimeType(PPT_MIME_TYPE), { outputFormat: "markdown" });
     assertEquals(extractionConfigForMimeType(PPTX_MIME_TYPE), { outputFormat: "markdown" });
     assertEquals(extractionConfigForMimeType("application/pdf"), {
-      outputFormat: "markdown",
       images: { extractImages: false },
       pdfOptions: {
         extractImages: false,
@@ -350,7 +349,6 @@ describe("ext-document-kreuzberg extension", () => {
       bytes: "%PDF-1.4\n",
       mimeType: "application/pdf",
       config: {
-        outputFormat: "markdown",
         images: { extractImages: false },
         pdfOptions: {
           extractImages: false,
@@ -459,7 +457,6 @@ describe("ext-document-kreuzberg extension", () => {
       bytes: "%PDF-1.4\n",
       mimeType: "application/pdf",
       config: {
-        outputFormat: "markdown",
         images: { extractImages: false },
         pdfOptions: {
           extractImages: false,

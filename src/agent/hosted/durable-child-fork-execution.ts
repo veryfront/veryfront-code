@@ -3,7 +3,10 @@ import type {
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
-import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
+import {
+  buildChildRunResultSummary,
+  type ChildRunResultSummary,
+} from "../child-run/result-summary.ts";
 import {
   type ConversationRunTargets,
   resolveConversationRunTargets,
@@ -39,7 +42,7 @@ export type HostedDurableChildInvokeResult = {
   status: "completed" | "failed";
   text?: string;
   error?: string;
-  summary?: { text: string };
+  summary?: ChildRunResultSummary;
   steps?: number;
   toolCalls?: ChildRunExecutionSnapshot["toolCalls"];
   toolResults?: ChildRunExecutionSnapshot["toolResults"];

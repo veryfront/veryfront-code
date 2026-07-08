@@ -8,6 +8,7 @@ import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -46,6 +47,7 @@ export class ApiCacheBackend implements CacheBackend {
     } = {},
   ) {
     this.apiBaseUrl = options.apiBaseUrl ??
+      getHostEnv("VERYFRONT_API_BASE_URL") ??
       getEnvValue("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix ?? "";
@@ -69,10 +71,18 @@ export class ApiCacheBackend implements CacheBackend {
     body?: Record<string, unknown>,
   ): Promise<T | null> {
     const reqCtx = getCurrentRequestContext();
+    const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
-    // Prefer request context token (from proxy) - this is how production works
-    const token = reqCtx?.token || envToken || null;
-    const tokenSource = reqCtx?.token ? "request" : envToken ? "env" : "none";
+    // Cache API calls are framework-owned operations; use the host token when
+    // available so project/request-scoped credentials cannot shadow it.
+    const token = hostToken || reqCtx?.token || envToken || null;
+    const tokenSource = hostToken
+      ? "host-env"
+      : reqCtx?.token
+      ? "request"
+      : envToken
+      ? "env"
+      : "none";
     const projectRef = reqCtx?.projectId || reqCtx?.projectSlug ||
       tryGetCacheKeyContext()?.projectId || null;
 

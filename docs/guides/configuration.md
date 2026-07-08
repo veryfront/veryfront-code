@@ -173,11 +173,6 @@ defineConfig({
         paths: ["workflows"],
       },
     },
-    work: {
-      discovery: {
-        paths: ["work"],
-      },
-    },
     tasks: {
       discovery: {
         paths: ["tasks"],
@@ -190,7 +185,7 @@ defineConfig({
 Notes:
 
 - `paths` are relative to your project root.
-- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, `work`, and `tasks`.
+- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
 - Set `enabled: false` to disable discovery for that primitive.
 
 ### AI providers and MCP

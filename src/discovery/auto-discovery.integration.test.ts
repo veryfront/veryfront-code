@@ -8,7 +8,6 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { toolRegistry } from "#veryfront/tool";
 import { promptRegistry } from "#veryfront/prompt";
-import { workRegistry } from "#veryfront/work";
 import { resourceRegistry } from "#veryfront/resource";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createMockAdapter } from "#veryfront/platform";
@@ -32,7 +31,6 @@ describe(
       toolRegistry.clear();
       resourceRegistry.clear();
       promptRegistry.clear();
-      workRegistry.clear();
       agentRegistry.clear();
     });
 
@@ -98,7 +96,6 @@ describe(
           resourceDirs: [],
           promptDirs: [],
           workflowDirs: [],
-          workDirs: [],
           taskDirs: [],
           skillDirs: [],
         });
@@ -137,18 +134,6 @@ describe(
       });
 
       assertEquals(result.prompts.size >= 1, true);
-    });
-
-    it("should discover Work definitions from work/ directory", async () => {
-      const result = await discoverAll({
-        baseDir: getFixturePath(),
-        verbose: false,
-      });
-
-      const definition = result.works.get("supplier-invoice-processing");
-      assertExists(definition);
-      assertEquals(definition.outcome, "Resolve all open supplier invoices.");
-      assertEquals(workRegistry.getRequired("supplier-invoice-processing"), definition);
     });
 
     it("should register discovered tools in registry", async () => {
@@ -225,7 +210,6 @@ describe(
           resourceDirs: [],
           promptDirs: [],
           workflowDirs: [],
-          workDirs: [],
           taskDirs: [],
           evalDirs: [],
           skillDirs: [],

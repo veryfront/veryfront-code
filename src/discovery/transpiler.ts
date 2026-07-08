@@ -29,7 +29,6 @@ import * as resourceMod from "#veryfront/resource";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
 import * as workflowMod from "#veryfront/workflow";
-import * as workMod from "#veryfront/work";
 import * as evalMod from "#veryfront/eval";
 import * as metricsMod from "#veryfront/metrics";
 import * as schemasMod from "#veryfront/schemas";
@@ -114,7 +113,6 @@ async function ensureVeryfrontGlobals(): Promise<void> {
     "veryfront/embedding": embeddingMod,
     "veryfront/knowledge": knowledgeMod,
     "veryfront/workflow": workflowMod,
-    "veryfront/work": workMod,
     "veryfront/eval": evalMod,
     "veryfront/metrics": metricsMod,
     "veryfront/schemas": schemasMod,
