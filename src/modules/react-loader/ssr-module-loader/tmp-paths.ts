@@ -11,7 +11,8 @@ export function getTmpDirCacheKey(
   contentSourceId: string,
 ): string {
   const projectKey = hashCodeHex(projectId);
-  return `${baseCacheDir}|${projectKey}|${contentSourceId}`;
+  const sourceKey = hashCodeHex(contentSourceId);
+  return `${baseCacheDir}|${projectKey}|${sourceKey}`;
 }
 
 export function buildTmpDirPath(
@@ -20,7 +21,8 @@ export function buildTmpDirPath(
   contentSourceId: string,
 ): string {
   const projectKey = hashCodeHex(projectId);
-  return join(baseCacheDir, projectKey, contentSourceId);
+  const sourceKey = hashCodeHex(contentSourceId);
+  return join(baseCacheDir, projectKey, sourceKey);
 }
 
 export function buildTempModulePath(

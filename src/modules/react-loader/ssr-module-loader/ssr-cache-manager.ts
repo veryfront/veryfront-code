@@ -185,6 +185,7 @@ export class SSRCacheManager {
   invalidateFilePathCacheEntry(filePath: string, cacheEntry?: ModuleCacheEntry): void {
     globalModuleCache.delete(this.getCacheKey(filePath));
     if (cacheEntry) {
+      this.invalidateMatchingCacheEntries(cacheEntry);
       verifiedHttpBundlePaths.delete(`${cacheEntry.tempPath}:${cacheEntry.contentHash}`);
     }
   }
@@ -198,6 +199,22 @@ export class SSRCacheManager {
     globalModuleCache.delete(filePathCacheKey);
     if (cacheEntry) {
       verifiedHttpBundlePaths.delete(`${cacheEntry.tempPath}:${cacheEntry.contentHash}`);
+    }
+  }
+
+  private invalidateMatchingCacheEntries(cacheEntry: ModuleCacheEntry): void {
+    const keysToDelete: string[] = [];
+    for (const [key, entry] of globalModuleCache.entries()) {
+      if (
+        entry.tempPath === cacheEntry.tempPath &&
+        entry.contentHash === cacheEntry.contentHash
+      ) {
+        keysToDelete.push(key);
+      }
+    }
+
+    for (const key of keysToDelete) {
+      globalModuleCache.delete(key);
     }
   }
 

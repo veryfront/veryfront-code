@@ -7,18 +7,28 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
   it("builds a stable tmp dir cache key with hashed project id", () => {
     const key = getTmpDirCacheKey("/cache/mdx", "my/project", "release-1");
-    assertEquals(key, `/cache/mdx|${hashCodeHex("my/project")}|release-1`);
+    assertEquals(key, `/cache/mdx|${hashCodeHex("my/project")}|${hashCodeHex("release-1")}`);
   });
 
   it("builds tmp dir path with hashed project id", () => {
     const path = buildTmpDirPath("/cache/mdx", "my/project", "branch-main");
-    assertEquals(path, `/cache/mdx/${hashCodeHex("my/project")}/branch-main`);
+    assertEquals(path, `/cache/mdx/${hashCodeHex("my/project")}/${hashCodeHex("branch-main")}`);
+  });
+
+  it("does not nest slash-containing content source ids under their prefixes", () => {
+    const parent = buildTmpDirPath("/cache/mdx", "my/project", "preview-feature");
+    const child = buildTmpDirPath("/cache/mdx", "my/project", "preview-feature/refactor");
+
+    assert(
+      !child.startsWith(`${parent}/`),
+      `child source cache dir must not be nested under parent source: ${child}`,
+    );
   });
 
   it("builds hashed temp module path for files under project dir", () => {
     const projectHash = hashCodeHex("my/project");
     const tempPath = buildTempModulePath(
-      `/cache/mdx/${projectHash}/release-1`,
+      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}`,
       "/repo/project/src/page.tsx",
       "/repo/project",
       "0.1.7-rc.49",
@@ -27,20 +37,23 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
 
     assertEquals(
       tempPath,
-      `/cache/mdx/${projectHash}/release-1/src/page.v0-1-7-rc-49.deadbeef.js`,
+      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}/src/page.v0-1-7-rc-49.deadbeef.js`,
     );
   });
 
   it("keeps absolute path structure when file is outside project dir", () => {
     const projectHash = hashCodeHex("my/project");
     const tempPath = buildTempModulePath(
-      `/cache/mdx/${projectHash}/release-1`,
+      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}`,
       "/tmp/external.tsx",
       "/repo/project",
       "0.1.7-rc.49",
     );
 
-    assertEquals(tempPath, `/cache/mdx/${projectHash}/release-1/tmp/external.v0-1-7-rc-49.js`);
+    assertEquals(
+      tempPath,
+      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}/tmp/external.v0-1-7-rc-49.js`,
+    );
   });
 
   it("should not produce URL-encoded characters in cache paths", () => {
