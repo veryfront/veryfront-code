@@ -99,7 +99,6 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
-  "work.md",
   "workflows-advanced.md",
   "eval.md",
 ] as const;

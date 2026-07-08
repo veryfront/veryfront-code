@@ -19,7 +19,6 @@ export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/embedding",
   "veryfront/knowledge",
   "veryfront/workflow",
-  "veryfront/work",
   "veryfront/eval",
   "veryfront/metrics",
   "veryfront/schemas",
