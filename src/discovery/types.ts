@@ -9,7 +9,6 @@ import type { Prompt } from "#veryfront/prompt/types.ts";
 import type { Resource } from "#veryfront/resource/types.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
-import type { WorkDefinition } from "#veryfront/work";
 import type { Workflow } from "#veryfront/workflow/types.ts";
 import type { TaskDefinition } from "#veryfront/task/types.ts";
 import type { EvalDefinition } from "#veryfront/eval";
@@ -42,7 +41,6 @@ export interface DiscoveryConfig {
   resourceDirs?: string[];
   promptDirs?: string[];
   workflowDirs?: string[];
-  workDirs?: string[];
   taskDirs?: string[];
   scheduleDirs?: string[];
   webhookDirs?: string[];
@@ -61,7 +59,6 @@ export interface DiscoveryResult {
   resources: Map<string, Resource>;
   prompts: Map<string, Prompt>;
   workflows: Map<string, Workflow>;
-  works: Map<string, WorkDefinition>;
   tasks: Map<string, TaskDefinition>;
   schedules: Map<string, ScheduleDefinition>;
   webhooks: Map<string, WebhookDefinition>;

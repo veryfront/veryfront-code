@@ -173,7 +173,6 @@ function createEmptyDiscoveryResult(): DiscoveryResult {
     resources: new Map(),
     prompts: new Map(),
     workflows: new Map(),
-    works: new Map(),
     tasks: new Map(),
     schedules: new Map(),
     webhooks: new Map(),
