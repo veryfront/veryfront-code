@@ -24,9 +24,41 @@ import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
 import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
+import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 describe("MDX module path cache", () => {
+  it("partitions SSR cache directories by runtime version", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-versioned-cache-dir-" });
+    const projectId = "project-versioned-cache";
+    const contentSourceId = "preview-main";
+
+    try {
+      await runWithCacheDir(cacheBase, () => {
+        const projectKey = hashCodeHex(projectId);
+        const sourceKey = hashCodeHex(contentSourceId);
+        const versionKey = formatCacheVersionSegment(RUNTIME_VERSION);
+        const currentDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+
+        assertEquals(
+          currentDir,
+          join(cacheBase, "veryfront-mdx-esm", versionKey, projectKey, sourceKey),
+        );
+        assertEquals(
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+          [
+            currentDir,
+            join(cacheBase, "veryfront-mdx-esm", projectKey, sourceKey),
+            join(cacheBase, "veryfront-mdx-esm", projectKey, contentSourceId),
+          ],
+        );
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+    }
+  });
+
   it("clears a project/content-source namespace from disk and memory", async () => {
     clearModulePathCache();
 
@@ -753,6 +785,61 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
         await waitForDiskCleanup();
         clearModulePathCache();
         assertEquals((await getModulePathCache(legacyRawCacheDir)).get(key), undefined);
+      });
+    } finally {
+      await Promise.all([
+        remove(cacheBase, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("self-heals stale entries from older versioned cache dirs", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-old-version-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-old-version-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const projectId = "project-old-version-selfheal";
+    const contentSourceId = "preview-main";
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const oldVersionCacheDir = join(
+          cacheBase,
+          "veryfront-mdx-esm",
+          formatCacheVersionSegment("0.1.1030"),
+          hashCodeHex(projectId),
+          hashCodeHex(contentSourceId),
+        );
+        const cachedPath = join(oldVersionCacheDir, buildMdxEsmModuleFileName("oldversion"));
+
+        await getLocalFs().mkdir(oldVersionCacheDir, { recursive: true });
+        await writeTextFile(cachedPath, `export default "old-version";`);
+        await writeTextFile(
+          join(oldVersionCacheDir, "_index.json"),
+          JSON.stringify({ [key]: cachedPath }),
+        );
+        const cache = await getModulePathCache(oldVersionCacheDir);
+        verifiedModuleDeps.set(`${cachedPath}:${key}`, true);
+
+        const invalidated = await invalidateMdxEsmModuleForCachedPath(
+          cachedPath,
+          filePath,
+          projectDir,
+          "19.1.1",
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+        );
+
+        assertEquals(invalidated, true);
+        assertEquals(cache.get(key), undefined);
+        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), undefined);
+
+        await waitForDiskCleanup();
+        clearModulePathCache();
+        assertEquals((await getModulePathCache(oldVersionCacheDir)).get(key), undefined);
       });
     } finally {
       await Promise.all([

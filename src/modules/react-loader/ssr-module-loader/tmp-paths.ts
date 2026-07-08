@@ -3,26 +3,32 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
+import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 export function getTmpDirCacheKey(
   baseCacheDir: string,
   projectId: string,
   contentSourceId: string,
+  runtimeVersion: string = RUNTIME_VERSION,
 ): string {
+  const versionKey = formatCacheVersionSegment(runtimeVersion);
   const projectKey = hashCodeHex(projectId);
   const sourceKey = hashCodeHex(contentSourceId);
-  return `${baseCacheDir}|${projectKey}|${sourceKey}`;
+  return `${baseCacheDir}|${versionKey}|${projectKey}|${sourceKey}`;
 }
 
 export function buildTmpDirPath(
   baseCacheDir: string,
   projectId: string,
   contentSourceId: string,
+  runtimeVersion: string = RUNTIME_VERSION,
 ): string {
+  const versionKey = formatCacheVersionSegment(runtimeVersion);
   const projectKey = hashCodeHex(projectId);
   const sourceKey = hashCodeHex(contentSourceId);
-  return join(baseCacheDir, projectKey, sourceKey);
+  return join(baseCacheDir, versionKey, projectKey, sourceKey);
 }
 
 export function buildTempModulePath(
@@ -37,7 +43,7 @@ export function buildTempModulePath(
     ? filePath.substring(normalizedProjectDir.length)
     : filePath;
 
-  const versionPrefix = version.replace(/\./g, "-");
+  const versionPrefix = formatCacheVersionSegment(version).replace(/^v/, "");
   const hashSuffix = contentHash
     ? `.v${versionPrefix}.${contentHash.slice(0, 8)}`
     : `.v${versionPrefix}`;
