@@ -25,11 +25,17 @@ commit.
 - [ ] **Storybook three-tier harness assertion** — folds into E7 (tracking).
 
 ## E0.5 — Characterization safety net
-- [ ] Characterization tests over the god file + untested components (must
-      precede E1/E3).
+- [~] Characterization tests over the god file + untested components (must
+      precede E1/E3). God-file (`<Chat>`) render/seed behaviours landing;
+      full useChat/persistence-effect characterization needs a `useChat` mock
+      (tracked for the E3 PR, alongside the invariants below).
 
-## E2 — React 19 forwardRef codemod (safe, mechanical; burns the forwardRef ratchet → 0)
-- [ ] In progress.
+## E2 — React 19 forwardRef codemod (safe, mechanical; burns the forwardRef ratchet → 0) — ✅ DONE
+- [x] All 29 forwardRef sites / 17 files converted to React-19 `ref` prop.
+      forwardRef ratchet locked at 0. Full chat suite (29 files) + consumer gate
+      green. Bonus: plain-function form gives consumers stricter prop types than
+      forwardRef masked (gate now enforces Chat.Root/Chat.Input controlled props).
+      Commit `fe115dadf`.
 
 ## E1 / E3 / E4 / E5 / E6 — context spine, state glue, depth
 - [ ] Pending (gated behind E0.5 safety net + spec review per Q5).
