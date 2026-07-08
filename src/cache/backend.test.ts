@@ -529,6 +529,56 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   }
 });
 
+Deno.test("ApiCacheBackend uses host API token before request token", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let capturedAuthorization = "";
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "run-scoped-request-token",
+      projectId: "project-123",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    capturedAuthorization = new Headers(init?.headers).get("authorization") ?? "";
+    return Promise.resolve(
+      new Response(JSON.stringify({ deleted: 3 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      circuitBreakerName: "api-cache-host-token-test",
+    });
+    const deleted = await cache.delByPattern("agent:*");
+
+    assertEquals(deleted, 3);
+    assertEquals(capturedAuthorization, "Bearer host-framework-token");
+  } finally {
+    if (originalAdapter === undefined) {
+      delete globals.__vf_multi_project_adapter;
+    } else {
+      globals.__vf_multi_project_adapter = originalAdapter;
+    }
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
 Deno.test("RedisCacheBackend type property", async () => {
   const { RedisCacheBackend } = await importBackend();
 
@@ -939,5 +989,61 @@ Deno.test({
 
     const backend = await createCacheBackend({ preferredBackend: "api" });
     assertEquals(backend.type, "api");
+  },
+});
+
+Deno.test({
+  name:
+    "createCacheBackend auto-selects API backend from host API base URL under project env isolation",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { createCacheBackend } = await importBackend();
+    const globals = globalThis as Record<string, unknown>;
+    const originalProjectEnvGetter = globals.__vfProjectEnvGetter;
+    const originalProjectEnvActiveChecker = globals.__vfProjectEnvActiveChecker;
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalProxyMode = Deno.env.get("PROXY_MODE");
+    const originalNodeEnv = Deno.env.get("NODE_ENV");
+
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    Deno.env.delete("PROXY_MODE");
+    Deno.env.delete("NODE_ENV");
+    globals.__vfProjectEnvGetter = () => undefined;
+    globals.__vfProjectEnvActiveChecker = () => true;
+
+    try {
+      const backend = await createCacheBackend({
+        circuitBreakerName: "api-cache-host-base-url-auto-select-test",
+      });
+
+      assertEquals(backend.type, "api");
+    } finally {
+      if (originalProjectEnvGetter === undefined) {
+        delete globals.__vfProjectEnvGetter;
+      } else {
+        globals.__vfProjectEnvGetter = originalProjectEnvGetter;
+      }
+      if (originalProjectEnvActiveChecker === undefined) {
+        delete globals.__vfProjectEnvActiveChecker;
+      } else {
+        globals.__vfProjectEnvActiveChecker = originalProjectEnvActiveChecker;
+      }
+      if (originalApiBaseUrl === undefined) {
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+      } else {
+        Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      }
+      if (originalProxyMode === undefined) {
+        Deno.env.delete("PROXY_MODE");
+      } else {
+        Deno.env.set("PROXY_MODE", originalProxyMode);
+      }
+      if (originalNodeEnv === undefined) {
+        Deno.env.delete("NODE_ENV");
+      } else {
+        Deno.env.set("NODE_ENV", originalNodeEnv);
+      }
+    }
   },
 });
