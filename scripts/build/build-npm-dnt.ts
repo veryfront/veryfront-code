@@ -60,6 +60,10 @@ const entryPoints = Object.entries(denoJson.exports as Record<string, string>)
 // dnt ignores mappings it doesn't encounter, so including all is safe.
 const esmShMappings = buildEsmShMappings(denoJson.imports as Record<string, string>);
 
+// npm range for the bare react/react-dom peer the emitted package imports (see
+// the `./react/*.ts` mappings below). Derived from the pinned esm.sh version.
+const reactRange = "^19.2.4";
+
 await build({
 	entryPoints,
 	outDir: "./npm",
@@ -105,6 +109,39 @@ await build({
 	mappings: {
 		// esm.sh URLs - derived from deno.json imports
 		...esmShMappings,
+		// React must resolve to the CONSUMER's bare `react` / `react-dom` in the
+		// emitted package. The repo pins react through the local `./react/*.ts`
+		// deno shims (so Deno imports a stable esm.sh build); if dnt bundles those
+		// into a local `npm/esm/react/react.js` and rewrites every component
+		// import to it, the shim's multi-hop `export { HTMLAttributes, … } from`
+		// re-export collapses `interface Props extends React.HTMLAttributes<…>` to
+		// `{}` under a consumer's `tsc` — stripping `children`/`className`/handlers
+		// from every component's public type (invisible to `deno check`). Mapping
+		// the local shims straight to the bare npm specifiers makes emitted code
+		// `import … from "react"`, so `React.HTMLAttributes` resolves against the
+		// consumer's own `@types/react`. See scripts/typecheck/README.md.
+		"./react/react.ts": { name: "react", version: reactRange },
+		"./react/react-dom.ts": { name: "react-dom", version: reactRange },
+		"./react/react-dom-client.ts": {
+			name: "react-dom",
+			version: reactRange,
+			subPath: "client",
+		},
+		"./react/react-dom-server.ts": {
+			name: "react-dom",
+			version: reactRange,
+			subPath: "server",
+		},
+		"./react/jsx-runtime.ts": {
+			name: "react",
+			version: reactRange,
+			subPath: "jsx-runtime",
+		},
+		"./react/jsx-dev-runtime.ts": {
+			name: "react",
+			version: reactRange,
+			subPath: "jsx-dev-runtime",
+		},
 	},
 
 	package: {
@@ -190,6 +227,16 @@ await build({
 		if (patchedReactShimCount > 0) {
 			console.log(`📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`);
 		}
+
+		// Guard the react-mapping fix: emitted component `.d.ts` MUST import react
+		// via the bare `react` specifier so `React.HTMLAttributes` resolves against
+		// the consumer's `@types/react`. If dnt ever bundles a local react shim
+		// again, `interface Props extends React.HTMLAttributes<…>` collapses to `{}`
+		// for consumers (children/className/handlers vanish) while `deno check`
+		// stays green. See scripts/typecheck/README.md.
+		assertConsumerReactImport(
+			"./npm/esm/src/react/components/ui/app-shell.d.ts",
+		);
 
 		// Keep browser-safe client exports free of dnt Node polyfill imports.
 		// These modules are consumed directly in browser bundles and do not rely on
@@ -295,6 +342,28 @@ function addTypesExportEntries(
 }
 
 /** Patch a generated file with string or regex replacement. Throws if pattern not found. */
+/**
+ * Assert an emitted component `.d.ts` imports React via the bare `react`
+ * specifier (a consumer's own `@types/react`), not a bundled local react shim.
+ * See the call site + scripts/typecheck/README.md for why this matters.
+ */
+function assertConsumerReactImport(path: string): void {
+	const content = Deno.readTextFileSync(path);
+	const bareImport = /import \* as React from ["']react["'];/.test(content);
+	const shimImport = /import \* as React from ["'][^"']*\/react\/react\.js["'];/
+		.test(content);
+	if (!bareImport || shimImport) {
+		throw new Error(
+			`Consumer react-import guard failed for ${path}: emitted component ` +
+				`types must import from the bare "react" specifier, not a bundled ` +
+				`react shim, or every \`extends React.HTMLAttributes\` component ` +
+				`ships with its DOM props stripped for consumers. See ` +
+				`scripts/typecheck/README.md.`,
+		);
+	}
+	console.log(`✅ Verified consumer react import in ${path}`);
+}
+
 function patchFile(
 	path: string,
 	search: string | RegExp,
