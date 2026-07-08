@@ -1,4 +1,5 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import type { LocalImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
 
 interface PreflightImportsResult {
@@ -13,6 +14,7 @@ export async function preflightLocalImports(
 ): Promise<PreflightImportsResult> {
   const validImports: LocalImport[] = [];
   const missingImports: MissingImport[] = [];
+  const localFs = createFileSystem();
 
   for (const imp of imports) {
     if (!imp.absolutePath.startsWith("/")) {
@@ -20,8 +22,10 @@ export async function preflightLocalImports(
       continue;
     }
 
+    const statFs = isFrameworkSourcePath(imp.absolutePath) ? localFs : fs;
+
     try {
-      const stat = await fs.stat(imp.absolutePath);
+      const stat = await statFs.stat(imp.absolutePath);
       if (stat?.isFile) {
         validImports.push(imp);
       } else {
