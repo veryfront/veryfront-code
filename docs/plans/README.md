@@ -7,4 +7,5 @@ and are not part of the published documentation surface.
 
 | Plan | Status |
 | --- | --- |
+| [**START HERE** — implementation kickoff handoff](./START-HERE.md) | — |
 | [`veryfront/chat` composition & API overhaul](./2026-07-08-chat-composition-overhaul.md) — full epic breakdown, from the [handoff brief](./2026-07-08-chat-composition-handoff.md) | Proposed |
