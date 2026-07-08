@@ -1,4 +1,5 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
@@ -35,6 +36,10 @@ import {
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
+
+function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
+  return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
+}
 
 interface WebSocketDeps {
   apiBaseUrl: string;
@@ -152,7 +157,7 @@ export class WebSocketManager {
     logger.debug(
       "Connecting to WebSocket",
       this.getConnectionLogContext({
-        url,
+        url: sanitizeWebSocketLogUrl(url),
         consecutiveFailures: this.wsConsecutiveFailures,
       }),
     );
@@ -214,7 +219,7 @@ export class WebSocketManager {
             projectId,
             project_id: projectId,
             connectionId,
-            url,
+            url: sanitizeWebSocketLogUrl(url),
             delayMs: delay,
             totalPokesReceived: this.pokeMetrics.received,
             consecutiveFailures: this.wsConsecutiveFailures,
@@ -234,7 +239,7 @@ export class WebSocketManager {
             "WebSocket error",
             this.getConnectionLogContext({
               type: event.type,
-              url: (event.target as WebSocket)?.url,
+              url: sanitizeWebSocketLogUrl((event.target as WebSocket)?.url),
               readyState: (event.target as WebSocket)?.readyState,
               consecutiveFailures: this.wsConsecutiveFailures,
             }),

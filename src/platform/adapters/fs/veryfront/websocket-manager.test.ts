@@ -89,6 +89,7 @@ function withJsonLogFormat<T>(fn: () => T): T {
 }
 
 function createWebSocketManager(options: {
+  apiBaseUrl?: string;
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
@@ -109,7 +110,7 @@ function createWebSocketManager(options: {
   const invalidationCallbacks: InvalidationCallbacks = options.invalidationCallbacks ?? {};
 
   return new WebSocketManager({
-    apiBaseUrl: "https://api.example.com/api",
+    apiBaseUrl: options.apiBaseUrl ?? "https://api.example.com/api",
     apiToken: "test-token",
     projectSlug: "test-project",
     cache,
@@ -497,6 +498,40 @@ describe("WebSocketManager", () => {
     } finally {
       debugCapture.restore();
       logCapture.restore();
+      warnCapture.restore();
+    }
+  });
+
+  it("redacts WebSocket URL credentials from reconnect warnings", () => {
+    const warnCapture = captureConsoleMethod("warn");
+
+    try {
+      withJsonLogFormat(() => {
+        const manager = createWebSocketManager({
+          apiBaseUrl: "https://user:secret@api.example.com/api",
+        });
+        manager.connect("project-1");
+
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+        socket.emitClose();
+
+        const rawLog = warnCapture.getOutput();
+        assertEquals(rawLog.includes("user:secret"), false);
+        assertEquals(rawLog.includes("secret@"), false);
+
+        const closeEntry = JSON.parse(rawLog) as {
+          message: string;
+          context?: {
+            url?: string;
+          };
+        };
+        assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
+        assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
+
+        manager.dispose();
+      });
+    } finally {
       warnCapture.restore();
     }
   });
