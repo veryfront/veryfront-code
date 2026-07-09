@@ -25,7 +25,7 @@ export function buildRouteRegistrySpanAttributes(
       "unknown";
   }
 
-  const projectId = ctx.projectId ?? ctx.enriched?.projectId;
+  const projectId = ctx.projectId;
   if (projectId) {
     attributes["veryfront.project_id"] = projectId;
     attributes["project.id"] = projectId;

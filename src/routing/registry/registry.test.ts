@@ -115,6 +115,24 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals("veryfront.environment_name" in attributes, false);
     });
 
+    it("does not emit slug fallbacks as project id attributes", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectSlug: "ops-agent",
+        enriched: {
+          projectSlug: "ops-agent",
+          projectId: "ops-agent",
+        } as HandlerContext["enriched"],
+      });
+
+      assertEquals(attributes["veryfront.project_slug"], "ops-agent");
+      assertEquals(attributes["project.slug"], "ops-agent");
+      assertEquals("veryfront.project_id" in attributes, false);
+      assertEquals("project.id" in attributes, false);
+    });
+
     it("should return response from first matching handler", async () => {
       const registry = new RouteRegistry();
       registry.register(
