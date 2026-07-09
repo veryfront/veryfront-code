@@ -257,6 +257,7 @@ function resolveLlmObservabilityEnabled(
 function resolveLlmObservabilityHeaders(
   env: NodeHostedAgentServiceTelemetryEnv,
   tracesHeaders: Record<string, string> | undefined,
+  mlAppFallback: string | undefined,
 ): Record<string, string> | undefined {
   const datadogApiKey = getHeaderValue(tracesHeaders, "dd-api-key") ??
     env.DD_API_KEY ??
@@ -267,7 +268,9 @@ function resolveLlmObservabilityHeaders(
   setHeaderValue(headers, "dd-api-key", datadogApiKey);
   setHeaderValue(headers, "dd-otlp-source", "llmobs");
 
-  const mlApp = env.DD_LLMOBS_ML_APP;
+  const mlApp = env.DD_LLMOBS_ML_APP?.trim() ||
+    getHeaderValue(headers, "dd-ml-app")?.trim() ||
+    mlAppFallback?.trim();
   if (mlApp) {
     setHeaderValue(headers, "dd-ml-app", mlApp);
   }
@@ -322,14 +325,21 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
   const baseEndpoint = options.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const exporterHeaders = parseExporterHeaders(options.env.OTEL_EXPORTER_OTLP_HEADERS);
   const tracesHeaders = resolveSignalHeaders(options.env, "TRACES");
-  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(options.env, tracesHeaders);
+  const serviceName = resolveServiceName(options.env, options.defaultServiceName);
+  const serviceVersion = resolveServiceVersion(options.env, options.defaultServiceVersion);
+  const deploymentEnvironment = resolveDeploymentEnvironment(options.env);
+  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(
+    options.env,
+    tracesHeaders,
+    serviceName,
+  );
   const llmObservabilityEnabled = resolveLlmObservabilityEnabled(options.env, tracesHeaders);
 
   return {
     enabled: tracesEnabled || llmObservabilityEnabled || metricsEnabled || logsEnabled,
-    serviceName: resolveServiceName(options.env, options.defaultServiceName),
-    serviceVersion: resolveServiceVersion(options.env, options.defaultServiceVersion),
-    deploymentEnvironment: resolveDeploymentEnvironment(options.env),
+    serviceName,
+    serviceVersion,
+    deploymentEnvironment,
     samplingRatio: resolveSamplingRatio(options.env),
     exporterHeaders,
     tracesEnabled,

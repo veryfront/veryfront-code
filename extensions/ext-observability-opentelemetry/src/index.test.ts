@@ -147,6 +147,39 @@ describe("ext-observability-opentelemetry config helpers", () => {
     });
   });
 
+  it("defaults the Datadog LLM app to the resolved service name", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=investment-ops-agent",
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+      DD_LLMOBS_ENABLED: "true",
+    }));
+
+    assertEquals(config.serviceName, "investment-ops-agent");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "investment-ops-agent",
+    });
+  });
+
+  it("preserves a Datadog LLM app supplied through OTLP headers", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=investment-ops-agent",
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted,dd-ml-app=header-app",
+      DD_LLMOBS_ENABLED: "true",
+    }));
+
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "header-app",
+    });
+  });
+
   it("resolves Datadog unified service tags from OTel resource attributes", () => {
     const config = resolveOtlpExtensionConfig(env({
       OTEL_RESOURCE_ATTRIBUTES:

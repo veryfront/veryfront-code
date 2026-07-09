@@ -330,6 +330,7 @@ function resolveLlmObservabilityEnabled(
 function resolveLlmObservabilityHeaders(
   read: EnvReader,
   tracesHeaders: Record<string, string>,
+  mlAppFallback: string | undefined,
 ): Record<string, string> {
   const headers = { ...tracesHeaders };
   const datadogApiKey = getHeaderValue(headers, "dd-api-key") ??
@@ -340,7 +341,9 @@ function resolveLlmObservabilityHeaders(
   }
   setHeaderValue(headers, "dd-otlp-source", "llmobs");
 
-  const mlApp = read("DD_LLMOBS_ML_APP");
+  const mlApp = read("DD_LLMOBS_ML_APP")?.trim() ||
+    getHeaderValue(headers, "dd-ml-app")?.trim() ||
+    mlAppFallback?.trim();
   if (mlApp) {
     setHeaderValue(headers, "dd-ml-app", mlApp);
   }
@@ -567,12 +570,15 @@ export function resolveOtlpExtensionConfig(
     headers,
     parseHeaders(read("OTEL_EXPORTER_OTLP_LOGS_HEADERS")),
   );
-  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(read, tracesHeaders);
+  const serviceName = resolveServiceName(read, resourceAttributes);
+  const serviceVersion = resolveServiceVersion(read, resourceAttributes);
+  const deploymentEnvironment = resolveDeploymentEnvironment(read, resourceAttributes);
+  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(read, tracesHeaders, serviceName);
 
   return {
-    serviceName: resolveServiceName(read, resourceAttributes),
-    serviceVersion: resolveServiceVersion(read, resourceAttributes),
-    deploymentEnvironment: resolveDeploymentEnvironment(read, resourceAttributes),
+    serviceName,
+    serviceVersion,
+    deploymentEnvironment,
     headers,
     tracesHeaders,
     metricsHeaders,
