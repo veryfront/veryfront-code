@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunExecutionSnapshot,
@@ -276,6 +276,93 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
   });
 
+  it("keeps durable invoke summaries bounded unless full result mode is requested", () => {
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+    const fullResultText = [
+      "# Create an agent",
+      "x".repeat(64_500),
+      '    "model": "anthropic/claude-sonnet-4-6"',
+    ].join("\n");
+    const snapshot = {
+      ...buildChildRunExecutionSnapshot(baseSuccessResult()),
+      fullResultText,
+    };
+
+    const defaultResult = buildHostedDurableChildInvokeSuccessResult({
+      result: baseSuccessResult(),
+      snapshot,
+      identifiers,
+      targets,
+    });
+    assertEquals(defaultResult.summary?.truncated, true);
+    assertStringIncludes(defaultResult.text ?? "", "[truncated");
+
+    const fullResult = buildHostedDurableChildInvokeSuccessResult(
+      {
+        result: baseSuccessResult(),
+        snapshot,
+        identifiers,
+        targets,
+      },
+      { resultMode: "full" },
+    );
+    assertEquals(fullResult.summary?.truncated, false);
+    assertEquals(fullResult.summary?.originalChars, fullResultText.length);
+    assertStringIncludes(fullResult.text ?? "", '"model": "anthropic/claude-sonnet-4-6"');
+  });
+
+  it("preserves existing durable summary metadata when full snapshot text is unavailable", () => {
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+    const fullResultText = [
+      "# Create an agent",
+      "x".repeat(64_500),
+      '    "model": "anthropic/claude-sonnet-4-6"',
+    ].join("\n");
+    const result: ChildRunExecutionResult = {
+      ...baseSuccessResult(),
+      summary: buildChildRunResultSummary(fullResultText),
+    };
+    const snapshot = {
+      ...buildChildRunExecutionSnapshot(result),
+      fullResultText: null,
+    };
+
+    const fullResult = buildHostedDurableChildInvokeSuccessResult(
+      {
+        result,
+        snapshot,
+        identifiers,
+        targets,
+      },
+      { resultMode: "full" },
+    );
+
+    assertEquals(fullResult.summary?.truncated, true);
+    assertStringIncludes(fullResult.text ?? "", "[truncated");
+  });
+
   it("records standard hosted invoke trace attributes while building results", () => {
     const recordedAttributes: unknown[] = [];
     const identifiers = {
@@ -451,6 +538,63 @@ describe("agent/hosted-durable-child-fork-execution", () => {
 
     assertEquals(result, localResult);
     assertEquals(recordedFailures, []);
+  });
+
+  it("returns local child full snapshot text when full result mode is requested", async () => {
+    const fullResultText = [
+      "# Create an agent",
+      "x".repeat(64_500),
+      '    "model": "anthropic/claude-sonnet-4-6"',
+    ].join("\n");
+    const localResult = baseSuccessResult();
+    const result = await executeHostedLocalChildInvoke({
+      forkInput: { description: "Inspect logs" },
+      traceRecorder: {
+        recordLocalResult: (recordedResult) => recordedResult,
+        recordLocalFailure: () => {},
+      },
+      execute: () => localResult,
+      getExecutionSnapshot: () => ({
+        ...buildChildRunExecutionSnapshot(localResult),
+        fullResultText,
+      }),
+      resultMode: "full",
+    });
+
+    assertEquals(result.success, true);
+    if (result.success) {
+      assertEquals(result.summary.truncated, false);
+      assertEquals(result.summary.originalChars, fullResultText.length);
+      assertStringIncludes(result.summary.text, '"model": "anthropic/claude-sonnet-4-6"');
+    }
+  });
+
+  it("preserves local child summary metadata when full snapshot text is unavailable", async () => {
+    const fullResultText = [
+      "# Create an agent",
+      "x".repeat(64_500),
+      '    "model": "anthropic/claude-sonnet-4-6"',
+    ].join("\n");
+    const localResult: ChildRunExecutionResult = {
+      ...baseSuccessResult(),
+      summary: buildChildRunResultSummary(fullResultText),
+    };
+    const result = await executeHostedLocalChildInvoke({
+      forkInput: { description: "Inspect logs" },
+      traceRecorder: {
+        recordLocalResult: (recordedResult) => recordedResult,
+        recordLocalFailure: () => {},
+      },
+      execute: () => localResult,
+      getExecutionSnapshot: () => null,
+      resultMode: "full",
+    });
+
+    assertEquals(result.success, true);
+    if (result.success) {
+      assertEquals(result.summary.truncated, true);
+      assertStringIncludes(result.summary.text, "[truncated");
+    }
   });
 
   it("normalizes non-abort local child invoke failures", async () => {

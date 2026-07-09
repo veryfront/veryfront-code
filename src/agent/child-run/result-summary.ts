@@ -18,6 +18,14 @@ const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^first,? [^.?!]+[.?!]\s*/i,
 ];
 
+/** Result return modes supported by delegated child runs. */
+export type ChildRunResultMode = "summary" | "full";
+
+/** Options accepted when building child run result summaries. */
+export type BuildChildRunResultSummaryOptions = {
+  mode?: ChildRunResultMode;
+};
+
 /** Summary metadata returned to parent runs after child delegation. */
 export type ChildRunResultSummary = {
   text: string;
@@ -45,21 +53,10 @@ function sanitizeMalformedToolTranscriptText(text: string): string {
     .trim();
 }
 
-/** Summarize child run result text helper. */
-export function summarizeChildRunResultText(
-  text: string,
-  maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
-): string {
-  return summarizeChildRunResultTextWithMetadata(text, maxLength).text;
-}
-
-/** Summarize child run result text with machine-readable truncation metadata. */
-export function summarizeChildRunResultTextWithMetadata(
-  text: string,
-  maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
+function summarizeNormalizedChildRunResultTextWithMetadata(
+  normalized: string,
+  maxLength: number,
 ): ChildRunResultSummary {
-  const normalized = sanitizeMalformedToolTranscriptText(text);
-
   if (normalized.length <= maxLength) {
     return {
       text: normalized,
@@ -86,9 +83,32 @@ export function summarizeChildRunResultTextWithMetadata(
   };
 }
 
+/** Summarize child run result text helper. */
+export function summarizeChildRunResultText(
+  text: string,
+  maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
+): string {
+  return summarizeChildRunResultTextWithMetadata(text, maxLength).text;
+}
+
+/** Summarize child run result text with machine-readable truncation metadata. */
+export function summarizeChildRunResultTextWithMetadata(
+  text: string,
+  maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
+): ChildRunResultSummary {
+  const normalized = sanitizeMalformedToolTranscriptText(text);
+  return summarizeNormalizedChildRunResultTextWithMetadata(normalized, maxLength);
+}
+
 /** Builds child run result summary. */
-export function buildChildRunResultSummary(text: string): ChildRunResultSummary {
-  return summarizeChildRunResultTextWithMetadata(text);
+export function buildChildRunResultSummary(
+  text: string,
+  options: BuildChildRunResultSummaryOptions = {},
+): ChildRunResultSummary {
+  const normalized = options.mode === "full" ? text : sanitizeMalformedToolTranscriptText(text);
+  const maxLength = options.mode === "full" ? normalized.length : CHILD_RUN_RESULT_TEXT_LIMIT;
+
+  return summarizeNormalizedChildRunResultTextWithMetadata(normalized, maxLength);
 }
 
 /** Builds root owned child run result text. */
