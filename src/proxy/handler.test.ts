@@ -520,6 +520,53 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for managed production hosts when token mint reports no project for domain", async () => {
+      const { entries, logger } = createRecordingLogger();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          logger,
+        });
+
+        const req = new Request("http://stripe.production.veryfront.com/", {
+          headers: { host: "stripe.production.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Project not found");
+        assertEquals(
+          entries.filter((entry) => entry.level === "error").map((entry) => entry.message),
+          [],
+        );
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
     it("logs expected custom domain token-mint misses below error level", async () => {
       const { entries, logger } = createRecordingLogger();
       const { server, port } = createMockServer((req: Request) => {

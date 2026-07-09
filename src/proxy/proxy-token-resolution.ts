@@ -97,7 +97,7 @@ export async function resolveProxyRequestToken(
         tokenSource = "service";
       } catch (error) {
         tokenFetchError = error;
-        if (!(customDomain && isMissingCustomDomainProjectError(error))) {
+        if (!isMissingCustomDomainProjectError(error)) {
           logger?.error(tokenFetchErrorMessage, error as Error, {
             projectSlug,
             customDomain,
