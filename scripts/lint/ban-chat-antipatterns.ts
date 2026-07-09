@@ -88,6 +88,45 @@ async function walk(
   }
 }
 
+// Per-file LOC ceilings (§0.9 / F-1 "God components"). A file may only shrink
+// past its ceiling — lower the number when you split one up. Presentation+logic
+// fused in one file is the structural reason the acid test fails; this stops the
+// big files from growing back.
+const FILE_SIZE_CEILINGS: Record<string, number> = {
+  "src/react/components/chat/chat/index.tsx": 371,
+  "src/react/components/chat/chat/composition/message.tsx": 978,
+  "src/react/components/chat/chat/components/sidebar.tsx": 630,
+  "src/react/components/chat/chat/composition/chat-composer.tsx": 650,
+  "src/react/components/chat/agent-picker.tsx": 520,
+  "src/react/components/chat/chat-actions.tsx": 515,
+  "src/react/components/chat/chat/controlled-chat.tsx": 329,
+  "src/react/components/chat/chat/app-mode-chat.tsx": 274,
+};
+
+function checkFileSizes(): boolean {
+  let failed = false;
+  for (const [path, ceiling] of Object.entries(FILE_SIZE_CEILINGS)) {
+    let loc: number;
+    try {
+      // Count newlines (matches `wc -l`).
+      loc = (Deno.readTextFileSync(path).match(/\n/g) ?? []).length;
+    } catch (_) {
+      continue; // file moved/renamed — will surface via other gates
+    }
+    if (loc > ceiling) {
+      failed = true;
+      console.error(
+        `✖ ${path}: ${loc} LOC exceeds ceiling ${ceiling} — split it, don't grow it.`,
+      );
+    } else if (loc < ceiling) {
+      console.log(
+        `✓ ${path}: ${loc} LOC (ceiling ${ceiling}). Lower the ceiling to lock it in.`,
+      );
+    }
+  }
+  return !failed;
+}
+
 interface Ratchet {
   label: string;
   key: keyof AntipatternCounts;
@@ -146,6 +185,8 @@ async function main(): Promise<void> {
       console.log(`✓ chat ${r.label}: ${count}/${r.baseline}.`);
     }
   }
+
+  if (!checkFileSizes()) failed = true;
 
   if (failed) Deno.exit(1);
 }
