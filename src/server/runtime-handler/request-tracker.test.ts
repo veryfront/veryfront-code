@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { requestTracker } from "./request-tracker.ts";
 
 describe("server/runtime-handler/request-tracker", () => {
@@ -9,6 +14,8 @@ describe("server/runtime-handler/request-tracker", () => {
     for (const tracked of requestTracker.getInFlightRequests()) {
       requestTracker.complete(tracked.requestId, 200);
     }
+    Deno.env.delete("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
+    __resetLogRecordEmitterForTests();
   });
 
   describe("start / complete", () => {
@@ -187,6 +194,45 @@ describe("server/runtime-handler/request-tracker", () => {
       requestTracker.start("reg-req", "proj", "/about", "GET");
       requestTracker.complete("reg-req", 200);
       // Just verify no error
+    });
+
+    it("attaches request profile details to slow completion logs", () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      Deno.env.set("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS", "0");
+
+      requestTracker.start("profiled-req", "proj", "/", "GET", "production", "rel-1");
+      requestTracker.complete("profiled-req", 200, false, {
+        sequence: 7,
+        category: "html",
+        method: "GET",
+        pathname: "/",
+        projectSlug: "proj",
+        requestMode: "production",
+        status: 200,
+        startedAt: "2026-07-09T18:41:00.000Z",
+        completedAt: "2026-07-09T18:41:02.500Z",
+        totalMs: 2500,
+        phases: {
+          "runtime.resolve_project": 12,
+          "handler.execute": 2400,
+        },
+      });
+
+      const entry = entries.find((candidate) => candidate.message === "GET / 200");
+      const profile = entry?.context?.request_profile as
+        | {
+          sequence: number;
+          category: string;
+          totalMs: number;
+          phases: Record<string, number>;
+        }
+        | undefined;
+
+      assertEquals(profile?.sequence, 7);
+      assertEquals(profile?.category, "html");
+      assertEquals(profile?.totalMs, 2500);
+      assertEquals(profile?.phases["handler.execute"], 2400);
     });
 
     it("handles 404 status completion", () => {

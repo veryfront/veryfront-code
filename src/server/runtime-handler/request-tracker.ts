@@ -8,6 +8,8 @@
 import { serverLogger } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/compat/process.ts";
 import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
+import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("request-tracker");
 
@@ -37,6 +39,40 @@ const DRAIN_PROGRESS_LOG_INTERVAL_MS = 5_000; // 5 seconds
 
 /** Only log module requests that exceed this duration (to reduce noise) */
 const MODULE_REQUEST_LOG_THRESHOLD_MS = 100;
+
+/** Attach request-profiler details to completion logs at or above this duration. */
+const DEFAULT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS = 2_000;
+
+function getSlowRequestProfileLogThresholdMs(): number {
+  const raw = getEnv("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
+  if (!raw) return DEFAULT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS;
+  }
+  return parsed;
+}
+
+function buildRequestProfileLogContext(record: RequestProfileRecord): Record<string, unknown> {
+  const slowestPhases = Object.entries(record.phases)
+    .sort(([, left], [, right]) => right - left)
+    .slice(0, 10)
+    .map(([name, durationMs]) => ({ name, durationMs }));
+
+  return {
+    sequence: record.sequence,
+    category: record.category,
+    method: record.method,
+    pathname: record.pathname,
+    projectSlug: record.projectSlug,
+    requestMode: record.requestMode,
+    status: record.status,
+    totalMs: record.totalMs,
+    phases: record.phases,
+    slowestPhases,
+  };
+}
 
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
@@ -139,7 +175,12 @@ class RequestTracker {
     });
   }
 
-  complete(requestId: string, statusCode: number, timedOut = false): void {
+  complete(
+    requestId: string,
+    statusCode: number,
+    timedOut = false,
+    profile?: RequestProfileRecord | null,
+  ): void {
     const tracked = this.inFlight.get(requestId);
     if (!tracked) return;
 
@@ -160,7 +201,7 @@ class RequestTracker {
       return;
     }
 
-    logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, {
+    const logContext: Record<string, unknown> = {
       project_slug: tracked.projectSlug,
       request_url: tracked.path,
       durationMs,
@@ -168,7 +209,13 @@ class RequestTracker {
       statusCode,
       env: tracked.env,
       release_id: tracked.releaseId,
-    });
+    };
+
+    if (profile && durationMs >= getSlowRequestProfileLogThresholdMs()) {
+      logContext.request_profile = buildRequestProfileLogContext(profile);
+    }
+
+    logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
   }
 
   getInFlightCount(): number {

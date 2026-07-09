@@ -47,6 +47,10 @@ function shouldEnableServerTiming(): boolean {
   return getEnv("VERYFRONT_ENABLE_SERVER_TIMING") === "1";
 }
 
+function shouldEnableSlowRequestProfiling(): boolean {
+  return getEnv("VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING") !== "1";
+}
+
 function isHtmlPath(pathname: string): boolean {
   return !pathname.startsWith("/_") && !pathname.startsWith("/api/") &&
     !/\.[a-zA-Z0-9]+$/.test(pathname);
@@ -62,8 +66,12 @@ function shouldProfilePath(pathname: string): boolean {
 }
 
 export function isRequestProfilingEnabled(pathname?: string): boolean {
-  if (!shouldEnableProfiling() && !shouldEnableServerTiming()) return false;
+  const explicitProfiling = shouldEnableProfiling() || shouldEnableServerTiming();
+  const slowRequestProfiling = shouldEnableSlowRequestProfiling();
+
+  if (!explicitProfiling && !slowRequestProfiling) return false;
   if (!pathname) return true;
+  if (slowRequestProfiling && isHtmlPath(pathname)) return true;
   return shouldProfilePath(pathname);
 }
 
@@ -201,7 +209,8 @@ export function snapshotRequestProfiles(): {
   records: RequestProfileRecord[];
 } {
   return {
-    enabled: shouldEnableProfiling() || shouldEnableServerTiming(),
+    enabled: shouldEnableProfiling() || shouldEnableServerTiming() ||
+      shouldEnableSlowRequestProfiling(),
     last_sequence: sequence,
     records: [...records],
   };
