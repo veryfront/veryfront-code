@@ -5,10 +5,11 @@
  */
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ChatSidebar } from "./sidebar.tsx";
+import { ChatSidebar, useChatSidebarItem } from "./sidebar.tsx";
 import { ConversationsProvider } from "../contexts/conversations-context.tsx";
 import { memoryConversationStore } from "../persistence/memory-conversation-store.ts";
 import type { Conversation, ConversationSummary } from "../persistence/conversation-store.ts";
@@ -116,5 +117,52 @@ describe("ChatSidebar — conversation-native", () => {
     } finally {
       restoreDom();
     }
+  });
+});
+
+describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
+  it("exposes the row-menu leaves off the compound", () => {
+    assert(typeof ChatSidebar.Item.Menu === "function", "Item.Menu is addressable");
+    assert(typeof ChatSidebar.Item.Rename === "function", "Item.Rename is addressable");
+    assert(typeof ChatSidebar.Item.Delete === "function", "Item.Delete is addressable");
+  });
+
+  it("useChatSidebarItem fails fast outside an <ChatSidebar.Item>", () => {
+    function Orphan() {
+      useChatSidebarItem();
+      return null;
+    }
+    let threw = false;
+    try {
+      renderToString(<Orphan />);
+    } catch {
+      threw = true;
+    }
+    assert(threw, "a misplaced Item leaf is a loud error, not a silent null");
+  });
+
+  it("a custom entry composes alongside the built-ins without re-implementing the row", () => {
+    // The whole point: add a menu entry by composing, not by re-writing the row.
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+        onRename={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Menu>
+              <ChatSidebar.Item.Rename />
+              <ChatSidebar.Item.Delete />
+              <div data-archive="">Archive</div>
+            </ChatSidebar.Item.Menu>
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    // The composed row still renders (the built-in row is reused, not replaced).
+    assert(html.includes("Row title"), "the row renders from the composed Item");
   });
 });

@@ -140,12 +140,17 @@ export {
   type ChatSidebarEmptyProps,
   type ChatSidebarGroupProps,
   type ChatSidebarIcons,
+  type ChatSidebarItemActionProps,
+  type ChatSidebarItemComponent,
+  type ChatSidebarItemContextValue,
+  type ChatSidebarItemMenuProps,
   type ChatSidebarItemProps,
   type ChatSidebarItemRenderOptions,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
   type ChatSidebarRootProps,
+  useChatSidebarItem,
 } from "./components/sidebar.tsx";
 export { type ChatTab, TabSwitcher, type TabSwitcherProps } from "./components/tab-switcher.tsx";
 export {

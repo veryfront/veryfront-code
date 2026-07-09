@@ -325,23 +325,60 @@ ChatSidebarNewButton.displayName = "ChatSidebar.NewButton";
 // ---------------------------------------------------------------------------
 
 /** Props accepted by {@link ChatSidebarItem}. */
+/**
+ * Per-row state + actions shared with `ChatSidebar.Item.*` leaves, so a swapped
+ * or extended row menu keeps rename/delete/select behaviour (the acid test).
+ */
+export interface ChatSidebarItemContextValue {
+  conversation: ConversationSummary;
+  isActive: boolean;
+  /** Rename is available (the surrounding sidebar wired an `onRename`). */
+  canRename: boolean;
+  /** Enter inline-rename mode (no-op when rename is unavailable). */
+  startRename: () => void;
+  /** Delete this conversation. */
+  remove: () => void;
+  /** `…` menu open state (drives the row's active styling). */
+  menuOpen: boolean;
+  setMenuOpen: (open: boolean) => void;
+}
+
+const ChatSidebarItemContext = React.createContext<
+  ChatSidebarItemContextValue | null
+>(null);
+
+/** Read the enclosing `ChatSidebar.Item` row state. Throws when used outside one. */
+export function useChatSidebarItem(): ChatSidebarItemContextValue {
+  const ctx = React.useContext(ChatSidebarItemContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "ChatSidebar.Item.* must be used within <ChatSidebar.Item>",
+    });
+  }
+  return ctx;
+}
+
 export interface ChatSidebarItemProps {
   conversation: ConversationSummary;
   className?: string;
+  /**
+   * Compose the row's action slot — typically a `<ChatSidebar.Item.Menu>`.
+   * Omit for the default `…` rename/delete menu.
+   */
+  children?: React.ReactNode;
 }
 
-/** A single conversation row — select on click, rename/delete via a "…" menu. */
+/**
+ * A single conversation row — select on click, rename/delete via a "…" menu.
+ * The menu is a composable compound: pass a `<ChatSidebar.Item.Menu>` child to
+ * add or reorder entries without re-implementing the row.
+ */
 export function ChatSidebarItem({
   conversation,
   className,
+  children,
 }: ChatSidebarItemProps): React.ReactElement {
-  const {
-    activeId,
-    onSelect,
-    onDelete,
-    onRename,
-    icons,
-  } = useChatSidebarContext();
+  const { activeId, onSelect, onDelete, onRename } = useChatSidebarContext();
 
   const isActive = conversation.id === activeId;
   const [editing, setEditing] = React.useState(false);
@@ -353,11 +390,11 @@ export function ChatSidebarItem({
     if (editing) inputRef.current?.select();
   }, [editing]);
 
-  function startRename(): void {
+  const startRename = React.useCallback((): void => {
     if (!onRename) return;
     setEditValue(conversation.title);
     setEditing(true);
-  }
+  }, [onRename, conversation.title]);
 
   function commitRename(): void {
     setEditing(false);
@@ -366,6 +403,19 @@ export function ChatSidebarItem({
       onRename?.(conversation.id, trimmed);
     }
   }
+
+  const itemContext = React.useMemo<ChatSidebarItemContextValue>(
+    () => ({
+      conversation,
+      isActive,
+      canRename: Boolean(onRename),
+      startRename,
+      remove: () => onDelete(conversation.id),
+      menuOpen,
+      setMenuOpen,
+    }),
+    [conversation, isActive, onRename, startRename, onDelete, menuOpen],
+  );
 
   if (editing) {
     // Fixed `h-8` = the display row's height (py-1.5 + a size-5 action button),
@@ -388,45 +438,103 @@ export function ChatSidebarItem({
   }
 
   return (
-    <ListItem
-      title={conversation.title}
-      active={isActive || menuOpen}
-      className={className}
-      onClick={() => onSelect(conversation.id)}
-      action={
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="icon-ghost"
-              size="icon-xs"
-              on="card"
-              aria-label={`More actions for ${conversation.title}`}
-            >
-              {icons?.more ?? <MoreGlyph />}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[160px]">
-            {onRename && (
-              <DropdownMenuItem onSelect={startRename}>
-                {icons?.rename ?? <PencilIcon />}
-                Rename
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              onSelect={() => onDelete(conversation.id)}
-              className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
-            >
-              {icons?.delete ?? <TrashIcon />}
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      }
-    />
+    <ChatSidebarItemContext.Provider value={itemContext}>
+      <ListItem
+        title={conversation.title}
+        active={isActive || menuOpen}
+        className={className}
+        onClick={() => onSelect(conversation.id)}
+        action={children ?? <ChatSidebarItemMenu />}
+      />
+    </ChatSidebarItemContext.Provider>
   );
 }
 ChatSidebarItem.displayName = "ChatSidebar.Item";
+
+/** Props for {@link ChatSidebarItemMenu}. */
+export interface ChatSidebarItemMenuProps {
+  /** Override the trigger glyph. */
+  icon?: React.ReactNode;
+  /** Compose the entries; omit for the default `Rename` + `Delete`. */
+  children?: React.ReactNode;
+}
+
+/** The row's `…` dropdown. Reads row state from {@link useChatSidebarItem}. */
+export function ChatSidebarItemMenu({
+  icon,
+  children,
+}: ChatSidebarItemMenuProps): React.ReactElement {
+  const { conversation, menuOpen, setMenuOpen } = useChatSidebarItem();
+  const { icons } = useChatSidebarContext();
+  return (
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="icon-ghost"
+          size="icon-xs"
+          on="card"
+          aria-label={`More actions for ${conversation.title}`}
+        >
+          {icon ?? icons?.more ?? <MoreGlyph />}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[160px]">
+        {children ?? (
+          <>
+            <ChatSidebarItemRename />
+            <ChatSidebarItemDelete />
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+ChatSidebarItemMenu.displayName = "ChatSidebar.Item.Menu";
+
+/** Props for {@link ChatSidebarItemRename} / {@link ChatSidebarItemDelete}. */
+export interface ChatSidebarItemActionProps {
+  /** Override the entry glyph. */
+  icon?: React.ReactNode;
+  /** Override the entry label. */
+  children?: React.ReactNode;
+}
+
+/** `Rename` menu entry — enters inline rename. Renders nothing if unavailable. */
+export function ChatSidebarItemRename({
+  icon,
+  children,
+}: ChatSidebarItemActionProps): React.ReactElement | null {
+  const { canRename, startRename } = useChatSidebarItem();
+  const { icons } = useChatSidebarContext();
+  if (!canRename) return null;
+  return (
+    <DropdownMenuItem onSelect={startRename}>
+      {icon ?? icons?.rename ?? <PencilIcon />}
+      {children ?? "Rename"}
+    </DropdownMenuItem>
+  );
+}
+ChatSidebarItemRename.displayName = "ChatSidebar.Item.Rename";
+
+/** `Delete` menu entry. */
+export function ChatSidebarItemDelete({
+  icon,
+  children,
+}: ChatSidebarItemActionProps): React.ReactElement {
+  const { remove } = useChatSidebarItem();
+  const { icons } = useChatSidebarContext();
+  return (
+    <DropdownMenuItem
+      onSelect={remove}
+      className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
+    >
+      {icon ?? icons?.delete ?? <TrashIcon />}
+      {children ?? "Delete"}
+    </DropdownMenuItem>
+  );
+}
+ChatSidebarItemDelete.displayName = "ChatSidebar.Item.Delete";
 
 // ---------------------------------------------------------------------------
 // ChatSidebar.Group
@@ -609,13 +717,29 @@ function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
 }
 ChatSidebarBase.displayName = "ChatSidebar";
 
+/** `ChatSidebar.Item` compound — the row plus its composable menu leaves. */
+export type ChatSidebarItemComponent = typeof ChatSidebarItem & {
+  Menu: typeof ChatSidebarItemMenu;
+  Rename: typeof ChatSidebarItemRename;
+  Delete: typeof ChatSidebarItemDelete;
+};
+
+const ChatSidebarItemCompound: ChatSidebarItemComponent = Object.assign(
+  ChatSidebarItem,
+  {
+    Menu: ChatSidebarItemMenu,
+    Rename: ChatSidebarItemRename,
+    Delete: ChatSidebarItemDelete,
+  },
+);
+
 /** Compound type — the preset plus its namespaced sub-components. */
 export type ChatSidebarComponent = typeof ChatSidebarBase & {
   Root: typeof ChatSidebarRoot;
   NewButton: typeof ChatSidebarNewButton;
   List: typeof ChatSidebarList;
   Group: typeof ChatSidebarGroup;
-  Item: typeof ChatSidebarItem;
+  Item: ChatSidebarItemComponent;
   Empty: typeof ChatSidebarEmpty;
 };
 
@@ -625,6 +749,6 @@ export const ChatSidebar: ChatSidebarComponent = Object.assign(ChatSidebarBase, 
   NewButton: ChatSidebarNewButton,
   List: ChatSidebarList,
   Group: ChatSidebarGroup,
-  Item: ChatSidebarItem,
+  Item: ChatSidebarItemCompound,
   Empty: ChatSidebarEmpty,
 });
