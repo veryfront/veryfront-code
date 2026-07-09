@@ -388,6 +388,59 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
   }
 });
 
+Deno.test("executeHostedChildForkToolInput honors full result mode", async () => {
+  const rawText =
+    '<function_calls><invoke name="run_bash">cat report.md</invoke></function_calls><function_result>Exact delegated output.</function_result>';
+
+  const result = await executeHostedChildForkToolInput({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    kind: "invoke_agent",
+    forkInput: {
+      description: "Return exact output",
+      prompt: "Return exact output.",
+      context: {},
+      result_mode: "full",
+    },
+    toolCallId: "tool-call-full",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    resolveModelId: (modelId) => modelId,
+    resolveProvider: () => "anthropic",
+    prepareToolAssembly: () => ({
+      ok: true,
+      forkTools: {},
+      availableToolNames: [],
+    }),
+    startRuntime: () => ({
+      forkStreamAbortController: new AbortController(),
+      childRunMonitorAbortController: null,
+      childRunMonitorPromise: Promise.resolve(),
+      forkToolNames: [],
+      streamResult: {
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: rawText } as const;
+        })(),
+        steps: Promise.resolve([
+          {
+            text: rawText,
+            finishReason: "stop",
+            messages: [],
+            toolCalls: [],
+            toolResults: [],
+          },
+        ]),
+        totalUsage: Promise.resolve(undefined),
+      },
+    }),
+  });
+
+  assertEquals(result.success, true);
+  if (result.success) {
+    assertEquals(result.summary.text, rawText);
+  }
+});
+
 Deno.test("executeHostedChildForkToolInput preserves root invocation context for nested child forks", async () => {
   await executeHostedChildForkToolInput({
     authToken: "token",

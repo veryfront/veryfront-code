@@ -205,6 +205,7 @@ export type ExecuteHostedChildForkRunContextStreamInput =
     | "kind"
     | "usage"
     | "maxSteps"
+    | "resultMode"
     | "startTime"
     | "finalizationTimeoutMs"
     | "onSettled"
@@ -249,6 +250,7 @@ export function executeHostedChildForkRunContextStream(
     streamState,
     usage: input.usage,
     maxSteps: input.maxSteps,
+    resultMode: input.resultMode,
     startTime: input.startTime,
     finalizationTimeoutMs: input.finalizationTimeoutMs,
     onSettled: input.onSettled,
