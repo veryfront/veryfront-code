@@ -433,6 +433,76 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(store.data.has(`${prefix}:page:about`), false);
   });
 
+  it("prioritizes route-family siblings when prewarming production routes", async () => {
+    const store = createInMemoryStore();
+    const renderedSlugs: string[] = [];
+    const shallowPages = Array.from(
+      { length: 14 },
+      (_, index) => `/page-${index.toString().padStart(2, "0")}`,
+    );
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: (slug: string) => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () =>
+      Promise.resolve([
+        "/blog/articles/terraform-azure-kubernetes",
+        ...shallowPages,
+        "/blog/articles/helm-best-practices",
+      ]);
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug) => {
+          renderedSlugs.push(slug);
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: {} } as RenderContext["adapter"],
+    };
+    await renderer.renderPage("/blog/articles/terraform-azure-kubernetes", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    });
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(renderedSlugs.includes("/blog/articles/helm-best-practices"), true);
+  });
+
   it("does not prewarm when the request has cache-sensitive state", async () => {
     const store = createInMemoryStore();
     const renderedSlugs: string[] = [];
