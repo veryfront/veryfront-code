@@ -336,6 +336,10 @@ export const getChatRequestContextSchema = defineSchema((v) =>
     projectId: v.string().nullable(),
     projectSlug: v.string().optional(),
     branchId: v.string().nullable(),
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"] as const)
+      .nullable()
+      .optional(),
+    runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     environmentContext: v.string().optional(),
   }).strict()
 );

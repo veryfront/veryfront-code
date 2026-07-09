@@ -104,6 +104,14 @@ function getStudioRuntimeEnvironmentContext(input: RuntimeAgentRunInvocation): s
   return undefined;
 }
 
+function getRuntimeTargetKind(
+  value: unknown,
+): HostedChatRequestInput["context"]["runtimeTargetKind"] {
+  return value === "main_branch" || value === "environment" || value === "preview_branch"
+    ? value
+    : undefined;
+}
+
 /** Builds hosted chat request forwarded props from runtime agent invocation. */
 export function buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
@@ -128,6 +136,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
 ): HostedChatRequestInput {
   const environmentContext = getStudioRuntimeEnvironmentContext(input);
+  const runtimeTargetKind = getRuntimeTargetKind(input.run.project.runtimeTargetKind);
 
   return {
     messages: input.messages,
@@ -136,6 +145,10 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
       projectId: input.run.project.projectId,
       projectSlug: input.run.project.projectSlug,
       branchId: input.run.project.runtimeTargetBranchId ?? null,
+      ...(runtimeTargetKind ? { runtimeTargetKind } : {}),
+      ...(input.run.project.runtimeTargetEnvironmentId !== undefined
+        ? { runtimeTargetEnvironmentId: input.run.project.runtimeTargetEnvironmentId ?? null }
+        : {}),
       ...(environmentContext ? { environmentContext } : {}),
     },
     forwardedProps: buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(input),
