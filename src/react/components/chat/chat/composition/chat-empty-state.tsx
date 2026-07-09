@@ -23,7 +23,7 @@
  */
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { Avatar, Button, type ButtonProps } from "../../ui/index.ts";
+import { Avatar, Button, type ButtonProps } from "../../../ui/index.ts";
 
 /** Props accepted by `<ChatEmptyState.Root>`. */
 export interface ChatEmptyStateRootProps extends React.HTMLAttributes<HTMLDivElement> {

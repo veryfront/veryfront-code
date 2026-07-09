@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, CopyIcon } from "../../icons/index.ts";
+import { CheckIcon, CopyIcon } from "../../../ui/icons/index.ts";
 
 /** Props accepted by code block. */
 export interface CodeBlockProps {
@@ -13,7 +13,7 @@ export interface CodeBlockProps {
 /**
  * Render rich code block.
  *
- * @deprecated Use the shared `CodeBlock` primitive (`chat/ui/code-block.tsx`)
+ * @deprecated Use the shared `CodeBlock` primitive (`ui/code-block.tsx`)
  * instead — it does real shiki syntax highlighting, an icon-only copy button
  * with tooltip, a file-type/language label, collapsible + mermaid support. This
  * plain `<pre>` fork (no highlighting) is kept only for back-compat and will be

@@ -5,8 +5,8 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "../../../src/react/components/chat/ui/index.ts";
-import { ChevronDownIcon } from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/index.ts";
+import { ChevronDownIcon } from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -21,7 +21,7 @@ const importCode = `import {
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
-} from "veryfront/chat/ui"`;
+} from "veryfront/ui"`;
 
 const compositionTree = `Collapsible               <- Root (open state, data-state attribute)
 +-- CollapsibleTrigger    <- Toggle button (use asChild to wrap your own element)
@@ -124,7 +124,7 @@ function CollapsibleDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Collapsible",
+  title: "UI/Collapsible",
   component: Collapsible,
   tags: ["autodocs"],
   parameters: {

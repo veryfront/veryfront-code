@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { SparklesIcon } from "../../icons/index.ts";
+import { SparklesIcon } from "../../../ui/icons/index.ts";
 
 /** Props accepted by model avatar. */
 export interface ModelAvatarProps {

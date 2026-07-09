@@ -12,9 +12,9 @@ import {
   Checkbox,
   Input,
   Label,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 
-const importCode = `import { Label } from "veryfront/chat/ui"`;
+const importCode = `import { Label } from "veryfront/ui"`;
 
 function LabelDocsPage() {
   return (
@@ -88,7 +88,7 @@ function LabelDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Label",
+  title: "UI/Label",
   component: Label,
   tags: ["autodocs"],
   parameters: {

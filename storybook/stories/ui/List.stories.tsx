@@ -9,12 +9,12 @@ import {
   List,
   ListItem,
   ListLabel,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   MoreHorizontalIcon,
   PencilIcon,
   TrashIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -25,7 +25,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { List, ListLabel, ListItem } from "veryfront/chat/ui"`;
+const importCode = `import { List, ListLabel, ListItem } from "veryfront/ui"`;
 
 const compositionTree =
   `List             <- container (tight vertical rhythm)
@@ -157,7 +157,7 @@ function ListDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/List",
+  title: "UI/List",
   component: List,
   tags: ["autodocs"],
   parameters: {

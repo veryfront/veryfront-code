@@ -11,9 +11,9 @@ import {
 import {
   Label,
   Textarea,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 
-const importCode = `import { Textarea } from "veryfront/chat/ui"`;
+const importCode = `import { Textarea } from "veryfront/ui"`;
 
 const compositionTree = `Textarea <- native <textarea> with CVA variants`;
 
@@ -88,7 +88,7 @@ function TextareaDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Textarea",
+  title: "UI/Textarea",
   component: Textarea,
   tags: ["autodocs"],
   parameters: {

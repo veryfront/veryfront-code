@@ -28,7 +28,7 @@ function MarkdownDocsPage() {
     <DocsPage>
       <DocsHero
         title="Markdown"
-        lead="Renders chat markdown — GitHub-flavored syntax, syntax-highlighted code, tables, and mermaid diagrams. Fenced code renders through the shiki-based `CodeBlock` primitive (Chat/UI/CodeBlock)."
+        lead="Renders chat markdown — GitHub-flavored syntax, syntax-highlighted code, tables, and mermaid diagrams. Fenced code renders through the shiki-based `CodeBlock` primitive (UI/CodeBlock)."
       />
 
       <DocsSection

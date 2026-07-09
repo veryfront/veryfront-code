@@ -41,6 +41,7 @@ const REQUIRED_EXPORTS = {
   "./router": ["Link", "useRouter", "RouterProvider"],
   "./context": ["usePageContext", "PageContextProvider"],
   "./fonts": ["GoogleFonts"],
+  "./ui": ["Button", "AppShell", "DesignTokenStyle", "generateTokenCSS"],
   "./chat": ["Chat", "useChat", "useAgent", "AgentCard", "Message", "ChatErrorBoundary"],
   "./markdown": ["Markdown"],
   "./mdx": ["MDXProvider", "useMDXComponents"],

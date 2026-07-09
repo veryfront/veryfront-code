@@ -7,15 +7,15 @@ import {
   PaperclipIcon,
   TrashIcon,
   XIcon,
-} from "../../icons/index.ts";
-import { Button } from "../../ui/button.tsx";
-import { Skeleton } from "../../ui/skeleton.tsx";
+} from "../../../ui/icons/index.ts";
+import { Button } from "../../../ui/button.tsx";
+import { Skeleton } from "../../../ui/skeleton.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../ui/dropdown-menu.tsx";
+} from "../../../ui/dropdown-menu.tsx";
 import { AttachmentPill, useAttachmentPill } from "./attachment-pill.tsx";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 

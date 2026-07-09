@@ -9,13 +9,13 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   CodeBracketsIcon,
   FileTextIcon,
   PanelLeftIcon,
   WrenchIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -35,7 +35,7 @@ const importCode = `import {
   SelectTrigger,
   SelectValue,
   selectTriggerVariants,
-} from "veryfront/chat/ui"`;
+} from "veryfront/ui"`;
 
 const compositionTree = `Select                           <- Root
 +-- SelectTrigger                <- Button that opens the dropdown (size: xs|sm|md|lg)
@@ -145,7 +145,7 @@ function SelectDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Select",
+  title: "UI/Select",
   component: Select,
   subcomponents: { SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectLabel, SelectItem },
   tags: ["autodocs"],

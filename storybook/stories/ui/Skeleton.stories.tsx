@@ -8,9 +8,9 @@ import {
   DocsPropsTable,
   DocsSection,
 } from "../../.storybook/docs";
-import { Skeleton } from "../../../src/react/components/chat/ui/index.ts";
+import { Skeleton } from "../../../src/react/components/ui/index.ts";
 
-const importCode = `import { Skeleton } from "veryfront/chat/ui"`;
+const importCode = `import { Skeleton } from "veryfront/ui"`;
 
 const compositionTree = `Skeleton`;
 
@@ -60,7 +60,7 @@ function SkeletonDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Skeleton",
+  title: "UI/Skeleton",
   component: Skeleton,
   tags: ["autodocs"],
   parameters: {

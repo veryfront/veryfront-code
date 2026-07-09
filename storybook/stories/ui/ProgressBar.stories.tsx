@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { ProgressBar } from "../../../src/react/components/chat/ui/index.ts";
+import { ProgressBar } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -10,7 +10,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { ProgressBar } from "veryfront/chat/ui"`;
+const importCode = `import { ProgressBar } from "veryfront/ui"`;
 
 const compositionTree = `ProgressBar`;
 
@@ -82,7 +82,7 @@ function ProgressBarDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/ProgressBar",
+  title: "UI/ProgressBar",
   component: ProgressBar,
   tags: ["autodocs"],
   args: { percent: 0 },
