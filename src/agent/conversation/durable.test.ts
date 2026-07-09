@@ -16,6 +16,7 @@ import {
   isAppendableConversationRunProjection,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
+  isPermanentAuthConversationRunAppendError,
   monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
   recoverConversationRunAppendExecution,
@@ -813,6 +814,37 @@ describe("agent/durable", () => {
       errorMessage: "Append conversation run events failed (500): internal failure",
     });
 
+    const authStopController = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_queue_controller_auth_stop",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      maxEventsPerBatch: 2,
+    });
+
+    authStopController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
+    globalThis.fetch =
+      (async () => jsonResponse({ detail: "Invalid authentication token" }, 401)) as typeof fetch;
+
+    assertEquals(await authStopController.flush(), {
+      outcome: "stopped",
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: true,
+      disableReason: "auth_rejected",
+    });
+    assertEquals(authStopController.getSnapshot(), {
+      latestEventId: 2,
+      latestExternalEventSequence: 4,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: true,
+    });
+
     const stopController = createConversationRunEventQueueController({
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
@@ -963,10 +995,15 @@ describe("agent/durable", () => {
       status: 400,
       detail: "External run event cursor mismatch",
     });
+    const invalidToken = new AppendConversationRunEventsError({
+      status: 401,
+      detail: "Invalid authentication token",
+    });
 
     assertEquals(isIgnorableConversationRunAppendError(ignorable), true);
     assertEquals(isIgnorableConversationRunAppendError(cursorMismatch), false);
     assertEquals(isCursorMismatchConversationRunAppendError(cursorMismatch), true);
+    assertEquals(isPermanentAuthConversationRunAppendError(invalidToken), true);
     assertEquals(isActiveConversationRunStatus("running"), true);
     assertEquals(isActiveConversationRunStatus("completed"), false);
     assertEquals(
@@ -1354,6 +1391,29 @@ describe("agent/durable", () => {
     assertEquals(
       await recoverConversationRunAppendFailure({
         error: new AppendConversationRunEventsError({
+          status: 401,
+          detail: "Invalid authentication token",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_auth",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "auth_rejected",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
           status: 400,
           detail: "External run event cursor mismatch",
         }),
@@ -1469,6 +1529,32 @@ describe("agent/durable", () => {
         latestEventId: 2,
         latestExternalEventSequence: 4,
         disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendExecution({
+        error: new AppendConversationRunEventsError({
+          status: 401,
+          detail: "Invalid authentication token",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_execution_auth",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        remainingEvents: [{ type: "STATE_DELTA" }],
+        pendingEvents: [{ type: "CUSTOM" }],
+        cursorResyncsThisFlush: 0,
+        consecutiveFailures: 1,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "auth_rejected",
       },
     );
 
