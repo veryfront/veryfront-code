@@ -88,7 +88,7 @@ const BROWSER_SAFE_ERROR_MODULES = new Set([
 
 const BROWSER_CSP_SAFE_MODULE_PATHS = [
   "/_vf_modules/_veryfront/chat/index.js",
-  "/_vf_modules/_veryfront/react/components/chat/color-mode.js",
+  "/_vf_modules/_veryfront/react/components/ui/color-mode.js",
   "/_vf_modules/_veryfront/react/components/chat/chat.js",
   "/_vf_modules/_veryfront/react/components/chat/chat/contexts/chat-context.js",
   "/_vf_modules/_veryfront/react/components/chat/chat/contexts/composer-context.js",

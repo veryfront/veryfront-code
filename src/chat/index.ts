@@ -254,9 +254,9 @@ export {
 } from "#veryfront/react/components/chat/chat.tsx";
 export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
 
-// Layout primitives — chat-independent, promoted from the private `chat/ui`
-// barrel so consuming apps can compose their own shell (sidebar in the layout,
-// pages in the content slot). Eventual home is a top-level `veryfront/ui`.
+// Layout primitives — chat-independent, re-exported from the `veryfront/ui`
+// package (their home) so consuming apps can compose their own shell (sidebar
+// in the layout, pages in the content slot) straight from `veryfront/chat`.
 export {
   AppShell,
   type AppShellHeaderProps,
@@ -266,13 +266,13 @@ export {
   type AppShellSidebarProps,
   type AppShellTriggerProps,
   useAppShell,
-} from "#veryfront/react/components/chat/ui/app-shell.tsx";
+} from "#veryfront/react/components/ui/app-shell.tsx";
 export {
   Tabs,
   TabsItem,
   type TabsItemProps,
   type TabsProps,
-} from "#veryfront/react/components/chat/ui/tabs.tsx";
+} from "#veryfront/react/components/ui/tabs.tsx";
 export {
   ChatThemeScope,
   type ChatThemeScopeProps,
@@ -319,7 +319,7 @@ export {
   type CopyButtonProps,
   useClipboard,
   type UseClipboardResult,
-} from "#veryfront/react/components/chat/ui/code-block.tsx";
+} from "#veryfront/react/components/ui/code-block.tsx";
 
 export {
   AgentCard,

@@ -19,10 +19,10 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "./ui/command.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.tsx";
-import { Pill } from "./ui/pill.tsx";
-import { CheckIcon, ChevronDownIcon, SparklesIcon } from "./icons/index.ts";
+} from "../ui/command.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.tsx";
+import { Pill } from "../ui/pill.tsx";
+import { CheckIcon, ChevronDownIcon, SparklesIcon } from "../ui/icons/index.ts";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Provider slug for a model (explicit `provider`, else the `value` prefix). */

@@ -9,7 +9,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   ArrowRightIcon,
   ChevronDownIcon,
@@ -17,7 +17,7 @@ import {
   MessageSquareIcon,
   PanelLeftIcon,
   WrenchIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -37,7 +37,7 @@ const importCode = `import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "veryfront/chat/ui"`;
+} from "veryfront/ui"`;
 
 const compositionTree = `DropdownMenu                          <- Root
 +-- DropdownMenuTrigger              <- toggles the menu
@@ -185,7 +185,7 @@ function DropdownMenuDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/DropdownMenu",
+  title: "UI/DropdownMenu",
   component: DropdownMenu,
   tags: ["autodocs"],
   parameters: {

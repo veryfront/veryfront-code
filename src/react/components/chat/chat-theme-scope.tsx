@@ -15,7 +15,7 @@
  * @module react/components/chat/chat-theme-scope
  */
 import * as React from "react";
-import { getDocumentNonce } from "./csp-nonce.ts";
+import { getDocumentNonce } from "../ui/csp-nonce.ts";
 import { cn, generateTokenCSS } from "./theme.ts";
 
 /** Props accepted by {@link ChatThemeScope}. */

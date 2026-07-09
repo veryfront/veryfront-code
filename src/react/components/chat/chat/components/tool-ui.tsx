@@ -12,8 +12,8 @@ import {
   ClockIcon,
   WrenchIcon,
   XCircleIcon,
-} from "../../icons/index.ts";
-import { Alert, AlertContent, AlertIcon } from "../../ui/alert.tsx";
+} from "../../../ui/icons/index.ts";
+import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";

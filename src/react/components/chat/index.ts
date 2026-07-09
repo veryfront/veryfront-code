@@ -28,7 +28,7 @@ export {
   ColorModeScript,
   ColorModeToggle,
   useColorMode,
-} from "./color-mode.tsx";
+} from "../ui/color-mode.tsx";
 
 // ---------------------------------------------------------------------------
 // Design Tokens

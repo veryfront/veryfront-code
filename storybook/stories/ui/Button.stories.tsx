@@ -8,14 +8,14 @@ import {
   DocsPropsTable,
   DocsSection,
 } from "../../.storybook/docs";
-import { Button, LoadingButton } from "../../../src/react/components/chat/ui/index.ts";
+import { Button, LoadingButton } from "../../../src/react/components/ui/index.ts";
 import {
   ArrowUpIcon,
   PlusIcon,
   ArrowRightIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 
-const importCode = `import { Button, LoadingButton } from "veryfront/chat/ui"`;
+const importCode = `import { Button, LoadingButton } from "veryfront/ui"`;
 
 const compositionTree =
   `Button           <- <button> or Radix Slot (asChild)
@@ -204,7 +204,7 @@ function ButtonDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Button",
+  title: "UI/Button",
   component: Button,
   tags: ["autodocs"],
   parameters: {

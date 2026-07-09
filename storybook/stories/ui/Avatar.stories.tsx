@@ -5,8 +5,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
   Avatar,
-} from "../../../src/react/components/chat/ui/index.ts";
-import { cn } from "../../../src/react/components/chat/theme.ts";
+} from "../../../src/react/components/ui/index.ts";
+import { cx as cn } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -22,7 +22,7 @@ import {
 // arrow), so the "Active Users" example renders the accent-coloured tooltips
 // without a pointer arrow.
 
-const importCode = `import { Avatar } from "veryfront/chat/ui"`;
+const importCode = `import { Avatar } from "veryfront/ui"`;
 
 function AvatarDocsPage() {
   return (
@@ -146,7 +146,7 @@ function AvatarDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Avatar",
+  title: "UI/Avatar",
   component: Avatar,
   tags: ["autodocs"],
   parameters: {

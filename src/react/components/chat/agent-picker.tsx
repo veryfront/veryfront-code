@@ -8,7 +8,7 @@
  * `Floating` (through `PopoverContent`) so it never clips in the iframe.
  *
  * Semantic Studio classes remapped to veryfront's `[var(--token)]` vocabulary;
- * icons inherit the Command row's sizing. Composes the private chat/ui
+ * icons inherit the Command row's sizing. Composes the private ui
  * primitives (Popover, Command, Avatar) — no radix / cva / `@/` imports.
  *
  * @module react/components/chat/agent-picker
@@ -22,11 +22,11 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "./ui/command.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.tsx";
-import { Pill } from "./ui/pill.tsx";
-import { Avatar } from "./ui/avatar.tsx";
-import { CheckIcon, ChevronDownIcon, PlusIcon, SparklesIcon } from "./icons/index.ts";
+} from "../ui/command.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.tsx";
+import { Pill } from "../ui/pill.tsx";
+import { Avatar } from "../ui/avatar.tsx";
+import { CheckIcon, ChevronDownIcon, PlusIcon, SparklesIcon } from "../ui/icons/index.ts";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** A selectable agent entry. */

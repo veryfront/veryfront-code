@@ -38,7 +38,7 @@ async function* storyFiles(dir: string): AsyncGenerator<string> {
 }
 
 describe("Storybook UI workbench", () => {
-  it("Overview links every UI/Component/Composition story exactly once, in the right section", async () => {
+  it("Overview links every UI/Component story exactly once, in the right section", async () => {
     const overview = await readText("storybook/stories/Overview.stories.tsx");
 
     // All nav ids in order, plus a duplicate check (one link per story).
@@ -49,13 +49,14 @@ describe("Storybook UI workbench", () => {
     const dupes = [...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i))];
     assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
 
-    // Every linkable docs page: an autodocs story titled under one of the three
-    // linked sections. (`Chat/Overview` and any non-autodocs story are excluded.)
+    // Every linkable docs page: an autodocs story titled under one of the two
+    // linked sections — the top-level `UI/*` primitives and `Chat/Components`.
+    // (`Chat/Overview` and any non-autodocs story are excluded.)
     const expected = new Set<string>();
     for await (const path of storyFiles("storybook/stories")) {
       const src = await readText(path);
       const title = src.match(
-        /title:\s*"(Chat\/(?:UI|Components|Composition)\/[^"]+)"/,
+        /title:\s*"((?:Chat\/Components|UI)\/[^"]+)"/,
       )?.[1];
       if (title && /tags:\s*\[[^\]]*"autodocs"/.test(src)) {
         expected.add(`${toStorybookId(title)}--docs`);
@@ -76,8 +77,7 @@ describe("Storybook UI workbench", () => {
     for (
       const [name, prefix] of [
         ["COMPONENTS", "chat-components-"],
-        ["COMPOSITION", "chat-composition-"],
-        ["UI", "chat-ui-"],
+        ["UI", "ui-"],
       ] as const
     ) {
       const block = overview.match(
@@ -184,28 +184,10 @@ describe("Storybook UI workbench", () => {
         names: ["Chat", "modelOptions"],
       },
       {
-        path: "storybook/stories/chat/ChatComposition.stories.tsx",
-        title: "Chat/Composition/Anatomy",
-        imports: ['from "veryfront/chat"'],
-        names: ["ChatRoot", "ChatMessageList", "ChatInput", "Message"],
-      },
-      {
-        path: "storybook/stories/chat/ChatSubcomponents.stories.tsx",
-        title: "Chat/Composition/Subcomponents",
-        imports: ['from "veryfront/chat"'],
-        names: ["ToolCall", "Sources", "Reasoning", "MessageActionBar"],
-      },
-      {
         path: "storybook/stories/chat/ChatSidebar.stories.tsx",
         title: "Chat/Components/ChatSidebar",
         imports: ['from "veryfront/chat"'],
         names: ["ChatSidebar"],
-      },
-      {
-        path: "storybook/stories/primitives/ReactPrimitives.stories.tsx",
-        title: "Chat/Composition/React Primitives",
-        imports: ['from "../../../src/react/primitives/index.ts"'],
-        names: ["ChatContainer", "MessageList", "InputBox", "SubmitButton"],
       },
     ];
 
@@ -318,22 +300,22 @@ describe("Storybook UI workbench", () => {
     );
   });
 
-  it("has a CodeBlock primitive under Chat/UI (driver)", async () => {
+  it("has a CodeBlock primitive under UI (driver)", async () => {
     // CodeBlock is the shared syntax-highlight primitive (Markdown + ToolCall).
     // Renamed from RichCodeBlock, moved to the ui barrel, shiki github-light/dark
     // + mermaid, lazy-loaded from esm.sh (no bundled dep).
     const problems: string[] = [];
 
-    const uiBarrel = await readText("src/react/components/chat/ui/index.ts");
+    const uiBarrel = await readText("src/react/components/ui/index.ts");
     if (!/\bCodeBlock\b/.test(uiBarrel)) {
-      problems.push("src/react/components/chat/ui/index.ts must export CodeBlock");
+      problems.push("src/react/components/ui/index.ts must export CodeBlock");
     }
 
     const storyPath = "storybook/stories/ui/CodeBlock.stories.tsx";
     try {
       const story = await readText(storyPath);
-      if (!story.includes("Chat/UI/CodeBlock")) {
-        problems.push(`${storyPath} must use title "Chat/UI/CodeBlock"`);
+      if (!story.includes("UI/CodeBlock")) {
+        problems.push(`${storyPath} must use title "UI/CodeBlock"`);
       }
     } catch {
       problems.push(`missing story ${storyPath}`);
@@ -343,6 +325,26 @@ describe("Storybook UI workbench", () => {
       problems,
       [],
       `CodeBlock primitive incomplete:\n  - ${problems.join("\n  - ")}`,
+    );
+  });
+
+  it("teaches the canonical `veryfront/ui` import in every UI story", async () => {
+    // The primitives are published from `veryfront/ui`; a `UI/*` story must not
+    // import them from (or advertise) `veryfront/chat` — even for re-exported
+    // leaves like CodeBlock. Guards the regression fixed in PR #2798 review.
+    const offenders: string[] = [];
+    for await (const path of storyFiles("storybook/stories/ui")) {
+      const source = await readText(path);
+      if (/veryfront\/chat/.test(source)) {
+        offenders.push(path);
+      }
+    }
+    assertEquals(
+      offenders,
+      [],
+      `UI stories must import/advertise \`veryfront/ui\`, not \`veryfront/chat\`:\n  - ${
+        offenders.join("\n  - ")
+      }`,
     );
   });
 
@@ -392,10 +394,10 @@ describe("Storybook UI workbench", () => {
       }
     }
 
-    const themeSource = await readText("src/react/components/chat/theme.ts");
+    const tokenSource = await readText("src/react/components/ui/design-tokens.ts");
     const previewSource = await readText("storybook/.storybook/preview.css");
     const bridgeSource = await readText("src/studio/bridge/bridge-styles.ts");
-    assertStringIncludes(themeSource, "font-family:Inter");
+    assertStringIncludes(tokenSource, "font-family:Inter");
     assertStringIncludes(previewSource, "Inter, ui-sans-serif");
     assertStringIncludes(bridgeSource, "font-family: Inter, ui-sans-serif");
   });

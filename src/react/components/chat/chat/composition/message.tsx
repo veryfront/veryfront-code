@@ -35,19 +35,19 @@ import type { MessageContextValue } from "../contexts/message-context.tsx";
 import { useChatContextOptional } from "../contexts/chat-context.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import { useClipboard } from "../hooks/use-clipboard.ts";
-import { Slot } from "../../ui/slot.tsx";
-import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../icons/index.ts";
+import { Slot } from "../../../ui/slot.tsx";
+import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
-import { Shimmer } from "../../ui/shimmer.tsx";
+import { Shimmer } from "../../../ui/shimmer.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
 import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "../../ui/popover.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "../../../ui/popover.tsx";
 import {
   extractSourcesFromParts,
   getAnswerPartsForRendering,

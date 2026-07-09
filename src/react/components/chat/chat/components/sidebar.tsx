@@ -42,16 +42,16 @@
 import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { cn } from "../../theme.ts";
-import { PencilIcon, TrashIcon } from "../../icons/index.ts";
-import { Button } from "../../ui/button.tsx";
+import { PencilIcon, TrashIcon } from "../../../ui/icons/index.ts";
+import { Button } from "../../../ui/button.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../ui/dropdown-menu.tsx";
-import { List, ListItem, ListLabel } from "../../ui/list.tsx";
-import { Skeleton } from "../../ui/skeleton.tsx";
+} from "../../../ui/dropdown-menu.tsx";
+import { List, ListItem, ListLabel } from "../../../ui/list.tsx";
+import { Skeleton } from "../../../ui/skeleton.tsx";
 import { ChatTokens } from "../../chat-tokens-style.tsx";
 import type { ConversationSummary } from "../persistence/conversation-store.ts";
 import { useConversationsContextOptional } from "../contexts/conversations-context.tsx";

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckCircleIcon } from "../../icons/index.ts";
+import { CheckCircleIcon } from "../../../ui/icons/index.ts";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Props accepted by step indicator. */

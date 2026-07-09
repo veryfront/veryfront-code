@@ -6,9 +6,9 @@
 
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { RefreshCwIcon } from "../../icons/index.ts";
-import { Alert, AlertAction, AlertContent } from "../../ui/alert.tsx";
-import { Button } from "../../ui/button.tsx";
+import { RefreshCwIcon } from "../../../ui/icons/index.ts";
+import { Alert, AlertAction, AlertContent } from "../../../ui/alert.tsx";
+import { Button } from "../../../ui/button.tsx";
 
 /** Props accepted by error banner. */
 export interface ErrorBannerProps {

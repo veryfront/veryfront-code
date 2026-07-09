@@ -1,30 +1,18 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@david/code-block-writer@^13.0.3": "13.0.3",
-    "jsr:@deno/dnt@0.42.3": "0.42.3",
     "jsr:@std/assert@1.0.19": "1.0.19",
     "jsr:@std/assert@^1.0.17": "1.0.19",
-    "jsr:@std/assert@^1.0.19": "1.0.19",
-    "jsr:@std/async@1.2.0": "1.2.0",
-    "jsr:@std/async@^1.1.0": "1.2.0",
     "jsr:@std/cli@1.0.28": "1.0.28",
-    "jsr:@std/data-structures@^1.0.10": "1.1.1",
     "jsr:@std/dotenv@0.225.6": "0.225.6",
-    "jsr:@std/expect@1.0.18": "1.0.18",
-    "jsr:@std/fmt@1": "1.0.9",
     "jsr:@std/fmt@1.0.9": "1.0.9",
-    "jsr:@std/fs@1": "1.0.23",
     "jsr:@std/fs@1.0.23": "1.0.23",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
-    "jsr:@std/path@1": "1.1.4",
     "jsr:@std/path@1.1.4": "1.1.4",
-    "jsr:@std/path@^1.1.4": "1.1.4",
+    "jsr:@std/path@^1.1.4": "1.1.6",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
-    "jsr:@ts-morph/bootstrap@0.27": "0.27.0",
-    "jsr:@ts-morph/common@0.27": "0.27.0",
     "npm:@babel/generator@7.29.1": "7.29.1",
     "npm:@babel/parser@7.29.2": "7.29.2",
     "npm:@babel/traverse@7.29.0": "7.29.0",
@@ -55,7 +43,7 @@
     "npm:@types/mdast@4.0.3": "4.0.3",
     "npm:@types/node@*": "24.2.0",
     "npm:@types/unist@3.0.2": "3.0.2",
-    "npm:bash-tool@1.3.16": "1.3.16_ai@6.0.214__zod@3.25.76_just-bash@2.14.5",
+    "npm:bash-tool@1.3.16": "1.3.16_ai@6.0.219__zod@3.25.76_just-bash@2.14.5",
     "npm:better-sqlite3@9.6.0": "9.6.0",
     "npm:es-module-lexer@2.0.0": "2.0.0",
     "npm:esbuild@0.28.1": "0.28.1",
@@ -85,44 +73,17 @@
     "npm:zod@4.3.6": "4.3.6"
   },
   "jsr": {
-    "@david/code-block-writer@13.0.3": {
-      "integrity": "f98c77d320f5957899a61bfb7a9bead7c6d83ad1515daee92dbacc861e13bb7f"
-    },
-    "@deno/dnt@0.42.3": {
-      "integrity": "62a917a0492f3c8af002dce90605bb0d41f7d29debc06aca40dba72ab65d8ae3",
-      "dependencies": [
-        "jsr:@david/code-block-writer",
-        "jsr:@std/fmt@1",
-        "jsr:@std/fs@1",
-        "jsr:@std/path@1",
-        "jsr:@ts-morph/bootstrap"
-      ]
-    },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
         "jsr:@std/internal@^1.0.12"
       ]
     },
-    "@std/async@1.2.0": {
-      "integrity": "c059c6f6d95ca7cc012ae8e8d7164d1697113d54b0b679e4372b354b11c2dee5"
-    },
     "@std/cli@1.0.28": {
       "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
     },
-    "@std/data-structures@1.1.1": {
-      "integrity": "7e1fcf19771fb9c6dbcd7f65039d6d42ef8dc023cfbc0c4cdc74b24e09229380"
-    },
     "@std/dotenv@0.225.6": {
       "integrity": "1d6f9db72f565bd26790fa034c26e45ecb260b5245417be76c2279e5734c421b"
-    },
-    "@std/expect@1.0.18": {
-      "integrity": "8566eab35200466f8609eb7e7aed062ed0db314e9a258d5d201b1b8997ce801a",
-      "dependencies": [
-        "jsr:@std/assert@^1.0.19",
-        "jsr:@std/internal@^1.0.12",
-        "jsr:@std/path@^1.1.4"
-      ]
     },
     "@std/fmt@1.0.9": {
       "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
@@ -153,34 +114,19 @@
       "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
       "dependencies": [
         "jsr:@std/assert@^1.0.17",
-        "jsr:@std/async@^1.1.0",
-        "jsr:@std/data-structures",
         "jsr:@std/internal@^1.0.12"
       ]
     },
     "@std/yaml@1.1.0": {
       "integrity": "fc1c5c63e05c4c5eb6118355f557958035d41940d6c29d35b306ef7155d6edb0"
-    },
-    "@ts-morph/bootstrap@0.27.0": {
-      "integrity": "b8d7bc8f7942ce853dde4161b28f9aa96769cef3d8eebafb379a81800b9e2448",
-      "dependencies": [
-        "jsr:@ts-morph/common"
-      ]
-    },
-    "@ts-morph/common@0.27.0": {
-      "integrity": "c7b73592d78ce8479b356fd4f3d6ec3c460d77753a8680ff196effea7a939052",
-      "dependencies": [
-        "jsr:@std/fs@1",
-        "jsr:@std/path@1"
-      ]
     }
   },
   "npm": {
     "@acemir/cssom@0.9.31": {
       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA=="
     },
-    "@ai-sdk/gateway@3.0.139_zod@3.25.76": {
-      "integrity": "sha512-RFpxyh5j9g7ZMfKxhiwCcF7bGU872o3JvoiIqZbHOM4qkR4RCzeKJF+k+zHomcJYGeUabEbeMXTKNASzz4Toxw==",
+    "@ai-sdk/gateway@3.0.143_zod@3.25.76": {
+      "integrity": "sha512-RCH60KsUaNiZkI/fBuyau4yvYrVBIEgAcN+Ain94QpL1kVm28GduQzFKfGffAiJU2We0ZrmN4BHkoCZzACK96Q==",
       "dependencies": [
         "@ai-sdk/provider",
         "@ai-sdk/provider-utils",
@@ -188,8 +134,8 @@
         "zod@3.25.76"
       ]
     },
-    "@ai-sdk/provider-utils@4.0.33_zod@3.25.76": {
-      "integrity": "sha512-nJ0bAfegMAIJtrzMJtbzer1cS3nb7c7DsyU1S4nrPm7ZU0Mn6SBBZv5IGZZGTbpWTJwqKTSPeZJTXalbAxt1BA==",
+    "@ai-sdk/provider-utils@4.0.35_zod@3.25.76": {
+      "integrity": "sha512-bjYld/2KGPLt78kpqbya+fD4LYS7BqVQJyUjE3qAHrYB0FR2Q90BaWEVIBZaguTWXf/A8L6uG1zO1v9TxVlGWg==",
       "dependencies": [
         "@ai-sdk/provider",
         "@standard-schema/spec",
@@ -197,8 +143,8 @@
         "zod@3.25.76"
       ]
     },
-    "@ai-sdk/provider@3.0.12": {
-      "integrity": "sha512-sj9DWTJ2Ze0WR9qsiOPqoqzNx3OxL6iMxHImbhvoe9qOspekbzxNDMiJ4TIGfYHYh9w4OmBjz3prvqhzTi96+Q==",
+    "@ai-sdk/provider@3.0.13": {
+      "integrity": "sha512-ZPtVYt5QIJzOta1kdUiDuCx4HhFkvNPv/rvmZ2b1iXwybYjJsCnNYR4PAw4kW7rgVfDARvHXcU64efWuqNp6bw==",
       "dependencies": [
         "json-schema"
       ]
@@ -1479,8 +1425,8 @@
         "@opentelemetry/resources"
       ]
     },
-    "@opentelemetry/resource-detector-aws@2.19.0_@opentelemetry+api@1.9.1": {
-      "integrity": "sha512-ELKQCtbc7g2ghbteLftKzXvI3MkIfENrRjAaYd2h9cWNj8g/Dx3oDzpxfcv9mBigtwwWCZwQRr8R//uxREpdrg==",
+    "@opentelemetry/resource-detector-aws@2.20.0_@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-3ZkhvVHqJgJ75ObpZQwZIBySNfd4h772QRb2NBPU1A3lSUzDlRen9x5Kzv/K7HNkL/Azl8XEanykwa73YjWmQA==",
       "dependencies": [
         "@opentelemetry/api",
         "@opentelemetry/core",
@@ -1497,8 +1443,8 @@
         "@opentelemetry/semantic-conventions"
       ]
     },
-    "@opentelemetry/resource-detector-container@0.8.10_@opentelemetry+api@1.9.1": {
-      "integrity": "sha512-aMU2wG4ktcqy6zEotdbIkkX5ACKRxEZLX1ZlMH0dea0M2+2KfabJc1lHPqAIFaa+CD37fCION55e69QmYwqX4A==",
+    "@opentelemetry/resource-detector-container@0.8.11_@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-O7dMPH13+JZu+swtCsdq5702Fa2Q4MSHmwMoLxyqgWuPPtmDmao4s+V1ovfg225zW67quNDXFKdLf1q5/Elb9w==",
       "dependencies": [
         "@opentelemetry/api",
         "@opentelemetry/core",
@@ -1838,8 +1784,8 @@
     "agent-base@7.1.4": {
       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="
     },
-    "ai@6.0.214_zod@3.25.76": {
-      "integrity": "sha512-9MlePEXT5pXtQv4fXqmiR0RG3DZU4Dbv+kU9ktEJC2COi2RH2WvI2GiyG9MuCqgPII6f1w+5kB5fNIiArqPzaQ==",
+    "ai@6.0.219_zod@3.25.76": {
+      "integrity": "sha512-rtTDz99Rc9HsstSJ7YdO8DX7DQwS442N2vQ5jOopXDdo4qfkLrtIRpORdztFMOZxX/XjBzHRlvqF6eMg3cpyLA==",
       "dependencies": [
         "@ai-sdk/gateway",
         "@ai-sdk/provider",
@@ -1882,7 +1828,7 @@
     "base64-js@1.5.1": {
       "integrity": "sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA=="
     },
-    "bash-tool@1.3.16_ai@6.0.214__zod@3.25.76_just-bash@2.14.5": {
+    "bash-tool@1.3.16_ai@6.0.219__zod@3.25.76_just-bash@2.14.5": {
       "integrity": "sha512-2xuprVBzUOYw4+QCpeSwvkuXuHkjKRtMzh+nTpEidROsNnglr5xRs3mdeOmwFVkjB4JhE/uZqIXE+tabbJI7QQ==",
       "dependencies": [
         "ai",
@@ -2264,8 +2210,8 @@
         "micromatch"
       ]
     },
-    "fast-xml-builder@1.2.0": {
-      "integrity": "sha512-00aAWieqff+ZJhsXA4g1g7M8k+7AYoMUUHF+/zFb5U6Uv/P0Vl4QZo84/IcufzYalLuEj9928bXN9PbbFzMF0Q==",
+    "fast-xml-builder@1.2.1": {
+      "integrity": "sha512-tPb5TTWfgfVx5BNSi2xV0eLr89POeXXn0dXIsCJ9m1narrWxeIyx6je9d7Rce/3NyXLbvuQmLkxq+RuxMWejvw==",
       "dependencies": [
         "path-expression-matcher",
         "xml-naming"
@@ -3397,8 +3343,8 @@
     "napi-build-utils@2.0.0": {
       "integrity": "sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA=="
     },
-    "node-abi@3.92.0": {
-      "integrity": "sha512-KdHvFWZjEKDf0cakgFjebl371GPsISX2oZHcuyKqM7DtogIsHrqKeLTo8wBHxaXRAQlY2PsPlZmfo+9ZCxEREQ==",
+    "node-abi@3.94.0": {
+      "integrity": "sha512-W5ZNO5KRPB5TkYmGVD9F6YqhsglXJzE6etpbmT+f6EQElhiX/UTG551cnsRGvLG3fyZEg9HwaDmNmj5nwJ4z9g==",
       "dependencies": [
         "semver"
       ]
