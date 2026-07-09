@@ -12,6 +12,7 @@ import factory, {
   logAttributes,
   resolveOtlpExtensionConfig,
   resolveOtlpSignalUrl,
+  rewriteLlmObservabilitySpanResource,
   unifiedServiceResourceAttributes,
 } from "./index.ts";
 
@@ -220,6 +221,89 @@ describe("ext-observability-opentelemetry config helpers", () => {
 
     assertEquals(config.serviceName, "veryfront-server");
     assertEquals(config.tracesUrl, "https://platform-collector.example/otlp/v1/traces");
+  });
+});
+
+describe("ext-observability-opentelemetry LLMObs resource rewriting", () => {
+  it("rewrites GenAI span resource tags from span service attributes", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "service.name": "veryfront-ops-agent",
+        "service.version": "0.0.34",
+        "deployment.environment.name": "production",
+      },
+      resource: {
+        attributes: {
+          "service.name": "investment-ops-agent",
+          "service.version": "0.0.13",
+          "deployment.environment.name": "production",
+          service: "investment-ops-agent",
+          version: "0.0.13",
+          env: "production",
+        },
+      },
+      instrumentationScope: {
+        name: "investment-ops-agent",
+        version: "0.1.1042",
+      },
+    };
+
+    const rewritten = rewriteLlmObservabilitySpanResource(span) as typeof span;
+
+    assertEquals(Object.is(rewritten, span), false);
+    assertEquals(rewritten.resource.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes.service, "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes["service.version"], "0.0.34");
+    assertEquals(rewritten.resource.attributes.version, "0.0.34");
+    assertEquals(rewritten.resource.attributes["deployment.environment.name"], "production");
+    assertEquals(rewritten.resource.attributes.env, "production");
+    assertEquals(rewritten.instrumentationScope.name, "veryfront-ops-agent");
+    assertEquals(span.resource.attributes["service.name"], "investment-ops-agent");
+    assertEquals(span.instrumentationScope.name, "investment-ops-agent");
+  });
+
+  it("uses a trace fallback identity for GenAI child spans without service attributes", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "execute_tool",
+      },
+      resource: {
+        attributes: {
+          "service.name": "investment-ops-agent",
+          "service.version": "0.0.13",
+          "deployment.environment.name": "production",
+        },
+      },
+      instrumentationScope: {
+        name: "investment-ops-agent",
+      },
+    };
+
+    const rewritten = rewriteLlmObservabilitySpanResource(span, {
+      serviceName: "veryfront-ops-agent",
+      serviceVersion: "0.0.34",
+      deploymentEnvironment: "production",
+    }) as typeof span;
+
+    assertEquals(rewritten.resource.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes["service.version"], "0.0.34");
+    assertEquals(rewritten.instrumentationScope.name, "veryfront-ops-agent");
+  });
+
+  it("keeps spans unchanged when no project service identity is available", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "chat",
+      },
+      resource: {
+        attributes: {
+          "service.name": "veryfront-server",
+        },
+      },
+    };
+
+    assertEquals(Object.is(rewriteLlmObservabilitySpanResource(span), span), true);
   });
 });
 
