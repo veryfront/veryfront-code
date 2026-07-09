@@ -13,7 +13,11 @@ import {
   withServerTimingHeader,
 } from "./request-profiler.ts";
 
-const ENV_KEYS = ["VERYFRONT_ENABLE_PERF_PROFILING", "VERYFRONT_ENABLE_SERVER_TIMING"] as const;
+const ENV_KEYS = [
+  "VERYFRONT_ENABLE_PERF_PROFILING",
+  "VERYFRONT_ENABLE_SERVER_TIMING",
+  "VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING",
+] as const;
 
 function clearProfilerEnv(): void {
   for (const key of ENV_KEYS) Deno.env.delete(key);
@@ -25,7 +29,14 @@ describe("request profiler", () => {
     resetRequestProfiles();
   });
 
-  it("keeps normal HTML requests unprofiled by default", () => {
+  it("profiles normal HTML requests by default for slow-completion diagnostics", () => {
+    assertEquals(isRequestProfilingEnabled("/"), true);
+    assertEquals(snapshotRequestProfiles().enabled, true);
+  });
+
+  it("can disable default slow-completion profiling", () => {
+    Deno.env.set("VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING", "1");
+
     assertEquals(isRequestProfilingEnabled("/"), false);
     assertEquals(snapshotRequestProfiles().enabled, false);
   });
