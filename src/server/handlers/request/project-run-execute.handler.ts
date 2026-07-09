@@ -55,6 +55,9 @@ export interface ProjectRunExecuteRequest {
   target: string;
   projectId: string;
   runtimeAgUiEndpoint?: string;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch";
+  runtimeTargetEnvironmentId?: string | null;
+  runtimeTargetBranchId?: string | null;
   config?: Record<string, unknown>;
   input?: Record<string, unknown>;
 }
@@ -166,6 +169,21 @@ function parseOptionalUrl(value: unknown, fieldName: string): string | undefined
   }
 }
 
+function parseRuntimeTargetKind(value: unknown): ProjectRunExecuteRequest["runtimeTargetKind"] {
+  if (value === undefined || value === null) return undefined;
+  if (value === "main_branch" || value === "environment" || value === "preview_branch") {
+    return value;
+  }
+  throw new Error("Invalid runtimeTargetKind");
+}
+
+function parseOptionalNullableString(value: unknown, fieldName: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length === 0) throw new Error(`Invalid ${fieldName}`);
+  return value;
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw new Error("Expected object");
 
@@ -193,6 +211,15 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     target,
     projectId,
     runtimeAgUiEndpoint: parseOptionalUrl(value.runtimeAgUiEndpoint, "runtimeAgUiEndpoint"),
+    runtimeTargetKind: parseRuntimeTargetKind(value.runtimeTargetKind),
+    runtimeTargetEnvironmentId: parseOptionalNullableString(
+      value.runtimeTargetEnvironmentId,
+      "runtimeTargetEnvironmentId",
+    ),
+    runtimeTargetBranchId: parseOptionalNullableString(
+      value.runtimeTargetBranchId,
+      "runtimeTargetBranchId",
+    ),
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
@@ -299,6 +326,7 @@ async function executeTaskRun(
     task,
     config: request.config ?? {},
     projectId: request.projectId,
+    environmentId: request.runtimeTargetEnvironmentId ?? ctx.environmentId,
     debug: ctx.debug,
   });
 

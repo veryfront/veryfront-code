@@ -229,9 +229,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
+    let receivedEnvironmentId: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async (options) => {
         receivedConfig = options.config;
+        receivedEnvironmentId = options.environmentId;
         return {
           success: true,
           result: { synced: 12 },
@@ -244,6 +246,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       kind: "task",
       target: "task:sync-calendar-events",
       projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "11111111-1111-4111-8111-111111111111",
       config: { dry_run: true },
     };
     const { request, publicKeyPem } = await signedRequest(
@@ -262,6 +266,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: null,
     });
     assertEquals(receivedConfig, { dry_run: true });
+    assertEquals(receivedEnvironmentId, "11111111-1111-4111-8111-111111111111");
   });
 
   it("runs cloud task targets from project runtime discovery", async () => {

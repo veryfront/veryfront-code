@@ -103,6 +103,20 @@ describe("src/task/runner", () => {
       assertEquals(receivedProjectId, "proj-123");
     });
 
+    it("should pass environmentId to task context", async () => {
+      let receivedEnvironmentId: string | undefined;
+      const task = makeTask({
+        run: (ctx) => {
+          receivedEnvironmentId = ctx.environmentId;
+          return null;
+        },
+      });
+
+      await runTask({ task, environmentId: "env-123" });
+
+      assertEquals(receivedEnvironmentId, "env-123");
+    });
+
     it("should merge injected task env into ctx.env without exposing reserved runtime env", async () => {
       let receivedEnv: Record<string, string> = {};
       const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
