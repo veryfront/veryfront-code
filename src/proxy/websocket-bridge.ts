@@ -11,8 +11,22 @@ const TRANSIENT_SERVER_ERROR_PATTERNS = [
   /socket closed/i,
 ];
 
+const TRANSIENT_CLIENT_ERROR_PATTERNS = [
+  /unexpected eof/i,
+  /no response from ping frame/i,
+  /connection reset/i,
+  /connection closed/i,
+  /socket closed/i,
+];
+
 export function getServerWebSocketErrorLogLevel(message: string): ServerWebSocketErrorLogLevel {
   return TRANSIENT_SERVER_ERROR_PATTERNS.some((pattern) => pattern.test(message))
+    ? "warn"
+    : "error";
+}
+
+export function getClientWebSocketErrorLogLevel(message: string): ServerWebSocketErrorLogLevel {
+  return TRANSIENT_CLIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message))
     ? "warn"
     : "error";
 }
