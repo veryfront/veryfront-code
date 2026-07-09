@@ -6,8 +6,16 @@ export type OpenTelemetrySpanContext = {
 
 /** Public API contract for open telemetry span. */
 export type OpenTelemetrySpan = {
-  setAttribute(key: string, value: string | number | boolean): unknown;
-  setAttributes(attributes: Record<string, string | number | boolean>): unknown;
+  setAttribute(
+    key: string,
+    value: ServiceTracerAttributePrimitive | readonly ServiceTracerAttributePrimitive[],
+  ): unknown;
+  setAttributes(
+    attributes: Record<
+      string,
+      ServiceTracerAttributePrimitive | readonly ServiceTracerAttributePrimitive[]
+    >,
+  ): unknown;
   setStatus(status: { code: number }): unknown;
   recordException(error: unknown): unknown;
   end(): unknown;
@@ -115,9 +123,24 @@ export type OpenTelemetryServiceTracer<
   getTraceContext(): { traceId?: string; spanId?: string };
 };
 
-function toAttributeValue(value: ServiceTracerAttributeInput): string | number | boolean {
+function isPrimitiveArray(
+  value: object,
+): value is readonly ServiceTracerAttributePrimitive[] {
+  return Array.isArray(value) &&
+    value.every((item) =>
+      typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+    );
+}
+
+function toAttributeValue(
+  value: ServiceTracerAttributeInput,
+): ServiceTracerAttributePrimitive | readonly ServiceTracerAttributePrimitive[] {
   if (value === null || value === undefined) {
     return "";
+  }
+
+  if (typeof value === "object" && isPrimitiveArray(value)) {
+    return value;
   }
 
   if (typeof value === "object") {

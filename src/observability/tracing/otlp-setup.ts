@@ -15,6 +15,7 @@
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
+  type AttributeValue,
   type Context,
   context as shimContext,
   defaultTextMapGetter,
@@ -139,18 +140,23 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
   if (error instanceof Error) span.recordException(error);
 }
 
+export type WithSpanOptions = {
+  kind?: SpanKind;
+};
+
 /** Applies span. */
 export async function withSpan<T>(
   name: string,
   fn: (span: Span) => Promise<T>,
-  attributes?: Record<string, string | number | boolean>,
+  attributes?: Record<string, AttributeValue>,
+  options?: WithSpanOptions,
 ): Promise<T> {
   const { tracer } = getTracingRuntime();
   const parentContext = shimContext.active();
 
   const span = tracer.startSpan(
     name,
-    { kind: SpanKind.INTERNAL, attributes },
+    { kind: options?.kind ?? SpanKind.INTERNAL, attributes },
     parentContext,
   );
 
@@ -172,14 +178,15 @@ export async function withSpan<T>(
 export function withSpanSync<T>(
   name: string,
   fn: () => T,
-  attributes?: Record<string, string | number | boolean>,
+  attributes?: Record<string, AttributeValue>,
+  options?: WithSpanOptions,
 ): T {
   const { tracer } = getTracingRuntime();
   const parentContext = shimContext.active();
 
   const span = tracer.startSpan(
     name,
-    { kind: SpanKind.INTERNAL, attributes },
+    { kind: options?.kind ?? SpanKind.INTERNAL, attributes },
     parentContext,
   );
 
@@ -252,7 +259,7 @@ export function endServerSpan(span: unknown, statusCode: number, error?: Error):
 /** Sets span attributes. */
 export function setSpanAttributes(
   span: unknown,
-  attributes: Record<string, string | number | boolean>,
+  attributes: Record<string, AttributeValue>,
 ): void {
   if (!span) return;
 
@@ -264,7 +271,7 @@ export function setSpanAttributes(
 export function addSpanEvent(
   span: unknown,
   name: string,
-  attributes?: Record<string, string | number | boolean>,
+  attributes?: Record<string, AttributeValue>,
 ): void {
   if (!span) return;
 
@@ -274,7 +281,7 @@ export function addSpanEvent(
 
 /** Sets active span attributes. */
 export function setActiveSpanAttributes(
-  attributes: Record<string, string | number | boolean>,
+  attributes: Record<string, AttributeValue>,
 ): void {
   const span = shimTrace.getActiveSpan?.();
   if (!span) return;

@@ -60,9 +60,12 @@ export type NodeTelemetryInitializeOptions = {
   metricsEnabled?: boolean;
   logsEnabled?: boolean;
   tracesEndpoint?: string;
+  llmObservabilityEnabled?: boolean;
+  llmObservabilityEndpoint?: string;
   metricsEndpoint?: string;
   logsEndpoint?: string;
   tracesHeaders?: Record<string, string>;
+  llmObservabilityHeaders?: Record<string, string>;
   metricsHeaders?: Record<string, string>;
   logsHeaders?: Record<string, string>;
   metricsExportIntervalMillis?: number;

@@ -450,9 +450,10 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "agent.id": "agent-1",
       "run.id": "root-run-1",
       "message.id": "stream-message-1",
-      "gen_ai.operation.name": "chat",
+      "gen_ai.operation.name": "invoke_agent",
       "gen_ai.conversation.id": "conversation-1",
       "gen_ai.agent.id": "agent-1",
+      "gen_ai.request.model": "openai/gpt-5.4",
     });
   });
 

@@ -31,12 +31,15 @@ export type NodeHostedAgentServiceTelemetryConfig = {
   samplingRatio: number;
   exporterHeaders?: Record<string, string>;
   tracesEnabled: boolean;
+  llmObservabilityEnabled: boolean;
   metricsEnabled: boolean;
   logsEnabled: boolean;
   tracesEndpoint?: string;
+  llmObservabilityEndpoint?: string;
   metricsEndpoint?: string;
   logsEndpoint?: string;
   tracesHeaders?: Record<string, string>;
+  llmObservabilityHeaders?: Record<string, string>;
   metricsHeaders?: Record<string, string>;
   logsHeaders?: Record<string, string>;
   metricsExportIntervalMillis: number;
@@ -202,6 +205,28 @@ function parseExporterHeaders(headersEnv: string | undefined): Record<string, st
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
+function getHeaderValue(
+  headers: Record<string, string> | undefined,
+  headerName: string,
+): string | undefined {
+  const normalizedName = headerName.toLowerCase();
+  return Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === normalizedName)?.[1];
+}
+
+function setHeaderValue(
+  headers: Record<string, string>,
+  headerName: string,
+  value: string,
+): void {
+  const normalizedName = headerName.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === normalizedName && key !== headerName) {
+      delete headers[key];
+    }
+  }
+  headers[headerName] = value;
+}
+
 function mergeHeaders(
   base: Record<string, string> | undefined,
   override: Record<string, string> | undefined,
@@ -218,6 +243,36 @@ function resolveSignalHeaders(
     parseExporterHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
     parseExporterHeaders(env[`OTEL_EXPORTER_OTLP_${signal}_HEADERS`]),
   );
+}
+
+function resolveLlmObservabilityEnabled(
+  env: NodeHostedAgentServiceTelemetryEnv,
+  tracesHeaders: Record<string, string> | undefined,
+): boolean {
+  const explicitFlag = isTruthySignalFlag(env.DD_LLMOBS_ENABLED ?? env.OTEL_LLMOBS_ENABLED);
+  if (explicitFlag !== undefined) return explicitFlag;
+  return getHeaderValue(tracesHeaders, "dd-otlp-source") === "llmobs";
+}
+
+function resolveLlmObservabilityHeaders(
+  env: NodeHostedAgentServiceTelemetryEnv,
+  tracesHeaders: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const datadogApiKey = getHeaderValue(tracesHeaders, "dd-api-key") ??
+    env.DD_API_KEY ??
+    env.DATADOG_OTLP_API_KEY;
+  if (!datadogApiKey) return undefined;
+
+  const headers = { ...(tracesHeaders ?? {}) };
+  setHeaderValue(headers, "dd-api-key", datadogApiKey);
+  setHeaderValue(headers, "dd-otlp-source", "llmobs");
+
+  const mlApp = env.DD_LLMOBS_ML_APP;
+  if (mlApp) {
+    setHeaderValue(headers, "dd-ml-app", mlApp);
+  }
+
+  return headers;
 }
 
 function resolveOtlpSignalEndpoint(
@@ -266,19 +321,30 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
   const logsEnabled = resolveLogSignalEnabled(options.env);
   const baseEndpoint = options.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const exporterHeaders = parseExporterHeaders(options.env.OTEL_EXPORTER_OTLP_HEADERS);
+  const tracesHeaders = resolveSignalHeaders(options.env, "TRACES");
+  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(options.env, tracesHeaders);
+  const llmObservabilityEnabled = resolveLlmObservabilityEnabled(options.env, tracesHeaders);
 
   return {
-    enabled: tracesEnabled || metricsEnabled || logsEnabled,
+    enabled: tracesEnabled || llmObservabilityEnabled || metricsEnabled || logsEnabled,
     serviceName: resolveServiceName(options.env, options.defaultServiceName),
     serviceVersion: resolveServiceVersion(options.env, options.defaultServiceVersion),
     deploymentEnvironment: resolveDeploymentEnvironment(options.env),
     samplingRatio: resolveSamplingRatio(options.env),
     exporterHeaders,
     tracesEnabled,
+    llmObservabilityEnabled,
     metricsEnabled,
     logsEnabled,
     tracesEndpoint: resolveOtlpSignalEndpoint(
       options.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? baseEndpoint,
+      "traces",
+    ),
+    llmObservabilityEndpoint: resolveOtlpSignalEndpoint(
+      options.env.OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT ??
+        options.env.DD_LLMOBS_OTLP_ENDPOINT ??
+        options.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+        baseEndpoint,
       "traces",
     ),
     metricsEndpoint: resolveOtlpSignalEndpoint(
@@ -289,7 +355,8 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
       options.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? baseEndpoint,
       "logs",
     ),
-    tracesHeaders: resolveSignalHeaders(options.env, "TRACES"),
+    tracesHeaders,
+    llmObservabilityHeaders,
     metricsHeaders: resolveSignalHeaders(options.env, "METRICS"),
     logsHeaders: resolveSignalHeaders(options.env, "LOGS"),
     metricsExportIntervalMillis: resolveMetricsExportIntervalMillis(options.env),
@@ -363,12 +430,15 @@ export async function initializeNodeHostedAgentServiceOpenTelemetry(
       samplingRatio: options.samplingRatio,
       exporterHeaders: options.exporterHeaders,
       tracesEnabled: options.tracesEnabled,
+      llmObservabilityEnabled: options.llmObservabilityEnabled,
       metricsEnabled: options.metricsEnabled,
       logsEnabled: options.logsEnabled,
       tracesEndpoint: options.tracesEndpoint,
+      llmObservabilityEndpoint: options.llmObservabilityEndpoint,
       metricsEndpoint: options.metricsEndpoint,
       logsEndpoint: options.logsEndpoint,
       tracesHeaders: options.tracesHeaders,
+      llmObservabilityHeaders: options.llmObservabilityHeaders,
       metricsHeaders: options.metricsHeaders,
       logsHeaders: options.logsHeaders,
       metricsExportIntervalMillis: options.metricsExportIntervalMillis,

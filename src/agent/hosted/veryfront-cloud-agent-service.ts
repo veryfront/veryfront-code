@@ -830,6 +830,8 @@ function setPrepareChatExecutionResultAttributes(
     projectId: string | null;
     userId: string;
     agentId: string;
+    agentName?: string;
+    modelId?: string;
     runId?: string;
     upstreamParentConversationId?: string;
     upstreamParentRunId?: string;
@@ -842,11 +844,13 @@ function setPrepareChatExecutionResultAttributes(
   const span = context.infrastructure.tracer.scope().active();
   span?.setAttributes(
     buildAgentRunTraceAttributes({
-      operationName: "chat",
+      operationName: "invoke_agent",
       conversationId: input.conversationId,
       projectId: input.projectId,
       userId: input.userId,
       agentId: input.agentId,
+      agentName: input.agentName,
+      modelId: input.modelId,
       runId: input.runId,
       parentConversationId: input.upstreamParentConversationId,
       parentRunId: input.upstreamParentRunId,
@@ -973,6 +977,8 @@ async function prepareChatExecution(
     projectId,
     userId,
     agentId: agentConfig.id,
+    agentName: agentConfig.name,
+    modelId,
     runId: rootRunContext.durableRootRun?.runId,
     upstreamParentConversationId,
     upstreamParentRunId,
