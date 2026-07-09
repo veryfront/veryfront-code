@@ -5,6 +5,39 @@ import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-
 
 const logger = serverLogger.component("route-registry");
 
+type SpanAttributes = Record<string, string | number | boolean>;
+
+export function buildRouteRegistrySpanAttributes(
+  req: Request,
+  url: URL,
+  ctx: HandlerContext,
+): SpanAttributes {
+  const attributes: SpanAttributes = {
+    "http.method": req.method,
+    "http.path": url.pathname,
+  };
+
+  const projectSlug = ctx.projectSlug ?? ctx.enriched?.projectSlug;
+  if (projectSlug) {
+    attributes["veryfront.project_slug"] = projectSlug;
+    attributes["project.slug"] = projectSlug;
+    attributes["veryfront.environment"] = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ??
+      "unknown";
+  }
+
+  const projectId = ctx.projectId;
+  if (projectId) {
+    attributes["veryfront.project_id"] = projectId;
+    attributes["project.id"] = projectId;
+  }
+
+  if ((projectSlug || projectId) && ctx.environmentName) {
+    attributes["veryfront.environment_name"] = ctx.environmentName;
+  }
+
+  return attributes;
+}
+
 export class RouteRegistry {
   private handlers: Handler[] = [];
   private config: RouteRegistryConfig;
@@ -117,7 +150,7 @@ export class RouteRegistry {
 
         return null;
       },
-      { "http.method": req.method, "http.path": url.pathname },
+      buildRouteRegistrySpanAttributes(req, url, ctx),
     );
   }
 

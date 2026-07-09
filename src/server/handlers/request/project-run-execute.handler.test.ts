@@ -11,6 +11,7 @@ import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { toolRegistry } from "#veryfront/tool";
 import {
   ProjectRunExecuteHandler,
@@ -151,6 +152,16 @@ function createDeps(
       logs: null,
       duration_ms: 10,
     }),
+    executeStyleArtifactBuild: async () => ({
+      success: true,
+      result: {
+        state: "ready",
+        artifactHash: "hash-1",
+        assetPath: "/_vf/css/hash-1.css",
+      },
+      logs: null,
+      duration_ms: 12,
+    }),
     ensureProjectDiscovery: async () => {
       const discovery = createEmptyDiscoveryResult();
       discovery.tasks.set("sync-calendar-events", {
@@ -181,6 +192,11 @@ function createEmptyDiscoveryResult(): DiscoveryResult {
   };
 }
 
+function requestJsonBody(init: RequestInit | undefined): Record<string, unknown> | null {
+  const body = init?.body;
+  return typeof body === "string" ? JSON.parse(body) as Record<string, unknown> : null;
+}
+
 async function signedRequest(
   path: string,
   body: Record<string, unknown>,
@@ -207,6 +223,101 @@ async function signedRequest(
   };
 }
 
+function createStyleArtifactCtx(
+  publicKeyPem: string,
+  options: {
+    files: Array<{ path: string; content?: string }>;
+    stylesheet?: string;
+    stylesheetPath?: string;
+    contentContext?: {
+      sourceType: "branch" | "environment" | "release";
+      projectSlug: string;
+      branch?: string;
+      environmentName?: string;
+      releaseId?: string;
+    };
+  },
+): { ctx: HandlerContext; readCalls: string[]; sourceFileCalls: { count: number } } {
+  const ctx = createCtx(publicKeyPem);
+  const readCalls: string[] = [];
+  const sourceFileCalls = { count: 0 };
+  const stylesheetPath = options.stylesheetPath ?? "src/styles.css";
+  const underlyingAdapter = {
+    async getAllSourceFiles() {
+      sourceFileCalls.count++;
+      return options.files;
+    },
+    getContentContext() {
+      return options.contentContext ?? {
+        sourceType: "environment" as const,
+        projectSlug: "demo-project",
+        environmentName: "Preview",
+      };
+    },
+  };
+
+  ctx.projectDir = "/unrelated-runtime-dir";
+  ctx.config = { tailwind: { stylesheet: stylesheetPath } };
+  ctx.environmentName = "Preview";
+  ctx.adapter = ({
+    ...ctx.adapter,
+    fs: {
+      getUnderlyingAdapter: () => underlyingAdapter,
+      async readFile(path: string) {
+        readCalls.push(path);
+        if (path === stylesheetPath && options.stylesheet !== undefined) {
+          return options.stylesheet;
+        }
+        throw new Error(`Missing test file: ${path}`);
+      },
+    },
+  } as unknown) as HandlerContext["adapter"];
+
+  return { ctx, readCalls, sourceFileCalls };
+}
+
+function createStyleArtifactFetchRecorder(): {
+  upserts: Record<string, unknown>[];
+  fetch: typeof fetch;
+} {
+  const upserts: Record<string, unknown>[] = [];
+
+  return {
+    upserts,
+    fetch: ((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof Request
+        ? input.url
+        : input.toString();
+      if (url.endsWith("/projects/demo-project/style-artifacts/current")) {
+        const body = requestJsonBody(init) ?? {};
+        upserts.push(body);
+        const artifactHash = typeof body.artifact_hash === "string"
+          ? body.artifact_hash
+          : undefined;
+
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: body.status === "failed" ? "failed" : "ready",
+              ...(artifactHash ? { artifact_hash: artifactHash } : {}),
+              asset_path: artifactHash ? `/_vf/css/${artifactHash}.css` : undefined,
+              content_type: "text/css; charset=utf-8",
+              etag: artifactHash ? `"${artifactHash}"` : undefined,
+              failure_reason: body.failure_reason,
+              updated_at: "2026-07-08T00:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      return Promise.resolve(new Response("Not found", { status: 404, statusText: "Not Found" }));
+    }) as typeof fetch,
+  };
+}
+
 async function withEnvValue<T>(
   key: string,
   value: string,
@@ -229,9 +340,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
+    let receivedEnvironmentId: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async (options) => {
         receivedConfig = options.config;
+        receivedEnvironmentId = options.environmentId;
         return {
           success: true,
           result: { synced: 12 },
@@ -244,6 +357,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       kind: "task",
       target: "task:sync-calendar-events",
       projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "11111111-1111-4111-8111-111111111111",
       config: { dry_run: true },
     };
     const { request, publicKeyPem } = await signedRequest(
@@ -262,6 +377,44 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: null,
     });
     assertEquals(receivedConfig, { dry_run: true });
+    assertEquals(receivedEnvironmentId, "11111111-1111-4111-8111-111111111111");
+  });
+
+  it("preserves explicit null runtime environment targets", async () => {
+    let receivedEnvironmentId: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        receivedEnvironmentId = options.environmentId;
+        return {
+          success: true,
+          result: { synced: 12 },
+          durationMs: 42,
+        };
+      },
+    }));
+    const body = {
+      runId: "run_task_main",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      runtimeTargetKind: "main_branch",
+      runtimeTargetEnvironmentId: null,
+      config: {},
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_main/execute",
+      body,
+    );
+    const ctx = {
+      ...createCtx(publicKeyPem),
+      environmentId: "22222222-2222-4222-8222-222222222222",
+    } as HandlerContext;
+
+    const result = await handler.handle(request, ctx);
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedEnvironmentId, undefined);
   });
 
   it("runs cloud task targets from project runtime discovery", async () => {
@@ -376,6 +529,144 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       duration_ms: 51,
     });
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
+  });
+
+  it("dispatches built-in style artifact builds through the reusable style executor", async () => {
+    let receivedConfig: Record<string, unknown> | undefined;
+    let attemptedProjectDiscovery = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        attemptedProjectDiscovery = true;
+        return createEmptyDiscoveryResult();
+      },
+      executeStyleArtifactBuild: async (input) => {
+        receivedConfig = input.request.config;
+        return {
+          success: true,
+          result: {
+            state: "ready",
+            artifactHash: "hash-1",
+            assetPath: "/_vf/css/hash-1.css",
+          },
+          logs: null,
+          duration_ms: 12,
+        };
+      },
+    }));
+    const body = {
+      runId: "run_style_artifact_1",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: {
+        state: "ready",
+        artifactHash: "hash-1",
+        assetPath: "/_vf/css/hash-1.css",
+      },
+      logs: null,
+      duration_ms: 12,
+    });
+    assertEquals(receivedConfig, { environment_name: "preview" });
+    assertEquals(attemptedProjectDiscovery, false);
+  });
+
+  it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
+    const body = {
+      runId: "run_style_artifact_adapter_source",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_adapter_source/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content:
+          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities; .from-css { color: red; }",
+      stylesheetPath: "src/styles.css",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, true);
+    assertEquals(sourceFileCalls.count, 1);
+    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.environment_name, "Preview");
+    assertEquals(recorder.upserts[0]?.status, "ready");
+    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+  });
+
+  it("rejects mismatched style profile hashes before scanning source files", async () => {
+    const body = {
+      runId: "run_style_artifact_hash_mismatch",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        style_profile_hash: "queued-profile-hash",
+      },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_hash_mismatch/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertStringIncludes(json.error, "Style profile hash mismatch");
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.style_profile_hash, "queued-profile-hash");
+    assertEquals(recorder.upserts[0]?.status, "failed");
+    assertStringIncludes(
+      String(recorder.upserts[0]?.failure_reason),
+      "Style profile hash mismatch",
+    );
   });
 
   it("runs a discovered workflow with the canonical run id and input", async () => {
@@ -975,7 +1266,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           token: "runtime-token",
           slug: "demo-project",
           branch: "main",
-          mode: "preview",
+          mode: "preview" as const,
         },
         resolvedEnvironment: "preview",
       } as HandlerContext;
