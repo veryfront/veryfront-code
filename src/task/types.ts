@@ -16,6 +16,8 @@ export interface TaskContext {
   config: Record<string, unknown>;
   /** Project ID (when executed by the platform) */
   projectId?: string;
+  /** Environment ID for the runtime target executing this task */
+  environmentId?: string;
 }
 
 /**
