@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Message } from "veryfront/chat";
+import { Message, useMessageParts } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -67,6 +67,14 @@ function MessageDocsPage() {
 
       <DocsSection title="Composition">
         <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection
+        title="Headless parts"
+        description="Read the message's grouped parts as data with `useMessageParts()` (the 4th access point — alongside `Message.Part` and `Message.Content`) to build a fully custom body without reimplementing part grouping."
+      >
+        <DocsExampleAuto of={HeadlessParts} />
+        <DocsCode code={headlessPartsCode} />
       </DocsSection>
 
       <DocsSection title="API Reference">
@@ -253,6 +261,51 @@ export const Streaming: Story = {
   render: () => (
     <StoryFrame maxWidth="760px">
       <Message message={chatMessages[1]} isStreaming />
+    </StoryFrame>
+  ),
+};
+
+// The 4th, headless access point to a message's parts: read them as data and
+// render your own UI — no part grouping to reimplement.
+const headlessPartsCode = `import { Message, useMessageParts } from "veryfront/chat";
+
+function PartsSummary() {
+  const { parts, textContent } = useMessageParts();
+  return (
+    <div>
+      <span>{parts.length} part(s): {parts.map((p) => p.type).join(", ")}</span>
+      <p>{textContent}</p>
+    </div>
+  );
+}
+
+<Message.Root message={assistantMessage}>
+  <PartsSummary />
+</Message.Root>`;
+
+function PartsSummary() {
+  const { parts, textContent } = useMessageParts();
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[var(--edge-medium)] p-3 text-sm">
+      <div className="mb-1 font-medium text-[var(--faint)]">
+        {parts.length} part(s): {parts.map((p) => p.type).join(", ")}
+      </div>
+      <p className="text-[var(--foreground)]">{textContent}</p>
+    </div>
+  );
+}
+
+export const HeadlessParts: Story = {
+  name: "Headless parts (useMessageParts)",
+  tags: ["!dev"],
+  parameters: {
+    docs: { source: { code: headlessPartsCode } },
+  },
+  render: () => (
+    <StoryFrame maxWidth="760px">
+      <Message.Root message={chatMessages[1]}>
+        <PartsSummary />
+      </Message.Root>
     </StoryFrame>
   ),
 };
