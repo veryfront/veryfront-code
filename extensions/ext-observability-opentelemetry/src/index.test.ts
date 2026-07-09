@@ -12,6 +12,7 @@ import factory, {
   logAttributes,
   resolveOtlpExtensionConfig,
   resolveOtlpSignalUrl,
+  unifiedServiceResourceAttributes,
 } from "./index.ts";
 
 const noopLogger = {
@@ -156,6 +157,25 @@ describe("ext-observability-opentelemetry config helpers", () => {
     assertEquals(config.serviceName, "resource-service");
     assertEquals(config.serviceVersion, "7.8.9");
     assertEquals(config.deploymentEnvironment, "production");
+  });
+
+  it("emits Datadog reserved tag aliases with OTel resource attributes", () => {
+    assertEquals(
+      unifiedServiceResourceAttributes({
+        serviceName: "veryfront-ops-agent",
+        serviceVersion: "20260709144949-fe7bf026a69d",
+        deploymentEnvironment: "production",
+      }),
+      {
+        "service.name": "veryfront-ops-agent",
+        "service.version": "20260709144949-fe7bf026a69d",
+        "deployment.environment": "production",
+        "deployment.environment.name": "production",
+        service: "veryfront-ops-agent",
+        version: "20260709144949-fe7bf026a69d",
+        env: "production",
+      },
+    );
   });
 
   it("does not expose a ctx.config.otel exporter-routing override", () => {

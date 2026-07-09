@@ -277,6 +277,22 @@ function resolveDeploymentEnvironment(
     "development";
 }
 
+export function unifiedServiceResourceAttributes(options: {
+  serviceName: string;
+  serviceVersion: string;
+  deploymentEnvironment: string;
+}): Record<string, string> {
+  return {
+    "service.name": options.serviceName,
+    "service.version": options.serviceVersion,
+    "deployment.environment": options.deploymentEnvironment,
+    "deployment.environment.name": options.deploymentEnvironment,
+    service: options.serviceName,
+    version: options.serviceVersion,
+    env: options.deploymentEnvironment,
+  };
+}
+
 function headersOrDefault(
   signalHeaders: Record<string, string> | undefined,
   defaultHeaders: Record<string, string> | undefined,
@@ -647,12 +663,11 @@ class OtlpTracingExporter implements TracingExporter {
     }
 
     const otel = await loadOpenTelemetryRuntime();
-    const resource = otel.resources.resourceFromAttributes({
-      [otel.semanticConventions.ATTR_SERVICE_NAME]: cfg.serviceName,
-      [otel.semanticConventions.ATTR_SERVICE_VERSION]: cfg.serviceVersion,
-      "deployment.environment": cfg.deploymentEnvironment,
-      "deployment.environment.name": cfg.deploymentEnvironment,
-    });
+    const resource = otel.resources.resourceFromAttributes(unifiedServiceResourceAttributes({
+      serviceName: cfg.serviceName,
+      serviceVersion: cfg.serviceVersion,
+      deploymentEnvironment: cfg.deploymentEnvironment,
+    }));
 
     if (cfg.tracesEnabled || cfg.llmObservabilityEnabled) {
       if (cfg.tracesEnabled && !cfg.tracesUrl) {
@@ -795,6 +810,11 @@ class OtlpTracingExporter implements TracingExporter {
         body: "OpenTelemetry log export initialized",
         attributes: {
           "service.name": cfg.serviceName,
+          "service.version": cfg.serviceVersion,
+          "deployment.environment.name": cfg.deploymentEnvironment,
+          service: cfg.serviceName,
+          version: cfg.serviceVersion,
+          env: cfg.deploymentEnvironment,
         },
       });
     }
@@ -869,12 +889,11 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
     if (!tracesEnabled && !llmObservabilityEnabled && !metricsEnabled && !logsEnabled) return false;
 
     const otel = await loadOpenTelemetryRuntime();
-    const resource = otel.resources.resourceFromAttributes({
-      "service.name": options.serviceName,
-      "service.version": options.serviceVersion,
-      "deployment.environment": options.deploymentEnvironment,
-      "deployment.environment.name": options.deploymentEnvironment,
-    });
+    const resource = otel.resources.resourceFromAttributes(unifiedServiceResourceAttributes({
+      serviceName: options.serviceName,
+      serviceVersion: options.serviceVersion,
+      deploymentEnvironment: options.deploymentEnvironment,
+    }));
 
     const spanProcessors = [];
 
