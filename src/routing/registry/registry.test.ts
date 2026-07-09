@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { RouteRegistry } from "./registry.ts";
+import { buildRouteRegistrySpanAttributes, RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
 import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 
@@ -79,6 +79,60 @@ describe("routing/registry/RouteRegistry", () => {
   });
 
   describe("execute()", () => {
+    it("adds trusted project identity to the routing span attributes", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectSlug: "investment-ops-agent",
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        environmentName: "Production",
+      });
+
+      assertEquals(attributes["http.method"], "GET");
+      assertEquals(attributes["http.path"], "/test");
+      assertEquals(attributes["veryfront.project_slug"], "investment-ops-agent");
+      assertEquals(attributes["project.slug"], "investment-ops-agent");
+      assertEquals(attributes["veryfront.project_id"], "proj-123");
+      assertEquals(attributes["project.id"], "proj-123");
+      assertEquals(attributes["veryfront.environment"], "production");
+      assertEquals(attributes["veryfront.environment_name"], "Production");
+    });
+
+    it("omits project attributes when no trusted project identity exists", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, makeCtx());
+
+      assertEquals(attributes["http.method"], "GET");
+      assertEquals(attributes["http.path"], "/test");
+      assertEquals("veryfront.project_slug" in attributes, false);
+      assertEquals("project.slug" in attributes, false);
+      assertEquals("veryfront.project_id" in attributes, false);
+      assertEquals("project.id" in attributes, false);
+      assertEquals("veryfront.environment" in attributes, false);
+      assertEquals("veryfront.environment_name" in attributes, false);
+    });
+
+    it("does not emit slug fallbacks as project id attributes", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectSlug: "ops-agent",
+        enriched: {
+          projectSlug: "ops-agent",
+          projectId: "ops-agent",
+        } as HandlerContext["enriched"],
+      });
+
+      assertEquals(attributes["veryfront.project_slug"], "ops-agent");
+      assertEquals(attributes["project.slug"], "ops-agent");
+      assertEquals("veryfront.project_id" in attributes, false);
+      assertEquals("project.id" in attributes, false);
+    });
+
     it("should return response from first matching handler", async () => {
       const registry = new RouteRegistry();
       registry.register(

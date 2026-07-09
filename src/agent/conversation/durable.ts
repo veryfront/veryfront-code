@@ -23,6 +23,7 @@ import {
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
   isPayloadTooLargeConversationRunAppendError,
+  isPermanentAuthConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 
@@ -45,6 +46,7 @@ export {
   AppendConversationRunEventsError,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
+  isPermanentAuthConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
@@ -262,7 +264,8 @@ export async function recoverConversationRunAppendFailure(input: {
     | "cursor_resyncs_exhausted"
     | "non_appendable"
     | "ignorable_append_rejection"
-    | "payload_too_large";
+    | "payload_too_large"
+    | "auth_rejected";
   errorMessage?: string;
   run?: ConversationRunProjection;
 }> {
@@ -304,6 +307,16 @@ export async function recoverConversationRunAppendFailure(input: {
       latestEventId: cursorRecovery.latestEventId,
       latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
       disableReason: "ignorable_append_rejection",
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
+  if (isPermanentAuthConversationRunAppendError(input.error)) {
+    return {
+      outcome: "stopped",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      disableReason: "auth_rejected",
       ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
     };
   }
@@ -360,7 +373,8 @@ export async function recoverConversationRunAppendExecution(input: {
       | "cursor_resyncs_exhausted"
       | "non_appendable"
       | "ignorable_append_rejection"
-      | "payload_too_large";
+      | "payload_too_large"
+      | "auth_rejected";
   }
   | {
     outcome: "retry_scheduled";
@@ -490,7 +504,8 @@ export async function flushConversationRunEventBatches(input: {
       | "cursor_resyncs_exhausted"
       | "non_appendable"
       | "ignorable_append_rejection"
-      | "payload_too_large";
+      | "payload_too_large"
+      | "auth_rejected";
   }
 > {
   const batches = buildConversationRunEventBatches({
@@ -593,7 +608,8 @@ export async function flushConversationRunEventQueue(input: {
       | "cursor_resyncs_exhausted"
       | "non_appendable"
       | "ignorable_append_rejection"
-      | "payload_too_large";
+      | "payload_too_large"
+      | "auth_rejected";
   }
   | {
     outcome: "retry_scheduled";
