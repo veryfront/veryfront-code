@@ -110,6 +110,37 @@ Deno.test("createHostedWebFetchTool returns resumable slices for large pages", a
   });
 });
 
+Deno.test("createHostedWebFetchTool honors host content limits above the default", async () => {
+  const body = "x".repeat(500_001);
+  const tool = createHostedWebFetchTool({
+    maxContentChars: 600_000,
+    fetch: () =>
+      Promise.resolve(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+  });
+
+  const result = await tool.execute?.({
+    url: "https://veryfront.com/large-doc",
+  });
+
+  assertEquals(
+    (result as { content?: { source?: { data?: string } } }).content?.source?.data?.length,
+    500_001,
+  );
+  assertEquals((result as { complete?: unknown }).complete, true);
+  assertEquals((result as { truncated?: unknown }).truncated, false);
+  assertEquals((result as { page_info?: unknown }).page_info, {
+    offset: 0,
+    returned_chars: 500_001,
+    total_chars: 500_001,
+    next: null,
+  });
+});
+
 Deno.test("createHostedWebFetchTool honors smaller per-call content limits", async () => {
   const tool = createHostedWebFetchTool({
     fetch: () =>

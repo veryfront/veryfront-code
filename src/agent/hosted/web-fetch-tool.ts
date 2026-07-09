@@ -40,17 +40,18 @@ export type HostedWebFetchToolOptions = {
   maxContentChars?: number;
 };
 
-const getHostedWebFetchInputSchema = defineSchema((v) =>
-  v.object({
-    url: v.string().min(1),
-    cursor: v.string().min(1).optional(),
-    max_content_chars: v.number().int().positive(
-      "web_fetch max_content_chars must be a positive integer",
-    )
-      .max(DEFAULT_MAX_CONTENT_CHARS)
-      .optional(),
-  })
-);
+const getHostedWebFetchInputSchema = (maxContentChars: number) =>
+  defineSchema((v) =>
+    v.object({
+      url: v.string().min(1),
+      cursor: v.string().min(1).optional(),
+      max_content_chars: v.number().int().positive(
+        "web_fetch max_content_chars must be a positive integer",
+      )
+        .max(maxContentChars)
+        .optional(),
+    })
+  );
 
 function parseFetchUrl(value: string): URL {
   let url: URL;
@@ -91,28 +92,40 @@ function parseCursor(value: string | undefined): number {
   return offset;
 }
 
-function normalizeMaxContentChars(value: number | undefined, label: string): number {
+function normalizeMaxContentChars(
+  value: number | undefined,
+  label: string,
+  fallback: number,
+): number {
   if (value === undefined) {
-    return DEFAULT_MAX_CONTENT_CHARS;
+    return fallback;
   }
 
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error(`web_fetch ${label} must be a positive integer`);
   }
 
-  return Math.min(value, DEFAULT_MAX_CONTENT_CHARS);
+  return value;
 }
 
 function resolveMaxContentChars(
   input: HostedWebFetchToolInput,
   options: Required<HostedWebFetchToolOptions>,
 ): number {
-  const optionMax = normalizeMaxContentChars(options.maxContentChars, "maxContentChars option");
+  const optionMax = normalizeMaxContentChars(
+    options.maxContentChars,
+    "maxContentChars option",
+    DEFAULT_MAX_CONTENT_CHARS,
+  );
   if (input.max_content_chars === undefined) {
     return optionMax;
   }
 
-  const inputMax = normalizeMaxContentChars(input.max_content_chars, "max_content_chars");
+  const inputMax = normalizeMaxContentChars(
+    input.max_content_chars,
+    "max_content_chars",
+    optionMax,
+  );
   return Math.min(inputMax, optionMax);
 }
 
@@ -180,7 +193,7 @@ export function createHostedWebFetchTool(options: HostedWebFetchToolOptions = {}
     id: "web_fetch",
     description:
       "Fetch the content of an explicit http or https URL directly. Use this for canonical documentation or pages named in the task or available context; no prior web_search is required. Returns complete, truncated, and page_info.next metadata when a response is sliced; pass cursor to continue.",
-    inputSchema: getHostedWebFetchInputSchema(),
+    inputSchema: getHostedWebFetchInputSchema(resolvedOptions.maxContentChars)(),
     execute: (input, context) => executeHostedWebFetch(input, resolvedOptions, context),
   });
 }
