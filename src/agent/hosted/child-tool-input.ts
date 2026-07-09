@@ -1,10 +1,15 @@
 import { defineSchema, getJsonValueSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
+import type { ChildRunResultMode } from "../child-run/result-summary.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
 
 /** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
+const HOSTED_CHILD_FORK_RESULT_MODES = ["summary", "full"] as const;
+
+/** Hosted child fork result return mode. */
+export type HostedChildForkResultMode = ChildRunResultMode;
 
 export const getHostedChildForkToolInputSchema = defineSchema((v) =>
   v.object({
@@ -27,6 +32,9 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
       .describe("Thinking override in budget tokens. Use 0 to disable thinking."),
     max_steps: v.number().optional().describe(
       "Max steps override. Omit for the hosted child default. Values below the default are raised to the default.",
+    ),
+    result_mode: v.enum(HOSTED_CHILD_FORK_RESULT_MODES).optional().describe(
+      'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required.',
     ),
   })
 );
