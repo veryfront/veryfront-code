@@ -76,6 +76,8 @@ describe("hosted-agent-run-lifecycle", () => {
       projectId: "project-1",
       userId: "user-1",
       agentId: "agent-1",
+      agentName: "Ops Agent",
+      modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
       rootRun: { runId: "run-1", messageId: "message-1" },
       upstreamParentConversationId: "parent-conversation-1",
       upstreamParentRunId: "parent-run-1",
@@ -100,6 +102,11 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["run.trigger.kind"], "schedule");
     assertEquals(span.attributes["run.trigger.id"], "schedule-1");
     assertEquals(span.attributes["gen_ai.operation.name"], "chat");
+    assertEquals(span.attributes["gen_ai.agent.name"], "Ops Agent");
+    assertEquals(
+      span.attributes["gen_ai.request.model"],
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    );
 
     const value = controller.withContext(() => "ok");
     assertEquals(value, "ok");
@@ -129,6 +136,7 @@ describe("hosted-agent-run-lifecycle", () => {
     );
     assertEquals(span.attributes["gen_ai.usage.input_tokens"], 10);
     assertEquals(span.attributes["gen_ai.usage.output_tokens"], 5);
+    assertEquals(span.attributes["gen_ai.usage.total_tokens"], 15);
     assertEquals(span.attributes["gen_ai.usage.cache_read.input_tokens"], 2);
     assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
   });

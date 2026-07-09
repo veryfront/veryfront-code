@@ -12,6 +12,7 @@ export type AgentTraceAttributes = Record<string, AgentTraceAttributeValue>;
 export type AgentTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
+  totalTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
@@ -73,7 +74,7 @@ export function buildScheduleTraceAttributes(
   });
 }
 
-function resolveGenAiProviderName(modelId: string | null | undefined): string | null {
+export function resolveGenAiProviderName(modelId: string | null | undefined): string | null {
   const normalizedModelId = modelId?.startsWith("veryfront-cloud/")
     ? modelId.slice("veryfront-cloud/".length)
     : modelId;
@@ -95,6 +96,12 @@ function resolveGenAiProviderName(modelId: string | null | undefined): string | 
 }
 
 function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttributes {
+  const totalTokens = typeof usage?.totalTokens === "number"
+    ? usage.totalTokens
+    : typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number"
+    ? usage.inputTokens + usage.outputTokens
+    : undefined;
+
   return compactTraceAttributes({
     ...(typeof usage?.inputTokens === "number"
       ? { "gen_ai.usage.input_tokens": usage.inputTokens }
@@ -102,6 +109,7 @@ function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttribute
     ...(typeof usage?.outputTokens === "number"
       ? { "gen_ai.usage.output_tokens": usage.outputTokens }
       : {}),
+    ...(typeof totalTokens === "number" ? { "gen_ai.usage.total_tokens": totalTokens } : {}),
     ...(typeof usage?.cacheCreationInputTokens === "number"
       ? { "gen_ai.usage.cache_creation.input_tokens": usage.cacheCreationInputTokens }
       : {}),
@@ -123,6 +131,8 @@ export function buildAgentRunTraceAttributes(input: {
   projectId?: string | null;
   userId: string;
   agentId: string;
+  agentName?: string | null;
+  modelId?: string | null;
   runId?: string | null;
   parentRunId?: string | null;
   parentConversationId?: string | null;
@@ -148,6 +158,8 @@ export function buildAgentRunTraceAttributes(input: {
     "gen_ai.operation.name": input.operationName,
     "gen_ai.conversation.id": input.conversationId,
     "gen_ai.agent.id": input.agentId,
+    "gen_ai.agent.name": input.agentName,
+    "gen_ai.request.model": input.modelId,
   });
 }
 

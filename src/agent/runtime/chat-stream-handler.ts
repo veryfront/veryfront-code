@@ -19,6 +19,7 @@ import {
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
+import { SpanKind } from "#veryfront/observability/tracing/api-shim.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
@@ -34,6 +35,9 @@ const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
 const STREAM_START_IDLE_MS = 60_000;
 const STREAM_OUTPUT_IDLE_MS = 15_000;
+
+type TraceAttributePrimitive = string | number | boolean;
+type TraceAttributeValue = TraceAttributePrimitive | readonly TraceAttributePrimitive[];
 
 export interface StreamingToolCall {
   id: string;
@@ -124,6 +128,8 @@ export interface ChatStreamCallbacks {
   availableToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
+  traceSpanName?: string;
+  traceAttributes?: Record<string, TraceAttributeValue>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -372,7 +378,14 @@ export function processStream(
   callbacks?: ChatStreamCallbacks,
   abortSignal?: AbortSignal,
 ): Promise<void> {
-  return withSpan("agent.runtime.processStream", async () => {
+  const traceAttributes = {
+    "gen_ai.operation.name": "chat",
+    "gen_ai.request.stream": true,
+    ...(callbacks?.traceAttributes ?? {}),
+  };
+  const traceSpanName = callbacks?.traceSpanName ?? "agent.runtime.processStream";
+
+  const process = async () => {
     let eventCount = 0;
     let textOpen = false;
     let activeReasoningId: string | null = null;
@@ -1001,6 +1014,11 @@ export function processStream(
           closeTextSegment();
           closeReasoningSegment();
           state.finishReason = typedPart.finishReason ?? null;
+          if (state.finishReason) {
+            setActiveSpanAttributes({
+              "gen_ai.response.finish_reasons": [state.finishReason],
+            });
+          }
           if (state.finishReason === "tool-calls") {
             commitParseablePendingToolInputs();
           }
@@ -1098,5 +1116,7 @@ export function processStream(
       "stream.tool_calls": state.toolCalls.size,
       "stream.text_length": state.accumulatedText.length,
     });
-  });
+  };
+
+  return withSpan(traceSpanName, process, traceAttributes, { kind: SpanKind.CLIENT });
 }

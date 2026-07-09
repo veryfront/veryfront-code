@@ -139,6 +139,27 @@ export {
   shouldContinueAfterStreamStep,
   type StreamedToolCallMaterialization,
 } from "./tool-result-continuation.ts";
+
+function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
+  const normalizedModelId = modelId.startsWith("veryfront-cloud/")
+    ? modelId.slice("veryfront-cloud/".length)
+    : modelId;
+  const provider = normalizedModelId.split("/")[0]?.trim().toLowerCase();
+
+  switch (provider) {
+    case "anthropic":
+      return "anthropic";
+    case "openai":
+      return "openai";
+    case "google":
+    case "google-ai-studio":
+      return "gcp.gen_ai";
+    case "moonshotai":
+      return "moonshotai";
+    default:
+      return undefined;
+  }
+}
 export {
   enforceSkillPolicy,
   extractSkillPolicy,
@@ -1302,13 +1323,15 @@ export class AgentRuntime {
         temperatureModelString ?? effectiveModel,
         providerOptions,
       );
+      const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
+      const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
       const result = streamText({
         model: languageModel,
         system: currentSystemPrompt,
         messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
         tools: runtimeTools,
         experimental_repairToolCall: repairToolCall,
-        maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
+        maxOutputTokens,
         ...(temperature === undefined ? {} : { temperature }),
         ...(headers ? { headers } : {}),
         ...(providerOptions ? { providerOptions } : {}),
@@ -1322,6 +1345,15 @@ export class AgentRuntime {
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
+        traceSpanName: `chat ${effectiveModel}`,
+        traceAttributes: {
+          ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
+          "gen_ai.request.model": effectiveModel,
+          "gen_ai.response.model": effectiveModel,
+          "gen_ai.request.max_tokens": maxOutputTokens,
+          "gen_ai.output.type": "text",
+          ...(temperature === undefined ? {} : { "gen_ai.request.temperature": temperature }),
+        },
       }, abortSignal);
       throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;

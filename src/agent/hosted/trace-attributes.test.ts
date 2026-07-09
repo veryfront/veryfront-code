@@ -44,6 +44,8 @@ describe("agent/agent-trace-attributes", () => {
         projectId: "project-1",
         userId: "user-1",
         agentId: "builder",
+        agentName: "Builder",
+        modelId: "anthropic/claude-sonnet-4-6",
         runId: "run-1",
         parentRunId: "run-parent",
         parentConversationId: "conversation-parent",
@@ -69,6 +71,8 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.operation.name": "chat",
         "gen_ai.conversation.id": "conversation-1",
         "gen_ai.agent.id": "builder",
+        "gen_ai.agent.name": "Builder",
+        "gen_ai.request.model": "anthropic/claude-sonnet-4-6",
       },
     );
   });
@@ -144,6 +148,7 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.tool.call.id": "tool-call-1",
         "gen_ai.usage.input_tokens": 10,
         "gen_ai.usage.output_tokens": 5,
+        "gen_ai.usage.total_tokens": 15,
       },
     );
   });
@@ -169,6 +174,7 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.response.finish_reasons": ["stop"],
         "gen_ai.usage.input_tokens": 11,
         "gen_ai.usage.output_tokens": 7,
+        "gen_ai.usage.total_tokens": 18,
         "gen_ai.usage.cache_creation.input_tokens": 1,
         "gen_ai.usage.cache_read.input_tokens": 2,
         "gen_ai.usage.reasoning.output_tokens": 4,

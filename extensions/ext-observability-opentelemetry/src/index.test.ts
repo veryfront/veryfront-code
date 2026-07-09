@@ -33,6 +33,8 @@ async function withOtelSignalsDisabled<T>(fn: () => Promise<T>): Promise<T> {
     "OTEL_TRACES_EXPORTER",
     "OTEL_METRICS_EXPORTER",
     "OTEL_LOGS_EXPORTER",
+    "DD_LLMOBS_ENABLED",
+    "OTEL_LLMOBS_ENABLED",
   ];
 
   let previous: Map<string, string | undefined>;
@@ -109,9 +111,11 @@ describe("ext-observability-opentelemetry config helpers", () => {
     }));
 
     assertEquals(config.tracesEnabled, false);
+    assertEquals(config.llmObservabilityEnabled, false);
     assertEquals(config.metricsEnabled, true);
     assertEquals(config.logsEnabled, true);
     assertEquals(config.tracesUrl, "https://collector.example/otlp/v1/traces");
+    assertEquals(config.llmObservabilityUrl, "https://collector.example/otlp/v1/traces");
     assertEquals(config.metricsUrl, "https://collector.example/otlp/v1/metrics");
     assertEquals(config.logsUrl, "https://collector.example/otlp/v1/logs");
     assertEquals(config.headers, { Authorization: "Basic platform-token" });
@@ -122,6 +126,24 @@ describe("ext-observability-opentelemetry config helpers", () => {
     assertEquals(config.serviceName, "veryfront-server");
     assertEquals(config.serviceVersion, VERSION);
     assertEquals(config.deploymentEnvironment, "development");
+  });
+
+  it("resolves Datadog LLM Observability OTLP routing", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+      DD_LLMOBS_ENABLED: "true",
+      DD_LLMOBS_ML_APP: "veryfront-ops-agent",
+    }));
+
+    assertEquals(config.llmObservabilityEnabled, true);
+    assertEquals(config.llmObservabilityUrl, "https://otlp.datadoghq.eu/v1/traces");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "veryfront-ops-agent",
+    });
   });
 
   it("resolves Datadog unified service tags from OTel resource attributes", () => {

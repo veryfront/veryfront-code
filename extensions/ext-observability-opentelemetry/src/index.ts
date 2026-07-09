@@ -190,11 +190,14 @@ export interface ResolvedOtlpExtensionConfig {
   metricsHeaders: Record<string, string>;
   logsHeaders: Record<string, string>;
   tracesEnabled: boolean;
+  llmObservabilityEnabled: boolean;
   metricsEnabled: boolean;
   logsEnabled: boolean;
   tracesUrl: string | undefined;
+  llmObservabilityUrl: string | undefined;
   metricsUrl: string | undefined;
   logsUrl: string | undefined;
+  llmObservabilityHeaders: Record<string, string>;
   metricsExportIntervalMillis: number;
   metricsTemporalityPreference: "delta" | "cumulative" | "lowmemory";
 }
@@ -279,6 +282,54 @@ function headersOrDefault(
   defaultHeaders: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
   return signalHeaders ?? defaultHeaders;
+}
+
+function getHeaderValue(
+  headers: Record<string, string> | undefined,
+  headerName: string,
+): string | undefined {
+  const normalizedName = headerName.toLowerCase();
+  return Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === normalizedName)?.[1];
+}
+
+function setHeaderValue(headers: Record<string, string>, headerName: string, value: string): void {
+  const normalizedName = headerName.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === normalizedName && key !== headerName) {
+      delete headers[key];
+    }
+  }
+  headers[headerName] = value;
+}
+
+function resolveLlmObservabilityEnabled(
+  read: EnvReader,
+  tracesHeaders: Record<string, string>,
+): boolean {
+  const explicitFlag = isTruthySignalFlag(read("DD_LLMOBS_ENABLED") ?? read("OTEL_LLMOBS_ENABLED"));
+  if (explicitFlag !== undefined) return explicitFlag;
+  return getHeaderValue(tracesHeaders, "dd-otlp-source") === "llmobs";
+}
+
+function resolveLlmObservabilityHeaders(
+  read: EnvReader,
+  tracesHeaders: Record<string, string>,
+): Record<string, string> {
+  const headers = { ...tracesHeaders };
+  const datadogApiKey = getHeaderValue(headers, "dd-api-key") ??
+    read("DD_API_KEY") ??
+    read("DATADOG_OTLP_API_KEY");
+  if (datadogApiKey) {
+    setHeaderValue(headers, "dd-api-key", datadogApiKey);
+  }
+  setHeaderValue(headers, "dd-otlp-source", "llmobs");
+
+  const mlApp = read("DD_LLMOBS_ML_APP");
+  if (mlApp) {
+    setHeaderValue(headers, "dd-ml-app", mlApp);
+  }
+
+  return headers;
 }
 
 function metricTemporalityPreference(
@@ -478,6 +529,9 @@ export function resolveOtlpExtensionConfig(
   const resourceAttributes = parseResourceAttributes(read("OTEL_RESOURCE_ATTRIBUTES"));
   const endpoint = read("OTEL_EXPORTER_OTLP_ENDPOINT");
   const tracesEndpoint = read("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ?? endpoint;
+  const llmObservabilityEndpoint = read("OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT") ??
+    read("DD_LLMOBS_OTLP_ENDPOINT") ??
+    tracesEndpoint;
   const metricsEndpoint = read("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ?? endpoint;
   const logsEndpoint = read("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") ?? endpoint;
   const metricsExportIntervalMillis = Number.parseInt(
@@ -497,6 +551,7 @@ export function resolveOtlpExtensionConfig(
     headers,
     parseHeaders(read("OTEL_EXPORTER_OTLP_LOGS_HEADERS")),
   );
+  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(read, tracesHeaders);
 
   return {
     serviceName: resolveServiceName(read, resourceAttributes),
@@ -506,13 +561,16 @@ export function resolveOtlpExtensionConfig(
     tracesHeaders,
     metricsHeaders,
     logsHeaders,
+    llmObservabilityHeaders,
     tracesEnabled: resolveSignalEnabled(read("OTEL_TRACES_ENABLED"), read("OTEL_TRACES_EXPORTER")),
+    llmObservabilityEnabled: resolveLlmObservabilityEnabled(read, tracesHeaders),
     metricsEnabled: resolveSignalEnabled(
       read("OTEL_METRICS_ENABLED"),
       read("OTEL_METRICS_EXPORTER"),
     ),
     logsEnabled: resolveSignalEnabled(read("OTEL_LOGS_ENABLED"), read("OTEL_LOGS_EXPORTER")),
     tracesUrl: resolveOtlpSignalUrl(tracesEndpoint, "traces"),
+    llmObservabilityUrl: resolveOtlpSignalUrl(llmObservabilityEndpoint, "traces"),
     metricsUrl: resolveOtlpSignalUrl(metricsEndpoint, "metrics"),
     logsUrl: resolveOtlpSignalUrl(logsEndpoint, "logs"),
     metricsExportIntervalMillis: Number.isFinite(metricsExportIntervalMillis)
@@ -522,6 +580,50 @@ export function resolveOtlpExtensionConfig(
       read("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"),
     ),
   };
+}
+
+type SpanExporterLike = {
+  export(spans: unknown[], resultCallback: (result: { code: number; error?: Error }) => void): void;
+  shutdown(): Promise<void>;
+  forceFlush?(): Promise<void>;
+};
+
+type ReadableSpanLike = {
+  attributes?: Record<string, unknown>;
+};
+
+function isGenAiSpan(span: unknown): boolean {
+  const attributes = (span as ReadableSpanLike).attributes;
+  return typeof attributes?.["gen_ai.operation.name"] === "string";
+}
+
+class FilteringSpanExporter {
+  constructor(
+    private readonly delegate: SpanExporterLike,
+    private readonly includeSpan: (span: unknown) => boolean,
+    private readonly successCode: number,
+  ) {}
+
+  export(
+    spans: unknown[],
+    resultCallback: (result: { code: number; error?: Error }) => void,
+  ): void {
+    const includedSpans = spans.filter(this.includeSpan);
+    if (includedSpans.length === 0) {
+      resultCallback({ code: this.successCode });
+      return;
+    }
+
+    this.delegate.export(includedSpans, resultCallback);
+  }
+
+  shutdown(): Promise<void> {
+    return this.delegate.shutdown();
+  }
+
+  forceFlush(): Promise<void> {
+    return this.delegate.forceFlush?.() ?? Promise.resolve();
+  }
 }
 
 class OtlpTracingExporter implements TracingExporter {
@@ -536,9 +638,13 @@ class OtlpTracingExporter implements TracingExporter {
   async start(_ctxConfig: Record<string, unknown>): Promise<void> {
     const cfg = resolveOtlpExtensionConfig(readEnv);
 
-    // Honor OTEL_TRACES_ENABLED: when unset/false, skip exporter wiring so
-    // deployments opting out never create OTLP traffic or set globals.
-    if (!cfg.tracesEnabled && !cfg.metricsEnabled && !cfg.logsEnabled) return;
+    // Honor signal gates: when unset/false, skip exporter wiring so deployments
+    // opting out never create OTLP traffic or set globals.
+    if (
+      !cfg.tracesEnabled && !cfg.llmObservabilityEnabled && !cfg.metricsEnabled && !cfg.logsEnabled
+    ) {
+      return;
+    }
 
     const otel = await loadOpenTelemetryRuntime();
     const resource = otel.resources.resourceFromAttributes({
@@ -548,21 +654,50 @@ class OtlpTracingExporter implements TracingExporter {
       "deployment.environment.name": cfg.deploymentEnvironment,
     });
 
-    if (cfg.tracesEnabled) {
-      if (!cfg.tracesUrl) {
+    if (cfg.tracesEnabled || cfg.llmObservabilityEnabled) {
+      if (cfg.tracesEnabled && !cfg.tracesUrl) {
         throw new Error(
           "OTEL_TRACES_ENABLED=true requires OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         );
       }
 
-      const exporter = new otel.traceExporter.OTLPTraceExporter({
-        url: cfg.tracesUrl,
-        headers: cfg.tracesHeaders,
-      });
+      if (cfg.llmObservabilityEnabled && !cfg.llmObservabilityUrl) {
+        throw new Error(
+          "DD_LLMOBS_ENABLED=true requires OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, or OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT",
+        );
+      }
+
+      const spanProcessors = [];
+
+      if (cfg.tracesEnabled && cfg.tracesUrl) {
+        spanProcessors.push(
+          new otel.sdkTraceBase.BatchSpanProcessor(
+            new otel.traceExporter.OTLPTraceExporter({
+              url: cfg.tracesUrl,
+              headers: cfg.tracesHeaders,
+            }),
+          ),
+        );
+      }
+
+      if (cfg.llmObservabilityEnabled && cfg.llmObservabilityUrl) {
+        spanProcessors.push(
+          new otel.sdkTraceBase.BatchSpanProcessor(
+            new FilteringSpanExporter(
+              new otel.traceExporter.OTLPTraceExporter({
+                url: cfg.llmObservabilityUrl,
+                headers: cfg.llmObservabilityHeaders,
+              }) as SpanExporterLike,
+              isGenAiSpan,
+              otel.core.ExportResultCode.SUCCESS,
+            ) as never,
+          ),
+        );
+      }
 
       const provider = new otel.sdkTraceBase.BasicTracerProvider({
         resource,
-        spanProcessors: [new otel.sdkTraceBase.BatchSpanProcessor(exporter)],
+        spanProcessors,
       });
 
       // Wire OTel SDK globals so the real API delegates to this provider.
@@ -727,10 +862,11 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
 
   async initialize(options: NodeTelemetryInitializeOptions): Promise<boolean> {
     const tracesEnabled = options.tracesEnabled ?? true;
+    const llmObservabilityEnabled = options.llmObservabilityEnabled ?? false;
     const metricsEnabled = options.metricsEnabled ?? false;
     const logsEnabled = options.logsEnabled ?? false;
 
-    if (!tracesEnabled && !metricsEnabled && !logsEnabled) return false;
+    if (!tracesEnabled && !llmObservabilityEnabled && !metricsEnabled && !logsEnabled) return false;
 
     const otel = await loadOpenTelemetryRuntime();
     const resource = otel.resources.resourceFromAttributes({
@@ -740,8 +876,10 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
       "deployment.environment.name": options.deploymentEnvironment,
     });
 
-    const spanProcessors = tracesEnabled
-      ? [
+    const spanProcessors = [];
+
+    if (tracesEnabled) {
+      spanProcessors.push(
         new otel.sdkTraceBase.BatchSpanProcessor(
           new otel.traceExporter.OTLPTraceExporter({
             url: options.tracesEndpoint,
@@ -752,8 +890,27 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
             scheduledDelayMillis: 500,
           },
         ),
-      ]
-      : [];
+      );
+    }
+
+    if (llmObservabilityEnabled) {
+      spanProcessors.push(
+        new otel.sdkTraceBase.BatchSpanProcessor(
+          new FilteringSpanExporter(
+            new otel.traceExporter.OTLPTraceExporter({
+              url: options.llmObservabilityEndpoint ?? options.tracesEndpoint,
+              headers: headersOrDefault(options.llmObservabilityHeaders, options.tracesHeaders),
+            }) as SpanExporterLike,
+            isGenAiSpan,
+            otel.core.ExportResultCode.SUCCESS,
+          ) as never,
+          {
+            maxExportBatchSize: 100,
+            scheduledDelayMillis: 500,
+          },
+        ),
+      );
+    }
 
     const metricReaders = metricsEnabled
       ? [
@@ -840,6 +997,7 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
       tracesEnabled,
       metricsEnabled,
       logsEnabled,
+      llmObservabilityEnabled,
     });
 
     options.processTarget?.on("SIGTERM", async () => {
@@ -883,6 +1041,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
         keys: [
           "OTEL_EXPORTER_OTLP_ENDPOINT",
           "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+          "OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_HEADERS",
@@ -896,6 +1055,12 @@ const extOpenTelemetry: ExtensionFactory = () => {
           "DD_SERVICE",
           "DD_VERSION",
           "DD_ENV",
+          "DD_API_KEY",
+          "DATADOG_OTLP_API_KEY",
+          "DD_LLMOBS_ENABLED",
+          "DD_LLMOBS_ML_APP",
+          "DD_LLMOBS_OTLP_ENDPOINT",
+          "OTEL_LLMOBS_ENABLED",
           "VERYFRONT_VERSION",
           "RELEASE_VERSION",
           "APP_ENVIRONMENT",

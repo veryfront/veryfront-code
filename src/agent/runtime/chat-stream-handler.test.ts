@@ -1,12 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  type AttributeValue,
+  setGlobalTracerProvider,
+  type Span,
+  type SpanContext,
+  SpanKind,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
 import {
   createStreamState,
   processStream,
   summarizeProviderToolDebugValue,
 } from "./chat-stream-handler.ts";
+
+afterEach(() => {
+  _resetShimForTests();
+});
 
 function emptyAsyncIterable() {
   return {
@@ -74,6 +86,102 @@ describe("chat-stream-handler", () => {
   });
 
   describe("processStream", () => {
+    it("starts the model stream trace as a GenAI client span", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const attributes: Record<string, unknown> = {};
+      const spanContext: SpanContext = {
+        traceId: "00000000000000000000000000000001",
+        spanId: "0000000000000001",
+        traceFlags: 1,
+      };
+      let capturedName: string | undefined;
+      let capturedKind: number | undefined;
+      let capturedAttributes: Record<string, unknown> | undefined;
+      const span: Span = {
+        setAttribute(key, value) {
+          attributes[key] = value;
+          return span;
+        },
+        setAttributes(values) {
+          Object.assign(attributes, values);
+          return span;
+        },
+        setStatus() {
+          return span;
+        },
+        recordException() {},
+        addEvent() {
+          return span;
+        },
+        end() {},
+        spanContext() {
+          return spanContext;
+        },
+        updateName() {},
+      };
+
+      setGlobalTracerProvider({
+        getTracer() {
+          return {
+            startSpan(name, options) {
+              capturedName = name;
+              capturedKind = options?.kind;
+              capturedAttributes = options?.attributes;
+              Object.assign(attributes, options?.attributes);
+              return span;
+            },
+            startActiveSpan<T>(
+              _name: string,
+              optionsOrFn:
+                | { kind?: number; attributes?: Record<string, AttributeValue> }
+                | ((span: Span) => T),
+              contextOrFn?: unknown,
+              fn?: (span: Span) => T,
+            ): T {
+              const callback = typeof optionsOrFn === "function"
+                ? optionsOrFn
+                : typeof contextOrFn === "function"
+                ? contextOrFn as (span: Span) => T
+                : fn!;
+              return callback(span);
+            },
+          };
+        },
+      });
+
+      await processStream(
+        createMockResult([
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+          },
+        ]),
+        state,
+        controller,
+        encoder,
+        "text-1",
+        {
+          traceSpanName: "chat openai/gpt-5.4",
+          traceAttributes: {
+            "gen_ai.provider.name": "openai",
+            "gen_ai.request.model": "openai/gpt-5.4",
+            "gen_ai.response.model": "openai/gpt-5.4",
+          },
+        },
+      );
+
+      assertEquals(capturedName, "chat openai/gpt-5.4");
+      assertEquals(capturedKind, SpanKind.CLIENT);
+      assertEquals(capturedAttributes?.["gen_ai.operation.name"], "chat");
+      assertEquals(capturedAttributes?.["gen_ai.request.stream"], true);
+      assertEquals(attributes["gen_ai.response.finish_reasons"], ["stop"]);
+      assertEquals(attributes["gen_ai.usage.input_tokens"], 2);
+      assertEquals(attributes["gen_ai.usage.output_tokens"], 3);
+      assertEquals(attributes["gen_ai.usage.total_tokens"], 5);
+    });
+
     it("accumulates text-delta events", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

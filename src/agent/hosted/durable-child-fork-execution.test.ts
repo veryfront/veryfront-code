@@ -432,6 +432,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "error.message": "local failed",
       "gen_ai.usage.input_tokens": 3,
       "gen_ai.usage.output_tokens": 4,
+      "gen_ai.usage.total_tokens": 7,
     });
 
     assertEquals(
@@ -511,6 +512,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "gen_ai.tool.call.id": "tool-call-1",
       "gen_ai.usage.input_tokens": 3,
       "gen_ai.usage.output_tokens": 4,
+      "gen_ai.usage.total_tokens": 7,
     });
   });
 
