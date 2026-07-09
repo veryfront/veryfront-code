@@ -464,17 +464,17 @@ function AgentPickerRoot({
     onCreate?.();
   };
 
-  const context: AgentPickerContextValue = {
-    value,
-    onSelect: handleSelect,
-    open,
-    setOpen: handleOpenChange,
-    icons,
-  };
+  // Memoized so consumers don't re-render on every parent render (F-3). The
+  // callbacks are already stable (useCallback above).
+  const context = React.useMemo<AgentPickerContextValue>(
+    () => ({ value, onSelect: handleSelect, open, setOpen: handleOpenChange, icons }),
+    [value, handleSelect, open, handleOpenChange, icons],
+  );
+  const agentData = React.useMemo(() => ({ agents, sections }), [agents, sections]);
 
   return (
     <AgentPickerContext.Provider value={context}>
-      <AgentDataContext.Provider value={{ agents, sections }}>
+      <AgentDataContext.Provider value={agentData}>
         <Popover open={open} onOpenChange={handleOpenChange}>
           {children ?? (
             <>

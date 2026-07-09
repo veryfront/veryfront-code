@@ -48,7 +48,23 @@ Deno.test("countAntipatterns ignores comments and string literals", () => {
     const doc = \`icons?: bag\`;
   `;
   const c: AntipatternCounts = countAntipatterns(src);
-  assertEquals(c, { forwardRef: 0, featureToggle: 0, passthrough: 0 });
+  assertEquals(c, {
+    forwardRef: 0,
+    featureToggle: 0,
+    passthrough: 0,
+    inlineContext: 0,
+  });
+});
+
+Deno.test("countAntipatterns detects inline context Provider values", () => {
+  const src = `
+    return (
+      <FooContext.Provider value={{ a, b }}>
+        <BarContext.Provider value={memoized}>{children}</BarContext.Provider>
+      </FooContext.Provider>
+    );
+  `;
+  assertEquals(countAntipatterns(src).inlineContext, 1);
 });
 
 Deno.test("baselines are non-negative ratchet targets", () => {

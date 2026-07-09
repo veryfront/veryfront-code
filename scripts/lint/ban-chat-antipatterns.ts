@@ -29,6 +29,8 @@ const SCAN_ROOT = "src/react/components/chat";
 export const FORWARDREF_BASELINE = 0;
 export const FEATURE_TOGGLE_BASELINE = 29;
 export const PASSTHROUGH_BASELINE = 14;
+// E1 memoized the last inline context value (F-3). Locked at 0.
+export const INLINE_CONTEXT_BASELINE = 0;
 
 /** `forwardRef` / `React.forwardRef` call sites. */
 const FORWARDREF_RE = /\bforwardRef\s*[(<]/g;
@@ -37,6 +39,8 @@ const FEATURE_TOGGLE_RE = /\b(?:show|enable|hide)[A-Z][A-Za-z]*\??:\s*boolean\b/
 /** `*ClassName` bag props, `icons` bag props, `dragProps`. */
 const PASSTHROUGH_RE =
   /(?:^|\s)(?:[a-z][A-Za-z]*ClassName|icons|dragProps)\??:\s/gm;
+/** Inline `Provider value={{…}}` — a fresh object every render (F-3). */
+const INLINE_CONTEXT_RE = /\.Provider\s+value=\{\{/g;
 
 /** Strip comments + string/template literals so they can't trigger matches. */
 function stripCommentsAndStrings(text: string): string {
@@ -52,6 +56,7 @@ export interface AntipatternCounts {
   forwardRef: number;
   featureToggle: number;
   passthrough: number;
+  inlineContext: number;
 }
 
 export function countAntipatterns(source: string): AntipatternCounts {
@@ -60,6 +65,7 @@ export function countAntipatterns(source: string): AntipatternCounts {
     forwardRef: s.match(FORWARDREF_RE)?.length ?? 0,
     featureToggle: s.match(FEATURE_TOGGLE_RE)?.length ?? 0,
     passthrough: s.match(PASSTHROUGH_RE)?.length ?? 0,
+    inlineContext: s.match(INLINE_CONTEXT_RE)?.length ?? 0,
   };
 }
 
@@ -153,6 +159,12 @@ const RATCHETS: Ratchet[] = [
     baseline: PASSTHROUGH_BASELINE,
     hint: "expose styling/icons per sub-component instead of *ClassName / icons={{}} bags",
   },
+  {
+    label: "inline context values",
+    key: "inlineContext",
+    baseline: INLINE_CONTEXT_BASELINE,
+    hint: "memoize the context value (useMemo) — inline value={{…}} re-renders all consumers",
+  },
 ];
 
 async function main(): Promise<void> {
@@ -160,12 +172,14 @@ async function main(): Promise<void> {
     forwardRef: 0,
     featureToggle: 0,
     passthrough: 0,
+    inlineContext: 0,
   };
   await walk(SCAN_ROOT, async (path) => {
     const c = countAntipatterns(await Deno.readTextFile(path));
     totals.forwardRef += c.forwardRef;
     totals.featureToggle += c.featureToggle;
     totals.passthrough += c.passthrough;
+    totals.inlineContext += c.inlineContext;
   });
 
   let failed = false;
