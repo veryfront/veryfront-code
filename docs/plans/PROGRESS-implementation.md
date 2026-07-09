@@ -97,8 +97,14 @@ Acceptance for E3: a fully-composed multi-conversation persisted chat contains
 **zero** `useEffect`/`useRef` in app/userland code, and `<Chat>` + the composed
 demo share the one hook/provider — with 1–5 above proven unchanged.
 
-## E7 — Storybook three-tier coverage
-- [ ] Pending (folds per component).
+## E7 — Storybook API visibility for customization
+- [x] Rebased onto `origin/main` (base PR #2798 merged as b42ab37d7).
+- [x] `ChatSidebar` "Custom row menu" story — surfaces Item.Menu/.Rename/.Delete
+      customization (add an entry without re-implementing the row). Commit `a8672fe7e`.
+- [x] `Message` "Headless parts (useMessageParts)" story — surfaces the data API.
+      Commit `d37dc3bcc`. Storybook build green.
+- [ ] Remaining: fold three-tier + acid-test stories into the other components
+      as their new leaves land (most already carry composition stories).
 
 ## E8 / E9 / E10 / E11 — BREAKING batch + codemod + migration
 - [ ] Pending. Additive replacements + deprecations land first; removals batch
