@@ -80,12 +80,14 @@ export {
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
+  type MessagePartsData,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
+  useMessageParts,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart, ChatMessage } from "#veryfront/agent/react";
 import { Message } from "./message.tsx";
+import { useMessageParts } from "../contexts/message-context.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 
 const completedTool: ChatDynamicToolPart = {
@@ -121,5 +122,37 @@ describe("Message.Content — composability contract", () => {
       !html.includes("Hidden source"),
       "composed body must not auto-append sources",
     );
+  });
+});
+
+// The 4th, headless access point to a message's parts (§K tier-1): read them as
+// data and render however you like, without reimplementing part grouping.
+describe("useMessageParts — headless parts data", () => {
+  it("exposes grouped parts + text content as data inside a Message", () => {
+    function PartsProbe() {
+      const { parts, textContent } = useMessageParts();
+      return <div data-count={parts.length}>{textContent}</div>;
+    }
+    const html = renderToString(
+      <Message.Root message={assistantMessage}>
+        <PartsProbe />
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Answer body.");
+    assertStringIncludes(html, "data-count=");
+  });
+
+  it("fails fast when used outside a Message", () => {
+    function Orphan() {
+      useMessageParts();
+      return null;
+    }
+    let threw = false;
+    try {
+      renderToString(<Orphan />);
+    } catch {
+      threw = true;
+    }
+    assert(threw, "a misplaced useMessageParts is a loud error, not silent");
   });
 });

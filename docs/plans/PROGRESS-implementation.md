@@ -55,8 +55,18 @@ commit.
 - [ ] Server half (Q3): symmetric `afterStream/onFinish({messages})` on
       `createAgUiHandler` (agent-runtime `src/agent/ag-ui/handler.ts`).
 
-## E4 / E5 / E6 — leaf depth, message parts, collections
-- [ ] Additive component work (gated behind spec review per Q5).
+## E4 — leaf composition depth
+- [x] Flagship acid test: ChatSidebar.Item decomposed into a composable
+      Item.Menu/.Rename/.Delete compound (per-item context `useChatSidebarItem`);
+      add a menu entry by composing, keep rename/delete/select. Commit `7e14f2e9d`.
+- [ ] Remaining targets: Message.Header.Name/.Timestamp, ChatInput.Toolbar,
+      AgentPicker.Search (same pattern).
+
+## E5 — message parts / render-prop discipline
+- [~] In progress.
+
+## E6 — collections (K0 4-tier) everywhere
+- [ ] Pending (attachments + transcript first).
 
 ### E3 groundwork — behaviour the persistence lift MUST preserve
 The §2.3 "useEffect to sync state up" anti-pattern lives in

@@ -54,5 +54,24 @@ export function useMessageContextOptional(): MessageContextValue | null {
   return React.useContext(MessageContext);
 }
 
+/** The message's parts as headless data (§K tier-1). */
+export interface MessagePartsData {
+  /** Parts grouped in render order (text / reasoning / tool / source …). */
+  parts: MessageContextValue["parts"];
+  /** The concatenated text content of the answer parts. */
+  textContent: string;
+}
+
+/**
+ * `useMessageParts` — read the current message's parts as data, so a consumer
+ * can render them however they like (the 4th, headless access point to parts;
+ * `Message.Part` is the leaf, `Message.Content` the batteries). Throws outside a
+ * `Message`. See docs/plans/K0-collections-house-rule.md.
+ */
+export function useMessageParts(): MessagePartsData {
+  const { parts, textContent } = useMessageContext();
+  return { parts, textContent };
+}
+
 /** Render message context provider. */
 export const MessageContextProvider = MessageContext.Provider;
