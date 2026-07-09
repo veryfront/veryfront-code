@@ -326,7 +326,9 @@ async function executeTaskRun(
     task,
     config: request.config ?? {},
     projectId: request.projectId,
-    environmentId: request.runtimeTargetEnvironmentId ?? ctx.environmentId,
+    environmentId: request.runtimeTargetEnvironmentId === undefined
+      ? ctx.environmentId
+      : request.runtimeTargetEnvironmentId ?? undefined,
     debug: ctx.debug,
   });
 
