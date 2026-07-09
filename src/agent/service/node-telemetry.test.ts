@@ -190,6 +190,7 @@ describe("agent/node-agent-service-telemetry", () => {
     assertEquals(config.llmObservabilityHeaders, {
       "dd-api-key": "global",
       "dd-otlp-source": "llmobs",
+      "dd-ml-app": "agent-service",
     });
     assertEquals(config.metricsHeaders, { "dd-api-key": "metrics" });
     assertEquals(config.logsHeaders, { "dd-api-key": "global" });
@@ -214,6 +215,45 @@ describe("agent/node-agent-service-telemetry", () => {
       "dd-api-key": "redacted",
       "dd-otlp-source": "llmobs",
       "dd-ml-app": "veryfront-ops-agent",
+    });
+  });
+
+  it("defaults the Datadog LLM app to the resolved service name", () => {
+    const config = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        DD_SERVICE: "investment-ops-agent",
+        OTEL_TRACES_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+        DD_LLMOBS_ENABLED: "true",
+      },
+      defaultServiceName: "veryfront-ops-agent",
+    });
+
+    assertEquals(config.serviceName, "investment-ops-agent");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "investment-ops-agent",
+    });
+  });
+
+  it("preserves a Datadog LLM app supplied through OTLP headers", () => {
+    const config = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        DD_SERVICE: "investment-ops-agent",
+        OTEL_TRACES_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted,dd-ml-app=header-app",
+        DD_LLMOBS_ENABLED: "true",
+      },
+      defaultServiceName: "veryfront-ops-agent",
+    });
+
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "header-app",
     });
   });
 
