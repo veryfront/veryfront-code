@@ -37,8 +37,26 @@ commit.
       forwardRef masked (gate now enforces Chat.Root/Chat.Input controlled props).
       Commit `fe115dadf`.
 
-## E1 / E3 / E4 / E5 / E6 — context spine, state glue, depth
-- [ ] Pending (gated behind E0.5 safety net + spec review per Q5).
+## E1 — context spine + god-file decomposition — ✅ core done
+- [x] God file decomposed **1147 → 376 LOC** (`chat-props.ts`,
+      `controlled-chat.tsx`, `app-mode-chat.tsx`). Commit `a0415013d`.
+- [x] Per-file LOC ratchet (§0.9 master metric) locking the win. Commit `a041…`.
+- [x] F-3: memoized the last inline context value (agent-picker) + a ratchet
+      dimension for `.Provider value={{…}}` at 0. Commit `cf9012cfd`.
+- [ ] Deferred: full `{state,actions,meta}` context reshape + removing
+      `showSources` from the context contract — entangled with message-parts
+      rendering; folds into E4/E5. The composability contract already proves the
+      contexts are honest.
+
+## E3 — kill userland state glue — ✅ client half done
+- [x] `useConversationChat()` library hook: `useChat` + seeding + the persist
+      bridge (§2.3 anti-pattern) live in one reusable, publicly-exported
+      primitive; `<Chat>` consumes it. Userland writes no effect. Commit `aed726ad0`.
+- [ ] Server half (Q3): symmetric `afterStream/onFinish({messages})` on
+      `createAgUiHandler` (agent-runtime `src/agent/ag-ui/handler.ts`).
+
+## E4 / E5 / E6 — leaf depth, message parts, collections
+- [ ] Additive component work (gated behind spec review per Q5).
 
 ### E3 groundwork — behaviour the persistence lift MUST preserve
 The §2.3 "useEffect to sync state up" anti-pattern lives in
