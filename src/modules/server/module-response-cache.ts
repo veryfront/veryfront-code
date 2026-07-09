@@ -79,6 +79,23 @@ async function getDistributedCache(): Promise<CacheBackend | null> {
   return cache.type === "api" || cache.type === "redis" ? cache : null;
 }
 
+/**
+ * The distributed cache backend validates keys against a strict charset
+ * (alphanumeric plus `_ : . - /`) and rejects anything else with HTTP 400.
+ * Request module paths routinely contain characters outside that set — notably
+ * `@` (e.g. `/@vite/env`) — so an unsanitized path makes the composed key
+ * unstorable and the response is silently never cached.
+ *
+ * We prefix a hash of the exact path (collision resistance for two paths that
+ * clamp to the same readable form) with a charset-clamped readable form (kept
+ * for debuggability). `:` is deliberately excluded from the readable form so it
+ * cannot be confused with the key's field separator.
+ */
+function sanitizeModulePathForCacheKey(modulePath: string): string {
+  const readable = modulePath.replace(/[^a-zA-Z0-9_.\-/]/g, "-");
+  return `${hashString(modulePath)}-${readable}`;
+}
+
 export function buildReleaseModuleResponseCacheKey(
   options: ReleaseModuleResponseCacheKeyOptions,
 ): string {
@@ -89,6 +106,8 @@ export function buildReleaseModuleResponseCacheKey(
     options.branch ?? "",
   ].join("\0");
 
+  // Fields are joined with `:` (an allowed key character) rather than a NUL
+  // byte, which the distributed cache backend's key validator also rejects.
   return [
     "module-server-release-response",
     hashString(projectScope),
@@ -98,8 +117,8 @@ export function buildReleaseModuleResponseCacheKey(
     options.releaseDependencyManifestVersion == null
       ? ""
       : `release-dependency-manifest:${options.releaseDependencyManifestVersion}`,
-    options.modulePath,
-  ].join("\0");
+    sanitizeModulePathForCacheKey(options.modulePath),
+  ].join(":");
 }
 
 export async function getReleaseModuleResponse(
