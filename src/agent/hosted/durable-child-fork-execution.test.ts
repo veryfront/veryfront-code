@@ -26,6 +26,7 @@ const CHILD_CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
 const PARENT_MESSAGE_ID = "33333333-3333-4333-a333-333333333333";
 const CHILD_MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const PROJECT_ID = "55555555-5555-4555-8555-555555555555";
+const ENVIRONMENT_ID = "77777777-7777-4777-8777-777777777777";
 const BRANCH_ID = "66666666-6666-4666-8666-666666666666";
 const originalFetch = globalThis.fetch;
 
@@ -468,6 +469,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "child.message.id": CHILD_MESSAGE_ID,
       "source.target.kind": "preview_branch",
       "runtime.target.kind": "preview_branch",
+      "target.branch.id": BRANCH_ID,
       "agent.run.final_status": "failed",
       "tool.name": "invoke_agent",
       "tool.call.id": "tool-call-1",
@@ -503,6 +505,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "child.message.id": CHILD_MESSAGE_ID,
       "source.target.kind": "preview_branch",
       "runtime.target.kind": "preview_branch",
+      "target.branch.id": BRANCH_ID,
       "agent.run.final_status": "completed",
       "tool.name": "invoke_agent",
       "tool.call.id": "tool-call-1",
@@ -677,7 +680,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(result, { status: "missing_context", message: "missing context" });
   });
 
-  it("bootstraps, runs lifecycle progress, and returns host-shaped success", async () => {
+  it("bootstraps environment-targeted child runs and returns host-shaped success", async () => {
     let projectId = PROJECT_ID;
     const lifecycleStatuses: string[] = [];
     const bootstrapCalls: string[] = [];
@@ -743,7 +746,9 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         parentRunId: "run_parent_1",
         parentMessageId: PARENT_MESSAGE_ID,
         getProjectId: () => projectId,
-        getBranchId: () => BRANCH_ID,
+        getRuntimeTargetKind: () => "environment",
+        getRuntimeTargetEnvironmentId: () => ENVIRONMENT_ID,
+        getBranchId: () => null,
         getContextModel: () => "sonnet",
         defaultModel: "opus",
         resolveModelId: (model) => `resolved-${model}`,
@@ -797,9 +802,10 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       latestExternalEventSequence: 3,
     });
     assertEquals(result.success.targets, {
-      sourceTargetKind: "preview_branch",
-      runtimeTargetKind: "preview_branch",
-      targetBranchId: BRANCH_ID,
+      sourceTargetKind: "environment",
+      runtimeTargetKind: "environment",
+      targetEnvironmentId: ENVIRONMENT_ID,
+      targetBranchId: null,
     });
     assertEquals(result.success.snapshot.success, true);
     const handoffMessageBody = getRecordedRequest(requests, 2).body;
@@ -826,10 +832,10 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         mode: "agent",
         agent_id: "invoke-agent-child",
         initial_status: "running",
-        source_target_kind: "preview_branch",
-        runtime_target_kind: "preview_branch",
-        source_target_branch_id: BRANCH_ID,
-        runtime_target_branch_id: BRANCH_ID,
+        source_target_kind: "environment",
+        runtime_target_kind: "environment",
+        source_target_environment_id: ENVIRONMENT_ID,
+        runtime_target_environment_id: ENVIRONMENT_ID,
       },
     });
     assertEquals(getRecordedRequest(requests, 5).body, {

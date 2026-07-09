@@ -18,6 +18,7 @@ const inputAnchorMessageId = "10000000-1000-4000-8000-100000000003";
 const userId = "10000000-1000-4000-8000-100000000004";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
+const environmentId = "10000000-1000-4000-8000-100000000008";
 
 function createRuntimeInvocation() {
   return RuntimeAgentRunInvocationSchema.parse({
@@ -148,6 +149,7 @@ describe("agent/hosted-chat-request", () => {
       projectId,
       projectSlug: "demo-project",
       branchId,
+      runtimeTargetKind: "preview_branch",
     });
     assertEquals(request.durableRootRun, {
       runId: "run_root_1",
@@ -155,6 +157,33 @@ describe("agent/hosted-chat-request", () => {
       parentConversationId: "10000000-1000-4000-8000-100000000007",
       parentRunId: "run_parent_1",
       spawnedFromToolCallId: "tool_1",
+    });
+  });
+
+  it("carries environment runtime target metadata from runtime invocations", () => {
+    const baseInvocation = createRuntimeInvocation();
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...baseInvocation,
+      run: {
+        ...baseInvocation.run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+    });
+
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(request.context, {
+      conversationId,
+      projectId,
+      projectSlug: "demo-project",
+      branchId: null,
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: environmentId,
     });
   });
   it("carries Studio environment context from runtime context into hosted chat context", () => {

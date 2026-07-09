@@ -491,6 +491,8 @@ export async function executeDefaultHostedInvokeAgentTool<
       parentRunId: options.context.parentRunId,
       parentMessageId: options.context.parentMessageId,
       getProjectId: () => options.context.projectId,
+      getRuntimeTargetKind: () => options.context.runtimeTargetKind,
+      getRuntimeTargetEnvironmentId: () => options.context.runtimeTargetEnvironmentId,
       getBranchId: () => options.context.branchId,
       getContextModel: () => options.context.model,
       defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,

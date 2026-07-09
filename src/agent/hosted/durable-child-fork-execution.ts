@@ -301,6 +301,8 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         childMessageId: failure.childMessageId,
         sourceTargetKind: failure.targets.sourceTargetKind,
         runtimeTargetKind: failure.targets.runtimeTargetKind,
+        targetEnvironmentId: failure.targets.targetEnvironmentId,
+        targetBranchId: failure.targets.targetBranchId,
         status: "failed",
         terminalErrorCode: failure.terminalErrorCode,
         terminalErrorMessage: failure.terminalErrorMessage,
@@ -324,6 +326,8 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         childMessageId: failure.identifiers.childMessageId,
         sourceTargetKind: failure.targets.sourceTargetKind,
         runtimeTargetKind: failure.targets.runtimeTargetKind,
+        targetEnvironmentId: failure.targets.targetEnvironmentId,
+        targetBranchId: failure.targets.targetBranchId,
         status: "failed",
         terminalErrorCode: failure.terminalErrorCode,
         terminalErrorMessage: failure.terminalErrorMessage,
@@ -341,6 +345,8 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         childMessageId: success.identifiers.childMessageId,
         sourceTargetKind: success.targets.sourceTargetKind,
         runtimeTargetKind: success.targets.runtimeTargetKind,
+        targetEnvironmentId: success.targets.targetEnvironmentId,
+        targetBranchId: success.targets.targetBranchId,
         status: success.snapshot.success ? "completed" : "failed",
         usage: success.snapshot.usage,
         terminalErrorCode: success.snapshot.success ? null : input.executionFailedCode,
@@ -444,6 +450,8 @@ export type ExecuteHostedDurableChildForkInput<
   parentRunId?: string;
   parentMessageId?: string;
   getProjectId: () => string | null | undefined;
+  getRuntimeTargetKind?: () => ConversationRunTargets["runtimeTargetKind"] | undefined;
+  getRuntimeTargetEnvironmentId?: () => string | null | undefined;
   getBranchId?: () => string | null | undefined;
   getContextModel?: () => string | undefined;
   defaultModel: string;
@@ -477,6 +485,18 @@ function getBranchId(input: {
   return input.getBranchId?.();
 }
 
+function getRuntimeTargetKind(input: {
+  getRuntimeTargetKind?: () => ConversationRunTargets["runtimeTargetKind"] | undefined;
+}): ConversationRunTargets["runtimeTargetKind"] | undefined {
+  return input.getRuntimeTargetKind?.();
+}
+
+function getRuntimeTargetEnvironmentId(input: {
+  getRuntimeTargetEnvironmentId?: () => string | null | undefined;
+}): string | null | undefined {
+  return input.getRuntimeTargetEnvironmentId?.();
+}
+
 function resolveContextModel(input: {
   forkInput: HostedChildForkToolInput;
   getContextModel?: () => string | undefined;
@@ -505,6 +525,8 @@ async function prepareHostedDurableChildBootstrapContext<
 
   const targets = resolveConversationRunTargets({
     projectId: input.getProjectId() ?? null,
+    runtimeTargetKind: getRuntimeTargetKind(input) ?? null,
+    environmentId: getRuntimeTargetEnvironmentId(input) ?? null,
     branchId: getBranchId(input) ?? null,
   });
   const resolvedModel = input.resolveModelId(resolveContextModel(input));
@@ -555,6 +577,8 @@ async function bootstrapHostedDurableChildFork<
         runId: input.executionOptions.toolCallId,
       }),
       agentId: input.childAgentId,
+      runtimeTargetKind: getRuntimeTargetKind(input),
+      runtimeTargetEnvironmentId: getRuntimeTargetEnvironmentId(input),
       branchId: getBranchId(input),
     });
     const identifiers: HostedChildRunIdentifiers = {
@@ -603,6 +627,7 @@ async function executeHostedDurableChildLifecycle<
       description: input.forkInput.description,
       sourceTargetKind: targets.sourceTargetKind,
       runtimeTargetKind: targets.runtimeTargetKind,
+      targetEnvironmentId: targets.targetEnvironmentId,
       targetBranchId: targets.targetBranchId,
     },
     model: bootstrapContext.resolvedModel,
