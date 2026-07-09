@@ -315,6 +315,8 @@ export async function bootstrapConversationAgentRun(input: {
   agentId: string;
   implementationKind?: string | null;
   projectId?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  runtimeTargetEnvironmentId?: string | null;
   branchId?: string | null;
 }): Promise<BootstrapConversationAgentRunResult> {
   if (input.parentConversationId && input.ensureProjectId) {
@@ -347,6 +349,8 @@ export async function bootstrapConversationAgentRun(input: {
     agentId: input.agentId,
     implementationKind: input.implementationKind,
     projectId: effectiveProjectId,
+    runtimeTargetKind: input.runtimeTargetKind,
+    runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId,
     branchId: input.branchId,
   });
 

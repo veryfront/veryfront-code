@@ -31,6 +31,7 @@ const AUTH_TOKEN = "token-123";
 const CONVERSATION_ID = "11111111-1111-4111-a111-111111111111";
 const MESSAGE_ID = "22222222-2222-4222-a222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-a333-333333333333";
+const ENVIRONMENT_ID = "55555555-5555-4555-8555-555555555555";
 const BRANCH_ID = "44444444-4444-4444-8444-444444444444";
 
 const originalFetch = globalThis.fetch;
@@ -112,6 +113,7 @@ describe("agent/durable", () => {
     assertEquals(resolveConversationRunTargets({ projectId: null, branchId: null }), {
       sourceTargetKind: null,
       runtimeTargetKind: null,
+      targetEnvironmentId: null,
       targetBranchId: null,
     });
   });
@@ -120,14 +122,33 @@ describe("agent/durable", () => {
     assertEquals(resolveConversationRunTargets({ projectId: PROJECT_ID, branchId: BRANCH_ID }), {
       sourceTargetKind: "preview_branch",
       runtimeTargetKind: "preview_branch",
+      targetEnvironmentId: null,
       targetBranchId: BRANCH_ID,
     });
+  });
+
+  it("resolves project environment targets when an environment is present", () => {
+    assertEquals(
+      resolveConversationRunTargets({
+        projectId: PROJECT_ID,
+        runtimeTargetKind: "environment",
+        environmentId: ENVIRONMENT_ID,
+        branchId: null,
+      }),
+      {
+        sourceTargetKind: "environment",
+        runtimeTargetKind: "environment",
+        targetEnvironmentId: ENVIRONMENT_ID,
+        targetBranchId: null,
+      },
+    );
   });
 
   it("resolves project main branch targets with main_branch runtime metadata", () => {
     assertEquals(resolveConversationRunTargets({ projectId: PROJECT_ID, branchId: null }), {
       sourceTargetKind: "project",
       runtimeTargetKind: "main_branch",
+      targetEnvironmentId: null,
       targetBranchId: null,
     });
   });
@@ -206,6 +227,53 @@ describe("agent/durable", () => {
           runtime_target_kind: "preview_branch",
           source_target_branch_id: BRANCH_ID,
           runtime_target_branch_id: BRANCH_ID,
+        },
+      },
+    );
+  });
+
+  it("preserves environment target metadata for project-backed runs", async () => {
+    const fetchCalls = stubFetchSequence(
+      acceptedRunResponse({ run_id: "run_child_env_1" }),
+      jsonResponse(
+        durableRunProjection({
+          run_id: "run_child_env_1",
+          project_id: PROJECT_ID,
+          source_target_kind: "environment",
+        }),
+        200,
+      ),
+    );
+
+    await createConversationAgentRun({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_child_env_1",
+      agentId: "invoke-agent-child",
+      projectId: PROJECT_ID,
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: ENVIRONMENT_ID,
+      branchId: null,
+    });
+
+    assertEquals(
+      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
+      {
+        kind: "agent",
+        owner: {
+          kind: "conversation",
+          id: CONVERSATION_ID,
+        },
+        public_id: "run_child_env_1",
+        request: {
+          mode: "agent",
+          agent_id: "invoke-agent-child",
+          initial_status: "running",
+          source_target_kind: "environment",
+          runtime_target_kind: "environment",
+          source_target_environment_id: ENVIRONMENT_ID,
+          runtime_target_environment_id: ENVIRONMENT_ID,
         },
       },
     );

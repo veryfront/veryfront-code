@@ -1064,6 +1064,8 @@ export async function createConversationAgentRun(
 ): Promise<ConversationRunProjection> {
   const targets = resolveConversationRunTargets({
     projectId: input.projectId ?? null,
+    runtimeTargetKind: input.runtimeTargetKind ?? null,
+    environmentId: input.runtimeTargetEnvironmentId ?? null,
     branchId: input.branchId ?? null,
   });
   const runId = input.runId ?? `run_${crypto.randomUUID()}`;
@@ -1082,6 +1084,12 @@ export async function createConversationAgentRun(
           runtime_target_branch_id: targets.targetBranchId,
         }
         : {}),
+      ...(targets.targetEnvironmentId
+        ? {
+          source_target_environment_id: targets.targetEnvironmentId,
+          runtime_target_environment_id: targets.targetEnvironmentId,
+        }
+        : {}),
     }
     : {
       mode: "agent" as const,
@@ -1093,6 +1101,12 @@ export async function createConversationAgentRun(
         ? {
           source_target_branch_id: targets.targetBranchId,
           runtime_target_branch_id: targets.targetBranchId,
+        }
+        : {}),
+      ...(targets.targetEnvironmentId
+        ? {
+          source_target_environment_id: targets.targetEnvironmentId,
+          runtime_target_environment_id: targets.targetEnvironmentId,
         }
         : {}),
     };

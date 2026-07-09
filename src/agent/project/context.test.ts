@@ -21,6 +21,8 @@ Deno.test("applyAgentProjectContextChange updates project and resets branch and 
   assertEquals(context, {
     projectId: "project-2",
     branchId: null,
+    runtimeTargetKind: "main_branch",
+    runtimeTargetEnvironmentId: null,
     availableSkillIds: undefined,
     skillSourcePaths: undefined,
     steeringRevision: 3,
