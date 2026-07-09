@@ -62,8 +62,11 @@ commit.
 - [ ] Remaining targets: Message.Header.Name/.Timestamp, ChatInput.Toolbar,
       AgentPicker.Search (same pattern).
 
-## E5 — message parts / render-prop discipline
-- [~] In progress.
+## E5 — message parts / render-prop discipline — ✅ core
+- [x] `useMessageParts()` headless data hook added (4th access point). Message.Content
+      already provides the function-child list tier + Message.Part leaf, so the
+      four part access points are complete. Commit `3085dcaa8`.
+- [ ] Optional sugar leaves Message.Text/.Reasoning/.Source (deferred).
 
 ## E6 — collections (K0 4-tier) everywhere
 - [ ] Pending (attachments + transcript first).
