@@ -52,7 +52,8 @@ export function isExternalScheme(specifier: string): boolean {
   return specifier.startsWith("node:") ||
     specifier.startsWith("data:") ||
     specifier.startsWith("file:") ||
-    specifier.startsWith("bun:");
+    specifier.startsWith("bun:") ||
+    specifier.startsWith("jsr:");
 }
 
 export function isRelative(specifier: string): boolean {
@@ -69,7 +70,7 @@ export function isParentHttpModule(baseUrl: string | undefined): boolean {
 
 export function isInternalBare(specifier: string): boolean {
   return specifier.startsWith("veryfront/") ||
-    specifier.startsWith("#veryfront/") ||
+    specifier.startsWith("#") ||
     specifier.startsWith("@std/") ||
     specifier.startsWith("_vf_modules/") ||
     specifier.startsWith("/_vf_modules/") ||

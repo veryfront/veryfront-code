@@ -41,7 +41,14 @@ async function resolveSpecifier(
   options: CacheOptions,
   cacheHttpModule: CacheHttpModuleFn,
 ): Promise<string | null> {
-  if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
+  if (isExternalScheme(specifier)) return null;
+
+  if (isInternalBare(specifier)) {
+    const mapped = resolveImport(specifier, options.importMap);
+    if (mapped === specifier) return null;
+    if (isLocalMappedSpecifier(mapped)) return mapped;
+    return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
+  }
 
   if (specifier.startsWith("npm:")) {
     const bareSpecifier = specifier.slice(4);
