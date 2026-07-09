@@ -60,6 +60,13 @@ export interface LogEntry {
   branch_id?: string;
   branch_name?: string;
   run_execution_id?: string;
+  run_id?: string;
+  agent_id?: string;
+  thread_id?: string;
+  schedule_id?: string;
+  schedule_name?: string;
+  tool_name?: string;
+  tool_call_id?: string;
   batch_id?: string;
   run_target?: string;
   task?: string;
@@ -104,6 +111,8 @@ type LoggerConfig = {
 type ConsoleLoggerOptions = {
   injectTraceContext?: boolean;
 };
+
+type LogRecordEmitter = (entry: LogEntry) => void;
 
 // ---- Config helpers (must be declared before the eager init below) ----
 
@@ -159,6 +168,8 @@ let loggerConfig: LoggerConfig = {
   format: getDefaultFormat(),
 };
 
+let logRecordEmitter: LogRecordEmitter | null = null;
+
 /**
  * Re-read logger configuration from environment variables.
  * Call after loading .env files so the logger picks up any overrides.
@@ -172,6 +183,16 @@ export function refreshLoggerConfig(): void {
 
 /** @internal Alias kept for tests. */
 export const __resetLoggerConfigForTests = refreshLoggerConfig;
+
+/** Register a process-level structured log emitter, for example an OTel bridge. */
+export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): void {
+  logRecordEmitter = emitter;
+}
+
+/** Reset the process-level structured log emitter. Only intended for tests. */
+export function __resetLogRecordEmitterForTests(): void {
+  logRecordEmitter = null;
+}
 
 function resolveLoggerConfig(): LoggerConfig {
   return loggerConfig;
@@ -252,6 +273,18 @@ function extractToEntryField(
   delete context[key];
 }
 
+function extractAliasToEntryField(
+  entry: LogEntry,
+  context: Record<string, unknown>,
+  sourceKey: string,
+  targetKey: keyof LogEntry,
+  coerce: (value: unknown) => LogEntry[keyof LogEntry],
+): void {
+  if (entry[targetKey] !== undefined || !(sourceKey in context)) return;
+  entry[targetKey] = coerce(context[sourceKey]) as never;
+  delete context[sourceKey];
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -279,7 +312,7 @@ class ConsoleLogger implements Logger {
     return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
   }
 
-  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
+  private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
     const { context, error } = extractContext(args);
     const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
 
@@ -329,6 +362,13 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
     extractToEntryField(entry, mergedContext, "run_execution_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "run_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "agent_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "thread_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "schedule_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "schedule_name", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "tool_name", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "tool_call_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "batch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "run_target", (v) => String(v));
     extractToEntryField(entry, mergedContext, "task", (v) => String(v));
@@ -341,6 +381,19 @@ class ConsoleLogger implements Logger {
     // Also extract camelCase variants so callers can use either convention
     extractToEntryField(entry, mergedContext, "userId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "conversationId", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "runId", "run_id", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "agentId", "agent_id", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "threadId", "thread_id", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "scheduleId", "schedule_id", (v) => String(v));
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "scheduleName",
+      "schedule_name",
+      (v) => String(v),
+    );
+    extractAliasToEntryField(entry, mergedContext, "toolName", "tool_name", (v) => String(v));
+    extractAliasToEntryField(entry, mergedContext, "toolCallId", "tool_call_id", (v) => String(v));
 
     // Emit snake_case aliases for camelCase fields (transition period)
     if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;
@@ -362,6 +415,11 @@ class ConsoleLogger implements Logger {
     // URIs, ?access_token= URLs, userinfo) before emission (#1989).
     if (error) entry.error = sanitizeSerializedError(error);
 
+    return entry;
+  }
+
+  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
+    const entry = this.createEntry(level, message, args);
     return JSON.stringify(entry);
   }
 
@@ -395,9 +453,21 @@ class ConsoleLogger implements Logger {
     const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
     if (resolvedLevel > logLevel) return;
 
+    let entry: LogEntry | undefined;
     const line = resolvedFormat === "json"
-      ? this.formatJson(level, message, args)
+      ? (() => {
+        entry = this.createEntry(level, message, args);
+        return JSON.stringify(entry);
+      })()
       : this.formatTextLine(level, message, args);
+
+    if (logRecordEmitter) {
+      try {
+        logRecordEmitter(entry ?? this.createEntry(level, message, args));
+      } catch (_) {
+        /* do not let telemetry export failures affect application logging */
+      }
+    }
 
     consoleFn(line);
   }

@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_orders",
+      "id": "bigcommerce__list_orders",
       "name": "List Orders",
       "description": "List store orders with optional status, customer, and date filtering (Orders are served by the v2 API)",
       "requiresWrite": false,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "get_order",
+      "id": "bigcommerce__get_order",
       "name": "Get Order",
       "description": "Get full details of a single order (Orders are served by the v2 API)",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "list_order_products",
+      "id": "bigcommerce__list_order_products",
       "name": "List Order Products",
       "description": "List the line items of an order — v2 order responses do not embed products, so use this to see what was bought",
       "requiresWrite": false,
@@ -145,7 +145,7 @@
       }
     },
     {
-      "id": "update_order",
+      "id": "bigcommerce__update_order",
       "name": "Update Order",
       "description": "Update an order, e.g. change its status to Shipped/Cancelled/Refunded or add staff notes",
       "requiresWrite": true,
@@ -183,7 +183,7 @@
       }
     },
     {
-      "id": "list_products",
+      "id": "bigcommerce__list_products",
       "name": "List Products",
       "description": "List catalog products with optional keyword, SKU, and availability filtering",
       "requiresWrite": false,
@@ -236,7 +236,7 @@
       }
     },
     {
-      "id": "get_product",
+      "id": "bigcommerce__get_product",
       "name": "Get Product",
       "description": "Get full details of a single catalog product",
       "requiresWrite": false,
@@ -268,7 +268,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "bigcommerce__list_customers",
       "name": "List Customers",
       "description": "List store customers with optional email and name filtering",
       "requiresWrite": false,
@@ -311,7 +311,7 @@
       }
     },
     {
-      "id": "create_product",
+      "id": "bigcommerce__create_product",
       "name": "Create Product",
       "description": "Create a new product in the catalog",
       "requiresWrite": true,
@@ -374,7 +374,7 @@
       }
     },
     {
-      "id": "update_product",
+      "id": "bigcommerce__update_product",
       "name": "Update Product",
       "description": "Update fields of an existing catalog product, such as price, visibility, or inventory",
       "requiresWrite": true,

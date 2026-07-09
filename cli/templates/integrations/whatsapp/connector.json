@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "send_text_message",
+      "id": "whatsapp__send_text_message",
       "name": "Send Text Message",
       "description": "Send a free-form text message to a WhatsApp user (only within 24 hours of their last message; otherwise use a template)",
       "requiresWrite": true,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "send_template_message",
+      "id": "whatsapp__send_template_message",
       "name": "Send Template Message",
       "description": "Send an approved message template to a WhatsApp user; required to start conversations outside the 24-hour customer service window",
       "requiresWrite": true,
@@ -127,7 +127,7 @@
       }
     },
     {
-      "id": "send_media_message",
+      "id": "whatsapp__send_media_message",
       "name": "Send Media Message",
       "description": "Send an image, document, video, or audio message to a WhatsApp user by public URL or uploaded media ID (subject to the same 24-hour window as text messages)",
       "requiresWrite": true,
@@ -178,7 +178,7 @@
       }
     },
     {
-      "id": "get_media_url",
+      "id": "whatsapp__get_media_url",
       "name": "Get Media URL",
       "description": "Get a short-lived download URL and metadata for a media ID, e.g. to retrieve an image or document a customer sent inbound",
       "requiresWrite": false,
@@ -201,7 +201,7 @@
       }
     },
     {
-      "id": "update_business_profile",
+      "id": "whatsapp__update_business_profile",
       "name": "Update Business Profile",
       "description": "Update the business profile (about, address, description, email, websites, vertical) shown to customers for a business phone number",
       "requiresWrite": true,
@@ -250,7 +250,7 @@
       }
     },
     {
-      "id": "mark_message_read",
+      "id": "whatsapp__mark_message_read",
       "name": "Mark Message as Read",
       "description": "Mark an inbound WhatsApp message as read so the customer sees read receipts after the agent processes it",
       "requiresWrite": true,
@@ -285,7 +285,7 @@
       }
     },
     {
-      "id": "get_business_profile",
+      "id": "whatsapp__get_business_profile",
       "name": "Get Business Profile",
       "description": "Read the business profile (about, address, email, websites) shown to customers for a business phone number",
       "requiresWrite": false,
@@ -312,7 +312,7 @@
       }
     },
     {
-      "id": "list_message_templates",
+      "id": "whatsapp__list_message_templates",
       "name": "List Message Templates",
       "description": "List the message templates on a WhatsApp Business Account so an agent can pick an approved template name and language before sending",
       "requiresWrite": false,

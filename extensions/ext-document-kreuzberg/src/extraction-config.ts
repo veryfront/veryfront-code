@@ -2,8 +2,7 @@ const MARKDOWN_EXTRACTION_CONFIG = {
   outputFormat: "markdown",
 } as const;
 
-const PDF_MARKDOWN_EXTRACTION_CONFIG = {
-  ...MARKDOWN_EXTRACTION_CONFIG,
+const PDF_TEXT_EXTRACTION_CONFIG = {
   images: { extractImages: false },
   pdfOptions: {
     extractImages: false,
@@ -19,6 +18,6 @@ function normalizeMimeType(mimeType: string): string {
 
 export function extractionConfigForMimeType(mimeType: string): Record<string, unknown> {
   return normalizeMimeType(mimeType) === "application/pdf"
-    ? PDF_MARKDOWN_EXTRACTION_CONFIG
+    ? PDF_TEXT_EXTRACTION_CONFIG
     : MARKDOWN_EXTRACTION_CONFIG;
 }

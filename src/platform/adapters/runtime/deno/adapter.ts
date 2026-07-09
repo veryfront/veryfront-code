@@ -14,6 +14,7 @@ import type {
   ShellAdapter,
   WatchOptions,
   WebSocketUpgrade,
+  WebSocketUpgradeOptions,
 } from "../../base.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -33,6 +34,7 @@ import {
   getNativeResponse,
   toNativeResponse,
 } from "../../../compat/http/native-response.ts";
+import { resolveDenoUpgradeWebSocketOptions } from "../../../compat/http/websocket.ts";
 
 const logger = serverLogger.component("deno");
 
@@ -299,7 +301,7 @@ class DenoEnvironmentAdapter implements EnvironmentAdapter {
 }
 
 class DenoServerAdapter implements ServerAdapter {
-  upgradeWebSocket(request: Request): WebSocketUpgrade {
+  upgradeWebSocket(request: Request, options?: WebSocketUpgradeOptions): WebSocketUpgrade {
     // Access native Deno via `self` to bypass dnt shim transform.
     // dnt rewrites `globalThis.Deno` to @deno/shim-deno, which lacks upgradeWebSocket.
     const nativeDeno = getNativeDeno();
@@ -308,7 +310,10 @@ class DenoServerAdapter implements ServerAdapter {
         detail: "DenoServerAdapter.upgradeWebSocket() can only be used in Deno runtime",
       });
     }
-    const { socket, response } = nativeDeno.upgradeWebSocket(request);
+    const { socket, response } = nativeDeno.upgradeWebSocket(
+      request,
+      resolveDenoUpgradeWebSocketOptions(options),
+    );
     return { socket, response };
   }
 }

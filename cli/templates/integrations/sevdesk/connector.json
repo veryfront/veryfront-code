@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "list_contacts",
+      "id": "sevdesk__list_contacts",
       "name": "List Contacts",
       "description": "List sevdesk contacts (organizations and persons), e.g. to find a contact id before creating an invoice",
       "requiresWrite": false,
@@ -64,7 +64,7 @@
       }
     },
     {
-      "id": "list_invoices",
+      "id": "sevdesk__list_invoices",
       "name": "List Invoices",
       "description": "List sevdesk invoices with optional status, number, date, and contact filters",
       "requiresWrite": false,
@@ -120,7 +120,7 @@
       }
     },
     {
-      "id": "get_invoice",
+      "id": "sevdesk__get_invoice",
       "name": "Get Invoice",
       "description": "Retrieve a single sevdesk invoice by its id",
       "requiresWrite": false,
@@ -141,7 +141,7 @@
       }
     },
     {
-      "id": "create_invoice",
+      "id": "sevdesk__create_invoice",
       "name": "Create Invoice",
       "description": "Create a sevdesk invoice with positions via the saveInvoice factory endpoint; create with status 100 for an editable draft",
       "requiresWrite": true,
@@ -179,7 +179,7 @@
       }
     },
     {
-      "id": "upload_voucher_file",
+      "id": "sevdesk__upload_voucher_file",
       "name": "Upload Voucher File",
       "description": "Upload a receipt or invoice file to sevdesk; returns an internal filename that can be attached when creating a voucher",
       "requiresWrite": true,
@@ -208,7 +208,7 @@
       }
     },
     {
-      "id": "list_vouchers",
+      "id": "sevdesk__list_vouchers",
       "name": "List Vouchers",
       "description": "List sevdesk accounting vouchers (receipts) with optional status, type, date, and description filters",
       "requiresWrite": false,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "create_voucher",
+      "id": "sevdesk__create_voucher",
       "name": "Create Voucher",
       "description": "Create a bookable voucher (receipt) with positions via the saveVoucher factory endpoint — the step that turns a file staged with Upload Voucher File into an actual accounting record",
       "requiresWrite": true,
@@ -292,7 +292,7 @@
       }
     },
     {
-      "id": "get_invoice_pdf",
+      "id": "sevdesk__get_invoice_pdf",
       "name": "Get Invoice PDF",
       "description": "Retrieve the rendered PDF document of an invoice for sending or archiving",
       "requiresWrite": false,
@@ -323,7 +323,7 @@
       }
     },
     {
-      "id": "book_invoice_amount",
+      "id": "sevdesk__book_invoice_amount",
       "name": "Book Invoice Amount",
       "description": "Register a (partial) payment on an invoice and mark it paid when settled — closes the reconciliation loop after money arrives",
       "requiresWrite": true,

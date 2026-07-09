@@ -1,8 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { Agent, AgentMessage } from "#veryfront/agent";
+import {
+  _resetShimForTests,
+  type AttributeValue,
+  setGlobalTracerProvider,
+  type Span,
+  type SpanContext,
+  type Tracer,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -12,6 +20,51 @@ import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool"
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+
+class RecordingSpan implements Span {
+  readonly attributes: Record<string, AttributeValue> = {};
+  readonly events: Array<{ name: string; attrs?: Record<string, AttributeValue> }> = [];
+  status: { code: number; message?: string } | undefined;
+  ended = false;
+
+  constructor(readonly name: string) {}
+
+  setAttribute(key: string, value: AttributeValue): Span {
+    this.attributes[key] = value;
+    return this;
+  }
+
+  setAttributes(attrs: Record<string, AttributeValue>): Span {
+    Object.assign(this.attributes, attrs);
+    return this;
+  }
+
+  setStatus(status: { code: number; message?: string }): Span {
+    this.status = status;
+    return this;
+  }
+
+  recordException(): void {}
+
+  addEvent(name: string, attrs?: Record<string, AttributeValue>): Span {
+    this.events.push({ name, attrs });
+    return this;
+  }
+
+  end(): void {
+    this.ended = true;
+  }
+
+  spanContext(): SpanContext {
+    return {
+      traceId: "00000000000000000000000000000001",
+      spanId: "0000000000000001",
+      traceFlags: 1,
+    };
+  }
+
+  updateName(): void {}
+}
 
 function remoteToolSource(toolNames: string[]): RemoteToolSource {
   return {
@@ -71,6 +124,10 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe("internal-agents/run-stream", () => {
+  afterEach(() => {
+    _resetShimForTests();
+  });
+
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
@@ -1339,6 +1396,121 @@ describe("internal-agents/run-stream", () => {
     }
 
     assertEquals(capturedToolEntry, projectTool);
+  });
+
+  it("records completed runtime token usage on the agent.run span", async () => {
+    const spans: RecordingSpan[] = [];
+    const tracer: Tracer = {
+      startSpan(name) {
+        const span = new RecordingSpan(name);
+        spans.push(span);
+        return span;
+      },
+      startActiveSpan<T>(
+        name: string,
+        optionsOrFn: ((span: Span) => T) | {
+          kind?: number;
+          attributes?: Record<string, AttributeValue>;
+        },
+        contextOrFn?: unknown,
+        fn?: (span: Span) => T,
+      ): T {
+        const span = this.startSpan(name);
+        const callback: ((span: Span) => T) | undefined = typeof optionsOrFn === "function"
+          ? optionsOrFn
+          : typeof contextOrFn === "function"
+          ? contextOrFn as (span: Span) => T
+          : fn;
+        if (!callback) {
+          throw new Error("Expected an active span callback");
+        }
+        try {
+          return callback(span);
+        } finally {
+          span.end();
+        }
+      },
+    };
+    setGlobalTracerProvider({ getTracer: () => tracer });
+
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "done",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 17,
+                completionTokens: 11,
+                totalTokens: 28,
+                cachedInputTokens: 5,
+                cacheCreationInputTokens: 2,
+                cacheReadInputTokens: 3,
+                reasoningTokens: 4,
+                billableInputTokens: 15,
+                billableOutputTokens: 10,
+                providerCostUsd: 0.012,
+                veryfrontChargeUsd: 0.014,
+                costCredits: 2,
+                costSource: "gateway",
+                billingMode: "deferred",
+                usageCaptureStatus: "complete",
+              },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      },
+    );
+
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.ended, true);
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["gen_ai.usage.input_tokens"], 17);
+    assertEquals(runSpan?.attributes["gen_ai.usage.output_tokens"], 11);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 28);
+    assertEquals(runSpan?.attributes["gen_ai.usage.cache_creation.input_tokens"], 2);
+    assertEquals(runSpan?.attributes["gen_ai.usage.cache_read.input_tokens"], 3);
+    assertEquals(runSpan?.attributes["gen_ai.usage.reasoning.output_tokens"], 4);
+    assertEquals(runSpan?.attributes["agent.usage.billable_input_tokens"], 15);
+    assertEquals(runSpan?.attributes["agent.usage.billable_output_tokens"], 10);
+    assertEquals(runSpan?.attributes["agent.usage.provider_cost_usd"], 0.012);
+    assertEquals(runSpan?.attributes["agent.usage.veryfront_charge_usd"], 0.014);
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 2);
+    assertEquals(runSpan?.attributes["agent.usage.cost_source"], "gateway");
+    assertEquals(runSpan?.attributes["agent.usage.billing_mode"], "deferred");
+    assertEquals(runSpan?.attributes["agent.usage.capture_status"], "complete");
   });
 
   it("emits comment heartbeats while the runtime stream is idle", async () => {

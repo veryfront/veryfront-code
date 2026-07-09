@@ -7,7 +7,7 @@
  * @module module-system/react-loader/ssr-module-loader/ssr-cache-manager
  */
 
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
@@ -69,7 +69,7 @@ export class SSRCacheManager {
     const configHash = this.getConfigHash();
 
     return buildSSRModuleCacheKey(
-      VERSION,
+      RUNTIME_VERSION,
       this.options.projectId,
       `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
     );
@@ -94,7 +94,13 @@ export class SSRCacheManager {
 
   async getTempPath(filePath: string, contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
-    return buildTempModulePath(tmpDir, filePath, this.options.projectDir, VERSION, contentHash);
+    return buildTempModulePath(
+      tmpDir,
+      filePath,
+      this.options.projectDir,
+      RUNTIME_VERSION,
+      contentHash,
+    );
   }
 
   isProductionContentSource(): boolean {
@@ -185,6 +191,7 @@ export class SSRCacheManager {
   invalidateFilePathCacheEntry(filePath: string, cacheEntry?: ModuleCacheEntry): void {
     globalModuleCache.delete(this.getCacheKey(filePath));
     if (cacheEntry) {
+      this.invalidateMatchingCacheEntries(cacheEntry);
       verifiedHttpBundlePaths.delete(`${cacheEntry.tempPath}:${cacheEntry.contentHash}`);
     }
   }
@@ -198,6 +205,22 @@ export class SSRCacheManager {
     globalModuleCache.delete(filePathCacheKey);
     if (cacheEntry) {
       verifiedHttpBundlePaths.delete(`${cacheEntry.tempPath}:${cacheEntry.contentHash}`);
+    }
+  }
+
+  private invalidateMatchingCacheEntries(cacheEntry: ModuleCacheEntry): void {
+    const keysToDelete: string[] = [];
+    for (const [key, entry] of globalModuleCache.entries()) {
+      if (
+        entry.tempPath === cacheEntry.tempPath &&
+        entry.contentHash === cacheEntry.contentHash
+      ) {
+        keysToDelete.push(key);
+      }
+    }
+
+    for (const key of keysToDelete) {
+      globalModuleCache.delete(key);
     }
   }
 
@@ -310,12 +333,12 @@ export class SSRCacheManager {
 
     const baseCacheDir = getMdxEsmCacheDir();
     const sourceKey = contentSourceId;
-    const cacheKey = getTmpDirCacheKey(baseCacheDir, projectId, sourceKey);
+    const cacheKey = getTmpDirCacheKey(baseCacheDir, projectId, sourceKey, RUNTIME_VERSION);
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) return existingDir;
 
-    const tmpDir = buildTmpDirPath(baseCacheDir, projectId, sourceKey);
+    const tmpDir = buildTmpDirPath(baseCacheDir, projectId, sourceKey, RUNTIME_VERSION);
 
     await this.fs.mkdir(tmpDir, { recursive: true });
     globalTmpDirs.set(cacheKey, tmpDir);

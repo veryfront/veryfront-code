@@ -61,6 +61,7 @@ export interface CreateHostedAgentRunSpanControllerInput {
   upstreamParentConversationId?: string;
   upstreamParentRunId?: string;
   spawnedFromToolCallId?: string;
+  traceAttributes?: AgentTraceAttributes;
 }
 
 /** Create hosted agent run span controller. */
@@ -82,8 +83,17 @@ export function createHostedAgentRunSpanController(
       parentRunId: input.upstreamParentRunId,
       messageId: input.rootRun?.messageId,
       toolCallId: input.spawnedFromToolCallId,
+      scheduleId: typeof input.traceAttributes?.["schedule.id"] === "string"
+        ? input.traceAttributes["schedule.id"]
+        : null,
+      scheduleName: typeof input.traceAttributes?.["schedule.name"] === "string"
+        ? input.traceAttributes["schedule.name"]
+        : null,
     }),
   );
+  if (input.traceAttributes) {
+    span.setAttributes(input.traceAttributes);
+  }
 
   return {
     withContext: (fn) => span.withContext(fn),

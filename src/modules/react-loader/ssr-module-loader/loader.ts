@@ -6,7 +6,6 @@
  * @module module-system/react-loader/ssr-module-loader/loader
  */
 
-import { join } from "#veryfront/compat/path/index.ts";
 import type * as React from "react";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
@@ -17,7 +16,6 @@ import {
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -46,8 +44,13 @@ import {
   tryAcquireTransformSlot,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { lookupMdxEsmCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  getMdxEsmSsrCacheDir,
+  getMdxEsmSsrCacheDirs,
+  invalidateMdxEsmModuleForCachedPath,
+  lookupMdxEsmCache,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { extractHttpBundlePaths, verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
@@ -66,6 +69,7 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
 
 /**
  * SSR Module Loader with Redis Support.
@@ -155,11 +159,12 @@ export class SSRModuleLoader {
         tempPath: cacheEntry.tempPath,
         contentHash: cacheEntry.contentHash,
       });
+      await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
       this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
       throw toError(
         createError({
           type: "build",
-          message: `Cache file missing: ${cacheEntry.tempPath}`,
+          message: `${CACHE_FILE_MISSING_PREFIX} ${cacheEntry.tempPath}`,
           context: { file: filePath, phase: "transform" },
         }),
       );
@@ -251,11 +256,63 @@ export class SSRModuleLoader {
             error: classifiedError.message.slice(0, 200),
           },
         );
+        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
         this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
       }
 
       throw importError;
     }
+  }
+
+  private getTransformedCacheEntry(filePath: string): ModuleCacheEntry {
+    const cacheKey = this.cache.getCacheKey(filePath);
+    const cacheEntry = globalModuleCache.get(cacheKey);
+    if (!cacheEntry) {
+      throw toError(
+        createError({
+          type: "build",
+          message: `Failed to transform module: ${filePath}`,
+          context: { file: filePath, phase: "transform" },
+        }),
+      );
+    }
+    return cacheEntry;
+  }
+
+  private async invalidateMdxEsmCacheEntry(
+    filePath: string,
+    cacheEntry: ModuleCacheEntry,
+  ): Promise<void> {
+    const { contentSourceId, projectId } = this.options;
+    const mdxCacheDirs = projectId && contentSourceId
+      ? getMdxEsmSsrCacheDirs(projectId, contentSourceId)
+      : undefined;
+
+    await invalidateMdxEsmModuleForCachedPath(
+      cacheEntry.tempPath,
+      filePath,
+      this.options.projectDir,
+      this.options.reactVersion,
+      mdxCacheDirs,
+    );
+  }
+
+  private throwMissingDependencies(filePath: string): void {
+    if (this.depValidator.missingDependencies.length > 0) {
+      this.depValidator.throwMissingDependencies(filePath);
+    }
+  }
+
+  private getRetryableStaleCacheErrorMessage(error: unknown): string | null {
+    const classifiedError = classifyImportError(error);
+    if (classifiedError.type === "module-not-found") {
+      return classifiedError.message;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes(CACHE_FILE_MISSING_PREFIX)) return message;
+
+    return null;
   }
 
   loadRawModule(
@@ -275,27 +332,35 @@ export class SSRModuleLoader {
         try {
           const dependencyHashCache = createDependencyHashCache();
           await this.transformWithDependencies(filePath, source, 0, dependencyHashCache);
+          this.throwMissingDependencies(filePath);
 
-          if (this.depValidator.missingDependencies.length > 0) {
-            this.depValidator.throwMissingDependencies(filePath);
+          const cacheEntry = this.getTransformedCacheEntry(filePath);
+
+          try {
+            const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
+
+            this.circuitBreaker.recordSuccess(circuitKey);
+            return mod;
+          } catch (importError) {
+            const retryErrorMessage = this.getRetryableStaleCacheErrorMessage(importError);
+            if (!retryErrorMessage) throw importError;
+
+            logger.warn("Retrying SSR module import after stale cache invalidation", {
+              file: filePath.slice(-40),
+              tempPath: cacheEntry.tempPath,
+              error: retryErrorMessage.slice(0, 200),
+            });
+
+            const retryDependencyHashCache = createDependencyHashCache();
+            await this.transformWithDependencies(filePath, source, 0, retryDependencyHashCache);
+            this.throwMissingDependencies(filePath);
+
+            const retryCacheEntry = this.getTransformedCacheEntry(filePath);
+            const mod = await this.importModuleFromCacheEntry(filePath, fileName, retryCacheEntry);
+
+            this.circuitBreaker.recordSuccess(circuitKey);
+            return mod;
           }
-
-          const cacheKey = this.cache.getCacheKey(filePath);
-          const cacheEntry = globalModuleCache.get(cacheKey);
-          if (!cacheEntry) {
-            throw toError(
-              createError({
-                type: "build",
-                message: `Failed to transform module: ${filePath}`,
-                context: { file: filePath, phase: "transform" },
-              }),
-            );
-          }
-
-          const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
-
-          this.circuitBreaker.recordSuccess(circuitKey);
-          return mod;
         } catch (error) {
           this.circuitBreaker.recordFailure(circuitKey);
           throw error;
@@ -440,10 +505,10 @@ export class SSRModuleLoader {
     }
 
     if (this.options.projectId && this.options.contentSourceId) {
-      const baseCacheDir = getMdxEsmCacheDir();
-      const projectKey = hashCodeHex(this.options.projectId);
-      const sourceKey = this.options.contentSourceId;
-      const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
+      const mdxCacheDir = getMdxEsmSsrCacheDir(
+        this.options.projectId,
+        this.options.contentSourceId,
+      );
 
       const mdxCacheResult = await lookupMdxEsmCache(
         filePath,
@@ -537,11 +602,10 @@ export class SSRModuleLoader {
       }
 
       if (parseResult.imports.length > 0) {
-        const preflightFs = createFileSystem();
         const { validImports, missingImports: preflightMissing } = await preflightLocalImports(
           parseResult.imports,
           filePath,
-          preflightFs,
+          this.options.adapter.fs,
         );
 
         if (preflightMissing.length > 0) {

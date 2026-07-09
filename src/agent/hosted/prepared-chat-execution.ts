@@ -5,6 +5,7 @@ import {
   createBootstrappedHostedChatExecutionRuntime,
   type CreateBootstrappedHostedChatExecutionRuntimeInput,
 } from "./chat-execution-runtime.ts";
+import type { HostedAgentRunSpanFinalState } from "./agent-run-lifecycle.ts";
 import { runHostedLifecycle } from "./lifecycle.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 
@@ -77,6 +78,7 @@ function tracePreparedHostedChatExecution<TResult>(input: {
       "conversation.id": input.execution.conversationId,
       "project.id": input.execution.projectId ?? "none",
       "agent.runtime.kind": input.execution.runtimeKind,
+      ...input.execution.traceAttributes,
     });
     return await input.run();
   };
@@ -172,8 +174,8 @@ export async function runPreparedHostedChatExecutionDetached<
         });
 
       try {
-        await agentRunSpan.withContext(async () => {
-          await runHostedLifecycle({
+        const result = await agentRunSpan.withContext(async () => {
+          return await runHostedLifecycle({
             abortSignal: input.execution.abortSignal,
             execution: {
               stream: execution.agentUIStream,
@@ -189,7 +191,17 @@ export async function runPreparedHostedChatExecutionDetached<
             }),
           });
         });
+        agentRunSpan.finalize({ status: result.terminalState.status });
       } catch (error) {
+        const finalStatus: HostedAgentRunSpanFinalState["status"] = input.execution.abortSignal
+            .aborted
+          ? "cancelled"
+          : "failed";
+        agentRunSpan.finalize({
+          status: finalStatus,
+          terminalErrorCode: finalStatus === "cancelled" ? "ABORTED" : "STREAM_ERROR",
+          terminalErrorMessage: error instanceof Error ? error.message : String(error),
+        });
         input.runtime.logger?.error("Detached durable chat execution failed", {
           conversationId: input.execution.conversationId,
           runId: input.execution.rootRunContext.durableRootRun?.runId,

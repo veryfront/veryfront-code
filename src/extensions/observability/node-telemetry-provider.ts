@@ -26,6 +26,29 @@ export type NodeTelemetryProcessTarget = {
   on(event: "SIGTERM", listener: () => void | Promise<void>): unknown;
 };
 
+/** Structured log record shape accepted by the telemetry provider. */
+export type NodeTelemetryLogRecord = {
+  timestamp?: string;
+  level?: string;
+  service?: string;
+  message: string;
+  component?: string;
+  context?: Record<string, unknown>;
+  error?: unknown;
+  trace_id?: string;
+  span_id?: string;
+  run_id?: string;
+  agent_id?: string;
+  thread_id?: string;
+  schedule_id?: string;
+  schedule_name?: string;
+  tool_name?: string;
+  tool_call_id?: string;
+};
+
+/** Emits a structured logger record into the active telemetry pipeline. */
+export type NodeTelemetryLogRecordEmitter = (record: NodeTelemetryLogRecord) => void;
+
 /** Options accepted by node telemetry initialize. */
 export type NodeTelemetryInitializeOptions = {
   serviceName: string;
@@ -33,9 +56,21 @@ export type NodeTelemetryInitializeOptions = {
   deploymentEnvironment: string;
   samplingRatio: number;
   exporterHeaders?: Record<string, string>;
+  tracesEnabled?: boolean;
+  metricsEnabled?: boolean;
+  logsEnabled?: boolean;
+  tracesEndpoint?: string;
+  metricsEndpoint?: string;
+  logsEndpoint?: string;
+  tracesHeaders?: Record<string, string>;
+  metricsHeaders?: Record<string, string>;
+  logsHeaders?: Record<string, string>;
+  metricsExportIntervalMillis?: number;
+  metricsTemporalityPreference?: "delta" | "cumulative" | "lowmemory";
   instrumentation: NodeTelemetryInstrumentationConfig;
   logger?: NodeTelemetryLogger;
   processTarget?: NodeTelemetryProcessTarget;
+  registerLogRecordEmitter?: (emitter: NodeTelemetryLogRecordEmitter) => void;
 };
 
 /**

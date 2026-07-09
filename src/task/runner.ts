@@ -37,6 +37,9 @@ export interface RunTaskOptions {
   /** Project ID (for cloud context) */
   projectId?: string;
 
+  /** Environment ID for the runtime target executing this task */
+  environmentId?: string;
+
   /** If set, only these env var names are passed to the task. */
   envAllowlist?: string[];
 
@@ -65,7 +68,7 @@ export interface TaskRunResult {
  * Run a task with the given options
  */
 export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
-  const { task, config = {}, projectId, envAllowlist, debug = false } = options;
+  const { task, config = {}, projectId, environmentId, envAllowlist, debug = false } = options;
   const start = Date.now();
 
   if (debug) {
@@ -79,6 +82,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
     env,
     config,
     projectId,
+    environmentId,
   };
 
   try {

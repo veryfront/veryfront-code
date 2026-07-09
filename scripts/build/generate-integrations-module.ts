@@ -28,6 +28,20 @@ const historicalToolSummaries: [string, NonNullable<
 >["historicalSummary"]][] = [];
 const errors: string[] = [];
 
+function getNamespacedToolId(connectorName: string, toolId: string): string {
+  const prefix = `${connectorName}__`;
+  return toolId.startsWith(prefix) ? toolId : `${prefix}${toolId}`;
+}
+
+function normalizeConnectorToolIds(connector: IntegrationConfig): IntegrationConfig {
+  return {
+    ...connector,
+    tools: connector.tools.map((tool) =>
+      tool.id ? { ...tool, id: getNamespacedToolId(connector.name, tool.id) } : tool
+    ),
+  };
+}
+
 for await (const entry of Deno.readDir(integrationsDir)) {
   if (!entry.isDirectory || entry.name === "_base") continue;
 
@@ -81,20 +95,25 @@ for await (const entry of Deno.readDir(integrationsDir)) {
       continue;
     }
 
-    connectors.push(result.data);
-    for (const tool of result.data.tools) {
+    const connector = normalizeConnectorToolIds(result.data);
+
+    connectors.push(connector);
+    for (const tool of connector.tools) {
       const historicalSummary = tool.endpoint?.response?.historicalSummary;
       if (!tool.id || !historicalSummary) continue;
-      historicalToolSummaries.push([`${result.data.name}__${tool.id}`, historicalSummary]);
+      historicalToolSummaries.push([
+        getNamespacedToolId(connector.name, tool.id),
+        historicalSummary,
+      ]);
     }
 
-    if (result.data.icon) {
+    if (connector.icon) {
       try {
-        const svg = await Deno.readTextFile(`${dirPath}/${result.data.icon}`);
-        icons.push([result.data.name, svg]);
+        const svg = await Deno.readTextFile(`${dirPath}/${connector.icon}`);
+        icons.push([connector.name, svg]);
       } catch {
         errors.push(
-          `${entry.name}: icon "${result.data.icon}" declared but file not found`,
+          `${entry.name}: icon "${connector.icon}" declared but file not found`,
         );
       }
     }

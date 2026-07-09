@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_checks",
+      "id": "checkly__list_checks",
       "name": "List Checks",
       "description": "List API and browser checks in the account",
       "requiresWrite": false,
@@ -74,7 +74,7 @@
       }
     },
     {
-      "id": "get_check",
+      "id": "checkly__get_check",
       "name": "Get Check",
       "description": "Get a check's full configuration",
       "requiresWrite": false,
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "list_check_results",
+      "id": "checkly__list_check_results",
       "name": "List Check Results",
       "description": "List raw results for a check within a time window (from/to must be at most 6 hours apart)",
       "requiresWrite": false,
@@ -141,7 +141,7 @@
       }
     },
     {
-      "id": "list_check_statuses",
+      "id": "checkly__list_check_statuses",
       "name": "List Check Statuses",
       "description": "Get the current status of every check in the account",
       "requiresWrite": false,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "get_check_status",
+      "id": "checkly__get_check_status",
       "name": "Get Check Status",
       "description": "Get the current status of a single check",
       "requiresWrite": false,

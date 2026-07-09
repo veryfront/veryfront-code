@@ -23,6 +23,7 @@ import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -36,7 +37,7 @@ import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integratio
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { logger } from "#veryfront/utils";
+import { __registerLogRecordEmitter, logger } from "#veryfront/utils/logger/index.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   getEnvSource,
@@ -117,7 +118,7 @@ function assertRequiredContracts(): void {
   }
 }
 
-function wireTracingShim(): void {
+export function wireTracingShim(): void {
   const tracing = tryResolve<TracingExporter>("TracingExporter");
   if (tracing) {
     setGlobalTracerProvider(
@@ -135,8 +136,17 @@ function wireTracingShim(): void {
         traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
       );
     }
+    const contextApi = tracing.getContextAPI?.();
+    if (contextApi) {
+      setGlobalContextAccessor(
+        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
+      );
+    }
+    const logRecordEmitter = tracing.getLogRecordEmitter?.();
+    __registerLogRecordEmitter(logRecordEmitter ?? null);
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
   } else {
+    __registerLogRecordEmitter(null);
     bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }
 }
@@ -200,7 +210,11 @@ function combineDispose(
       try {
         await teardownFileLog(fileLogHandle ?? null);
       } finally {
-        if (fsDispose) fsDispose();
+        try {
+          __registerLogRecordEmitter(null);
+        } finally {
+          if (fsDispose) fsDispose();
+        }
       }
     }
   };

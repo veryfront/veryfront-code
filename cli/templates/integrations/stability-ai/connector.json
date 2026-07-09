@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_engines",
+      "id": "stability-ai__list_engines",
       "name": "List Engines",
       "description": "List the generation engines (models) available to your account",
       "requiresWrite": false,
@@ -49,7 +49,7 @@
       }
     },
     {
-      "id": "get_balance",
+      "id": "stability-ai__get_balance",
       "name": "Get Balance",
       "description": "Get the credit balance of your Stability AI account",
       "requiresWrite": false,
@@ -59,7 +59,7 @@
       }
     },
     {
-      "id": "get_account",
+      "id": "stability-ai__get_account",
       "name": "Get Account",
       "description": "Get profile and organization details for the account that owns the API key",
       "requiresWrite": false,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "text_to_image",
+      "id": "stability-ai__text_to_image",
       "name": "Text to Image",
       "description": "Generate images from a text prompt with a Stable Diffusion engine (consumes credits)",
       "requiresWrite": true,

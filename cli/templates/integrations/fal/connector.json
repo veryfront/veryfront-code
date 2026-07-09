@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "run_model",
+      "id": "fal__run_model",
       "name": "Run Model",
       "description": "Run a fal model synchronously and wait for the result (best for fast models; billed per run). The model endpoint ID is split into owner / app / variant segments, e.g. fal-ai/flux/schnell",
       "requiresWrite": true,
@@ -64,7 +64,7 @@
       }
     },
     {
-      "id": "queue_submit",
+      "id": "fal__queue_submit",
       "name": "Submit Queue Request",
       "description": "Submit a request to the fal queue and return immediately with a request_id (billed per run)",
       "requiresWrite": true,
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "queue_status",
+      "id": "fal__queue_status",
       "name": "Get Queue Status",
       "description": "Check the status of a queued request (IN_QUEUE, IN_PROGRESS, or COMPLETED). Use the base app ID without the variant segment, matching the status_url returned at submit time",
       "requiresWrite": false,
@@ -138,7 +138,7 @@
       }
     },
     {
-      "id": "queue_result",
+      "id": "fal__queue_result",
       "name": "Get Queue Result",
       "description": "Fetch the result of a completed queue request. Use the base app ID without the variant segment, matching the response_url returned at submit time",
       "requiresWrite": false,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "id": "queue_cancel",
+      "id": "fal__queue_cancel",
       "name": "Cancel Queue Request",
       "description": "Cancel a queued request that has not started running yet",
       "requiresWrite": true,

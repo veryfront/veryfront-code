@@ -31,9 +31,15 @@ function isRuntimeConfigInitialized(): boolean {
 
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 
-function getApiBaseUrlEnv(): string {
-  return getHostEnv("VERYFRONT_API_BASE_URL") ??
-    getHostEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
+function normalizeApiBaseUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\/graphql\/?$/, "/api").replace(/\/+$/, "");
+}
+
+export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
+  return normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_BASE_URL")) ??
+    normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
@@ -116,7 +122,7 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
   const scopedContext = getCurrentVeryfrontCloudContext();
 
   return {
-    apiBaseUrl: scopedContext?.apiBaseUrl?.trim() || getApiBaseUrlEnv(),
+    apiBaseUrl: scopedContext?.apiBaseUrl?.trim() || resolveVeryfrontApiBaseUrlFromHostEnv(),
     ...getResolvedVeryfrontCloudContext(),
   };
 }

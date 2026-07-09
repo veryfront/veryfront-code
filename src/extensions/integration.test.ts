@@ -19,8 +19,12 @@ import extAnthropic from "../../extensions/ext-llm-anthropic/src/index.ts";
 import extGoogle from "../../extensions/ext-llm-google/src/index.ts";
 import {
   _resetShimForTests,
+  type AttributeValue,
   getTracer,
   setGlobalTracerProvider,
+  type Span,
+  type Tracer,
+  type TracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { TracingExporter } from "./observability/tracing-exporter.ts";
 
@@ -196,7 +200,7 @@ describe("extensions/integration", () => {
 
     let shimProvider: { getTracer(name: string): unknown } | null = null;
 
-    const noopSpan = {
+    const noopSpan: Span = {
       setAttribute: () => noopSpan,
       setAttributes: () => noopSpan,
       setStatus: () => noopSpan,
@@ -207,12 +211,29 @@ describe("extensions/integration", () => {
       updateName: () => {},
     };
 
-    const testProvider = {
-      getTracer: (name: string) => ({
-        startSpan: () => noopSpan,
-        startActiveSpan: (_: string, fn: (s: typeof noopSpan) => unknown) => fn(noopSpan),
-        _name: name,
-      }),
+    const testProvider: TracerProvider = {
+      getTracer: (name: string) => {
+        const tracer = {
+          startSpan: () => noopSpan,
+          startActiveSpan: <T>(
+            _name: string,
+            optionsOrFn:
+              | { kind?: number; attributes?: Record<string, AttributeValue> }
+              | ((span: Span) => T),
+            contextOrFn?: unknown,
+            fn?: (span: Span) => T,
+          ): T => {
+            const callback = typeof optionsOrFn === "function"
+              ? optionsOrFn
+              : typeof contextOrFn === "function"
+              ? contextOrFn as (span: Span) => T
+              : fn!;
+            return callback(noopSpan);
+          },
+          _name: name,
+        } satisfies Tracer & { _name: string };
+        return tracer;
+      },
     };
 
     const exporterStub: TracingExporter = {

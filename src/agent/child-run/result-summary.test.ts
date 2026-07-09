@@ -1,11 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertObjectMatch } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertObjectMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
   summarizeChildRunResultText,
+  summarizeChildRunResultTextWithMetadata,
   summarizeChildRunResultValue,
 } from "./result-summary.ts";
 
@@ -16,44 +21,82 @@ describe("child-run-result-summary", () => {
     });
 
     it("truncates text exceeding the default limit", () => {
-      const longText = "a".repeat(5000);
+      const longText = "a".repeat(65_000);
       const result = summarizeChildRunResultText(longText);
 
       assertEquals(result.length < longText.length, true);
       assertEquals(result.includes("… [truncated"), true);
     });
 
+    it("preserves docs contract lines that appear after the previous short cutoff", () => {
+      const text = [
+        "# Create an agent",
+        "x".repeat(4_500),
+        '    "model": "anthropic/claude-sonnet-4-6",',
+        '    "tool_ids": ["gmail__list_emails"]',
+      ].join("\n");
+
+      const result = summarizeChildRunResultText(text);
+
+      assertStringIncludes(result, '"model": "anthropic/claude-sonnet-4-6"');
+      assertStringIncludes(result, '"tool_ids": ["gmail__list_emails"]');
+    });
+
     it("respects custom maxLength", () => {
       assertEquals(summarizeChildRunResultText("hello world", 5), "hello… [truncated 6 chars]");
+    });
+
+    it("returns structured truncation metadata", () => {
+      assertEquals(summarizeChildRunResultTextWithMetadata("hello world", 5), {
+        text: "hello… [truncated 6 chars]",
+        status: "truncated",
+        truncated: true,
+        originalChars: 11,
+        returnedChars: 26,
+        omittedChars: 6,
+        limitChars: 5,
+      });
     });
   });
 
   describe("buildChildRunResultSummary", () => {
     it("wraps text in a summary object", () => {
-      assertEquals(buildChildRunResultSummary("done"), { text: "done" });
+      assertEquals(buildChildRunResultSummary("done"), {
+        text: "done",
+        status: "complete",
+        truncated: false,
+        originalChars: 4,
+        returnedChars: 4,
+        omittedChars: 0,
+        limitChars: 64_000,
+      });
     });
 
     it("removes malformed tool transcript wrappers while preserving result content", () => {
-      assertEquals(
-        buildChildRunResultSummary(
-          'I will fetch the docs.\n\n<tool_call>{"name":"web_fetch","parameters":{"url":"https://example.com"}}</tool_call><tool_response>Title: Example Content: Example Domain</tool_response>\n\nNow I can continue.',
-        ),
-        {
-          text:
-            "I will fetch the docs.\n\nTitle: Example Content: Example Domain\n\nNow I can continue.",
-        },
+      const result = buildChildRunResultSummary(
+        'I will fetch the docs.\n\n<tool_call>{"name":"web_fetch","parameters":{"url":"https://example.com"}}</tool_call><tool_response>Title: Example Content: Example Domain</tool_response>\n\nNow I can continue.',
       );
+
+      assertObjectMatch(result, {
+        text:
+          "I will fetch the docs.\n\nTitle: Example Content: Example Domain\n\nNow I can continue.",
+        status: "complete",
+        truncated: false,
+        omittedChars: 0,
+      });
     });
 
     it("removes malformed function transcript wrappers while preserving function result content", () => {
-      assertEquals(
-        buildChildRunResultSummary(
-          '```\nbash\n```\n\n<function_calls>\n<invoke name="run_bash">\n<parameter name="command">curl -s "https://docs.example.test/platform/" 2>&1 | head -5</parameter>\n</invoke>\n</function_calls>\n<function_result>\nExample Platform\nOverview\nArchitecture\n</parameter>\n</invoke>\n</function_calls>',
-        ),
-        {
-          text: "Example Platform\nOverview\nArchitecture",
-        },
+      const result = buildChildRunResultSummary(
+        '```\nbash\n```\n\n<function_calls>\n<invoke name="run_bash">\n<parameter name="command">curl -s "https://docs.example.test/platform/" 2>&1 | head -5</parameter>\n</invoke>\n</function_calls>\n<function_result>\nExample Platform\nOverview\nArchitecture\n</parameter>\n</invoke>\n</function_calls>',
       );
+
+      assertObjectMatch(result, {
+        text: "Example Platform\nOverview\nArchitecture",
+        status: "complete",
+        truncated: false,
+        omittedChars: 0,
+      });
     });
   });
 

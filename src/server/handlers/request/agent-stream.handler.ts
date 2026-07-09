@@ -53,11 +53,12 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
-  filterSharedRuntimeProjectEnv,
+  filterRuntimeProjectEnv,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
 
@@ -93,8 +94,12 @@ const LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES = new Set(["bash"]);
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
   (environmentId, token, projectSlug) => {
-    const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
-    return fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token);
+    return fetchProjectEnvVars(
+      resolveVeryfrontApiBaseUrlFromHostEnv(),
+      projectSlug,
+      environmentId,
+      token,
+    );
   },
 );
 
@@ -107,7 +112,7 @@ async function _resolveProductionEnvironmentId(
 ): Promise<string | null> {
   const cached = _productionEnvIdCache.get(projectSlug);
   if (cached) return cached;
-  const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
+  const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   try {
     const res = await fetch(
       `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
@@ -115,14 +120,30 @@ async function _resolveProductionEnvironmentId(
     );
     if (!res.ok) {
       await res.body?.cancel();
+      logger.warn("Unable to resolve production environment for agent stream", {
+        projectSlug,
+        apiBaseUrl,
+        status: res.status,
+      });
       return null;
     }
     const body = await res.json() as { data?: Array<{ id: string; name?: string }> };
     const env = body.data?.find((e) => e.name === "production") ?? body.data?.[0];
-    if (!env?.id) return null;
+    if (!env?.id) {
+      logger.warn("Production environment missing for agent stream", {
+        projectSlug,
+        apiBaseUrl,
+      });
+      return null;
+    }
     _productionEnvIdCache.set(projectSlug, env.id);
     return env.id;
-  } catch {
+  } catch (error) {
+    logger.warn("Unable to resolve production environment for agent stream", {
+      projectSlug,
+      apiBaseUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -359,7 +380,7 @@ async function withVeryfrontPlatformRemoteTools(input: {
     return input.agent;
   }
 
-  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
+  const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   const platformRemoteToolSource = createRemoteMCPToolSource({
     id: VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID,
     endpoint: `${apiUrl}/mcp`,
@@ -470,9 +491,9 @@ function buildAgentStreamEnv(input: {
   proxyToken?: string | null;
   projectSlug?: string | null;
 }): Record<string, string> {
-  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
+  const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   return {
-    ...filterSharedRuntimeProjectEnv(input.envVars),
+    ...filterRuntimeProjectEnv(input.envVars),
     // Framework-owned values must override project env to keep request-scoped
     // credentials bound to trusted Veryfront endpoints and the current project.
     ...(input.proxyToken ? { VERYFRONT_API_TOKEN: input.proxyToken } : {}),
@@ -716,7 +737,7 @@ export class AgentStreamHandler extends BaseHandler {
                 ...this.deps,
                 localTools,
                 projectAgentSandbox: {
-                  apiUrl: getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com",
+                  apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
                   authToken: apiAuthToken || undefined,
                   projectId: ctx.projectId ?? null,
                 },

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_services",
+      "id": "render__list_services",
       "name": "List Services",
       "description": "List services owned by the authenticated user or team",
       "requiresWrite": false,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "get_service",
+      "id": "render__get_service",
       "name": "Get Service",
       "description": "Get a service by ID",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "list_deploys",
+      "id": "render__list_deploys",
       "name": "List Deploys",
       "description": "List deploys for a service",
       "requiresWrite": false,
@@ -152,7 +152,7 @@
       }
     },
     {
-      "id": "trigger_deploy",
+      "id": "render__trigger_deploy",
       "name": "Trigger Deploy",
       "description": "Trigger a new deploy for a service",
       "requiresWrite": true,
@@ -185,7 +185,7 @@
       }
     },
     {
-      "id": "list_env_vars",
+      "id": "render__list_env_vars",
       "name": "List Environment Variables",
       "description": "List all environment variables for a service",
       "requiresWrite": false,

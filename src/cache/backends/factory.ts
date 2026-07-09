@@ -2,7 +2,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { CacheBackend } from "../types.ts";
 import {
   type CodeCacheGateway,
@@ -33,7 +33,7 @@ export interface CacheBackendConfig {
 export function isApiCacheAvailable(): boolean {
   const proxyMode = getEnv("PROXY_MODE");
   const nodeEnv = getEnv("NODE_ENV");
-  const apiUrl = getEnvValue("VERYFRONT_API_BASE_URL");
+  const apiUrl = getHostEnv("VERYFRONT_API_BASE_URL") ?? getEnvValue("VERYFRONT_API_BASE_URL");
 
   const isProduction = proxyMode === "1" ||
     nodeEnv === "production" ||

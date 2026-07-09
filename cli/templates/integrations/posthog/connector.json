@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "get_trends",
+      "id": "posthog__get_trends",
       "name": "Get Trends",
       "description": "Retrieve event trends and analytics data",
       "requiresWrite": false,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "list_feature_flags",
+      "id": "posthog__list_feature_flags",
       "name": "List Feature Flags",
       "description": "List all feature flags in your PostHog project",
       "requiresWrite": false,
@@ -120,7 +120,7 @@
       }
     },
     {
-      "id": "list_persons",
+      "id": "posthog__list_persons",
       "name": "List Persons",
       "description": "List persons/users tracked in PostHog",
       "requiresWrite": false,
@@ -175,7 +175,7 @@
       }
     },
     {
-      "id": "capture_event",
+      "id": "posthog__capture_event",
       "name": "Capture Event",
       "description": "Track a custom event in PostHog",
       "requiresWrite": true

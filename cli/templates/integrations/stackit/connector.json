@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "stackit__list_projects",
       "name": "List Projects",
       "description": "List STACKIT projects visible to the service account via the Resource Manager. At least one of containerParentId or member must be provided (use the service account's email as member).",
       "requiresWrite": false,
@@ -77,7 +77,7 @@
       }
     },
     {
-      "id": "list_servers",
+      "id": "stackit__list_servers",
       "name": "List Servers",
       "description": "List IaaS servers in a STACKIT project and region",
       "requiresWrite": false,
@@ -128,7 +128,7 @@
       }
     },
     {
-      "id": "get_server",
+      "id": "stackit__get_server",
       "name": "Get Server",
       "description": "Get a single IaaS server in a project and region, including status, machine type, and availability zone",
       "requiresWrite": false,
@@ -164,7 +164,7 @@
       }
     },
     {
-      "id": "list_machine_types",
+      "id": "stackit__list_machine_types",
       "name": "List Machine Types",
       "description": "List available machine types (server flavors) in a project and region, useful before creating or resizing servers",
       "requiresWrite": false,
@@ -207,7 +207,7 @@
       }
     },
     {
-      "id": "start_server",
+      "id": "stackit__start_server",
       "name": "Start Server",
       "description": "Boot up a stopped server, or allocate it again if it was deallocated (returns 202 Accepted; completes asynchronously)",
       "requiresWrite": true,
@@ -237,7 +237,7 @@
       }
     },
     {
-      "id": "stop_server",
+      "id": "stackit__stop_server",
       "name": "Stop Server",
       "description": "Stop a server (returns 202 Accepted; completes asynchronously). Note: a stopped server remains on the hypervisor and is still charged full price for its attached resources",
       "requiresWrite": true,
@@ -267,7 +267,7 @@
       }
     },
     {
-      "id": "reboot_server",
+      "id": "stackit__reboot_server",
       "name": "Reboot Server",
       "description": "Reboot a server (returns 202 Accepted; completes asynchronously); soft reboots ask the OS to shut down gracefully, hard reboots power-cycle",
       "requiresWrite": true,

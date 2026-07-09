@@ -539,8 +539,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let platformMcpFetchCalls = 0;
     const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
       if (String(url) === "https://api.veryfront.org/mcp") {
         platformMcpFetchCalls += 1;
@@ -662,6 +664,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
     }
   });
 
@@ -1130,8 +1134,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedRemoteToolNames: string[] = [];
     const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
       assertEquals(String(url), "https://api.veryfront.org/mcp");
       assertEquals(
@@ -1242,6 +1248,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
     }
   });
 
@@ -1317,8 +1325,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     };
     const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
@@ -1412,6 +1422,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
     }
 
     assertExists(result.response);
@@ -1435,6 +1447,166 @@ describe("server/handlers/request/agent-stream.handler", () => {
       "https://api.veryfront.org/mcp",
       "https://api.veryfront.org/projects/support-agent-fork/environments",
       "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
+    ]);
+  });
+
+  it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
+    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
+    let capturedEnv: Record<string, string | undefined> | null = null;
+    let capturedSystem: string | null = null;
+
+    const agent = createAgentWithConfig("assistant-1", {
+      system: () => `api=${getEnv("VERYFRONT_API_URL")}`,
+      tools: { list_projects: true },
+    });
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? agent : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent) => ({
+        stream: async (_messages, _context, callbacks) => {
+          capturedEnv = {
+            VERYFRONT_API_TOKEN: getEnv("VERYFRONT_API_TOKEN"),
+            VERYFRONT_API_URL: getEnv("VERYFRONT_API_URL"),
+            VERYFRONT_PROJECT_SLUG: getEnv("VERYFRONT_PROJECT_SLUG"),
+            CUSTOM_PROJECT_ENV: getEnv("CUSTOM_PROJECT_ENV"),
+          };
+          capturedSystem = typeof runtimeAgent.config.system === "function"
+            ? await runtimeAgent.config.system()
+            : runtimeAgent.config.system;
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 1,
+              completionTokens: 1,
+              totalTokens: 2,
+            },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: "base-url-agent-fork",
+      requestId: "run_1",
+    });
+    const ctx = {
+      ...createCtx(publicKeyPem),
+      proxyToken: "run-scoped-token",
+      projectSlug: "base-url-agent-fork",
+    };
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const fetchUrls: string[] = [];
+    Deno.env.set("VERYFRONT_API_URL", "https://wrong-api.example.test");
+    Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
+    globalThis.fetch = ((url, init) => {
+      fetchUrls.push(String(url));
+      assertEquals(
+        new Headers(init?.headers).get("authorization"),
+        "Bearer request-scoped-user-token",
+      );
+
+      if (String(url) === `${apiBaseUrl}/mcp`) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "veryfront-platform-mcp:tools:list",
+              result: {
+                tools: [
+                  {
+                    name: "list_projects",
+                    description: "List projects",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      if (String(url) === `${apiBaseUrl}/projects/base-url-agent-fork/environments`) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "env-production-base-url", name: "production", protected: false },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      if (
+        String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
+      ) {
+        assertEquals(String(url).includes("environment_id=env-production-base-url"), true);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ key: "CUSTOM_PROJECT_ENV", value: "project-value-from-base-url" }],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    }) as typeof fetch;
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(capturedEnv, {
+      VERYFRONT_API_TOKEN: "request-scoped-user-token",
+      VERYFRONT_API_URL: apiBaseUrl,
+      VERYFRONT_PROJECT_SLUG: "base-url-agent-fork",
+      CUSTOM_PROJECT_ENV: "project-value-from-base-url",
+    });
+    assertEquals(capturedSystem, `api=${apiBaseUrl}`);
+    assertEquals(fetchUrls, [
+      `${apiBaseUrl}/mcp`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
     ]);
   });
 

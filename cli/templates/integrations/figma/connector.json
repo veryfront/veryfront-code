@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "get_me",
+      "id": "figma__get_me",
       "name": "Get Me",
       "description": "Get the authenticated user's Figma profile (id, email, handle). Use this to verify the connection and identify the user.",
       "requiresWrite": false,
@@ -51,7 +51,7 @@
       }
     },
     {
-      "id": "get_file",
+      "id": "figma__get_file",
       "name": "Get File",
       "description": "Get detailed information about a Figma file, including pages, frames, components, and styles. Requires a Figma file key from a file or design URL.",
       "requiresWrite": false,
@@ -89,7 +89,7 @@
       }
     },
     {
-      "id": "get_comments",
+      "id": "figma__get_comments",
       "name": "Get Comments",
       "description": "Get all comments on a Figma file",
       "requiresWrite": false,
@@ -110,7 +110,7 @@
       }
     },
     {
-      "id": "post_comment",
+      "id": "figma__post_comment",
       "name": "Post Comment",
       "description": "Post a comment on a Figma file",
       "requiresWrite": true,

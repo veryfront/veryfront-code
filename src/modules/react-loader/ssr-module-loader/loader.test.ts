@@ -8,7 +8,7 @@ import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
 import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -16,8 +16,18 @@ import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-po
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
-import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  buildMdxEsmModuleRecoveryCacheKey,
+  buildMdxEsmPathCacheKey,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  clearModulePathCache,
+  getMdxEsmSsrCacheDir,
+  getModulePathCache,
+  verifiedModuleDeps,
+  waitForDiskCleanup,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
 function hashAsLoader(source: string, filePath: string, projectDir: string): string {
@@ -44,6 +54,54 @@ class FakeDistributedCache implements CacheBackend {
     this.values.delete(key);
     return Promise.resolve();
   }
+}
+
+function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapter {
+  const normalize = (path: string) => path.replace(/^\/app\/+/, "");
+
+  return {
+    id: "deno",
+    name: "proxy-project-test",
+    capabilities: denoAdapter.capabilities,
+    fs: {
+      async readFile(path: string): Promise<string> {
+        const normalized = normalize(path);
+        const content = files[normalized];
+        if (content == null) throw new Error(`File not found: ${path}`);
+        return content;
+      },
+      async writeFile(): Promise<void> {
+        throw new Error("writeFile is not supported in this test adapter");
+      },
+      async exists(path: string): Promise<boolean> {
+        return files[normalize(path)] != null;
+      },
+      async *readDir(): AsyncIterableIterator<never> {},
+      async stat(path: string) {
+        const content = files[normalize(path)];
+        if (content == null) throw new Error(`File not found: ${path}`);
+        return {
+          size: content.length,
+          mtime: new Date(0),
+          isDirectory: false,
+          isFile: true,
+          isSymlink: false,
+        };
+      },
+      async mkdir(): Promise<void> {},
+      async remove(): Promise<void> {},
+      async makeTempDir(prefix: string): Promise<string> {
+        return await makeTempDir({ prefix });
+      },
+      watch: denoAdapter.fs.watch.bind(denoAdapter.fs),
+      async resolveFile(): Promise<string | null> {
+        return null;
+      },
+    },
+    env: denoAdapter.env,
+    server: denoAdapter.server,
+    serve: denoAdapter.serve.bind(denoAdapter),
+  };
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -106,12 +164,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -151,6 +209,410 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("rebuilds a verified stale cache entry when dynamic import finds a missing local dependency", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-verified-stale-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "VerifiedStaleCache.tsx");
+    const projectId = "project-verified-stale-test";
+    const contentSourceId = "preview-main";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+
+      const source = "export default function VerifiedStaleCache() { return null; }";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
+      const staleTempPath = join(projectDir, `verified-stale-${crypto.randomUUID()}.mjs`);
+      const missingDependencyPath = join(
+        projectDir,
+        `missing-framework-core-${crypto.randomUUID()}.mjs`,
+      );
+      await writeTextFile(
+        staleTempPath,
+        [
+          `import { missing } from "file://${missingDependencyPath}";`,
+          `export default function VerifiedStaleCache() {`,
+          `  return missing;`,
+          `}`,
+        ].join("\n"),
+      );
+
+      const staleEntry = { tempPath: staleTempPath, contentHash };
+      globalModuleCache.set(contentCacheKey, staleEntry);
+      globalModuleCache.set(filePathCacheKey, staleEntry);
+      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+
+      await writeTextFile(filePath, source);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "VerifiedStaleCache");
+
+      const rebuiltEntry = globalModuleCache.get(contentCacheKey);
+      assert(
+        !!rebuiltEntry && rebuiltEntry.tempPath !== staleTempPath,
+        "Expected verified stale cache entry to be replaced with retransformed output",
+      );
+      assertEquals(
+        verifiedHttpBundlePaths.get(`${staleTempPath}:${contentHash}`),
+        undefined,
+        "Expected stale verification marker to be cleared",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rebuilds a verified stale cache entry when the cached output file is missing", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-missing-output-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "MissingCachedOutput.tsx");
+    const projectId = "project-missing-cached-output-test";
+    const contentSourceId = "preview-main";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+
+      const source = "export default function MissingCachedOutput() { return null; }";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
+      const staleTempPath = join(projectDir, `missing-cached-output-${crypto.randomUUID()}.mjs`);
+      const staleEntry = { tempPath: staleTempPath, contentHash };
+      globalModuleCache.set(contentCacheKey, staleEntry);
+      globalModuleCache.set(filePathCacheKey, staleEntry);
+      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+
+      await writeTextFile(filePath, source);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "MissingCachedOutput");
+
+      const rebuiltEntry = globalModuleCache.get(contentCacheKey);
+      assert(
+        !!rebuiltEntry && rebuiltEntry.tempPath !== staleTempPath,
+        "Expected missing verified cache output to be replaced with retransformed output",
+      );
+      assertEquals(
+        verifiedHttpBundlePaths.get(`${staleTempPath}:${contentHash}`),
+        undefined,
+        "Expected stale verification marker to be cleared",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("clears verified MDX-ESM path cache before retrying stale local dependencies", async () => {
+    clearSSRModuleCache();
+    clearModulePathCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-verified-mdx-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "VerifiedMdxStaleCache.tsx");
+    const projectId = "project-verified-mdx-stale-test";
+    const contentSourceId = "preview-main";
+
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+    const mdxComponentDir = join(mdxCacheDir, "components");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await mkdir(mdxComponentDir, { recursive: true });
+
+      const source = "export default function VerifiedMdxStaleCache() { return null; }";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
+      const staleTempPath = join(mdxComponentDir, `verified-mdx-stale-${crypto.randomUUID()}.js`);
+      const missingDependencyPath = join(
+        mdxComponentDir,
+        `missing-runtime-core-${crypto.randomUUID()}.js`,
+      );
+      await writeTextFile(
+        staleTempPath,
+        [
+          `import { missing } from "file://${missingDependencyPath}";`,
+          `export default function VerifiedMdxStaleCache() {`,
+          `  return missing;`,
+          `}`,
+        ].join("\n"),
+      );
+
+      const mdxPathCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/components/VerifiedMdxStaleCache.js",
+      );
+      const mdxPathCache = await getModulePathCache(mdxCacheDir);
+      mdxPathCache.set(mdxPathCacheKey, staleTempPath);
+      verifiedModuleDeps.set(`${staleTempPath}:${mdxPathCacheKey}`, true);
+
+      const staleEntry = { tempPath: staleTempPath, contentHash };
+      globalModuleCache.set(contentCacheKey, staleEntry);
+      globalModuleCache.set(filePathCacheKey, staleEntry);
+      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+
+      await writeTextFile(filePath, source);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "VerifiedMdxStaleCache");
+      assert(
+        mdxPathCache.get(mdxPathCacheKey) !== staleTempPath,
+        "Expected stale MDX-ESM path-cache entry to be cleared before retry",
+      );
+    } finally {
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      await remove(mdxCacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("persists MDX-ESM path cache invalidation when stale SSR cache is hit cold", async () => {
+    clearSSRModuleCache();
+    clearModulePathCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-cold-mdx-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "ColdMdxStaleCache.tsx");
+    const projectId = "project-cold-mdx-stale-test";
+    const contentSourceId = "preview-main";
+
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+    const mdxComponentDir = join(mdxCacheDir, "components");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await mkdir(mdxComponentDir, { recursive: true });
+
+      const source = "export default function ColdMdxStaleCache() { return null; }";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
+      const staleTempPath = join(mdxComponentDir, `cold-mdx-stale-${crypto.randomUUID()}.js`);
+      const missingDependencyPath = join(
+        mdxComponentDir,
+        `missing-cold-runtime-${crypto.randomUUID()}.js`,
+      );
+      await writeTextFile(
+        staleTempPath,
+        [
+          `import { missing } from "file://${missingDependencyPath}";`,
+          `export default function ColdMdxStaleCache() {`,
+          `  return missing;`,
+          `}`,
+        ].join("\n"),
+      );
+
+      const mdxPathCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/components/ColdMdxStaleCache.js",
+      );
+      await writeTextFile(
+        join(mdxCacheDir, "_index.json"),
+        JSON.stringify({ [mdxPathCacheKey]: staleTempPath }),
+      );
+      clearModulePathCache();
+
+      const staleEntry = { tempPath: staleTempPath, contentHash };
+      globalModuleCache.set(contentCacheKey, staleEntry);
+      globalModuleCache.set(filePathCacheKey, staleEntry);
+      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+
+      await writeTextFile(filePath, source);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "ColdMdxStaleCache");
+
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      const reloadedMdxPathCache = await getModulePathCache(mdxCacheDir);
+      assertEquals(
+        reloadedMdxPathCache.get(mdxPathCacheKey),
+        undefined,
+        "Expected stale MDX-ESM path-cache entry to stay cleared after reload",
+      );
+    } finally {
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      await remove(mdxCacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("persists stale MDX-ESM invalidation with slash-containing content source ids", async () => {
+    clearSSRModuleCache();
+    clearModulePathCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-branch-mdx-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "BranchMdxStaleCache.tsx");
+    const projectId = "project-branch-mdx-stale-test";
+    const contentSourceId = "preview-feature/refactor";
+
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+    const mdxComponentDir = join(mdxCacheDir, "components");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await mkdir(mdxComponentDir, { recursive: true });
+
+      const source = "export default function BranchMdxStaleCache() { return null; }";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
+      const staleTempPath = join(mdxComponentDir, `branch-mdx-stale-${crypto.randomUUID()}.js`);
+      const missingDependencyPath = join(
+        mdxComponentDir,
+        `missing-branch-runtime-${crypto.randomUUID()}.js`,
+      );
+      await writeTextFile(
+        staleTempPath,
+        [
+          `import { missing } from "file://${missingDependencyPath}";`,
+          `export default function BranchMdxStaleCache() {`,
+          `  return missing;`,
+          `}`,
+        ].join("\n"),
+      );
+
+      const mdxPathCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/components/BranchMdxStaleCache.js",
+      );
+      await writeTextFile(
+        join(mdxCacheDir, "_index.json"),
+        JSON.stringify({ [mdxPathCacheKey]: staleTempPath }),
+      );
+      clearModulePathCache();
+
+      const staleEntry = { tempPath: staleTempPath, contentHash };
+      globalModuleCache.set(contentCacheKey, staleEntry);
+      globalModuleCache.set(filePathCacheKey, staleEntry);
+      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+
+      await writeTextFile(filePath, source);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const component = await loader.loadModule(filePath, source);
+      assertEquals(component.name, "BranchMdxStaleCache");
+
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      const reloadedMdxPathCache = await getModulePathCache(mdxCacheDir);
+      assertEquals(
+        reloadedMdxPathCache.get(mdxPathCacheKey),
+        undefined,
+        "Expected slash-containing content source stale path-cache entry to stay cleared",
+      );
+    } finally {
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      await remove(mdxCacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("recovers missing vfmod dependencies before invalidating cached SSR modules", async () => {
     clearSSRModuleCache();
 
@@ -171,17 +633,17 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
 
-      const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
+      const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
       const childPath = join(vfmodDir, "vfmod-child.mjs");
       const cachedTempPath = join(projectDir, `recover-vfmod-${crypto.randomUUID()}.mjs`);
 
@@ -219,7 +681,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(globalModuleCache.has(filePathCacheKey), true);
     } finally {
       __injectCachesForTests(null);
-      await remove(join(getMdxEsmCacheDir(), projectId, contentSourceId), { recursive: true })
+      await remove(getMdxEsmSsrCacheDir(projectId, contentSourceId), { recursive: true })
         .catch(() => {});
       await remove(projectDir, { recursive: true });
     }
@@ -243,12 +705,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -371,6 +833,36 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("loads project-relative dependencies through the runtime adapter for proxy project paths", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = "/app";
+    const filePath = "/app/app/layout.tsx";
+    const adapter = createProxyProjectAdapter({
+      "app/runtime-registry.ts": `export const registered = true;`,
+    });
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId: "project-proxy-adapter-deps",
+      contentSourceId: "release-1",
+      adapter,
+      dev: true,
+    });
+
+    const component = await loader.loadModule(
+      filePath,
+      [
+        `import "./runtime-registry.ts";`,
+        `export default function RootLayout() {`,
+        `  return null;`,
+        `}`,
+      ].join("\n"),
+    );
+
+    assertEquals(component.name, "RootLayout");
+  });
+
   it("invalidates stale cache entries with unresolved _vf_modules imports and retransforms", async () => {
     clearSSRModuleCache();
 
@@ -389,12 +881,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
       );
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );
@@ -459,7 +951,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
       const contentCacheKey = buildSSRModuleCacheKey(
-        VERSION,
+        RUNTIME_VERSION,
         projectId,
         `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
       );

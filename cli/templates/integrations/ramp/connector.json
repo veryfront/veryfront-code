@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_transactions",
+      "id": "ramp__list_transactions",
       "name": "List Transactions",
       "description": "List card transactions with optional filtering by state, user, card, or date window",
       "requiresWrite": false,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "get_transaction",
+      "id": "ramp__get_transaction",
       "name": "Get Transaction",
       "description": "Fetch full details of a single card transaction",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "list_cards",
+      "id": "ramp__list_cards",
       "name": "List Cards",
       "description": "List corporate cards with optional filtering by owner or activation state",
       "requiresWrite": false,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "ramp__list_users",
       "name": "List Users",
       "description": "List employees on the Ramp account with optional filtering by email, role, department, or status",
       "requiresWrite": false,
@@ -257,7 +257,7 @@
       }
     },
     {
-      "id": "get_user",
+      "id": "ramp__get_user",
       "name": "Get User",
       "description": "Fetch a single employee by ID, e.g. to resolve the user_id referenced on a transaction or card",
       "requiresWrite": false,
@@ -275,7 +275,7 @@
       }
     },
     {
-      "id": "get_card",
+      "id": "ramp__get_card",
       "name": "Get Card",
       "description": "Fetch a single corporate card by ID, e.g. to resolve the card_id referenced on a transaction",
       "requiresWrite": false,
@@ -293,7 +293,7 @@
       }
     },
     {
-      "id": "list_reimbursements",
+      "id": "ramp__list_reimbursements",
       "name": "List Reimbursements",
       "description": "List employee reimbursements with optional filtering by user, state, or date window",
       "requiresWrite": false,

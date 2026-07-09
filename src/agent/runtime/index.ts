@@ -32,9 +32,10 @@ import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
+  setActiveSpanAttributes as setOtelActiveSpanAttributes,
   setSpanAttributes,
   withSpan,
-} from "#veryfront/observability/tracing/index.ts";
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
@@ -146,7 +147,12 @@ export {
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
-import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
+import {
+  executeConfiguredTool,
+  getAvailableTools,
+  isDynamicTool,
+  type ToolConfigEntry,
+} from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
@@ -157,6 +163,7 @@ import {
   extractSkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
+import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -248,6 +255,189 @@ function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): 
 
 function isSubmittedFormInputExecutionResult(toolName: string, result: unknown): boolean {
   return toolName === FORM_INPUT_TOOL_ID && containsSubmittedFormInputExecutionResult(result);
+}
+
+type RuntimeTraceAttributes = Record<string, string | number | boolean | undefined | null>;
+
+function estimateSerializedSizeBytes(value: unknown): number | undefined {
+  try {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (serialized === undefined) return undefined;
+    return new TextEncoder().encode(serialized).length;
+  } catch {
+    return undefined;
+  }
+}
+
+function compactRuntimeTraceAttributes(
+  attributes: RuntimeTraceAttributes,
+): Record<string, string | number | boolean> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(([, value]) =>
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ),
+  ) as Record<string, string | number | boolean>;
+}
+
+function buildRuntimeToolTraceAttributes(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  context?: ToolExecutionContext;
+  status?: "executing" | "completed" | "failed" | "blocked";
+  providerExecuted?: boolean;
+  inputSizeBytes?: number;
+  outputSizeBytes?: number;
+  errorType?: string;
+  errorMessage?: string;
+}): Record<string, string | number | boolean> {
+  return compactRuntimeTraceAttributes({
+    "agent.id": input.agentId,
+    "run.id": input.context?.runId,
+    "project.id": input.context?.projectId,
+    "project.slug": input.context?.projectSlug,
+    "tool.name": input.toolName,
+    "tool.call.id": input.toolCallId,
+    "tool.id": input.toolCallId,
+    "tool.status": input.status,
+    "tool.provider_executed": input.providerExecuted,
+    "tool.input.size_bytes": input.inputSizeBytes,
+    "tool.output.size_bytes": input.outputSizeBytes,
+    "agent.tool.execution_mode": input.mode,
+    "agent.tool.status": input.status,
+    "agent.tool.provider_executed": input.providerExecuted,
+    "agent.tool.input.size_bytes": input.inputSizeBytes,
+    "agent.tool.output.size_bytes": input.outputSizeBytes,
+    "gen_ai.operation.name": "execute_tool",
+    "gen_ai.agent.id": input.agentId,
+    "gen_ai.tool.name": input.toolName,
+    "gen_ai.tool.type": "function",
+    "gen_ai.tool.call.id": input.toolCallId,
+    "error.type": input.errorType,
+    "error.message": input.errorMessage,
+  });
+}
+
+async function traceConfiguredToolExecution(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, unknown>;
+  toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
+  context: ToolExecutionContext;
+  allowedRemoteToolNames: string[] | undefined;
+  remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
+}): Promise<unknown> {
+  const inputSizeBytes = estimateSerializedSizeBytes(input.args);
+  return await withSpan(
+    "agent.tool_execute",
+    async () => {
+      setOtelActiveSpanAttributes(
+        buildRuntimeToolTraceAttributes({
+          mode: input.mode,
+          agentId: input.agentId,
+          toolName: input.toolName,
+          toolCallId: input.toolCallId,
+          context: input.context,
+          status: "executing",
+          providerExecuted: false,
+          inputSizeBytes,
+        }),
+      );
+      try {
+        const result = await executeConfiguredTool(
+          input.toolName,
+          input.args,
+          input.toolsConfig,
+          input.context,
+          input.allowedRemoteToolNames,
+          input.remoteToolSources,
+        );
+        setOtelActiveSpanAttributes(
+          buildRuntimeToolTraceAttributes({
+            mode: input.mode,
+            agentId: input.agentId,
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            context: input.context,
+            status: "completed",
+            providerExecuted: false,
+            inputSizeBytes,
+            outputSizeBytes: estimateSerializedSizeBytes(result),
+          }),
+        );
+        return result;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setOtelActiveSpanAttributes({
+          ...buildRuntimeToolTraceAttributes({
+            mode: input.mode,
+            agentId: input.agentId,
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            context: input.context,
+            status: "failed",
+            providerExecuted: false,
+            inputSizeBytes,
+            errorType: error instanceof Error ? error.name : "Error",
+            errorMessage,
+          }),
+        });
+        throw error;
+      }
+    },
+    buildRuntimeToolTraceAttributes({
+      mode: input.mode,
+      agentId: input.agentId,
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      context: input.context,
+      status: "executing",
+      providerExecuted: false,
+      inputSizeBytes,
+    }),
+  );
+}
+
+async function traceProviderExecutedTool(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  context?: ToolExecutionContext;
+  args?: unknown;
+  result?: unknown;
+  isError?: boolean;
+}): Promise<void> {
+  const status = input.isError === true ? "failed" : "completed";
+  const errorMessage = input.isError === true ? stringifyToolError(input.result) : undefined;
+  await withSpan(
+    "agent.tool_execute",
+    async () => {
+      setOtelActiveSpanAttributes(
+        buildRuntimeToolTraceAttributes({
+          ...input,
+          status,
+          providerExecuted: true,
+          inputSizeBytes: estimateSerializedSizeBytes(input.args),
+          outputSizeBytes: estimateSerializedSizeBytes(input.result),
+          errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
+          errorMessage,
+        }),
+      );
+    },
+    buildRuntimeToolTraceAttributes({
+      ...input,
+      status,
+      providerExecuted: true,
+      inputSizeBytes: estimateSerializedSizeBytes(input.args),
+      outputSizeBytes: estimateSerializedSizeBytes(input.result),
+      errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
+      errorMessage,
+    }),
+  );
 }
 
 function markSubmittedFormInputRuntimeContext(
@@ -675,7 +865,7 @@ export class AgentRuntime {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
-          return generateText({
+          const result = await generateText({
             model: languageModel,
             system: currentSystemPrompt,
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
@@ -690,6 +880,8 @@ export class AgentRuntime {
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
           });
+          setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
+          return result;
         });
 
         // Accumulate usage
@@ -720,6 +912,7 @@ export class AgentRuntime {
             billingMode: response.usage.billingMode,
             usageCaptureStatus: response.usage.usageCaptureStatus,
           });
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
         }
 
         const assistantParts: MessagePart[] = [];
@@ -765,6 +958,7 @@ export class AgentRuntime {
           }
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
           return {
             text: response.text,
             messages: currentMessages,
@@ -790,15 +984,60 @@ export class AgentRuntime {
           const generatedToolResult = generatedToolResults.get(tc.toolCallId);
 
           await withSpan("agent.tool_execute", async (toolSpan) => {
-            setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
+            const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
+            setSpanAttributes(
+              toolSpan,
+              compactRuntimeTraceAttributes({
+                "tool.name": tc.toolName,
+                "tool.call.id": tc.toolCallId,
+                "tool.id": tc.toolCallId,
+                "tool.status": "executing",
+                "tool.input.size_bytes": inputSizeBytes,
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": tc.toolName,
+                "gen_ai.tool.type": "function",
+                "gen_ai.tool.call.id": tc.toolCallId,
+              }),
+            );
 
             if (generatedToolResult) {
+              if (generatedToolResult.providerExecuted === true) {
+                await traceProviderExecutedTool({
+                  mode: "generate",
+                  agentId: this.id,
+                  toolName: tc.toolName,
+                  toolCallId: tc.toolCallId,
+                  context: {
+                    toolCallId: tc.toolCallId,
+                    ...toolContext,
+                    agentId: this.id,
+                  },
+                  args: tc.input,
+                  result: generatedToolResult.result,
+                  isError: generatedToolResult.isError === true,
+                });
+              }
               await persistGeneratedToolResult(generatedToolResult);
               toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
               toolCall.result = generatedToolResult.result;
               toolCall.error = generatedToolResult.isError === true
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
+                  "tool.provider_executed": generatedToolResult.providerExecuted === true,
+                  "tool.output.size_bytes": estimateSerializedSizeBytes(generatedToolResult.result),
+                  ...(toolCall.error
+                    ? {
+                      error: true,
+                      "error.type": "ProviderExecutedToolError",
+                      "error.message": toolCall.error,
+                    }
+                    : {}),
+                }),
+              );
               toolCalls.push(toolCall);
               return;
             }
@@ -815,6 +1054,12 @@ export class AgentRuntime {
             if (!policyCheck.allowed) {
               toolCall.status = "error";
               toolCall.error = policyCheck.error;
+              setSpanAttributes(toolSpan, {
+                "tool.status": "blocked",
+                error: true,
+                "error.type": "ToolPolicyBlocked",
+                "error.message": policyCheck.error,
+              });
 
               const errorMessage: Message = {
                 id: `tool_error_${tc.toolCallId}`,
@@ -851,14 +1096,17 @@ export class AgentRuntime {
                 // spreads so caller-supplied context cannot spoof it.
                 agentId: this.id,
               };
-              const result = await executeConfiguredTool(
-                tc.toolName,
-                toolCall.args,
-                this.config.tools,
-                executionContext,
+              const result = await traceConfiguredToolExecution({
+                mode: "generate",
+                agentId: this.id,
+                toolName: tc.toolName,
+                toolCallId: tc.toolCallId,
+                args: toolCall.args,
+                toolsConfig: this.config.tools,
+                context: executionContext,
                 allowedRemoteToolNames,
                 remoteToolSources,
-              );
+              });
               await this.notifyToolResult({
                 mode: "generate",
                 toolName: tc.toolName,
@@ -871,6 +1119,14 @@ export class AgentRuntime {
               toolCall.status = "completed";
               toolCall.result = result;
               toolCall.executionTime = Date.now() - startTime;
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.status": "completed",
+                  "tool.provider_executed": false,
+                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                }),
+              );
 
               // Track skill policy from load_skill results
               if (tc.toolName === LOAD_SKILL_TOOL_ID) {
@@ -902,7 +1158,12 @@ export class AgentRuntime {
             } catch (error) {
               toolCall.status = "error";
               toolCall.error = error instanceof Error ? error.message : String(error);
-              setSpanAttributes(toolSpan, { error: true, "error.message": toolCall.error });
+              setSpanAttributes(toolSpan, {
+                "tool.status": "failed",
+                error: true,
+                "error.type": error instanceof Error ? error.name : "Error",
+                "error.message": toolCall.error,
+              });
 
               const errorMessage = createToolErrorMessage(
                 tc.toolCallId,
@@ -920,6 +1181,7 @@ export class AgentRuntime {
 
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
+      setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
 
       const lastMsg = currentMessages[currentMessages.length - 1];
       return {
@@ -1287,6 +1549,18 @@ export class AgentRuntime {
         }
 
         if (tc.providerExecuted === true) {
+          await traceProviderExecutedTool({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            context: {
+              toolCallId: tc.id,
+              ...toolContext,
+              agentId: this.id,
+            },
+            args: toolCall.args,
+          });
           toolCall.status = "completed";
           toolCalls.push(toolCall);
           continue;
@@ -1356,14 +1630,17 @@ export class AgentRuntime {
             // spread so caller-supplied context cannot spoof it.
             agentId: this.id,
           };
-          const result = await executeConfiguredTool(
-            tc.name,
-            toolCall.args,
-            this.config.tools,
-            executionContext,
+          const result = await traceConfiguredToolExecution({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            args: toolCall.args,
+            toolsConfig: this.config.tools,
+            context: executionContext,
             allowedRemoteToolNames,
             remoteToolSources,
-          );
+          });
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
             mode: "stream",

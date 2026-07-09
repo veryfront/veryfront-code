@@ -18,7 +18,6 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Reuse assistant instructions                                | Prompt                 | [MCP server](./mcp-server.md)               |
 | Expose readable context to assistants                       | Resource               | [MCP server](./mcp-server.md)               |
 | Measure agent quality across examples                       | Eval                   | [Evals](./evals.md)                         |
-| Define a business process outcome and observable done state | Work                   | [Work](../concepts/work.md)                 |
 | Define project-owned background work                        | Task                   | [Tasks](./tasks.md)                         |
 | Coordinate multiple steps, branches, approvals, or retries  | Workflow               | [Workflows](./workflows.md)                 |
 | Run durable background work now or on a schedule            | Run or schedule        | [Runs](./runs.md)                           |
@@ -38,9 +37,8 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Prompt      | An assistant needs reusable instruction text.                                 | The project needs to execute code or read data.                               |
 | Resource    | An assistant needs readable project context.                                  | The operation changes state or starts work.                                   |
 | Eval        | You need repeatable agent quality checks, datasets, metrics, and reports.     | You need deterministic code assertions without model execution.               |
-| Work        | You need business outcome criteria and execution observability.               | You need to prescribe automation sequence, retries, branches, or scheduling.  |
 | Task        | You own a reusable background function in `tasks/`.                           | The user needs conversational reasoning or streaming output.                  |
-| Workflow    | Work has ordered steps, parallel branches, retries, or human review.          | A single agent response or one background function is enough.                 |
+| Workflow    | The process has ordered steps, parallel branches, retries, or human review.   | A single agent response or one background function is enough.                 |
 | Run         | You need durable execution, scheduling, batch status, or run history.         | The work can finish inside a request without durability.                      |
 | Integration | You need provider metadata, OAuth, tokens, or remote integration tools.       | A local custom API call is enough and no shared connector behavior is needed. |
 | MCP server  | External assistants or MCP clients need tools, prompts, or resources.         | The capability is only used inside one Veryfront app route.                   |
@@ -57,7 +55,7 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Assistant help with a repeatable task  | Agent + skill + optional tools                     |
 | Agent quality gate for CI              | Eval + agent + dataset                             |
 | Assistant reads project context        | MCP server + resources                             |
-| Observable invoice processing          | Work + agent + Work execution tools                |
+| Observable invoice processing          | Workflow + agents + task runs                      |
 | User-authorized GitHub automation      | Integration + OAuth + tools                        |
 | Assistant-accessible project commands  | MCP server + tools                                 |
 | Isolated repo inspection or code edits | Agent + sandbox + tools                            |

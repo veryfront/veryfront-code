@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_groups",
+      "id": "cleverreach__list_groups",
       "name": "List Groups",
       "description": "List CleverReach groups (recipient lists) so agents can find a group ID before reading or adding recipients",
       "requiresWrite": false,
@@ -58,7 +58,7 @@
       }
     },
     {
-      "id": "list_group_receivers",
+      "id": "cleverreach__list_group_receivers",
       "name": "List Group Receivers",
       "description": "List the receivers (recipients) of a CleverReach group, with paging and email filters",
       "requiresWrite": false,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "add_receiver",
+      "id": "cleverreach__add_receiver",
       "name": "Add Receiver",
       "description": "Add (subscribe) a new receiver to a CleverReach group",
       "requiresWrite": true,
@@ -152,7 +152,7 @@
       }
     },
     {
-      "id": "list_mailings",
+      "id": "cleverreach__list_mailings",
       "name": "List Mailings",
       "description": "List CleverReach mailings (email campaigns) filtered by state, such as drafts or finished mailings",
       "requiresWrite": false,
@@ -195,7 +195,7 @@
       }
     },
     {
-      "id": "create_mailing",
+      "id": "cleverreach__create_mailing",
       "name": "Create Mailing Draft",
       "description": "Create a new CleverReach mailing as a draft with subject, sender, and HTML/text content; sending is triggered separately",
       "requiresWrite": true,
@@ -243,7 +243,7 @@
       }
     },
     {
-      "id": "get_mailing",
+      "id": "cleverreach__get_mailing",
       "name": "Get Mailing",
       "description": "Get a single mailing by ID, e.g. to inspect a draft created with Create Mailing Draft",
       "requiresWrite": false,
@@ -261,7 +261,7 @@
       }
     },
     {
-      "id": "deactivate_receiver",
+      "id": "cleverreach__deactivate_receiver",
       "name": "Deactivate Receiver",
       "description": "Deactivate (unsubscribe) a receiver in a group by ID or email — the counterpart to Add Receiver for unsubscribe handling",
       "requiresWrite": true,
@@ -285,7 +285,7 @@
       }
     },
     {
-      "id": "get_group_stats",
+      "id": "cleverreach__get_group_stats",
       "name": "Get Group Stats",
       "description": "Get list health statistics for a group: active, inactive, and bounced receiver counts",
       "requiresWrite": false,

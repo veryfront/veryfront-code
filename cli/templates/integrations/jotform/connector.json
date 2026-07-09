@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_forms",
+      "id": "jotform__list_forms",
       "name": "List Forms",
       "description": "List forms owned by the account",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "get_form",
+      "id": "jotform__get_form",
       "name": "Get Form",
       "description": "Get basic details of a form",
       "requiresWrite": false,
@@ -101,7 +101,7 @@
       }
     },
     {
-      "id": "get_form_questions",
+      "id": "jotform__get_form_questions",
       "name": "Get Form Questions",
       "description": "List the questions/fields on a form",
       "requiresWrite": false,
@@ -122,7 +122,7 @@
       }
     },
     {
-      "id": "list_submissions",
+      "id": "jotform__list_submissions",
       "name": "List Submissions",
       "description": "List submissions for a form",
       "requiresWrite": false,
@@ -166,7 +166,7 @@
       }
     },
     {
-      "id": "get_submission",
+      "id": "jotform__get_submission",
       "name": "Get Submission",
       "description": "Get a single submission with its answers",
       "requiresWrite": false,
@@ -187,7 +187,7 @@
       }
     },
     {
-      "id": "get_user",
+      "id": "jotform__get_user",
       "name": "Get User",
       "description": "Get the authenticated account profile and usage",
       "requiresWrite": false,

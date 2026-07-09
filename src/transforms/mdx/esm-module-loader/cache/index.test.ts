@@ -6,8 +6,11 @@ import {
   clearMdxEsmCacheNamespace,
   clearModulePathCache,
   getLocalFs,
+  getMdxEsmSsrCacheDir,
+  getMdxEsmSsrCacheDirs,
   getModulePathCache,
   invalidateMdxEsmModule,
+  invalidateMdxEsmModuleForCachedPath,
   invalidateModulePaths,
   lookupMdxEsmCache,
   saveModulePathCache,
@@ -21,38 +24,181 @@ import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
 import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
+import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 describe("MDX module path cache", () => {
+  it("partitions SSR cache directories by runtime version", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-versioned-cache-dir-" });
+    const projectId = "project-versioned-cache";
+    const contentSourceId = "preview-main";
+
+    try {
+      await runWithCacheDir(cacheBase, () => {
+        const projectKey = hashCodeHex(projectId);
+        const sourceKey = hashCodeHex(contentSourceId);
+        const versionKey = formatCacheVersionSegment(RUNTIME_VERSION);
+        const currentDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+
+        assertEquals(
+          currentDir,
+          join(cacheBase, "veryfront-mdx-esm", versionKey, projectKey, sourceKey),
+        );
+        assertEquals(
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+          [
+            currentDir,
+            join(cacheBase, "veryfront-mdx-esm", projectKey, sourceKey),
+            join(cacheBase, "veryfront-mdx-esm", projectKey, contentSourceId),
+          ],
+        );
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+    }
+  });
+
   it("clears a project/content-source namespace from disk and memory", async () => {
     clearModulePathCache();
 
     const cacheBase = await makeTempDir({ prefix: "vf-mdx-namespace-clear-" });
     const projectId = "project/with spaces";
     const contentSourceId = "preview-main";
-    const cacheDir = join(
-      cacheBase,
-      "veryfront-mdx-esm",
-      encodeURIComponent(projectId),
-      encodeURIComponent(contentSourceId),
-    );
     const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
-    const cachedPath = join(cacheDir, "stale.mjs");
 
     try {
       await runWithCacheDir(cacheBase, async () => {
+        const cacheDir = join(
+          cacheBase,
+          "veryfront-mdx-esm",
+          encodeURIComponent(projectId),
+          encodeURIComponent(contentSourceId),
+        );
+        const ssrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+        const cachedPath = join(cacheDir, "stale.mjs");
+        const ssrCachedPath = join(ssrCacheDir, "stale-ssr.mjs");
+
         await getLocalFs().mkdir(cacheDir, { recursive: true });
+        await getLocalFs().mkdir(ssrCacheDir, { recursive: true });
         await writeTextFile(cachedPath, "export default function Stale() {}");
+        await writeTextFile(ssrCachedPath, "export default function StaleSSR() {}");
 
         const cache = await getModulePathCache(cacheDir);
         cache.set(cacheKey, cachedPath);
+        const ssrCache = await getModulePathCache(ssrCacheDir);
+        ssrCache.set(cacheKey, ssrCachedPath);
         verifiedModuleDeps.set(`${cachedPath}:${cacheKey}`, true);
+        verifiedModuleDeps.set(`${ssrCachedPath}:${cacheKey}`, true);
 
         await clearMdxEsmCacheNamespace(projectId, contentSourceId);
 
         assertEquals(await exists(cachedPath), false);
+        assertEquals(await exists(ssrCachedPath), false);
         assertEquals((await getModulePathCache(cacheDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(ssrCacheDir)).get(cacheKey), undefined);
         assertEquals(verifiedModuleDeps.get(`${cachedPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${ssrCachedPath}:${cacheKey}`), undefined);
         assertEquals(await exists(cacheDir), true);
+        assertEquals(await exists(ssrCacheDir), true);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
+  it("does not delete slash-containing sibling SSR namespaces when clearing a prefix source", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-namespace-slash-isolation-" });
+    const projectId = "project-slash-source";
+    const parentSourceId = "preview-feature";
+    const childSourceId = "preview-feature/refactor";
+    const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const parentCacheDir = getMdxEsmSsrCacheDir(projectId, parentSourceId);
+        const childCacheDir = getMdxEsmSsrCacheDir(projectId, childSourceId);
+        const parentCachedPath = join(parentCacheDir, "parent.mjs");
+        const childCachedPath = join(childCacheDir, "child.mjs");
+
+        await getLocalFs().mkdir(parentCacheDir, { recursive: true });
+        await getLocalFs().mkdir(childCacheDir, { recursive: true });
+        await writeTextFile(parentCachedPath, "export default 'parent';");
+        await writeTextFile(childCachedPath, "export default 'child';");
+
+        const parentCache = await getModulePathCache(parentCacheDir);
+        parentCache.set(cacheKey, parentCachedPath);
+        const childCache = await getModulePathCache(childCacheDir);
+        childCache.set(cacheKey, childCachedPath);
+        verifiedModuleDeps.set(`${parentCachedPath}:${cacheKey}`, true);
+        verifiedModuleDeps.set(`${childCachedPath}:${cacheKey}`, true);
+
+        await clearMdxEsmCacheNamespace(projectId, parentSourceId);
+
+        assertEquals(await exists(parentCachedPath), false);
+        assertEquals(await exists(childCachedPath), true);
+        assertEquals((await getModulePathCache(parentCacheDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(childCacheDir)).get(cacheKey), childCachedPath);
+        assertEquals(verifiedModuleDeps.get(`${parentCachedPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${childCachedPath}:${cacheKey}`), true);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
+  it("clears legacy raw SSR namespaces while preserving current hashed siblings", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-legacy-raw-namespace-clear-" });
+    const projectId = "project-legacy-raw-source";
+    const parentSourceId = "preview-feature";
+    const childSourceId = "preview-feature/refactor";
+    const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const mdxCacheDir = join(cacheBase, "veryfront-mdx-esm");
+        const projectKey = hashCodeHex(projectId);
+        const legacyParentDir = join(mdxCacheDir, projectKey, parentSourceId);
+        const legacyChildDir = join(mdxCacheDir, projectKey, childSourceId);
+        const currentChildDir = getMdxEsmSsrCacheDir(projectId, childSourceId);
+        const legacyParentPath = join(legacyParentDir, "parent.mjs");
+        const legacyChildPath = join(legacyChildDir, "child-legacy.mjs");
+        const currentChildPath = join(currentChildDir, "child-current.mjs");
+
+        await getLocalFs().mkdir(legacyParentDir, { recursive: true });
+        await getLocalFs().mkdir(legacyChildDir, { recursive: true });
+        await getLocalFs().mkdir(currentChildDir, { recursive: true });
+        await writeTextFile(legacyParentPath, "export default 'legacy-parent';");
+        await writeTextFile(legacyChildPath, "export default 'legacy-child';");
+        await writeTextFile(currentChildPath, "export default 'current-child';");
+
+        const legacyParentCache = await getModulePathCache(legacyParentDir);
+        legacyParentCache.set(cacheKey, legacyParentPath);
+        const legacyChildCache = await getModulePathCache(legacyChildDir);
+        legacyChildCache.set(cacheKey, legacyChildPath);
+        const currentChildCache = await getModulePathCache(currentChildDir);
+        currentChildCache.set(cacheKey, currentChildPath);
+        verifiedModuleDeps.set(`${legacyParentPath}:${cacheKey}`, true);
+        verifiedModuleDeps.set(`${legacyChildPath}:${cacheKey}`, true);
+        verifiedModuleDeps.set(`${currentChildPath}:${cacheKey}`, true);
+
+        await clearMdxEsmCacheNamespace(projectId, parentSourceId);
+
+        assertEquals(await exists(legacyParentPath), false);
+        assertEquals(await exists(legacyChildPath), false);
+        assertEquals(await exists(currentChildPath), true);
+        assertEquals((await getModulePathCache(legacyParentDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(legacyChildDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(currentChildDir)).get(cacheKey), currentChildPath);
+        assertEquals(verifiedModuleDeps.get(`${legacyParentPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${legacyChildPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${currentChildPath}:${cacheKey}`), true);
       });
     } finally {
       await remove(cacheBase, { recursive: true });
@@ -589,6 +735,115 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
     } finally {
       await Promise.all([
         remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("self-heals legacy raw slash-containing cache dirs", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-legacy-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-legacy-selfheal-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const projectId = "project-legacy-selfheal";
+    const contentSourceId = "preview-feature/refactor";
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const legacyRawCacheDir = join(
+          cacheBase,
+          "veryfront-mdx-esm",
+          hashCodeHex(projectId),
+          contentSourceId,
+        );
+        const cachedPath = join(legacyRawCacheDir, buildMdxEsmModuleFileName("legacyraw"));
+
+        await getLocalFs().mkdir(legacyRawCacheDir, { recursive: true });
+        await writeTextFile(cachedPath, `export default "legacy";`);
+        await writeTextFile(
+          join(legacyRawCacheDir, "_index.json"),
+          JSON.stringify({ [key]: cachedPath }),
+        );
+        const cache = await getModulePathCache(legacyRawCacheDir);
+        verifiedModuleDeps.set(`${cachedPath}:${key}`, true);
+
+        const invalidated = await invalidateMdxEsmModuleForCachedPath(
+          cachedPath,
+          filePath,
+          projectDir,
+          "19.1.1",
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+        );
+
+        assertEquals(invalidated, true);
+        assertEquals(cache.get(key), undefined);
+        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), undefined);
+
+        await waitForDiskCleanup();
+        clearModulePathCache();
+        assertEquals((await getModulePathCache(legacyRawCacheDir)).get(key), undefined);
+      });
+    } finally {
+      await Promise.all([
+        remove(cacheBase, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("self-heals stale entries from older versioned cache dirs", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-old-version-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-old-version-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const projectId = "project-old-version-selfheal";
+    const contentSourceId = "preview-main";
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const oldVersionCacheDir = join(
+          cacheBase,
+          "veryfront-mdx-esm",
+          formatCacheVersionSegment("0.1.1030"),
+          hashCodeHex(projectId),
+          hashCodeHex(contentSourceId),
+        );
+        const cachedPath = join(oldVersionCacheDir, buildMdxEsmModuleFileName("oldversion"));
+
+        await getLocalFs().mkdir(oldVersionCacheDir, { recursive: true });
+        await writeTextFile(cachedPath, `export default "old-version";`);
+        await writeTextFile(
+          join(oldVersionCacheDir, "_index.json"),
+          JSON.stringify({ [key]: cachedPath }),
+        );
+        const cache = await getModulePathCache(oldVersionCacheDir);
+        verifiedModuleDeps.set(`${cachedPath}:${key}`, true);
+
+        const invalidated = await invalidateMdxEsmModuleForCachedPath(
+          cachedPath,
+          filePath,
+          projectDir,
+          "19.1.1",
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+        );
+
+        assertEquals(invalidated, true);
+        assertEquals(cache.get(key), undefined);
+        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), undefined);
+
+        await waitForDiskCleanup();
+        clearModulePathCache();
+        assertEquals((await getModulePathCache(oldVersionCacheDir)).get(key), undefined);
+      });
+    } finally {
+      await Promise.all([
+        remove(cacheBase, { recursive: true }).catch(() => {}),
         remove(projectDir, { recursive: true }).catch(() => {}),
       ]);
       clearModulePathCache();

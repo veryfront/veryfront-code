@@ -13,6 +13,7 @@ import {
   type MetricsAPI,
   propagation,
   setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
   type Span,
@@ -110,9 +111,18 @@ describe("observability/tracing/api-shim", () => {
       setGlobalActiveSpanAccessor({
         getActiveSpan: () => real,
         getSpan: () => real,
+        setSpan: (ctx) => ctx,
       });
       assertEquals(trace.getActiveSpan(), real);
       assertEquals(trace.getSpan(context.active()), real);
+    });
+
+    it("stores spans in shim context when no SDK accessor is wired", () => {
+      const real = { updateName() {} } as unknown as Span;
+      const scoped = trace.setSpan(context.active(), real);
+
+      assertEquals(trace.getSpan(scoped), real);
+      assertEquals(context.with(scoped, () => trace.getActiveSpan()), real);
     });
   });
 
@@ -168,6 +178,35 @@ describe("observability/tracing/api-shim", () => {
       assertEquals(threw, true);
       // The finally-restore must put the original context back.
       assertEquals(context.active() === base, true);
+    });
+
+    it("context.with keeps the active context until an async callback settles", async () => {
+      const base = context.active();
+      const scoped = makeScopedContext();
+
+      const result = await context.with(scoped, async () => {
+        await Promise.resolve();
+        return context.active() === scoped;
+      });
+
+      assertEquals(result, true);
+      assertEquals(context.active() === base, true);
+    });
+
+    it("delegates active and with to a registered context accessor", () => {
+      const scoped = makeScopedContext();
+      let withContext: Context | null = null;
+      setGlobalContextAccessor({
+        active: () => scoped,
+        with: (ctx, fn) => {
+          withContext = ctx;
+          return fn();
+        },
+      });
+
+      assertEquals(context.active() === scoped, true);
+      assertEquals(context.with(scoped, () => "ok"), "ok");
+      assertEquals(withContext === scoped, true);
     });
   });
 

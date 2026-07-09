@@ -75,6 +75,16 @@ export function isPayloadTooLargeConversationRunAppendError(
   );
 }
 
+/** Error shape for permanent auth rejection while appending run events. */
+export function isPermanentAuthConversationRunAppendError(
+  error: unknown,
+): error is AppendConversationRunEventsError {
+  return (
+    error instanceof AppendConversationRunEventsError &&
+    (error.status === 401 || error.status === 403)
+  );
+}
+
 /** Error shape for is cursor mismatch conversation run append. */
 export function isCursorMismatchConversationRunAppendError(
   error: unknown,

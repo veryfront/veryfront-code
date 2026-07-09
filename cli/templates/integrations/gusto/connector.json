@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "get_token_info",
+      "id": "gusto__get_token_info",
       "name": "Get Token Info",
       "description": "Get the resource (company) and scope associated with the current access token",
       "requiresWrite": false,
@@ -55,7 +55,7 @@
       }
     },
     {
-      "id": "get_company",
+      "id": "gusto__get_company",
       "name": "Get Company",
       "description": "Get a company's profile, locations, and entity details",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "list_employees",
+      "id": "gusto__list_employees",
       "name": "List Employees",
       "description": "List employees of a company",
       "requiresWrite": false,
@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "get_employee",
+      "id": "gusto__get_employee",
       "name": "Get Employee",
       "description": "Get a single employee",
       "requiresWrite": false,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "list_payrolls",
+      "id": "gusto__list_payrolls",
       "name": "List Payrolls",
       "description": "List payrolls for a company",
       "requiresWrite": false,
@@ -210,7 +210,7 @@
       }
     },
     {
-      "id": "get_payroll",
+      "id": "gusto__get_payroll",
       "name": "Get Payroll",
       "description": "Get a single payroll with totals",
       "requiresWrite": false,

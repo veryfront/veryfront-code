@@ -43,7 +43,7 @@
   ],
   "tools": [
     {
-      "id": "list_buckets",
+      "id": "google-cloud-storage__list_buckets",
       "name": "List Buckets",
       "description": "List Cloud Storage buckets in a Google Cloud project",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "get_bucket",
+      "id": "google-cloud-storage__get_bucket",
       "name": "Get Bucket Metadata",
       "description": "Get a bucket's metadata - location, storage class, versioning, and lifecycle configuration",
       "requiresWrite": false,
@@ -104,7 +104,7 @@
       }
     },
     {
-      "id": "list_objects",
+      "id": "google-cloud-storage__list_objects",
       "name": "List Objects",
       "description": "List objects in a bucket, optionally filtered by name prefix or grouped by delimiter",
       "requiresWrite": false,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "download_object",
+      "id": "google-cloud-storage__download_object",
       "name": "Download Object",
       "description": "Download an object's content (alt=media), or set alt=json to return the object's metadata instead",
       "requiresWrite": false,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "upload_object",
+      "id": "google-cloud-storage__upload_object",
       "name": "Upload Object",
       "description": "Upload content as a new object (or overwrite an existing one) using a simple media upload — requires the read-write scope",
       "requiresWrite": true,
@@ -221,7 +221,7 @@
       }
     },
     {
-      "id": "copy_object",
+      "id": "google-cloud-storage__copy_object",
       "name": "Copy Object",
       "description": "Copy an object to another name or bucket server-side (rewrite), without downloading and re-uploading - requires the read-write scope",
       "requiresWrite": true,
@@ -262,7 +262,7 @@
       }
     },
     {
-      "id": "delete_object",
+      "id": "google-cloud-storage__delete_object",
       "name": "Delete Object",
       "description": "Permanently delete an object from a bucket — requires the read-write scope",
       "requiresWrite": true,

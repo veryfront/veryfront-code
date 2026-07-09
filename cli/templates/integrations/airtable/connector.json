@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_bases",
+      "id": "airtable__list_bases",
       "name": "List Bases",
       "description": "List all accessible Airtable bases",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "get_base",
+      "id": "airtable__get_base",
       "name": "Get Base",
       "description": "Get schema information for a specific base",
       "requiresWrite": false,
@@ -86,7 +86,7 @@
       }
     },
     {
-      "id": "list_records",
+      "id": "airtable__list_records",
       "name": "List Records",
       "description": "List records from a table with optional filtering",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "get_record",
+      "id": "airtable__get_record",
       "name": "Get Record",
       "description": "Get a specific record by ID",
       "requiresWrite": false,
@@ -169,7 +169,7 @@
       }
     },
     {
-      "id": "create_record",
+      "id": "airtable__create_record",
       "name": "Create Record",
       "description": "Create a new record in a table",
       "requiresWrite": true,
@@ -205,7 +205,7 @@
       }
     },
     {
-      "id": "create_records",
+      "id": "airtable__create_records",
       "name": "Create Records",
       "description": "Create multiple records in a table",
       "requiresWrite": true,
@@ -244,7 +244,7 @@
       }
     },
     {
-      "id": "update_record",
+      "id": "airtable__update_record",
       "name": "Update Record",
       "description": "Update fields on an existing record",
       "requiresWrite": true,
@@ -286,7 +286,7 @@
       }
     },
     {
-      "id": "delete_record",
+      "id": "airtable__delete_record",
       "name": "Delete Record",
       "description": "Delete a record from a table",
       "requiresWrite": true,
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "create_table",
+      "id": "airtable__create_table",
       "name": "Create Table",
       "description": "Create a new table in an Airtable base",
       "requiresWrite": true,
@@ -350,7 +350,7 @@
       }
     },
     {
-      "id": "update_table",
+      "id": "airtable__update_table",
       "name": "Update Table",
       "description": "Update table metadata such as name or description using the table ID",
       "requiresWrite": true,
@@ -384,7 +384,7 @@
       }
     },
     {
-      "id": "create_field",
+      "id": "airtable__create_field",
       "name": "Create Field",
       "description": "Create a new field in an Airtable table",
       "requiresWrite": true,

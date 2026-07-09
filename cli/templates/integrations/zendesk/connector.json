@@ -31,7 +31,7 @@
   ],
   "tools": [
     {
-      "id": "list_tickets",
+      "id": "zendesk__list_tickets",
       "name": "List Tickets",
       "description": "List Zendesk support tickets",
       "requiresWrite": false,
@@ -62,7 +62,7 @@
       }
     },
     {
-      "id": "get_ticket",
+      "id": "zendesk__get_ticket",
       "name": "Get Ticket",
       "description": "Get a Zendesk ticket by ID",
       "requiresWrite": false,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "search_tickets",
+      "id": "zendesk__search_tickets",
       "name": "Search Tickets",
       "description": "Search Zendesk tickets with the Zendesk search API",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "update_ticket",
+      "id": "zendesk__update_ticket",
       "name": "Update Ticket",
       "description": "Update a Zendesk ticket status, priority, tags, or comment",
       "requiresWrite": true,
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "create_ticket",
+      "id": "zendesk__create_ticket",
       "name": "Create Ticket",
       "description": "Create a new Zendesk support ticket",
       "requiresWrite": true,
@@ -170,7 +170,7 @@
       }
     },
     {
-      "id": "list_ticket_comments",
+      "id": "zendesk__list_ticket_comments",
       "name": "List Ticket Comments",
       "description": "List comments on a Zendesk ticket",
       "requiresWrite": false,

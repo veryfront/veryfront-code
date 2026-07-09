@@ -37,7 +37,7 @@
   ],
   "tools": [
     {
-      "id": "list_boards",
+      "id": "monday__list_boards",
       "name": "List Boards",
       "description": "List boards in the monday.com account",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "list_items",
+      "id": "monday__list_items",
       "name": "List Items",
       "description": "List items on a monday.com board with their column values",
       "requiresWrite": false,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "get_item",
+      "id": "monday__get_item",
       "name": "Get Item",
       "description": "Get a monday.com item by ID with its column values and updates",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "create_item",
+      "id": "monday__create_item",
       "name": "Create Item",
       "description": "Create a new item on a monday.com board",
       "requiresWrite": true,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "update_column_values",
+      "id": "monday__update_column_values",
       "name": "Update Column Values",
       "description": "Update one or more column values on an existing monday.com item",
       "requiresWrite": true,

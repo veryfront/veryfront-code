@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "partition_document",
+      "id": "unstructured__partition_document",
       "name": "Partition Document",
       "description": "Parse one local document into structured JSON elements (titles, narrative text, tables, lists) with optional chunking for RAG. The file content is uploaded as the multipart/form-data 'files' field together with the other fields; remote URLs are not accepted — fetch the file first and pass its content",
       "requiresWrite": false,

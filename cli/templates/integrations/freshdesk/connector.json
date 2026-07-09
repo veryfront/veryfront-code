@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_tickets",
+      "id": "freshdesk__list_tickets",
       "name": "List Tickets",
       "description": "List support tickets in the Freshdesk account",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "get_ticket",
+      "id": "freshdesk__get_ticket",
       "name": "Get Ticket",
       "description": "Get details of a Freshdesk ticket",
       "requiresWrite": false,
@@ -128,7 +128,7 @@
       }
     },
     {
-      "id": "create_ticket",
+      "id": "freshdesk__create_ticket",
       "name": "Create Ticket",
       "description": "Create a new support ticket in Freshdesk",
       "requiresWrite": true,
@@ -179,7 +179,7 @@
       }
     },
     {
-      "id": "update_ticket",
+      "id": "freshdesk__update_ticket",
       "name": "Update Ticket",
       "description": "Update fields on an existing Freshdesk ticket",
       "requiresWrite": true,
@@ -217,7 +217,7 @@
       }
     },
     {
-      "id": "list_contacts",
+      "id": "freshdesk__list_contacts",
       "name": "List Contacts",
       "description": "List contacts in the Freshdesk account",
       "requiresWrite": false,

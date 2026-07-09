@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import {
   createDefaultHostedInvokeAgentTool,
   type DefaultHostedInvokeAgentContext,
@@ -11,6 +12,8 @@ import {
 } from "./default-invoke-agent-tool.ts";
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+const DURABLE_CONTEXT_FAILURE_TEXT =
+  "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.";
 
 function createTestOptions(input?: {
   context?: DefaultHostedInvokeAgentContext;
@@ -108,12 +111,8 @@ Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure b
   assertEquals(result, {
     ok: false,
     status: "failed",
-    text:
-      "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
-    summary: {
-      text:
-        "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
-    },
+    text: DURABLE_CONTEXT_FAILURE_TEXT,
+    summary: buildChildRunResultSummary(DURABLE_CONTEXT_FAILURE_TEXT),
     terminalErrorCode: "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
     terminalErrorMessage:
       "invoke_agent requires durable conversation context when durable child runs are enabled.",
@@ -144,12 +143,8 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
   assertEquals(result, {
     ok: false,
     status: "failed",
-    text:
-      "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
-    summary: {
-      text:
-        "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
-    },
+    text: DURABLE_CONTEXT_FAILURE_TEXT,
+    summary: buildChildRunResultSummary(DURABLE_CONTEXT_FAILURE_TEXT),
     terminalErrorCode: "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
     terminalErrorMessage:
       "invoke_agent requires durable conversation context when durable child runs are enabled.",
@@ -176,12 +171,8 @@ Deno.test("createDefaultHostedInvokeAgentTool treats omitted context as empty st
   assertEquals(result, {
     ok: false,
     status: "failed",
-    text:
-      "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
-    summary: {
-      text:
-        "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
-    },
+    text: DURABLE_CONTEXT_FAILURE_TEXT,
+    summary: buildChildRunResultSummary(DURABLE_CONTEXT_FAILURE_TEXT),
     terminalErrorCode: "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
     terminalErrorMessage:
       "invoke_agent requires durable conversation context when durable child runs are enabled.",

@@ -61,7 +61,7 @@ export class TracingManager {
     const api: OpenTelemetryAPI = {
       trace: {
         getTracer: (name, version) => shimApi.getTracer(name ?? "veryfront", version),
-        setSpan: (ctx, _span) => ctx,
+        setSpan: (ctx, span) => shimApi.trace.setSpan(ctx, span),
       },
       propagation: {
         setGlobalPropagator: (p) => shimApi.propagation.setGlobalPropagator(p),

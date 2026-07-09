@@ -35,7 +35,7 @@
   ],
   "tools": [
     {
-      "id": "list_jobs",
+      "id": "greenhouse__list_jobs",
       "name": "List Jobs",
       "description": "List jobs in the Greenhouse organization with optional status and date filtering",
       "requiresWrite": false,
@@ -73,7 +73,7 @@
       }
     },
     {
-      "id": "list_candidates",
+      "id": "greenhouse__list_candidates",
       "name": "List Candidates",
       "description": "List candidates with optional job, email, and date filtering",
       "requiresWrite": false,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "get_candidate",
+      "id": "greenhouse__get_candidate",
       "name": "Get Candidate",
       "description": "Get a candidate's full record, including applications, attachments, and contact details",
       "requiresWrite": false,
@@ -134,7 +134,7 @@
       }
     },
     {
-      "id": "list_applications",
+      "id": "greenhouse__list_applications",
       "name": "List Applications",
       "description": "List applications with optional job, status, and activity filtering",
       "requiresWrite": false,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "greenhouse__list_users",
       "name": "List Users",
       "description": "List Greenhouse users to find the numeric user IDs needed for On-Behalf-Of headers and notes",
       "requiresWrite": false,
@@ -210,7 +210,7 @@
       }
     },
     {
-      "id": "list_job_stages",
+      "id": "greenhouse__list_job_stages",
       "name": "List Job Stages",
       "description": "List the interview stages of a job to find the stage IDs needed to move applications",
       "requiresWrite": false,
@@ -239,7 +239,7 @@
       }
     },
     {
-      "id": "move_application",
+      "id": "greenhouse__move_application",
       "name": "Move Application",
       "description": "Move an active application to another stage on the same job (the core pipeline action)",
       "requiresWrite": true,
@@ -275,7 +275,7 @@
       }
     },
     {
-      "id": "add_candidate_note",
+      "id": "greenhouse__add_candidate_note",
       "name": "Add Candidate Note",
       "description": "Create a note on a candidate's activity feed (requires the acting Greenhouse user's ID)",
       "requiresWrite": true,

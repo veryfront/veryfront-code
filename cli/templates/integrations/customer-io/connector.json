@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "search_customers",
+      "id": "customer-io__search_customers",
       "name": "Search Customers",
       "description": "Search Customer.io people by attribute or segment filter conditions",
       "requiresWrite": false,
@@ -61,7 +61,7 @@
       }
     },
     {
-      "id": "list_campaigns",
+      "id": "customer-io__list_campaigns",
       "name": "List Campaigns",
       "description": "List campaigns in the Customer.io workspace with their state and goals",
       "requiresWrite": false,
@@ -74,7 +74,7 @@
       }
     },
     {
-      "id": "get_campaign_metrics",
+      "id": "customer-io__get_campaign_metrics",
       "name": "Get Campaign Metrics",
       "description": "Get delivery and conversion metrics for a Customer.io campaign over a time period",
       "requiresWrite": false,
@@ -115,7 +115,7 @@
       }
     },
     {
-      "id": "get_person_attributes",
+      "id": "customer-io__get_person_attributes",
       "name": "Get Person Attributes",
       "description": "Get a person's full attribute profile by ID, email, or cio_id (Search Customers returns only identifiers)",
       "requiresWrite": false,
@@ -141,7 +141,7 @@
       }
     },
     {
-      "id": "list_transactional_messages",
+      "id": "customer-io__list_transactional_messages",
       "name": "List Transactional Messages",
       "description": "List the workspace's transactional message templates so agents can find a valid transactional_message_id before sending",
       "requiresWrite": false,
@@ -154,7 +154,7 @@
       }
     },
     {
-      "id": "trigger_broadcast",
+      "id": "customer-io__trigger_broadcast",
       "name": "Trigger Broadcast",
       "description": "Trigger an API-triggered broadcast campaign, optionally overriding the recipients and passing liquid data into the messages",
       "requiresWrite": true,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "list_segments",
+      "id": "customer-io__list_segments",
       "name": "List Segments",
       "description": "List segments in the Customer.io workspace so agents can target or filter people",
       "requiresWrite": false,
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "send_transactional_email",
+      "id": "customer-io__send_transactional_email",
       "name": "Send Transactional Email",
       "description": "Send a transactional email to a recipient, using a transactional message template or inline subject and body",
       "requiresWrite": true,

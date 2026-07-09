@@ -33,7 +33,7 @@
   ],
   "tools": [
     {
-      "id": "list_traces",
+      "id": "langfuse__list_traces",
       "name": "List Traces",
       "description": "List traces in the Langfuse project with optional filters",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "get_trace",
+      "id": "langfuse__get_trace",
       "name": "Get Trace",
       "description": "Get a single trace with its full observation tree and scores",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "list_observations",
+      "id": "langfuse__list_observations",
       "name": "List Observations",
       "description": "List observations (spans, generations, events) with optional filters",
       "requiresWrite": false,
@@ -183,7 +183,7 @@
       }
     },
     {
-      "id": "create_score",
+      "id": "langfuse__create_score",
       "name": "Create Score",
       "description": "Attach a score (evaluation result) to a trace or observation",
       "requiresWrite": true,

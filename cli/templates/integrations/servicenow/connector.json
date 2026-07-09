@@ -22,7 +22,7 @@
   },
   "tools": [
     {
-      "id": "list_incidents",
+      "id": "servicenow__list_incidents",
       "name": "List Incidents",
       "description": "List ServiceNow incidents with optional filters",
       "requiresWrite": false,
@@ -61,7 +61,7 @@
       }
     },
     {
-      "id": "get_incident",
+      "id": "servicenow__get_incident",
       "name": "Get Incident",
       "description": "Get details of a specific incident",
       "requiresWrite": false,
@@ -94,7 +94,7 @@
       }
     },
     {
-      "id": "create_incident",
+      "id": "servicenow__create_incident",
       "name": "Create Incident",
       "description": "Create a new incident in ServiceNow",
       "requiresWrite": true,
@@ -142,7 +142,7 @@
       }
     },
     {
-      "id": "update_incident",
+      "id": "servicenow__update_incident",
       "name": "Update Incident",
       "description": "Update an existing incident",
       "requiresWrite": true,
@@ -195,7 +195,7 @@
       }
     },
     {
-      "id": "list_interactions",
+      "id": "servicenow__list_interactions",
       "name": "List Interactions",
       "description": "List ServiceNow Interaction records used for request-desk intake and routing",
       "requiresWrite": false,
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "get_interaction",
+      "id": "servicenow__get_interaction",
       "name": "Get Interaction",
       "description": "Get details of a specific ServiceNow Interaction record",
       "requiresWrite": false,
@@ -267,7 +267,7 @@
       }
     },
     {
-      "id": "create_interaction",
+      "id": "servicenow__create_interaction",
       "name": "Create Interaction",
       "description": "Create a ServiceNow Interaction intake record before converting or linking it to an incident or request",
       "requiresWrite": true,
@@ -319,7 +319,7 @@
       }
     },
     {
-      "id": "update_interaction",
+      "id": "servicenow__update_interaction",
       "name": "Update Interaction",
       "description": "Update an existing ServiceNow Interaction with routing status, parent record, notes, or comments",
       "requiresWrite": true,
@@ -372,7 +372,7 @@
       }
     },
     {
-      "id": "list_requests",
+      "id": "servicenow__list_requests",
       "name": "List Requests",
       "description": "List ServiceNow service request records from the sc_request table",
       "requiresWrite": false,
@@ -411,7 +411,7 @@
       }
     },
     {
-      "id": "get_request",
+      "id": "servicenow__get_request",
       "name": "Get Request",
       "description": "Get details of a specific ServiceNow service request",
       "requiresWrite": false,
@@ -444,7 +444,7 @@
       }
     },
     {
-      "id": "create_request",
+      "id": "servicenow__create_request",
       "name": "Create Request",
       "description": "Order a Service Catalog item to create a workflow-backed ServiceNow request",
       "requiresWrite": true,
@@ -482,7 +482,7 @@
       }
     },
     {
-      "id": "list_request_items",
+      "id": "servicenow__list_request_items",
       "name": "List Request Items",
       "description": "List ServiceNow requested item records from the sc_req_item table",
       "requiresWrite": false,
@@ -521,7 +521,7 @@
       }
     },
     {
-      "id": "get_request_item",
+      "id": "servicenow__get_request_item",
       "name": "Get Request Item",
       "description": "Get details of a specific ServiceNow requested item",
       "requiresWrite": false,
@@ -554,7 +554,7 @@
       }
     },
     {
-      "id": "create_request_item",
+      "id": "servicenow__create_request_item",
       "name": "Create Request Item",
       "description": "Create a requested item table record when direct sc_req_item writes are allowed",
       "requiresWrite": true,
@@ -619,7 +619,7 @@
       }
     },
     {
-      "id": "search_knowledge",
+      "id": "servicenow__search_knowledge",
       "name": "Search Knowledge Base",
       "description": "Search ServiceNow knowledge base articles",
       "requiresWrite": false,
@@ -658,7 +658,7 @@
       }
     },
     {
-      "id": "search_users",
+      "id": "servicenow__search_users",
       "name": "Search Users",
       "description": "Search ServiceNow users to find the sys_id needed for assigning incidents",
       "requiresWrite": false,
@@ -697,7 +697,7 @@
       }
     },
     {
-      "id": "query_table",
+      "id": "servicenow__query_table",
       "name": "Query Table",
       "description": "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
       "requiresWrite": false,
@@ -745,7 +745,7 @@
       }
     },
     {
-      "id": "create_table_record",
+      "id": "servicenow__create_table_record",
       "name": "Create Table Record",
       "description": "Create a record in any ServiceNow table",
       "requiresWrite": true,
@@ -780,7 +780,7 @@
       }
     },
     {
-      "id": "update_table_record",
+      "id": "servicenow__update_table_record",
       "name": "Update Table Record",
       "description": "Update a record in any ServiceNow table",
       "requiresWrite": true,

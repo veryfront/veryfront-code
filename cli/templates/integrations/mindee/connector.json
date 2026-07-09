@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "parse_invoice",
+      "id": "mindee__parse_invoice",
       "name": "Parse Invoice",
       "description": "Extract structured fields (supplier, customer, line items, totals, taxes, dates, payment details) from an invoice PDF or image using the Invoice OCR model. Consumes a page of your Mindee quota per call.",
       "requiresWrite": true,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "parse_receipt",
+      "id": "mindee__parse_receipt",
       "name": "Parse Receipt",
       "description": "Extract structured fields (merchant, date, time, category, line items, taxes, total amounts, tip) from an expense receipt photo or PDF using the Receipt OCR model. Consumes a page of your Mindee quota per call.",
       "requiresWrite": true,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "parse_financial_document",
+      "id": "mindee__parse_financial_document",
       "name": "Parse Financial Document",
       "description": "Parse a document that may be either an invoice or a receipt: the Financial Document model classifies it and returns the union of invoice and receipt fields. Use this when the document type is unknown. Consumes a page of your Mindee quota per call.",
       "requiresWrite": true,

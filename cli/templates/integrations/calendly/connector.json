@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "get_current_user",
+      "id": "calendly__get_current_user",
       "name": "Get Current User",
       "description": "Get the connected Calendly user, including their user URI and organization URI (needed by the other tools)",
       "requiresWrite": false,
@@ -49,7 +49,7 @@
       }
     },
     {
-      "id": "list_event_types",
+      "id": "calendly__list_event_types",
       "name": "List Event Types",
       "description": "List the user's or organization's event types (scheduling links)",
       "requiresWrite": false,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "list_scheduled_events",
+      "id": "calendly__list_scheduled_events",
       "name": "List Scheduled Events",
       "description": "List scheduled events for a user or organization",
       "requiresWrite": false,
@@ -167,7 +167,7 @@
       }
     },
     {
-      "id": "get_scheduled_event",
+      "id": "calendly__get_scheduled_event",
       "name": "Get Scheduled Event",
       "description": "Get details of a specific scheduled event",
       "requiresWrite": false,
@@ -188,7 +188,7 @@
       }
     },
     {
-      "id": "list_event_invitees",
+      "id": "calendly__list_event_invitees",
       "name": "List Event Invitees",
       "description": "List invitees of a scheduled event",
       "requiresWrite": false,
@@ -237,7 +237,7 @@
       }
     },
     {
-      "id": "cancel_event",
+      "id": "calendly__cancel_event",
       "name": "Cancel Event",
       "description": "Cancel a scheduled event",
       "requiresWrite": true,

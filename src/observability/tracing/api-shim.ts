@@ -100,6 +100,17 @@ export interface TextMapPropagator {
   fields(): string[];
 }
 
+export interface ContextAccessor {
+  active(): Context;
+  with<T>(ctx: Context, fn: () => T): T;
+}
+
+export interface ActiveSpanAccessor {
+  getActiveSpan(): Span | undefined;
+  getSpan(ctx: Context): Span | undefined;
+  setSpan?(ctx: Context, span: Span): Context;
+}
+
 // ---------------------------------------------------------------------------
 // Span kind + status constants
 // ---------------------------------------------------------------------------
@@ -176,22 +187,27 @@ export interface MetricsAPI {
 // ---------------------------------------------------------------------------
 
 function createNoopContext(): Context {
+  const store = new Map<symbol, unknown>();
   return {
-    getValue: () => undefined,
-    setValue(_key, _value) {
+    getValue: (key) => store.get(key),
+    setValue(key, value) {
+      store.set(key, value);
       return this;
     },
-    deleteValue(_key) {
+    deleteValue(key) {
+      store.delete(key);
       return this;
     },
   };
 }
 
 const NOOP_CONTEXT: Context = createNoopContext();
+const EMPTY_TRACE_ID = "00000000000000000000000000000000";
+const EMPTY_SPAN_ID = "0000000000000000";
 
 const NOOP_SPAN_CONTEXT: SpanContext = {
-  traceId: "00000000000000000000000000000000",
-  spanId: "0000000000000000",
+  traceId: EMPTY_TRACE_ID,
+  spanId: EMPTY_SPAN_ID,
   traceFlags: 0,
 };
 
@@ -252,16 +268,15 @@ let _provider: TracerProvider = createNoopProvider();
 let _providerRevision = 0;
 let _activeContext: Context = NOOP_CONTEXT;
 let _propagator: TextMapPropagator | null = null;
+let _contextAccessor: ContextAccessor | null = null;
+const ACTIVE_SPAN_CONTEXT_KEY = Symbol.for("veryfront.observability.active_span");
 
 /**
  * Optional accessor for the currently active span. Wired by
  * ext-observability-opentelemetry (via `setGlobalActiveSpanAccessor`) so `trace.getActiveSpan()`
  * and `trace.getSpan()` return the real SDK span once the extension is active.
  */
-let _activeSpanAccessor: {
-  getActiveSpan(): Span | undefined;
-  getSpan(ctx: Context): Span | undefined;
-} | null = null;
+let _activeSpanAccessor: ActiveSpanAccessor | null = null;
 
 /**
  * Register the real OTel trace API's span accessors. Called by the
@@ -269,9 +284,18 @@ let _activeSpanAccessor: {
  * `trace.getActiveSpan()` / `trace.getSpan()` can return real spans.
  */
 export function setGlobalActiveSpanAccessor(
-  accessor: { getActiveSpan(): Span | undefined; getSpan(ctx: Context): Span | undefined },
+  accessor: ActiveSpanAccessor,
 ): void {
   _activeSpanAccessor = accessor;
+}
+
+/**
+ * Register the real OTel context API. This lets the shim preserve active span
+ * context across async boundaries once the extension has installed the SDK's
+ * AsyncLocalStorageContextManager.
+ */
+export function setGlobalContextAccessor(accessor: ContextAccessor): void {
+  _contextAccessor = accessor;
 }
 
 /**
@@ -305,15 +329,27 @@ export function getTracer(name: string, version?: string): Tracer {
 
 export const context = {
   active(): Context {
-    return _activeContext;
+    return _contextAccessor?.active() ?? _activeContext;
   },
   with<T>(ctx: Context, fn: () => T): T {
+    if (_contextAccessor) {
+      return _contextAccessor.with(ctx, fn);
+    }
+
     const prev = _activeContext;
     _activeContext = ctx;
     try {
-      return fn();
-    } finally {
+      const result = fn();
+      if (result && typeof (result as { finally?: unknown }).finally === "function") {
+        return (result as unknown as Promise<unknown>).finally(() => {
+          _activeContext = prev;
+        }) as T;
+      }
       _activeContext = prev;
+      return result;
+    } catch (error) {
+      _activeContext = prev;
+      throw error;
     }
   },
   setGlobalContextManager(_mgr: unknown): void {
@@ -337,13 +373,25 @@ export const trace = {
     return _provider;
   },
   setSpan(ctx: Context, _span: Span): Context {
-    return ctx;
+    try {
+      const spanContext = _span.spanContext();
+      if (spanContext.traceId === EMPTY_TRACE_ID || spanContext.spanId === EMPTY_SPAN_ID) {
+        return ctx;
+      }
+    } catch {
+      // Keep structural test doubles usable even when they omit spanContext().
+    }
+    if (_activeSpanAccessor?.setSpan) {
+      return _activeSpanAccessor.setSpan(ctx, _span);
+    }
+    return ctx.setValue(ACTIVE_SPAN_CONTEXT_KEY, _span);
   },
   getSpan(ctx: Context): Span | undefined {
-    return _activeSpanAccessor?.getSpan(ctx);
+    return _activeSpanAccessor?.getSpan(ctx) ??
+      (ctx.getValue(ACTIVE_SPAN_CONTEXT_KEY) as Span | undefined);
   },
   getActiveSpan(): Span | undefined {
-    return _activeSpanAccessor?.getActiveSpan();
+    return _activeSpanAccessor?.getActiveSpan() ?? trace.getSpan(context.active());
   },
 };
 
@@ -412,6 +460,7 @@ export function _resetShimForTests(): void {
   _providerRevision++;
   _activeContext = NOOP_CONTEXT;
   _propagator = null;
+  _contextAccessor = null;
   _metricsApi = null;
   _activeSpanAccessor = null;
 }

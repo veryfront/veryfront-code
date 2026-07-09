@@ -15,7 +15,7 @@ import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
-import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
 class FakeDistributedCache implements CacheBackend {
   readonly type = "redis" as const;
@@ -42,7 +42,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     const distributedCache = new FakeDistributedCache();
     const projectId = `project-${crypto.randomUUID()}`;
     const contentSourceId = `preview-${crypto.randomUUID()}`;
-    const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
+    const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
     const childPath = join(vfmodDir, "vfmod-child.mjs");
     const stablePath = join(projectDir, "stable.mjs");
 
@@ -130,7 +130,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const projectId = `project-${crypto.randomUUID()}`;
     const contentSourceId = `preview-${crypto.randomUUID()}`;
-    const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
+    const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
     const childPath = join(vfmodDir, "vfmod-child.mjs");
 
     try {

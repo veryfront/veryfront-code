@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "railway__list_projects",
       "name": "List Projects",
       "description": "List Railway projects accessible to the token",
       "requiresWrite": false,
@@ -63,7 +63,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "railway__get_project",
       "name": "Get Project",
       "description": "Get a project with its services and environments",
       "requiresWrite": false,
@@ -86,7 +86,7 @@
       }
     },
     {
-      "id": "list_deployments",
+      "id": "railway__list_deployments",
       "name": "List Deployments",
       "description": "List deployments filtered by project, service, or environment",
       "requiresWrite": false,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "get_deployment",
+      "id": "railway__get_deployment",
       "name": "Get Deployment",
       "description": "Get a deployment by ID, including redeploy/rollback eligibility",
       "requiresWrite": false,
@@ -169,7 +169,7 @@
       }
     },
     {
-      "id": "restart_deployment",
+      "id": "railway__restart_deployment",
       "name": "Restart Deployment",
       "description": "Restart a running deployment",
       "requiresWrite": true,
@@ -189,7 +189,7 @@
       }
     },
     {
-      "id": "redeploy_deployment",
+      "id": "railway__redeploy_deployment",
       "name": "Redeploy Deployment",
       "description": "Redeploy an existing deployment (creates a new deployment from it)",
       "requiresWrite": true,

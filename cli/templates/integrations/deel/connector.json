@@ -22,7 +22,7 @@
   ],
   "tools": [
     {
-      "id": "list_contracts",
+      "id": "deel__list_contracts",
       "name": "List Contracts",
       "description": "List contracts in the Deel account, optionally filtered by contract type",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_contract",
+      "id": "deel__get_contract",
       "name": "Get Contract",
       "description": "Retrieve full details of a single contract by ID",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "list_people",
+      "id": "deel__list_people",
       "name": "List People",
       "description": "List people (workers) in the organization with their employment details",
       "requiresWrite": false,
@@ -97,7 +97,7 @@
       }
     },
     {
-      "id": "get_person",
+      "id": "deel__get_person",
       "name": "Get Person",
       "description": "Retrieve a single person (worker) with their employments, manager, and direct reports",
       "requiresWrite": false,
@@ -115,7 +115,7 @@
       }
     },
     {
-      "id": "list_invoices",
+      "id": "deel__list_invoices",
       "name": "List Invoices",
       "description": "List worker invoices; only paid invoices are returned unless status=all is passed",
       "requiresWrite": false,
@@ -154,7 +154,7 @@
       }
     },
     {
-      "id": "list_timesheets",
+      "id": "deel__list_timesheets",
       "name": "List Timesheets",
       "description": "List timesheet entries, optionally filtered to a single contract",
       "requiresWrite": false,
@@ -183,7 +183,7 @@
       }
     },
     {
-      "id": "create_timesheet",
+      "id": "deel__create_timesheet",
       "name": "Create Timesheet Entry",
       "description": "Submit a timesheet entry (work performed) for a contractor contract",
       "requiresWrite": true,
@@ -200,7 +200,7 @@
       }
     },
     {
-      "id": "review_timesheet",
+      "id": "deel__review_timesheet",
       "name": "Review Timesheet",
       "description": "Approve or decline a submitted timesheet entry; approved hours flow onto the contractor's invoice",
       "requiresWrite": true,
