@@ -48,6 +48,30 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(cacheCalls, []);
     });
 
+    it("rewrites mapped private import-map aliases before skipping internal aliases", async () => {
+      const code = `import pkg from "#pkg";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        "https://esm.sh/parent@1/index.js",
+        {
+          ...defaultOptions,
+          importMap: {
+            imports: {
+              "#pkg": "https://cdn.example.com/pkg.js",
+            },
+          },
+        },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-pkg.mjs";
+        },
+      );
+
+      assertEquals(result.get("#pkg"), "./http-pkg.mjs");
+      assertEquals(cacheCalls, ["https://cdn.example.com/pkg.js"]);
+    });
+
     it("returns empty map for jsr: specifiers", async () => {
       const code = `import { load } from "jsr:@std/dotenv@0.225.6";`;
       const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
