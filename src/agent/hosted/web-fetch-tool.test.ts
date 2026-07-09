@@ -195,4 +195,14 @@ Deno.test("createHostedWebFetchTool rejects invalid pagination inputs", async ()
     Error,
     "web_fetch max_content_chars must be a positive integer",
   );
+
+  await assertRejects(
+    () =>
+      tool.execute?.({
+        url: "https://veryfront.com/docs",
+        cursor: "5",
+      }) as Promise<unknown>,
+    Error,
+    "web_fetch cursor exceeds fetched content length",
+  );
 });

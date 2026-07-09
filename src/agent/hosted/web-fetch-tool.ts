@@ -153,6 +153,10 @@ async function executeHostedWebFetch(
 
   const mediaType = response.headers.get("content-type") ?? "text/plain";
   const text = await response.text();
+  if (offset > text.length) {
+    throw new Error("web_fetch cursor exceeds fetched content length");
+  }
+
   const end = Math.min(text.length, offset + maxContentChars);
   const data = text.slice(offset, end);
   const next = end < text.length ? String(end) : null;
