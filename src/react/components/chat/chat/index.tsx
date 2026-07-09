@@ -200,6 +200,11 @@ export {
 export { memoryConversationStore } from "./persistence/memory-conversation-store.ts";
 export { useUpload, type UseUploadOptions, type UseUploadResult } from "./hooks/use-upload.ts";
 export {
+  useConversationChat,
+  type UseConversationChatOptions,
+  type UseConversationChatResult,
+} from "./hooks/use-conversation-chat.ts";
+export {
   useUploadsRegistry,
   type UseUploadsRegistryOptions,
   type UseUploadsRegistryResult,

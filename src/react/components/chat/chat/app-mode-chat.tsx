@@ -1,18 +1,11 @@
 import * as React from "react";
-import { useChat } from "#veryfront/agent/react";
-import type { ChatMessage } from "#veryfront/agent/react";
 import { useAgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
 import type { AgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
 import { AgentAvatar } from "./composition/agent-avatar.tsx";
 import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
 import { useUpload } from "./hooks/use-upload.ts";
 import { useConversationsContextOptional } from "./contexts/conversations-context.tsx";
-import {
-  createEmptyConversation,
-  DEFAULT_CONVERSATION_TITLE,
-  deriveTitle,
-} from "./hooks/use-conversations.ts";
-import type { Conversation } from "./persistence/conversation-store.ts";
+import { useConversationChat } from "./hooks/use-conversation-chat.ts";
 import type { ChatProps } from "./chat-props.ts";
 import {
   attachmentsToFileParts,
@@ -79,74 +72,18 @@ function UncontrolledChat(
     ...rest
   }: ChatProps,
 ): React.ReactElement {
-  // Inside a `ConversationsProvider`, bind to the active conversation — seed
-  // from its messages/agent and persist changes back. No props: the context
-  // carries it, so standalone `<Chat>` (no provider) is unchanged. `active`
-  // must match `activeId` so we never seed from a still-loading thread.
-  const conversations = useConversationsContextOptional();
-  const bound = conversations?.active && conversations.active.id === conversations.activeId
-    ? conversations.active
-    : null;
-  const resolvedAgentId = bound?.agentId ?? agentId;
-
-  const chat = useChat({
+  // Seed + persistence are the library's job, not app code's: `useConversationChat`
+  // does `useChat` + conversation seeding + the persist bridge internally (the
+  // §2.3 anti-pattern lifted into a reusable hook). This component stays a dumb
+  // presenter of the resulting session.
+  const { chat, resolvedAgentId } = useConversationChat({
     api,
-    initialMessages: bound ? bound.messages : initialMessages,
+    agentId,
+    initialMessages,
     onError,
-    body: resolvedAgentId ? { agentId: resolvedAgentId } : undefined,
+    onUpdate,
   });
   const { agent, error: agentError } = useAgentMetadata(resolvedAgentId);
-
-  // --- Persistence sink (explicit prop → provider default → ephemeral) ------
-  // Resolve WHERE the live thread persists: an explicit `onUpdate` wins, else
-  // a surrounding `ConversationsProvider`'s `save`, else nothing. The sink
-  // takes the whole updated conversation; `<Chat>` owns building it (title
-  // included) so `useConversations` stays dumb about titling and `useChat`
-  // never touches the store.
-  const persist = onUpdate ?? conversations?.save;
-
-  // Identity for the emitted conversation: in a provider we ride the bound
-  // conversation (id/agentId/createdAt); standalone (explicit `onUpdate`, no
-  // provider) we mint one stable id so updates target a single record.
-  const syntheticRef = React.useRef<Conversation | null>(null);
-  const persistRef = React.useRef(persist);
-  persistRef.current = persist;
-  const boundRef = React.useRef(bound);
-  boundRef.current = bound;
-  const agentIdRef = React.useRef(resolvedAgentId);
-  agentIdRef.current = resolvedAgentId;
-
-  // Emit the whole conversation when the live messages change. Keyed on
-  // `chat.messages` + `boundId` only (sink/identity read via refs) so the
-  // save→setActive round-trip inside a provider can't feed a render loop.
-  // Seeded with the mount-time messages so merely *opening* a thread never
-  // re-saves it (a fresh `updatedAt` would jump it to the top of the sidebar).
-  const boundId = bound?.id;
-  const lastEmittedRef = React.useRef<ChatMessage[] | null>(null);
-  if (lastEmittedRef.current === null) lastEmittedRef.current = chat.messages;
-  React.useEffect(() => {
-    const sink = persistRef.current;
-    if (!sink) return;
-    if (chat.messages === lastEmittedRef.current) return;
-    lastEmittedRef.current = chat.messages;
-    let base = boundRef.current;
-    if (!base) {
-      syntheticRef.current ??= createEmptyConversation({ agentId: agentIdRef.current });
-      base = syntheticRef.current;
-    }
-    const keepTitle = base.title !== "" && base.title !== DEFAULT_CONVERSATION_TITLE;
-    const title = keepTitle ? base.title : (deriveTitle(chat.messages) || base.title);
-    const conversation: Conversation = {
-      ...base,
-      messages: chat.messages,
-      title,
-      updatedAt: Date.now(),
-    };
-    // Fold the derived title back onto the synthetic identity so later emits
-    // don't re-derive it every keystroke of a streamed reply.
-    if (base === syntheticRef.current) syntheticRef.current = conversation;
-    sink(conversation);
-  }, [chat.messages, boundId]);
 
   // App mode owns the loading signal: from the very first paint until the
   // agent resolves (or errors) we render the skeleton — never flash an idle
