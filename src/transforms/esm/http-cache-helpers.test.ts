@@ -53,6 +53,10 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(isExternalScheme("bun:test"), true);
     });
 
+    it("returns true for jsr: scheme", () => {
+      assertEquals(isExternalScheme("jsr:@std/dotenv@0.225.6"), true);
+    });
+
     it("returns false for https scheme", () => {
       assertEquals(isExternalScheme("https://example.com"), false);
     });
@@ -105,6 +109,11 @@ describe("transforms/esm/http-cache-helpers", () => {
 
     it("returns true for #veryfront/ imports", () => {
       assertEquals(isInternalBare("#veryfront/utils"), true);
+    });
+
+    it("returns true for private import-map aliases", () => {
+      assertEquals(isInternalBare("#std/dotenv.ts"), true);
+      assertEquals(isInternalBare("#project/env"), true);
     });
 
     it("returns true for _vf_modules/ imports", () => {
