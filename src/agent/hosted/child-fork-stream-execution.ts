@@ -30,6 +30,7 @@ import {
 } from "../child-run/execution-support.ts";
 import {
   buildChildRunResultSummary,
+  type ChildRunResultMode,
   summarizeChildRunResultValue,
 } from "../child-run/result-summary.ts";
 import {
@@ -110,6 +111,7 @@ export interface ExecuteHostedChildForkStreamInput {
   streamState: { finalText: string };
   usage?: ChildRunExecutionUsage;
   maxSteps: number;
+  resultMode?: ChildRunResultMode;
   startTime: number;
   finalizationTimeoutMs: number;
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
@@ -160,6 +162,7 @@ export async function finalizeHostedChildForkCompletion(input: {
   toolCalls: Array<{ toolName: string; toolCallId: string; input?: unknown }>;
   toolResults: Array<{ toolName: string; toolCallId: string; input: unknown; output: unknown }>;
   usage?: ChildRunExecutionUsage;
+  resultMode?: ChildRunResultMode;
   startTime: number;
   durableMessageId: string | null;
   durableMirrorHasEmittedProgress: boolean;
@@ -267,7 +270,10 @@ export async function finalizeHostedChildForkCompletion(input: {
   });
   const snapshot = buildChildRunSuccessSnapshot(common, finalText);
   await input.onSettled?.(snapshot);
-  return buildChildRunSuccessResult(common, buildChildRunResultSummary(finalText));
+  return buildChildRunSuccessResult(
+    common,
+    buildChildRunResultSummary(finalText, { mode: input.resultMode }),
+  );
 }
 
 /** Process a hosted child fork failure. */
@@ -621,6 +627,7 @@ export async function executeHostedChildForkStream(
     description: input.description,
     kind: input.kind,
     maxSteps: input.maxSteps,
+    resultMode: input.resultMode,
     toolCalls: input.toolCalls,
     toolResults: input.toolResults,
     usage: input.usage,

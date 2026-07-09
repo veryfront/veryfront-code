@@ -33,6 +33,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import type { ChildRunResultMode } from "../child-run/result-summary.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 import type {
   HostedConversationRunChunkMirrorInstrumentation,
@@ -136,6 +137,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   postToolIdleTimeoutMs?: number;
   finalizationTimeoutMs?: number;
   startTime?: number;
+  resultMode?: ChildRunResultMode;
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
   writeLog?: (entry: HostedChildExecutionLogEntry) => void;
   shouldRethrowError?: (error: unknown) => boolean;
@@ -281,6 +283,7 @@ export async function executeHostedChildForkToolInput<
       runtimeConfig.forkModel,
       runtimeConfig.thinkingConfig,
     ),
+    resultMode: forkInput.result_mode,
   });
 }
 
@@ -386,6 +389,7 @@ export async function executeHostedChildForkWithPreparedTools<
       kind: input.kind,
       usage: undefined,
       maxSteps: input.maxSteps,
+      resultMode: input.resultMode,
       startTime,
       finalizationTimeoutMs: input.finalizationTimeoutMs ??
         DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,

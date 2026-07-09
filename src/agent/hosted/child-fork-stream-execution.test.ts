@@ -1,11 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   executeHostedChildForkStream,
   handleHostedChildForkFailure,
   type HostedChildForkPendingToolLifecycle,
 } from "./child-fork-stream-execution.ts";
+import type { ChildRunExecutionSnapshot } from "../child-run/execution-snapshot.ts";
 import type { ForkPart, ForkRuntimeStep } from "../streaming/fork-runtime-stream.ts";
 
 function createPendingToolLifecycle(chunks: unknown[]): HostedChildForkPendingToolLifecycle {
@@ -128,6 +134,58 @@ describe("hosted child fork stream execution", () => {
       chunks.find((chunk) => typeof chunk === "object" && chunk !== null && "type" in chunk),
     );
     assertEquals(writeLogs.length, 1);
+  });
+
+  it("keeps the raw stream text in the settlement snapshot", async () => {
+    const rawText =
+      '  <function_calls><invoke name="run_bash">curl</invoke></function_calls><function_result>Title: Example</function_result>\n';
+    const chunks: unknown[] = [];
+    const streamState = { finalText: "" };
+    const snapshots: ChildRunExecutionSnapshot[] = [];
+
+    const result = await executeHostedChildForkStream({
+      streamResult: {
+        fullStream: partsStream([{ type: "text-delta", text: rawText }]),
+        steps: Promise.resolve([createStep({ text: rawText })]),
+        totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
+      },
+      abortForkStream: () => undefined,
+      description: "Inspect repo",
+      kind: "invoke_agent",
+      durableRunMirror: true,
+      durableMessageId: "msg-1",
+      durableReasoningMessageId: "reasoning-1",
+      durableMirrorState: { reasoningStarted: false, textStarted: false },
+      appendDurableMirrorChunk: (chunk) => {
+        chunks.push(chunk);
+        return Promise.resolve();
+      },
+      closeDurableMirrorReasoning: () => Promise.resolve(),
+      closeDurableMirrorText: () => Promise.resolve(),
+      markDurableStepStarted: () => {},
+      durableMirrorHasEmittedProgress: () => true,
+      pendingToolLifecycle: createPendingToolLifecycle(chunks),
+      toolCalls: [],
+      toolResults: [],
+      streamState,
+      maxSteps: 10,
+      startTime: Date.now(),
+      finalizationTimeoutMs: 100,
+      idleTimeoutMs: 1_000,
+      activeToolTimeoutMs: 1_000,
+      postToolIdleTimeoutMs: 1_000,
+      onSettled: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    assertEquals(result.success, true);
+    if (result.success) {
+      assertEquals(result.summary.text, "Title: Example");
+    }
+    assertEquals(snapshots.length, 1);
+    assertEquals(snapshots[0]?.fullResultText, rawText);
+    assertStringIncludes(streamState.finalText, "<function_calls>");
   });
 
   it("builds failure result and snapshot for child fork errors", async () => {

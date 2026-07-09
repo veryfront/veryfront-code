@@ -72,6 +72,38 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("returns complete text when full mode is requested", () => {
+      const text = [
+        "x".repeat(64_500),
+        '    "model": "anthropic/claude-sonnet-4-6"',
+      ].join("\n");
+
+      assertEquals(buildChildRunResultSummary(text, { mode: "full" }), {
+        text,
+        status: "complete",
+        truncated: false,
+        originalChars: text.length,
+        returnedChars: text.length,
+        omittedChars: 0,
+        limitChars: text.length,
+      });
+    });
+
+    it("preserves raw text when full mode is requested", () => {
+      const text =
+        '  <function_calls><invoke name="run_bash">curl</invoke></function_calls><function_result>Title: Example</function_result>\n';
+
+      assertEquals(buildChildRunResultSummary(text, { mode: "full" }), {
+        text,
+        status: "complete",
+        truncated: false,
+        originalChars: text.length,
+        returnedChars: text.length,
+        omittedChars: 0,
+        limitChars: text.length,
+      });
+    });
+
     it("removes malformed tool transcript wrappers while preserving result content", () => {
       const result = buildChildRunResultSummary(
         'I will fetch the docs.\n\n<tool_call>{"name":"web_fetch","parameters":{"url":"https://example.com"}}</tool_call><tool_response>Title: Example Content: Example Domain</tool_response>\n\nNow I can continue.',

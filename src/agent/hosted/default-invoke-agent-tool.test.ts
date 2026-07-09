@@ -57,12 +57,14 @@ Deno.test("defaultHostedInvokeAgentInputSchema accepts child-agent selection", (
       prompt: "Inspect auth flow.",
       context: {},
       agent_id: "security-reviewer",
+      result_mode: "full",
     }),
     {
       description: "inspect auth",
       prompt: "Inspect auth flow.",
       context: {},
       agent_id: "security-reviewer",
+      result_mode: "full",
     },
   );
 });
@@ -91,6 +93,21 @@ Deno.test("defaultHostedInvokeAgentInputSchema rejects blank child-agent selecti
       }),
     Error,
     "agent_id must not be blank",
+  );
+});
+
+Deno.test("defaultHostedInvokeAgentInputSchema rejects invalid result mode", async () => {
+  await assertRejects(
+    async () =>
+      defaultHostedInvokeAgentInputSchema.parse({
+        description: "inspect auth",
+        prompt: "Inspect auth flow.",
+        context: {},
+        agent_id: "security-reviewer",
+        result_mode: "verbose",
+      }),
+    Error,
+    "result_mode",
   );
 });
 
@@ -129,6 +146,7 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
   );
 
   assertStringIncludes(invokeTool.description, "agent_id is required");
+  assertStringIncludes(invokeTool.description, "result_mode defaults");
 
   const result = await invokeTool.execute(
     {

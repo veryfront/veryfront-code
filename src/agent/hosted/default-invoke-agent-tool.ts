@@ -466,6 +466,8 @@ export async function executeDefaultHostedInvokeAgentTool<
       abortSignal,
       traceRecorder: durableInvokeRecorder,
       execute: executeLocalInvoke,
+      getExecutionSnapshot: () => executionSnapshot,
+      resultMode: input.result_mode,
     });
   }
 
@@ -516,7 +518,8 @@ export async function executeDefaultHostedInvokeAgentTool<
       },
       buildSetupFailureResult: (failure) => durableInvokeRecorder.recordSetupFailure(failure),
       buildTerminalFailureResult: (failure) => durableInvokeRecorder.recordTerminalFailure(failure),
-      buildSuccessResult: (success) => durableInvokeRecorder.recordSuccess(success),
+      buildSuccessResult: (success) =>
+        durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
       runtime: {
         bootstrapChildRun: bootstrapHostedChildRun,
         createLifecycleAdapter: createConversationChildLifecycleAdapter,
@@ -597,6 +600,7 @@ export function createDefaultHostedInvokeAgentTool<
     inputSchema: defaultHostedInvokeAgentInputSchema,
     additionalDescriptionParts: [
       "agent_id is required. Use it to target a specific built-in or custom child agent.",
+      'result_mode defaults to "summary"; use "full" only when exact delegated output is required.',
     ],
     buildFailureResult: buildHostedDurableChildInvokeFailureResult,
     decorateResult: withRootOwnedChildResultHint,

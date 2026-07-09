@@ -5,6 +5,7 @@ import type {
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   buildChildRunResultSummary,
+  type ChildRunResultMode,
   type ChildRunResultSummary,
 } from "../child-run/result-summary.ts";
 import {
@@ -75,6 +76,11 @@ export type HostedDurableChildSuccess<TLocalResult extends ChildRunExecutionResu
   targets: ConversationRunTargets;
 };
 
+/** Options accepted when building hosted durable child invoke success results. */
+export type HostedDurableChildInvokeSuccessResultOptions = {
+  resultMode?: ChildRunResultMode;
+};
+
 /** Public API contract for hosted durable child terminal failure. */
 export type HostedDurableChildTerminalFailure = {
   status: HostedChildTerminalStatus;
@@ -129,8 +135,26 @@ export type ExecuteHostedLocalChildInvokeInput = {
   abortSignal?: AbortSignal;
   traceRecorder: HostedLocalChildInvokeTraceRecorder;
   execute: () => Promise<ChildRunExecutionResult> | ChildRunExecutionResult;
+  getExecutionSnapshot?: () => ChildRunExecutionSnapshot | null;
+  resultMode?: ChildRunResultMode;
   isAbortError?: (error: unknown) => boolean;
 };
+
+function buildHostedChildResultSummaryForMode(input: {
+  result: ChildRunExecutionResult;
+  snapshot: ChildRunExecutionSnapshot | null;
+  resultMode?: ChildRunResultMode;
+}): ChildRunResultSummary {
+  if (input.snapshot?.fullResultText !== null && input.snapshot?.fullResultText !== undefined) {
+    return buildChildRunResultSummary(input.snapshot.fullResultText, {
+      mode: input.resultMode,
+    });
+  }
+
+  return input.result.success
+    ? input.result.summary
+    : buildChildRunResultSummary(input.result.error);
+}
 
 /** Result returned from build hosted durable child invoke failure. */
 export function buildHostedDurableChildInvokeFailureResult(
@@ -192,10 +216,15 @@ function resolveKnownProviderTerminalError(error: unknown): {
 /** Result returned from build hosted durable child invoke success. */
 export function buildHostedDurableChildInvokeSuccessResult<
   TLocalResult extends ChildRunExecutionResult,
->(input: HostedDurableChildSuccess<TLocalResult>): HostedDurableChildInvokeResult {
-  const summaryText = input.snapshot.fullResultText ??
-    (input.result.success ? input.result.summary.text : input.result.error);
-  const summary = summaryText ? buildChildRunResultSummary(summaryText) : null;
+>(
+  input: HostedDurableChildSuccess<TLocalResult>,
+  options: HostedDurableChildInvokeSuccessResultOptions = {},
+): HostedDurableChildInvokeResult {
+  const summary = buildHostedChildResultSummaryForMode({
+    result: input.result,
+    snapshot: input.snapshot,
+    resultMode: options.resultMode,
+  });
   const terminalError = input.snapshot.success
     ? null
     : resolveKnownProviderTerminalError(input.snapshot.error);
@@ -304,6 +333,7 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
     },
     recordSuccess<TLocalResult extends ChildRunExecutionResult>(
       success: HostedDurableChildSuccess<TLocalResult>,
+      options: HostedDurableChildInvokeSuccessResultOptions = {},
     ): HostedDurableChildInvokeResult {
       annotate({
         childConversationId: success.identifiers.childConversationId,
@@ -317,7 +347,7 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         terminalErrorMessage: success.snapshot.success ? null : success.snapshot.error,
       });
 
-      return buildHostedDurableChildInvokeSuccessResult(success);
+      return buildHostedDurableChildInvokeSuccessResult(success, options);
     },
   };
 }
@@ -328,7 +358,20 @@ export async function executeHostedLocalChildInvoke(
 ): Promise<ChildRunExecutionResult> {
   try {
     const result = await input.execute();
-    return input.traceRecorder.recordLocalResult(result);
+    const recordedResult = input.traceRecorder.recordLocalResult(result);
+
+    if (input.resultMode !== "full" || !recordedResult.success) {
+      return recordedResult;
+    }
+
+    return {
+      ...recordedResult,
+      summary: buildHostedChildResultSummaryForMode({
+        result: recordedResult,
+        snapshot: input.getExecutionSnapshot?.() ?? null,
+        resultMode: input.resultMode,
+      }),
+    };
   } catch (error) {
     const isAbortError = input.isAbortError ?? isChildRunAbortError;
     const errorMessage = error instanceof Error ? error.message : String(error);
