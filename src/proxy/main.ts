@@ -26,6 +26,7 @@ import { isRetryableConnectionError } from "./retry.ts";
 import {
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
+  getClientWebSocketErrorLogLevel,
   getServerWebSocketErrorLogLevel,
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
@@ -299,8 +300,10 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
 
   clientSocket.onerror = (event) => {
     clearConnectTimeout();
-    proxyLogger.error("[WebSocket] Client connection error", {
-      error: event instanceof ErrorEvent ? event.message : "Unknown error",
+    const error = event instanceof ErrorEvent ? event.message : "Unknown error";
+    const logLevel = getClientWebSocketErrorLogLevel(error);
+    proxyLogger[logLevel]("[WebSocket] Client connection error", {
+      error,
     });
   };
 

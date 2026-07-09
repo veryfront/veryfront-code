@@ -5,6 +5,7 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import {
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
+  getClientWebSocketErrorLogLevel,
   getServerWebSocketErrorLogLevel,
 } from "./websocket-bridge.ts";
 
@@ -154,6 +155,11 @@ describe("Proxy WebSocket Handler Tests", () => {
   describe("Server WebSocket error handling", () => {
     it("treats upstream EOF as a transient warning", () => {
       assertEquals(getServerWebSocketErrorLogLevel("Unexpected EOF"), "warn");
+    });
+
+    it("treats browser-side EOF and ping timeouts as transient warnings", () => {
+      assertEquals(getClientWebSocketErrorLogLevel("Unexpected EOF"), "warn");
+      assertEquals(getClientWebSocketErrorLogLevel("No response from ping frame."), "warn");
     });
 
     it("closes the accepted client socket when the upstream bridge fails", () => {
