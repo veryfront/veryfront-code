@@ -698,7 +698,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
       if (projectSlug && !token) {
         const status = parseStatusFromError(tokenFetchError);
-        if (status === 404) {
+        if (status === 404 || isMissingCustomDomainProjectError(tokenFetchError)) {
           if (scope === "preview") {
             logger?.info("Preview project not found", { projectSlug, host });
             return createProjectNotFoundProxyContext(base, "Preview project not found");
