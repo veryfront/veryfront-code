@@ -915,6 +915,9 @@ describe("RedisBackend", () => {
 
       assertEquals(await backend.countRuns({ workflowId: "wf-x", status: "pending" }), 1);
       assertEquals(await backend.countRuns({ workflowId: "wf-x" }), 2);
+      assertEquals(await backend.countRuns({ status: ["pending", "running"] }), 3);
+      assertEquals(await backend.countRuns({ createdAfter: new Date("2026-01-01") }), 0);
+      assertEquals(await backend.countRuns({ createdBefore: new Date("2024-01-01") }), 0);
     });
   });
 });
