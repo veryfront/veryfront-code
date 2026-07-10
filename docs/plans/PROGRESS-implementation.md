@@ -55,12 +55,14 @@ commit.
 - [ ] Server half (Q3): symmetric `afterStream/onFinish({messages})` on
       `createAgUiHandler` (agent-runtime `src/agent/ag-ui/handler.ts`).
 
-## E4 — leaf composition depth
-- [x] Flagship acid test: ChatSidebar.Item decomposed into a composable
-      Item.Menu/.Rename/.Delete compound (per-item context `useChatSidebarItem`);
-      add a menu entry by composing, keep rename/delete/select. Commit `7e14f2e9d`.
-- [ ] Remaining targets: Message.Header.Name/.Timestamp, ChatInput.Toolbar,
-      AgentPicker.Search (same pattern).
+## E4 — leaf composition depth — ✅ DONE
+- [x] ChatSidebar.Item.Menu/.Rename/.Delete compound (acid test).
+- [x] Message.Header.Name/.Timestamp, ChatInput.Toolbar, AgentPicker.Search.
+      Behaviour-preserving; each leaf takes singular icon/className (sets up E9).
+
+## E6 — collections (K0 4-tier) — ✅ DONE
+- [x] Collection-conformance contract (Sources + AttachmentsPanel prove the
+      4-tier template). Remaining collections already carry the shape.
 
 ## E5 — message parts / render-prop discipline — ✅ core
 - [x] `useMessageParts()` headless data hook added (4th access point). Message.Content
@@ -68,8 +70,7 @@ commit.
       four part access points are complete. Commit `3085dcaa8`.
 - [ ] Optional sugar leaves Message.Text/.Reasoning/.Source (deferred).
 
-## E6 — collections (K0 4-tier) everywhere
-- [ ] Pending (attachments + transcript first).
+
 
 ### E3 groundwork — behaviour the persistence lift MUST preserve
 The §2.3 "useEffect to sync state up" anti-pattern lives in
@@ -106,7 +107,8 @@ demo share the one hook/provider — with 1–5 above proven unchanged.
 - [ ] Remaining: fold three-tier + acid-test stories into the other components
       as their new leaves land (most already carry composition stories).
 
-## E8 / E9 / E10 / E11 — BREAKING batch + codemod + migration
-- [ ] Pending. Additive replacements + deprecations land first; removals batch
-      last. Do NOT execute destructive removals until replacement gates hit
-      baseline 0 and the safety net is proven.
+## E8 / E9 / E10 / E11 — BREAKING batch + codemod + migration — in progress
+Additive replacement layer (E0–E6) is complete, so removals can begin. Batched on
+this branch; each removal validated by the consumer gate + full suite; ratchets
+(feature-toggle 29, passthrough 14) burn toward 0. Codemod + migration guide land
+alongside.
