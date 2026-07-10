@@ -28,7 +28,7 @@ const SCAN_ROOT = "src/react/components/chat";
 // E2 complete: chat no longer uses forwardRef (React 19 `ref` prop). Locked at 0.
 export const FORWARDREF_BASELINE = 0;
 export const FEATURE_TOGGLE_BASELINE = 29;
-export const PASSTHROUGH_BASELINE = 14;
+export const PASSTHROUGH_BASELINE = 12;
 // E1 memoized the last inline context value (F-3). Locked at 0.
 export const INLINE_CONTEXT_BASELINE = 0;
 
@@ -103,7 +103,7 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/composition/message.tsx": 1041,
   // Bumped once for E4: the ChatSidebar.Item menu compound (Item.Menu/.Rename/
   // .Delete). Extracting Item into its own file is a tracked follow-up.
-  "src/react/components/chat/chat/components/sidebar.tsx": 754,
+  "src/react/components/chat/chat/components/sidebar.tsx": 740,
   "src/react/components/chat/chat/composition/chat-composer.tsx": 678,
   "src/react/components/chat/agent-picker.tsx": 542,
   "src/react/components/chat/chat-actions.tsx": 515,

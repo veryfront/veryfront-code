@@ -72,17 +72,6 @@ function MoreGlyph({ className }: { className?: string }): React.ReactElement {
   );
 }
 
-/**
- * Icon overrides for {@link ChatSidebar}. Each defaults to the built-in glyph
- * (or, for `newConversation`, to no icon at all).
- */
-export interface ChatSidebarIcons {
-  newConversation?: React.ReactNode;
-  rename?: React.ReactNode;
-  delete?: React.ReactNode;
-  more?: React.ReactNode;
-}
-
 /** Per-row handlers/state handed to a custom {@link ChatSidebarRootProps.renderItem}. */
 export interface ChatSidebarItemRenderOptions {
   isActive: boolean;
@@ -127,7 +116,6 @@ interface ChatSidebarContextValue {
   onDelete: (id: string) => void;
   onRename?: (id: string, title: string) => void;
   onNew?: () => void;
-  icons?: ChatSidebarIcons;
   loading?: boolean;
   renderItem?: (
     conversation: ConversationSummary,
@@ -225,7 +213,6 @@ function groupConversations(
 /** Props accepted by {@link ChatSidebarRoot}. */
 export interface ChatSidebarRootProps extends ChatSidebarControlProps {
   /** Override any of the sidebar icons. */
-  icons?: ChatSidebarIcons;
   /**
    * Show the loading skeleton instead of the list — e.g. while conversations
    * are being fetched. When omitted, the auto {@link ChatSidebarList} shows a
@@ -246,11 +233,11 @@ export interface ChatSidebarRootProps extends ChatSidebarControlProps {
 
 /** Context provider + outer rail container for the compound sidebar. */
 export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement | null {
-  const { icons, loading, isOpen = true, fill = false, className, children } = props;
+  const { loading, isOpen = true, fill = false, className, children } = props;
   const resolved = useResolvedSidebar(props);
 
   const value = React.useMemo<ChatSidebarContextValue>(
-    () => ({ ...resolved, icons, loading }),
+    () => ({ ...resolved, loading }),
     [
       resolved.conversations,
       resolved.activeId,
@@ -259,7 +246,6 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
       resolved.onRename,
       resolved.onNew,
       resolved.renderItem,
-      icons,
       loading,
     ],
   );
@@ -295,15 +281,18 @@ ChatSidebarRoot.displayName = "ChatSidebar.Root";
 export interface ChatSidebarNewButtonProps {
   /** Button label. Defaults to "New chat". */
   children?: React.ReactNode;
+  /** Optional leading icon. */
+  icon?: React.ReactNode;
   className?: string;
 }
 
 /** The primary "new conversation" action. Wires `onNew` from context. */
 export function ChatSidebarNewButton({
   children,
+  icon,
   className,
 }: ChatSidebarNewButtonProps): React.ReactElement {
-  const { onNew, icons } = useChatSidebarContext();
+  const { onNew } = useChatSidebarContext();
   return (
     <div className="px-3 pt-4 pb-1">
       <Button
@@ -312,7 +301,7 @@ export function ChatSidebarNewButton({
         onClick={onNew}
         className={cn("w-full", className)}
       >
-        {icons?.newConversation}
+        {icon}
         {children ?? "New chat"}
       </Button>
     </div>
@@ -465,7 +454,6 @@ export function ChatSidebarItemMenu({
   children,
 }: ChatSidebarItemMenuProps): React.ReactElement {
   const { conversation, menuOpen, setMenuOpen } = useChatSidebarItem();
-  const { icons } = useChatSidebarContext();
   return (
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
@@ -476,7 +464,7 @@ export function ChatSidebarItemMenu({
           on="card"
           aria-label={`More actions for ${conversation.title}`}
         >
-          {icon ?? icons?.more ?? <MoreGlyph />}
+          {icon ?? <MoreGlyph />}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[160px]">
@@ -506,11 +494,10 @@ export function ChatSidebarItemRename({
   children,
 }: ChatSidebarItemActionProps): React.ReactElement | null {
   const { canRename, startRename } = useChatSidebarItem();
-  const { icons } = useChatSidebarContext();
   if (!canRename) return null;
   return (
     <DropdownMenuItem onSelect={startRename}>
-      {icon ?? icons?.rename ?? <PencilIcon />}
+      {icon ?? <PencilIcon />}
       {children ?? "Rename"}
     </DropdownMenuItem>
   );
@@ -523,13 +510,12 @@ export function ChatSidebarItemDelete({
   children,
 }: ChatSidebarItemActionProps): React.ReactElement {
   const { remove } = useChatSidebarItem();
-  const { icons } = useChatSidebarContext();
   return (
     <DropdownMenuItem
       onSelect={remove}
       className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
     >
-      {icon ?? icons?.delete ?? <TrashIcon />}
+      {icon ?? <TrashIcon />}
       {children ?? "Delete"}
     </DropdownMenuItem>
   );

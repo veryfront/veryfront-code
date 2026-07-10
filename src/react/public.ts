@@ -143,7 +143,6 @@ export type {
   ChatSidebarComponent,
   ChatSidebarEmptyProps,
   ChatSidebarGroupProps,
-  ChatSidebarIcons,
   ChatSidebarItemProps,
   ChatSidebarListProps,
   ChatSidebarNewButtonProps,
