@@ -28,7 +28,7 @@ const SCAN_ROOT = "src/react/components/chat";
 // E2 complete: chat no longer uses forwardRef (React 19 `ref` prop). Locked at 0.
 export const FORWARDREF_BASELINE = 0;
 export const FEATURE_TOGGLE_BASELINE = 29;
-export const PASSTHROUGH_BASELINE = 12;
+export const PASSTHROUGH_BASELINE = 3;
 // E1 memoized the last inline context value (F-3). Locked at 0.
 export const INLINE_CONTEXT_BASELINE = 0;
 

@@ -82,15 +82,6 @@ function ExportGlyph(): React.ReactElement {
   );
 }
 
-/** Icon overrides for the batteries-included `ChatInput` toolbar. */
-export interface ChatInputIcons {
-  send?: React.ReactNode;
-  attach?: React.ReactNode;
-  voice?: React.ReactNode;
-  stop?: React.ReactNode;
-  export?: React.ReactNode;
-}
-
 /** Wrap-signature onClick shared by the interactive `ChatInput` sub-parts. */
 type WrapClick = (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
 
@@ -389,8 +380,6 @@ export interface ChatInputProps {
   messages?: ChatMessage[];
 
   // Customisation
-  /** Override the toolbar button icons. */
-  icons?: ChatInputIcons;
   /** Wrap the built-in attachment `+` click; call `next()` to run it. */
   onAttachClick?: WrapClick;
   /** Wrap the built-in export click; call `next()` to run it. */
@@ -526,7 +515,6 @@ function ChatInputBase(
     onRemoveAttachment,
     showExport = false,
     messages,
-    icons,
     onAttachClick,
     onExportClick,
     className,
@@ -621,7 +609,7 @@ function ChatInputBase(
                 {/* Footer toolbar — left: + menu + agent selector; right: model + submit */}
                 <div className="mt-2.5 flex min-h-[44px] items-center justify-between gap-1.5 md:gap-2">
                   <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
-                    <ChatInputAttach icon={icons?.attach} onClick={onAttachClick} />
+                    <ChatInputAttach onClick={onAttachClick} />
                     {toolbarStart}
                   </div>
 
@@ -640,16 +628,16 @@ function ChatInputBase(
                         tooltipSide="top"
                         className="shrink-0"
                       >
-                        {icons?.export ?? <ExportGlyph />}
+                        <ExportGlyph />
                       </IconButton>
                     )}
                     {
                       /* Streaming → Stop · empty (+voice) → Mic · value → Send
                         (Studio PromptFormActions). Each sub-part self-gates. */
                     }
-                    <ChatInputStop icon={icons?.stop} />
-                    <ChatInputVoice icon={icons?.voice} />
-                    <ChatInputSend icon={icons?.send} className={theme?.button} />
+                    <ChatInputStop />
+                    <ChatInputVoice />
+                    <ChatInputSend className={theme?.button} />
                   </div>
                 </div>
               </div>

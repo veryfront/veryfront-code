@@ -30,22 +30,12 @@ export interface AttachmentInfo {
   url?: string;
 }
 
-/** Icon overrides for {@link AttachmentPill}. Each defaults to its glyph. */
-export interface AttachmentPillIcons {
-  /** Override the remove (✕) glyph. */
-  remove?: React.ReactNode;
-  /** Override the retry glyph. */
-  retry?: React.ReactNode;
-}
-
 /** Props accepted by attachment pill. */
 export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement> {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
   /** Retry handler — surfaces a retry button in the `error` state. */
   onRetry?: (id: string) => void;
-  /** Override the remove / retry button icons. */
-  icons?: AttachmentPillIcons;
   /**
    * Draw the outline + surrounding box. `false` gives a flat, borderless row
    * (e.g. `AttachmentsPanel`, where the pills are a plain list). @default true
@@ -153,7 +143,6 @@ export interface AttachmentPillContextValue {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
   onRetry?: (id: string) => void;
-  icons?: AttachmentPillIcons;
   /** File extension (from the name, falling back to the media type). */
   ext: string;
   /** Tailwind color pair for the default (no-state) icon box. */
@@ -206,7 +195,6 @@ function AttachmentPillRoot({
   attachment,
   onRemove,
   onRetry,
-  icons,
   bordered = true,
   className,
   children,
@@ -259,7 +247,6 @@ function AttachmentPillRoot({
     attachment,
     onRemove,
     onRetry,
-    icons,
     ext,
     colorClass,
     isImage,
@@ -397,9 +384,9 @@ AttachmentPillLabel.displayName = "AttachmentPill.Label";
  * when an `onRetry` handler is provided.
  */
 function AttachmentPillRetry(
-  { className }: { className?: string },
+  { className, icon }: { className?: string; icon?: React.ReactNode },
 ): React.JSX.Element | null {
-  const { attachment, isError, onRetry, icons } = useAttachmentPill();
+  const { attachment, isError, onRetry } = useAttachmentPill();
   if (!isError || !onRetry) return null;
   return (
     <Button
@@ -411,7 +398,7 @@ function AttachmentPillRetry(
       aria-label={`Retry ${attachment.name}`}
       className={cn("shrink-0", className)}
     >
-      {icons?.retry ?? <RefreshCwIcon />}
+      {icon ?? <RefreshCwIcon />}
     </Button>
   );
 }
@@ -422,9 +409,9 @@ AttachmentPillRetry.displayName = "AttachmentPill.Retry";
  * `onRemove` handler is provided and the pill isn't a legacy uploading pill.
  */
 function AttachmentPillRemove(
-  { className }: { className?: string },
+  { className, icon }: { className?: string; icon?: React.ReactNode },
 ): React.JSX.Element | null {
-  const { attachment, showRemove, onRemove, icons } = useAttachmentPill();
+  const { attachment, showRemove, onRemove } = useAttachmentPill();
   if (!showRemove) return null;
   return (
     <Button
@@ -439,7 +426,7 @@ function AttachmentPillRemove(
         className,
       )}
     >
-      {icons?.remove ?? (
+      {icon ?? (
         <svg
           viewBox="0 0 24 24"
           fill="none"

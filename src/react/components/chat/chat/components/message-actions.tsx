@@ -6,23 +6,10 @@ import { useClipboard } from "../hooks/use-clipboard.ts";
 const ACTION_BUTTON =
   "inline-flex items-center justify-center size-7 rounded-full text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]";
 
-/**
- * Icon overrides for {@link MessageActionBar}. Each defaults to the built-in
- * glyph; `copied` shows briefly after a successful copy.
- */
-export interface MessageActionBarIcons {
-  copy?: React.ReactNode;
-  copied?: React.ReactNode;
-  edit?: React.ReactNode;
-  regenerate?: React.ReactNode;
-}
-
 /** Props accepted by the context-free message action bar. */
 export interface MessageActionBarProps {
   content: string;
   className?: string;
-  /** Override any of the action icons. */
-  icons?: MessageActionBarIcons;
   /** Wrap the built-in copy; call `next()` to run it (or skip it). */
   onCopy?: (event: React.MouseEvent<HTMLButtonElement>, next: () => void) => void;
   /** When provided, renders an edit button that calls this handler. */
@@ -42,7 +29,7 @@ export interface MessageActionBarProps {
  * Renamed from `MessageActions` to end the collision with `Message.Actions`.
  */
 export function MessageActionBar(
-  { content, className, icons, onCopy, onEdit, onRegenerate, ref }: MessageActionBarProps,
+  { content, className, onCopy, onEdit, onRegenerate, ref }: MessageActionBarProps,
 ): React.ReactElement {
   const { copied, copy } = useClipboard();
   const doCopy = React.useCallback(() => void copy(content), [copy, content]);
@@ -64,9 +51,7 @@ export function MessageActionBar(
         title={copied ? "Copied!" : "Copy to clipboard"}
         aria-label={copied ? "Copied!" : "Copy to clipboard"}
       >
-        {copied
-          ? (icons?.copied ?? <CheckIcon className="size-3.5" />)
-          : (icons?.copy ?? <CopyIcon className="size-3.5" />)}
+        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </button>
       {onRegenerate && (
         <button
@@ -76,7 +61,7 @@ export function MessageActionBar(
           title="Regenerate response"
           aria-label="Regenerate response"
         >
-          {icons?.regenerate ?? <RefreshCwIcon className="size-3.5" />}
+          <RefreshCwIcon className="size-3.5" />
         </button>
       )}
       {onEdit && (
@@ -87,7 +72,7 @@ export function MessageActionBar(
           title="Edit message"
           aria-label="Edit message"
         >
-          {icons?.edit ?? <PencilIcon className="size-3.5" />}
+          <PencilIcon className="size-3.5" />
         </button>
       )}
     </div>

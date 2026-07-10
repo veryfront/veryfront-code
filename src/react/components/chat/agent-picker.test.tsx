@@ -52,6 +52,15 @@ describe("AgentPicker — composability contract", () => {
     assertStringIncludes(html, "Inbox Helper");
   });
 
+  it("Trigger accepts a per-leaf `icon` override for the chevron", () => {
+    const html = renderToString(
+      <AgentPicker agents={agents} value="inbox" onValueChange={() => {}}>
+        <AgentPicker.Trigger icon={<svg data-testid="custom-chevron" />} />
+      </AgentPicker>,
+    );
+    assertStringIncludes(html, "custom-chevron");
+  });
+
   it("restyles: className on the Trigger is merged onto the pill", () => {
     const html = renderToString(
       <AgentPicker agents={agents} value="inbox" onValueChange={() => {}}>

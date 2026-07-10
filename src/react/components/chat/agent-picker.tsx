@@ -48,16 +48,6 @@ export interface AgentPickerSection {
   agents: AgentOption[];
 }
 
-/**
- * Icon overrides for {@link AgentPicker}. Each defaults to the built-in glyph.
- */
-export interface AgentPickerIcons {
-  check?: React.ReactNode;
-  chevron?: React.ReactNode;
-  create?: React.ReactNode;
-  more?: React.ReactNode;
-}
-
 /** Props accepted by `<AgentPicker>`. */
 export interface AgentPickerProps {
   /** Agents shown in the default (top) group. */
@@ -82,8 +72,6 @@ export interface AgentPickerProps {
   isLoading?: boolean;
   /** Additional class names for the trigger. */
   className?: string;
-  /** Override any of the picker icons. */
-  icons?: AgentPickerIcons;
   /**
    * Compose your own menu from `AgentPicker.Trigger` / `Content` / `List` /
    * `Item`. When omitted, the default data-driven preset is rendered.
@@ -169,8 +157,6 @@ export interface AgentPickerContextValue {
   open: boolean;
   /** Set the popover open state (notifies `onOpenChange`). */
   setOpen: (open: boolean) => void;
-  /** Icon overrides passed to the picker. */
-  icons?: AgentPickerIcons;
 }
 
 const AgentPickerContext = React.createContext<AgentPickerContextValue | null>(
@@ -197,6 +183,8 @@ export interface AgentPickerTriggerProps {
   inputStyle?: boolean;
   /** Mark the input-style trigger invalid. */
   invalid?: boolean;
+  /** Override the trailing chevron glyph. */
+  icon?: React.ReactNode;
   /** Override the trigger contents; defaults to the selected agent's row. */
   children?: React.ReactNode;
   className?: string;
@@ -204,9 +192,9 @@ export interface AgentPickerTriggerProps {
 
 /** The pill (or input-style) combobox trigger. Toggles the popover. */
 function AgentPickerTrigger(
-  { inputStyle = false, invalid = false, children, className }: AgentPickerTriggerProps,
+  { inputStyle = false, invalid = false, icon, children, className }: AgentPickerTriggerProps,
 ): React.ReactElement {
-  const { value, icons } = useAgentPicker();
+  const { value } = useAgentPicker();
   const sections = React.useContext(AgentDataContext);
   const selected = sections ? findAgent(value, sections.agents, sections.sections) : undefined;
   const triggerLabel = selected?.name ?? "Select agent";
@@ -224,9 +212,8 @@ function AgentPickerTrigger(
       )}
       <span className="min-w-0 truncate">{triggerLabel}</span>
       {inputStyle
-        ? (icons?.chevron ??
-          <ChevronDownIcon className="ml-auto size-3.5 opacity-50" />)
-        : (icons?.chevron ?? <ChevronDownIcon className="ml-auto" />)}
+        ? (icon ?? <ChevronDownIcon className="ml-auto size-3.5 opacity-50" />)
+        : (icon ?? <ChevronDownIcon className="ml-auto" />)}
     </>
   );
 
@@ -326,14 +313,16 @@ export interface AgentPickerItemProps {
   agent: AgentOption;
   /** Force selected styling; defaults to matching the context `value`. */
   selected?: boolean;
+  /** Override the selection-check glyph. */
+  icon?: React.ReactNode;
   className?: string;
 }
 
 /** A single agent row (Avatar + name + selection check). */
 function AgentPickerItem(
-  { agent, selected, className }: AgentPickerItemProps,
+  { agent, selected, icon, className }: AgentPickerItemProps,
 ): React.ReactElement {
-  const { value, onSelect, icons } = useAgentPicker();
+  const { value, onSelect } = useAgentPicker();
   const isSelected = selected ?? agent.id === value;
   return (
     <CommandItem
@@ -351,7 +340,7 @@ function AgentPickerItem(
       />
       <span className="min-w-0 flex-1 truncate">{agent.name}</span>
       {isSelected &&
-        (icons?.check ?? <CheckIcon className="ml-auto opacity-70" />)}
+        (icon ?? <CheckIcon className="ml-auto opacity-70" />)}
     </CommandItem>
   );
 }
@@ -374,7 +363,6 @@ function AgentPickerPresetBody({
   onManage,
   onCreate,
   isLoading,
-  icons,
 }: {
   agents: AgentOption[];
   value?: string;
@@ -382,7 +370,6 @@ function AgentPickerPresetBody({
   onManage?: () => void;
   onCreate?: () => void;
   isLoading: boolean;
-  icons?: AgentPickerIcons;
 }): React.ReactElement {
   const hasSectionAgents = sections.some((section) => section.agents.length > 0);
   const showLoading = isLoading && !hasSectionAgents;
@@ -420,13 +407,13 @@ function AgentPickerPresetBody({
         <CommandGroup>
           {onCreate && (
             <CommandItem value="Create Agent" onSelect={onCreate}>
-              {icons?.create ?? <PlusIcon />}
+              <PlusIcon />
               Create Agent
             </CommandItem>
           )}
           {onManage && (
             <CommandItem value="Manage Agents" onSelect={onManage}>
-              {icons?.more ?? <SparklesIcon />}
+              <SparklesIcon />
               Manage Agents
             </CommandItem>
           )}
@@ -453,7 +440,6 @@ function AgentPickerRoot({
   invalid = false,
   isLoading = false,
   className,
-  icons,
   children,
 }: AgentPickerProps): React.ReactElement {
   const [open, setOpen] = React.useState(false);
@@ -488,8 +474,8 @@ function AgentPickerRoot({
   // Memoized so consumers don't re-render on every parent render (F-3). The
   // callbacks are already stable (useCallback above).
   const context = React.useMemo<AgentPickerContextValue>(
-    () => ({ value, onSelect: handleSelect, open, setOpen: handleOpenChange, icons }),
-    [value, handleSelect, open, handleOpenChange, icons],
+    () => ({ value, onSelect: handleSelect, open, setOpen: handleOpenChange }),
+    [value, handleSelect, open, handleOpenChange],
   );
   const agentData = React.useMemo(() => ({ agents, sections }), [agents, sections]);
 
@@ -513,7 +499,6 @@ function AgentPickerRoot({
                     onManage={onManage ? handleManage : undefined}
                     onCreate={onCreate ? handleCreate : undefined}
                     isLoading={isLoading}
-                    icons={icons}
                   />
                 </AgentPickerList>
               </AgentPickerContent>

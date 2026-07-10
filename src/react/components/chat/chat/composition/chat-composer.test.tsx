@@ -298,6 +298,15 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
+  it("Send accepts a per-leaf `icon` override", () => {
+    const html = renderToString(
+      <ChatInput.Root input="hi" onChange={() => {}} onSubmit={() => {}}>
+        <ChatInput.Send icon={<svg data-testid="custom-send" />} />
+      </ChatInput.Root>,
+    );
+    assert(html.includes("custom-send"), "Expected the custom send icon to render");
+  });
+
   describe("ChatInput.Toolbar", () => {
     it("is a function component", () => {
       assertEquals(typeof ChatInput.Toolbar, "function");
@@ -310,7 +319,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
         </ChatInput.Toolbar>,
       );
       assert(html.includes("vf-tb"), "Expected the toolbar className to render");
-      assert(html.includes("<button>x</button>"), "Expected the child to render");
+      assert(html.includes(">x</button>"), "Expected the child to render");
       assert(html.includes('role="toolbar"'), "Expected the toolbar role to render");
     });
   });
