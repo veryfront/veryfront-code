@@ -306,7 +306,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     it("renders its children and merges the className as a layout slot", () => {
       const html = renderToString(
         <ChatInput.Toolbar className="vf-tb">
-          <button>x</button>
+          <button type="button">x</button>
         </ChatInput.Toolbar>,
       );
       assert(html.includes("vf-tb"), "Expected the toolbar className to render");
