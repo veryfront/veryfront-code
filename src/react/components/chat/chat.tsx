@@ -105,7 +105,6 @@ export {
   type ChatSidebarComponent,
   type ChatSidebarEmptyProps,
   type ChatSidebarGroupProps,
-  type ChatSidebarIcons,
   type ChatSidebarItemProps,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,

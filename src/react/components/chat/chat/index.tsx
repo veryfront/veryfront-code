@@ -139,7 +139,6 @@ export {
   type ChatSidebarComponent,
   type ChatSidebarEmptyProps,
   type ChatSidebarGroupProps,
-  type ChatSidebarIcons,
   type ChatSidebarItemActionProps,
   type ChatSidebarItemComponent,
   type ChatSidebarItemContextValue,
