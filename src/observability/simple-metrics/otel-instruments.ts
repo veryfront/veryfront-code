@@ -9,7 +9,10 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
 import type { OtelInstruments } from "./types.ts";
 
-let otelInitialized = false;
+// In-flight or completed init promise; null means init has not started.
+// Using a promise (rather than a boolean flag) prevents a race where a second
+// concurrent caller sees the flag set to true but instruments are not yet ready.
+let initPromise: Promise<void> | null = null;
 const otel: OtelInstruments = {};
 
 export function safeLogWarn(message: string, error?: unknown): void {
@@ -20,10 +23,7 @@ export function safeLogWarn(message: string, error?: unknown): void {
   }
 }
 
-export async function ensureOtelInstruments(): Promise<void> {
-  if (otelInitialized) return;
-  otelInitialized = true;
-
+async function doInitOtelInstruments(): Promise<void> {
   if (!isDeno) return;
 
   try {
@@ -84,6 +84,13 @@ export async function ensureOtelInstruments(): Promise<void> {
   }
 }
 
+export function ensureOtelInstruments(): Promise<void> {
+  if (!initPromise) {
+    initPromise = doInitOtelInstruments();
+  }
+  return initPromise;
+}
+
 export async function safeOtelOperation(
   operation: () => void | Promise<void>,
   errorContext: string,
@@ -101,7 +108,7 @@ export function getOtelInstruments(): OtelInstruments {
 }
 
 export function resetOtelInstruments(): void {
-  otelInitialized = false;
+  initPromise = null;
 
   for (const key of Object.keys(otel) as (keyof OtelInstruments)[]) {
     delete otel[key];

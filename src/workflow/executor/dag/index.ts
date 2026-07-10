@@ -78,6 +78,14 @@ export class DAGExecutor {
         batch.map((nodeId) => this.executeNode(nodeMap.get(nodeId)!, context, nodeStates)),
       );
 
+      // Record the state of EVERY node in the batch before deciding the batch's
+      // outcome. The whole batch already ran (Promise.allSettled), so returning
+      // on the first failure would drop the persisted state of later nodes that
+      // actually succeeded — and those would re-execute on resume. We capture
+      // the earliest waiting/failed node (preserving index-order precedence) and
+      // return only after all states are recorded.
+      let outcome: { kind: "waiting" | "failed"; nodeId: string; error?: string } | undefined;
+
       for (let i = 0; i < batch.length; i++) {
         const nodeId = batch[i]!;
         const result = results[i]!;
@@ -95,13 +103,8 @@ export class DAGExecutor {
             completedAt: new Date(),
           };
 
-          return {
-            completed: false,
-            waiting: false,
-            context,
-            nodeStates,
-            error: `Node "${nodeId}" failed: ${error}`,
-          };
+          if (!outcome) outcome = { kind: "failed", nodeId, error };
+          continue;
         }
 
         const nodeResult = result.value;
@@ -110,13 +113,8 @@ export class DAGExecutor {
         Object.assign(context, nodeResult.contextUpdates);
 
         if (nodeResult.waiting) {
-          return {
-            completed: false,
-            waiting: true,
-            waitingNode: nodeId,
-            context,
-            nodeStates,
-          };
+          if (!outcome) outcome = { kind: "waiting", nodeId };
+          continue;
         }
 
         const nodeConfig = nodeMap.get(nodeId);
@@ -125,13 +123,14 @@ export class DAGExecutor {
         }
 
         if (nodeResult.state.status === "failed") {
-          return {
-            completed: false,
-            waiting: false,
-            context,
-            nodeStates,
-            error: `Node "${nodeId}" failed: ${nodeResult.state.error ?? "Unknown error"}`,
-          };
+          if (!outcome) {
+            outcome = {
+              kind: "failed",
+              nodeId,
+              error: nodeResult.state.error ?? "Unknown error",
+            };
+          }
+          continue;
         }
 
         if (nodeResult.state.status === "completed" || nodeResult.state.status === "skipped") {
@@ -139,6 +138,26 @@ export class DAGExecutor {
             inDegree.set(dependent, inDegree.get(dependent)! - 1);
           }
         }
+      }
+
+      if (outcome?.kind === "waiting") {
+        return {
+          completed: false,
+          waiting: true,
+          waitingNode: outcome.nodeId,
+          context,
+          nodeStates,
+        };
+      }
+
+      if (outcome?.kind === "failed") {
+        return {
+          completed: false,
+          waiting: false,
+          context,
+          nodeStates,
+          error: `Node "${outcome.nodeId}" failed: ${outcome.error}`,
+        };
       }
 
       ready = [...ready, ...getReadyNodes(inDegree, nodeStates)];

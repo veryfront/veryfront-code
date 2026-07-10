@@ -46,6 +46,29 @@ const RELEASE_LOCK_SCRIPT =
 const EXTEND_LOCK_SCRIPT =
   "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
 
+/**
+ * Atomically move a run between status index sets and write its new status,
+ * reading the previous status from the run hash inside the script. This closes
+ * the read-then-write race where two concurrent updateRun() calls both read the
+ * old status and then issue their own SREM/SADD, leaving the run in the wrong
+ * status set (or in two at once).
+ *
+ * KEYS[1] = run hash key
+ * ARGV[1] = runId
+ * ARGV[2] = new status
+ * ARGV[3] = status index key prefix (the status value is appended to it)
+ *
+ * The index keys are derived from ARGV (the old status is unknown to the
+ * caller), so this assumes a single logical Redis, matching the lock scripts
+ * above.
+ */
+const MOVE_STATUS_SCRIPT = `local old = redis.call('hget', KEYS[1], 'status')
+if old == ARGV[2] then return 0 end
+redis.call('hset', KEYS[1], 'status', ARGV[2])
+if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
+redis.call('sadd', ARGV[3] .. ARGV[2], ARGV[1])
+return 1`;
+
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
@@ -54,6 +77,13 @@ export class RedisBackend implements WorkflowBackend {
   private initialized = false;
   /** Per-run lock tokens for ownership-checked release/extend (Redlock pattern). */
   private lockValues = new Map<string, string>();
+  /**
+   * Stream message IDs this consumer has read but not yet acknowledged, keyed
+   * by runId. Populated in {@link dequeue} and consumed by {@link acknowledge}
+   * so we can XACK the exact PEL entry (a runId may map to more than one
+   * pending message if it was requeued and re-read before acking).
+   */
+  private pendingMessageIds = new Map<string, string[]>();
 
   constructor(config: RedisBackendConfig = {}) {
     this.config = {
@@ -86,6 +116,15 @@ export class RedisBackend implements WorkflowBackend {
 
   private workflowIndexKey(workflowId: string): string {
     return `${this.config.prefix}index:workflow:${workflowId}`;
+  }
+
+  /**
+   * Set of every run id. Maintained on create/delete so unfiltered listRuns and
+   * countRuns can enumerate runs via SMEMBERS instead of a keyspace-wide
+   * KEYS scan (which blocks the Redis event loop).
+   */
+  private allRunsIndexKey(): string {
+    return `${this.config.prefix}index:runs`;
   }
 
   private lockKey(runId: string): string {
@@ -235,6 +274,10 @@ export class RedisBackend implements WorkflowBackend {
         logger.debug(`Created consumer group: ${this.config.groupName}`);
       }
     } catch (e) {
+      // The node-redis client surfaces "group already exists" only as a
+      // BUSYGROUP-prefixed error message (no structured code is exposed through
+      // our adapter), so substring matching is the only signal available. Any
+      // other error is a genuine failure worth logging.
       const msg = String(e instanceof Error ? e.message : e);
       if (!msg.includes("BUSYGROUP")) {
         logger.error("Error creating consumer group:", e);
@@ -252,6 +295,7 @@ export class RedisBackend implements WorkflowBackend {
     await client.hset(this.runKey(run.id), this.serializeRun(run));
     await client.sadd(this.statusIndexKey(run.status), run.id);
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
+    await client.sadd(this.allRunsIndexKey(), run.id);
 
     if (this.config.runTtl) await client.expire(this.runKey(run.id), this.config.runTtl);
   }
@@ -271,10 +315,9 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
-    const oldStatus = (await this.getRun(runId))?.status;
-
     const fields: Record<string, string> = {};
-    if (patch.status !== undefined) fields.status = patch.status;
+    // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
+    // move), so it is deliberately excluded from this plain hset.
     if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
     if (patch._tenant !== undefined) {
       fields.tenant = patch._tenant ? JSON.stringify(patch._tenant) : "";
@@ -290,9 +333,13 @@ export class RedisBackend implements WorkflowBackend {
 
     if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
 
-    if (patch.status && oldStatus && patch.status !== oldStatus) {
-      await client.srem(this.statusIndexKey(oldStatus), runId);
-      await client.sadd(this.statusIndexKey(patch.status), runId);
+    if (patch.status !== undefined) {
+      // Atomic status write + index move (see MOVE_STATUS_SCRIPT).
+      await client.eval(
+        MOVE_STATUS_SCRIPT,
+        [this.runKey(runId)],
+        [runId, patch.status, `${this.config.prefix}index:status:`],
+      );
     }
 
     // Terminal states should clear stale-claim markers.
@@ -315,6 +362,8 @@ export class RedisBackend implements WorkflowBackend {
     );
     await client.srem(this.statusIndexKey(run.status), runId);
     await client.srem(this.workflowIndexKey(run.workflowId), runId);
+    await client.srem(this.allRunsIndexKey(), runId);
+    this.pendingMessageIds.delete(runId);
   }
 
   async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
@@ -331,8 +380,9 @@ export class RedisBackend implements WorkflowBackend {
       const all = await Promise.all(statuses.map((s) => client.smembers(this.statusIndexKey(s))));
       runIds = [...new Set(all.flat())];
     } else {
-      const keys = await client.keys(`${this.config.prefix}run:*`);
-      runIds = keys.map((k) => k.replace(`${this.config.prefix}run:`, ""));
+      // Enumerate via the maintained all-runs index instead of a blocking
+      // KEYS scan over the whole keyspace.
+      runIds = await client.smembers(this.allRunsIndexKey());
     }
 
     const runs: WorkflowRun[] = [];
@@ -357,8 +407,37 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async countRuns(filter: RunFilter): Promise<number> {
-    const runs = await this.listRuns({ ...filter, limit: undefined, offset: undefined });
-    return runs.length;
+    // Date filters need each run's createdAt, so fall back to materializing.
+    if (filter.createdAfter || filter.createdBefore) {
+      const runs = await this.listRuns({ ...filter, limit: undefined, offset: undefined });
+      return runs.length;
+    }
+
+    // Otherwise count membership of the index sets (ids only) rather than
+    // fetching and deserializing every run.
+    const client = await this.ensureClient();
+    const statuses = filter.status
+      ? Array.isArray(filter.status) ? filter.status : [filter.status]
+      : null;
+
+    if (filter.workflowId && statuses) {
+      const wfIds = new Set(await client.smembers(this.workflowIndexKey(filter.workflowId)));
+      const statusIds = (await Promise.all(
+        statuses.map((s) => client.smembers(this.statusIndexKey(s))),
+      )).flat();
+      return new Set(statusIds.filter((id) => wfIds.has(id))).size;
+    }
+
+    if (filter.workflowId) {
+      return (await client.smembers(this.workflowIndexKey(filter.workflowId))).length;
+    }
+
+    if (statuses) {
+      const all = await Promise.all(statuses.map((s) => client.smembers(this.statusIndexKey(s))));
+      return new Set(all.flat()).size;
+    }
+
+    return (await client.smembers(this.allRunsIndexKey())).length;
   }
 
   async saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
@@ -532,9 +611,19 @@ export class RedisBackend implements WorkflowBackend {
     if (!message) return null;
 
     const data = message.data;
+    const runId = data.runId ?? "";
+
+    // Remember the stream message id so acknowledge()/nack() can XACK the exact
+    // PEL entry. Without this the message stays pending forever and is
+    // redelivered on the next consumer-group read (duplicate execution).
+    if (runId) {
+      const ids = this.pendingMessageIds.get(runId);
+      if (ids) ids.push(message.id);
+      else this.pendingMessageIds.set(runId, [message.id]);
+    }
 
     return {
-      runId: data.runId ?? "",
+      runId,
       workflowId: data.workflowId ?? "",
       input: data.input ? JSON.parse(data.input) : undefined,
       priority: data.priority ? parseInt(data.priority) : undefined,
@@ -542,12 +631,30 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  acknowledge(runId: string): Promise<void> {
-    if (this.config.debug) logger.debug(`[RedisBackend] Acknowledged: ${runId}`);
-    return Promise.resolve();
+  async acknowledge(runId: string): Promise<void> {
+    const messageIds = this.pendingMessageIds.get(runId);
+    if (!messageIds || messageIds.length === 0) {
+      // Nothing tracked in this process — the message was either already acked
+      // or read by another consumer (its PEL entry is recovered via stalled-run
+      // reclaim, not here). Nothing to do.
+      if (this.config.debug) logger.debug(`[RedisBackend] Acknowledge (no pending): ${runId}`);
+      return;
+    }
+
+    const client = await this.ensureClient();
+    await client.xack(this.config.streamKey, this.config.groupName, ...messageIds);
+    this.pendingMessageIds.delete(runId);
+
+    if (this.config.debug) {
+      logger.debug(`[RedisBackend] Acknowledged ${messageIds.length} message(s): ${runId}`);
+    }
   }
 
   async nack(runId: string): Promise<void> {
+    // XACK the consumed message first so it leaves the PEL; requeueRun then adds
+    // a fresh stream entry. Skipping the ack would leave the old entry pending
+    // AND the requeued copy, growing the PEL unbounded.
+    await this.acknowledge(runId);
     await requeueRun(this, runId);
   }
 

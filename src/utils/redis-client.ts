@@ -43,39 +43,81 @@ interface RedisClientFactoryOptions {
 
 let sharedClient: RedisClient | null = null;
 let connectionPromise: Promise<RedisClient> | null = null;
-let isConnecting = false;
 let connectionFailed = false;
 let lastConnectionAttempt = 0;
 
 const RECONNECT_DELAY_MS = 5000;
 
-export async function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
-  if (sharedClient && sharedClient.isOpen !== false) return sharedClient;
-
-  if (connectionFailed && Date.now() - lastConnectionAttempt < RECONNECT_DELAY_MS) {
-    throw INITIALIZATION_ERROR.create({
-      detail: "[Redis] Connection recently failed, waiting before retry",
-    });
+export function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
+  // Reuse a healthy, connected client. A client whose `error` event fired sets
+  // connectionFailed=true even while `isOpen` may still report true, so we must
+  // not hand back a client in that state (a stale, broken client would make all
+  // cache ops silently return null).
+  if (sharedClient && sharedClient.isOpen !== false && !connectionFailed) {
+    return Promise.resolve(sharedClient);
   }
 
-  if (isConnecting && connectionPromise) return connectionPromise;
+  // A connect is already in flight: share the single promise. This is checked
+  // and the new promise assigned synchronously below with no `await` in between,
+  // so concurrent callers cannot each start their own connection (the previous
+  // isConnecting/connectionPromise split had a TOCTOU race that leaked
+  // connections and could exhaust Redis connection limits).
+  if (connectionPromise) return connectionPromise;
 
-  isConnecting = true;
-  lastConnectionAttempt = Date.now();
-  connectionPromise = createClient(options);
+  if (connectionFailed && Date.now() - lastConnectionAttempt < RECONNECT_DELAY_MS) {
+    return Promise.reject(
+      INITIALIZATION_ERROR.create({
+        detail: "[Redis] Connection recently failed, waiting before retry",
+      }),
+    );
+  }
 
-  try {
-    sharedClient = await connectionPromise;
-    connectionFailed = false;
-    logger.info("Connected successfully");
-    return sharedClient;
-  } catch (error) {
-    connectionFailed = true;
+  // Tear down any stale client before reconnecting so we don't leak the old one.
+  if (sharedClient) {
+    const stale = sharedClient;
     sharedClient = null;
-    throw error;
-  } finally {
-    isConnecting = false;
-    connectionPromise = null;
+    if (stale.isOpen !== false) {
+      stale.disconnect().catch((error) => {
+        logger.debug("Error disconnecting stale client", { error });
+      });
+    }
+  }
+
+  lastConnectionAttempt = Date.now();
+  const promise = createClient(options)
+    .then((client) => {
+      sharedClient = client;
+      connectionFailed = false;
+      logger.info("Connected successfully");
+      return client;
+    })
+    .catch((error) => {
+      connectionFailed = true;
+      sharedClient = null;
+      throw error;
+    })
+    .finally(() => {
+      connectionPromise = null;
+    });
+
+  connectionPromise = promise;
+  return promise;
+}
+
+/** Disconnect and clear the shared client so the next call reconnects fresh. */
+export async function disconnectRedisClient(): Promise<void> {
+  const client = sharedClient;
+  sharedClient = null;
+  connectionPromise = null;
+  connectionFailed = false;
+  lastConnectionAttempt = 0;
+
+  if (client && client.isOpen !== false) {
+    try {
+      await client.disconnect();
+    } catch (error) {
+      logger.debug("Error during disconnect", { error });
+    }
   }
 }
 

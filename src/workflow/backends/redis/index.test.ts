@@ -127,6 +127,31 @@ class MockRedisAdapter implements RedisAdapter {
   // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+
+    // Atomic status-move script: reads old status from the run hash, then moves
+    // the run between status index sets and writes the new status.
+    // KEYS[1]=runKey, ARGV[1]=runId, ARGV[2]=newStatus, ARGV[3]=statusIndexPrefix
+    if (script.includes("hget") && script.includes("srem") && script.includes("sadd")) {
+      const runId = args[0]!;
+      const newStatus = args[1]!;
+      const statusPrefix = args[2]!;
+      const hash = this.hashes.get(key);
+      const old = hash?.get("status");
+
+      if (old === newStatus) return Promise.resolve(0);
+      if (hash) hash.set("status", newStatus);
+
+      if (old && old !== "") this.sets.get(statusPrefix + old)?.delete(runId);
+
+      let newSet = this.sets.get(statusPrefix + newStatus);
+      if (!newSet) {
+        newSet = new Set();
+        this.sets.set(statusPrefix + newStatus, newSet);
+      }
+      newSet.add(runId);
+      return Promise.resolve(1);
+    }
+
     const token = args[0];
     const owns = this.store.get(key) === token;
 
@@ -777,8 +802,65 @@ describe("RedisBackend", () => {
   });
 
   describe("acknowledge", () => {
-    it("should resolve without error", async () => {
+    it("should resolve without error when nothing was dequeued", async () => {
       await backend.acknowledge("run-ack");
+    });
+
+    it("should XACK the exact stream message read by dequeue", async () => {
+      const ackCalls: Array<{ key: string; group: string; ids: string[] }> = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        ackCalls.push({ key, group, ids });
+        return realXack(key, group, ...ids);
+      };
+
+      await backend.enqueue({
+        runId: "run-ackx",
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      const job = await backend.dequeue();
+      assertExists(job);
+      assertEquals(job.runId, "run-ackx");
+
+      await backend.acknowledge("run-ackx");
+
+      assertEquals(ackCalls.length, 1);
+      assertEquals(ackCalls[0]!.key, "test:stream");
+      assertEquals(ackCalls[0]!.group, "test:group");
+      assertEquals(ackCalls[0]!.ids.length, 1);
+
+      // Second acknowledge is a no-op (already acked, nothing tracked).
+      await backend.acknowledge("run-ackx");
+      assertEquals(ackCalls.length, 1);
+    });
+
+    it("nack XACKs the consumed message before re-enqueueing", async () => {
+      const ackCalls: string[][] = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        ackCalls.push(ids);
+        return realXack(key, group, ...ids);
+      };
+
+      await backend.createRun(createTestRun("run-nack-ack"));
+      await backend.enqueue({
+        runId: "run-nack-ack",
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      await backend.dequeue();
+      await backend.nack("run-nack-ack");
+
+      // Old PEL entry acked exactly once, and a fresh job is queued.
+      assertEquals(ackCalls.length, 1);
+      const requeued = await backend.dequeue();
+      assertExists(requeued);
+      assertEquals(requeued.runId, "run-nack-ack");
     });
   });
 

@@ -336,9 +336,13 @@ export class MCPServer {
       try {
         this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
       } catch (error) {
-        // Config sync failed — non-fatal, integration tools from API won't reflect config
-        logger.debug("Failed to sync integration config to API during tools/list", {
-          error: error instanceof Error ? error.message : String(error),
+        // Config sync failed — non-fatal, but integration tools from API won't reflect config.
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.warn("Failed to sync integration config to API during tools/list", {
+          error: errMsg,
+        });
+        this.emitLogNotification("warning", "Failed to sync integration config to API", {
+          error: errMsg,
         });
       }
     }
@@ -654,6 +658,26 @@ export class MCPServer {
     // Real logic will resolve values from resource templates and prompts.
     return Promise.resolve({
       completion: { values: [], total: 0, hasMore: false },
+    });
+  }
+
+  /**
+   * Emit a `notifications/message` log entry to the connected MCP client,
+   * but only if `level` meets the minimum threshold set via `logging/setLevel`.
+   * This is what makes `this.logLevel` functional rather than a no-op field.
+   */
+  private emitLogNotification(
+    level: typeof MCPServer.LOG_LEVELS[number],
+    message: string,
+    data?: Record<string, unknown>,
+  ): void {
+    const emitIdx = MCPServer.LOG_LEVELS.indexOf(level);
+    const minIdx = MCPServer.LOG_LEVELS.indexOf(this.logLevel);
+    if (emitIdx < minIdx) return;
+    this.onNotification?.({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level, logger: "veryfront-mcp", data: { message, ...data } },
     });
   }
 

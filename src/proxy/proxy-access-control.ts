@@ -142,7 +142,14 @@ export function buildProxyAuthRedirectUrl(url: URL): string {
 
   const isHostedProductionDeployment = url.hostname.endsWith(".production.veryfront.org") ||
     url.hostname.endsWith(".production.veryfront.com");
-  const returnTarget = isHostedProductionDeployment ? url.toString() : returnPath;
+  // For hosted production, preserve the absolute origin so the user returns to
+  // the correct subdomain — but rebuild it from the allowlisted hostname and the
+  // already-sanitized path instead of the raw request URL. This prevents
+  // userinfo/port/other components of the inbound URL from smuggling a foreign
+  // target into the `from` param (open-redirect hardening).
+  const returnTarget = isHostedProductionDeployment
+    ? `https://${url.hostname}${returnPath}`
+    : returnPath;
 
   return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnTarget)}`;
 }

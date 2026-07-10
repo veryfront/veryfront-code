@@ -15,13 +15,24 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
- * Redis client interface (compatible with ioredis and node-redis)
+ * Redis client interface (compatible with ioredis and node-redis).
+ *
+ * The optional list operation methods (rpush, lrange, ltrim) enable atomic
+ * append semantics. When present they are preferred over get+set, which has a
+ * read-modify-write race under concurrent callers. Provide a client that
+ * implements all methods for safe use in horizontally-scaled deployments.
  */
 export interface RedisClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, options?: { EX?: number }): Promise<unknown>;
   del(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
+  /** Atomically append one or more values to a list. Returns the new list length. */
+  rpush?(key: string, ...values: string[]): Promise<number>;
+  /** Return elements of a list between start and stop (inclusive). */
+  lrange?(key: string, start: number, stop: number): Promise<string[]>;
+  /** Trim a list to contain only elements between start and stop. */
+  ltrim?(key: string, start: number, stop: number): Promise<unknown>;
 }
 
 /**
@@ -68,9 +79,15 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
     if (!data) return [];
     try {
       return JSON.parse(data);
-    } catch (_) {
-      /* expected: corrupted JSON in Redis, return empty message list */
-      return [];
+    } catch (error) {
+      // Corrupt stored JSON — throwing here prevents callers from silently
+      // overwriting all prior history with a single-message array. Callers
+      // should catch this, log the failure, and decide whether to clear the key.
+      throw new Error(
+        `RedisMemory: corrupt message data for key "${this.getKey()}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 
@@ -79,11 +96,53 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
       "agent.memory.redis.add",
       async () => {
         const key = this.getKey();
-        let messages = this.parseMessages(await this.client.get(key));
-
-        messages.push(message);
-
         const { maxMessages, maxTokens } = this.config;
+
+        // When the client supports list operations, use RPUSH for atomic append
+        // rather than a non-atomic get+JSON-parse+set that loses writes under
+        // concurrent callers (multi-process / horizontally-scaled deployments).
+        if (this.client.rpush && this.client.lrange && this.client.ltrim) {
+          await this.client.rpush(key, JSON.stringify(message));
+          if (this.ttl > 0) {
+            await this.client.expire(key, this.ttl);
+          }
+
+          // Trim list length if maxMessages is set
+          if (maxMessages) {
+            await this.client.ltrim(key, -maxMessages, -1);
+          }
+
+          // For token-budget trimming we need to read and re-write — this is
+          // still a race but is rare (trimming only fires when approaching
+          // the token ceiling).
+          if (maxTokens) {
+            const raw = await this.client.lrange(key, 0, -1);
+            let messages: M[] = [];
+            for (const item of raw) {
+              try {
+                messages.push(JSON.parse(item) as M);
+              } catch {
+                // Skip individual corrupt entries; partial loss is better than
+                // aborting the entire add.
+              }
+            }
+            messages = this.trimToTokenLimit(messages);
+            await this.client.del(key);
+            if (messages.length > 0) {
+              await this.client.rpush(key, ...messages.map((m) => JSON.stringify(m)));
+              if (this.ttl > 0) {
+                await this.client.expire(key, this.ttl);
+              }
+            }
+          }
+          return;
+        }
+
+        // Fallback: non-atomic get+set path. Safe for single-process deployments
+        // but has a lost-update race when multiple processes write concurrently.
+        // Upgrade the RedisClient with rpush/lrange/ltrim to eliminate the race.
+        let messages = this.parseMessages(await this.client.get(key));
+        messages.push(message);
 
         if (maxMessages && messages.length > maxMessages) {
           messages = messages.slice(-maxMessages);
@@ -152,9 +211,11 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
 
     let tokenCount = estimateTokens(messages);
 
+    // Subtract the removed message's token cost instead of re-scanning the full
+    // array on every iteration — O(n) instead of O(n²) for large histories.
     while (tokenCount > maxTokens && messages.length > 1) {
-      messages.shift();
-      tokenCount = estimateTokens(messages);
+      const removed = messages.shift()!;
+      tokenCount -= estimateTokens([removed]);
     }
 
     return messages;

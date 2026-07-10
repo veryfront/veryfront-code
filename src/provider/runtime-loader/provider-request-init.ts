@@ -1,5 +1,13 @@
 const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 
+/**
+ * Minimum Anthropic API version this runtime was built against.
+ * Used as the default when the caller does not supply an `anthropic-version`
+ * header. Update this constant (and test against the changelog) whenever
+ * adopting a new API version with breaking changes.
+ */
+const ANTHROPIC_API_VERSION = "2023-06-01";
+
 export function createRequestHeaders(options: {
   apiKeyHeaderName: string;
   apiKey: string;
@@ -19,7 +27,7 @@ export function createAnthropicRequestHeaders(options: {
 }): Headers {
   const headers = new Headers(options.extraHeaders);
   headers.set("content-type", "application/json");
-  headers.set("anthropic-version", headers.get("anthropic-version") ?? "2023-06-01");
+  headers.set("anthropic-version", headers.get("anthropic-version") ?? ANTHROPIC_API_VERSION);
 
   if (options.enableFineGrainedToolStreaming) {
     const existingBetaHeader = headers.get("anthropic-beta");

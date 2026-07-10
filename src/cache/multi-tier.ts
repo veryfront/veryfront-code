@@ -160,11 +160,16 @@ export class MultiTierCache<T = string> {
         span?.setAttribute("cache.key", key);
         span?.setAttribute("cache.ttl_seconds", ttl);
 
-        const tiers = [this.config.l1, this.config.l2, this.config.l3].filter(
+        // L1/L2 are per-pod tiers: their write may be best-effort (fire-and-forget
+        // under asyncBackfill). L3 is the distributed/authoritative tier whose
+        // failure must be observable to the caller — otherwise `await set()`
+        // resolves "successfully" while a cross-pod read later misses, silently
+        // losing data. So L3 is always awaited and its failure propagates.
+        const perPodTiers = [this.config.l1, this.config.l2].filter(
           (t): t is CacheTier<T> => t !== undefined,
         );
 
-        const setOps = tiers.map((tier) =>
+        const perPodOps = perPodTiers.map((tier) =>
           tier.set(key, value, ttl).catch((error) => {
             logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
               key: key.slice(-60),
@@ -174,15 +179,26 @@ export class MultiTierCache<T = string> {
         );
 
         if (this.config.asyncBackfill) {
-          void Promise.all(setOps).catch((err) => {
+          void Promise.all(perPodOps).catch((err) => {
             logger.warn(`[${this.config.name}] Cache backfill failed`, {
               error: err instanceof Error ? err.message : String(err),
             });
           });
-          return;
+        } else {
+          await Promise.all(perPodOps);
         }
 
-        await Promise.all(setOps);
+        if (this.config.l3) {
+          try {
+            await this.config.l3.set(key, value, ttl);
+          } catch (error) {
+            logger.error(`[${this.config.name}] Set error in ${this.config.l3.name}`, {
+              key: key.slice(-60),
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        }
       },
       { "cache.operation": "set" },
     );

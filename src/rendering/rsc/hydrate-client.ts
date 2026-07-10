@@ -54,8 +54,13 @@ function setClientModCache(key: string, mod: ClientModule): void {
 }
 
 function parseClientRef(ref: string): { rel: string; exportName: string } | null {
-  const m = ref.match(/^\/app\/(.+)#([A-Za-z0-9_]+)$/);
-  if (!m) return null;
+  // Export names may include $, -, and . in addition to alphanumeric + underscore.
+  // Path portion allows any characters up to the last #.
+  const m = ref.match(/^\/app\/(.+)#([\w$.-]+)$/);
+  if (!m) {
+    rscLogger.debug("hydrate: unrecognised client ref format, skipping", { ref });
+    return null;
+  }
   return { rel: `/${m[1] || ""}`, exportName: m[2] || "default" };
 }
 

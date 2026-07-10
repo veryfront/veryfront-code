@@ -21,6 +21,13 @@ export interface UseClipboardResult {
 /** Copy-to-clipboard with a transient `copied` flag. */
 export function useClipboard(timeout = 2000): UseClipboardResult {
   const [copied, setCopied] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  React.useEffect(() => {
+    return () => {
+      clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const copy = React.useCallback(async (text: string): Promise<void> => {
     try {
@@ -35,7 +42,8 @@ export function useClipboard(timeout = 2000): UseClipboardResult {
       document.body.removeChild(textarea);
     } finally {
       setCopied(true);
-      setTimeout(() => setCopied(false), timeout);
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), timeout);
     }
   }, [timeout]);
 

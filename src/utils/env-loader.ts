@@ -116,8 +116,13 @@ function parseEnvFile(content: string): Record<string, string> {
       continue;
     }
 
-    const commentIndex = value.indexOf("#");
-    if (commentIndex !== -1) value = value.substring(0, commentIndex).trim();
+    // Strip inline comments only when the `#` is preceded by whitespace. A `#`
+    // that is part of the value itself (e.g. a URL fragment like
+    // `rediss://host:6379/0#pool=5`) has no leading space and must be preserved.
+    const commentMatch = value.match(/\s#/);
+    if (commentMatch?.index !== undefined) {
+      value = value.substring(0, commentMatch.index).trim();
+    }
 
     vars[key] = expandVariables(value, vars);
   }

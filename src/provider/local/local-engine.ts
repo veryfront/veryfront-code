@@ -333,6 +333,20 @@ function getConditionalModelConstructor(
 }
 
 /**
+ * Returns true when an error message matches known ONNX Runtime / native-addon
+ * failure patterns. These substrings are heuristic — ONNX Runtime does not
+ * expose a structured error type, so message scanning is the only viable
+ * approach. Fail-safe: unrecognized errors are NOT matched and propagate as-is.
+ */
+function isOnnxUnavailableError(msg: string): boolean {
+  return (
+    msg.includes("onnx") || msg.includes("ONNX") ||
+    msg.includes("dlopen") || msg.includes("dynamic linking") ||
+    msg.includes("native module") || msg.includes("SharedArrayBuffer")
+  );
+}
+
+/**
  * Bounded, dedup-aware cache of text-generation pipelines keyed by HuggingFace
  * model id. Only loads a model on a cold cache miss; concurrent loads of the
  * same model share a single promise.
@@ -364,11 +378,7 @@ const textGenerationPipelines = createPipelineCache<TextGenerationPipeline, Loca
       // correctly through the chat handler (503) instead of being swallowed as
       // in-band SSE errors inside a 200 response stream.
       const msg = error instanceof Error ? error.message : String(error);
-      if (
-        msg.includes("onnx") || msg.includes("ONNX") ||
-        msg.includes("dlopen") || msg.includes("dynamic linking") ||
-        msg.includes("native module") || msg.includes("SharedArrayBuffer")
-      ) {
+      if (isOnnxUnavailableError(msg)) {
         transformersModule = null;
         throw toError(
           createError({
@@ -412,11 +422,7 @@ const conditionalGenerationRuntimes = createPipelineCache<
       return { processor, model };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      if (
-        msg.includes("onnx") || msg.includes("ONNX") ||
-        msg.includes("dlopen") || msg.includes("dynamic linking") ||
-        msg.includes("native module") || msg.includes("SharedArrayBuffer")
-      ) {
+      if (isOnnxUnavailableError(msg)) {
         transformersModule = null;
         throw toError(
           createError({

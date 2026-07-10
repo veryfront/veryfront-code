@@ -180,6 +180,12 @@ function AppShellRoot({
       toggle: (side) => setOpen(side, !isOpen(side)),
       sidebarId: (side) => `${baseId}-sidebar-${side}`,
     };
+    // Intentional: list the individual open fields rather than desktopOpen/mobileOpen
+    // objects. The objects are re-created on every render (derived from state), so
+    // listing them would make `value` a new reference every render and cause all
+    // consumers to re-render unnecessarily. Listing the primitive fields means the
+    // memo only invalidates when sidebar visibility or the viewport mode actually
+    // changes. Do not "fix" this to `[isMobile, setOpen, baseId, desktopOpen, mobileOpen]`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isMobile,
@@ -241,6 +247,14 @@ function SidebarOverlay({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const [entered, setEntered] = React.useState(false);
 
+  // Refs so the keydown handler always reads the latest ctx/side without
+  // being recreated on every render (which would tear down and re-register
+  // the focus trap on each parent re-render).
+  const ctxRef = React.useRef(ctx);
+  ctxRef.current = ctx;
+  const sideRef = React.useRef(side);
+  sideRef.current = side;
+
   React.useEffect(() => {
     const panel = panelRef.current;
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -254,7 +268,7 @@ function SidebarOverlay({
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        ctx.setOpen(side ?? "left", false);
+        ctxRef.current.setOpen(sideRef.current ?? "left", false);
         return;
       }
       if (e.key !== "Tab") return;
@@ -281,7 +295,6 @@ function SidebarOverlay({
       cancelAnimationFrame(raf);
       previouslyFocused?.focus?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const hiddenTransform = side === "right" ? "translateX(100%)" : "translateX(-100%)";

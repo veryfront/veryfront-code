@@ -1802,22 +1802,40 @@ function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> 
   );
 }
 
-/** Run an async task over items with a fixed concurrency limit. */
+/** Run an async task over items with a fixed concurrency limit.
+ *
+ * Unlike a bare Promise.all of workers, each worker catches per-item
+ * failures so a single bad upload never abandons the remaining queue.
+ * All items are attempted; if any fail, an AggregateError is thrown
+ * after all workers complete so callers know exactly which assets failed.
+ */
 async function uploadWithConcurrency<T>(
   items: T[],
   concurrency: number,
   task: (item: T) => Promise<void>,
 ): Promise<void> {
   let index = 0;
+  const errors: unknown[] = [];
+
   async function worker(): Promise<void> {
     while (index < items.length) {
       const current = index++;
-      await task(items[current]!);
+      try {
+        await task(items[current]!);
+      } catch (error) {
+        errors.push(error);
+      }
     }
   }
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => worker(),
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
   );
-  await Promise.all(workers);
+
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      `${errors.length} of ${items.length} asset uploads failed`,
+    );
+  }
 }

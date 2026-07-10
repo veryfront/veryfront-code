@@ -19,30 +19,26 @@ const logger = baseLogger.component("cache");
 export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
 
 /**
- * Common patterns for hardcoded cache paths that should be tokenized.
- * Used for invariant checks.
+ * Patterns for hardcoded cache paths that should have been tokenized before a
+ * distributed-cache write. This is a last-line INVARIANT check — the actual
+ * portability mechanism is `tokenizeAllVeryFrontPaths`, which rewrites cache dirs
+ * under ANY root. These patterns only decide whether to *raise* when something
+ * slipped through.
  *
- * These patterns match absolute file:// paths containing cache directories.
- * The patterns are intentionally broad to catch any absolute path that contains
- * veryfront cache markers (veryfront-http-bundle, veryfront-mdx-esm, .cache).
+ * MAINTENANCE: the goal is to match any absolute `file://` path that still carries
+ * a machine-specific cache directory. The `.cache` matcher below is root-agnostic
+ * on purpose (it caught only /app, /Users, /home, /tmp, /var/tmp, Windows before,
+ * which let non-standard deploy roots like /nix/store or /workspace bypass the
+ * assertion). Tokenized paths use the `__VF_CACHE_DIR__` token, which contains no
+ * `/.cache/` segment and no bare veryfront cache dir, so they are never matched.
  */
 const HARDCODED_PATH_PATTERNS = [
-  // Direct .cache in common root paths
-  /file:\/\/\/app\/.cache\//,
-  /file:\/\/\/app\/\.cache\//,
-  // .cache anywhere under /Users/ (catches /Users/*/any/path/.cache/)
-  /file:\/\/\/Users\/[^"'\s]*\.cache\//,
-  /file:\/\/\/Users\/[^"'\s]*\/\.cache\//,
-  // .cache anywhere under /home/
-  /file:\/\/\/home\/[^"'\s]*\.cache\//,
-  /file:\/\/\/home\/[^"'\s]*\/\.cache\//,
-  // Temp directories
-  /file:\/\/\/tmp\/[^"'\s]*\.cache\//,
-  /file:\/\/\/var\/tmp\/[^"'\s]*\.cache\//,
-  // Windows paths
+  // Any absolute unix path containing a `/.cache/` segment, under any root.
+  /file:\/\/\/[^"'\s]*\/\.cache\//,
+  // Windows drive-letter paths with a .cache segment.
   /file:\/\/\/[A-Za-z]:\/[^"'\s]*\.cache\//,
-  // Veryfront-specific cache directories (match anywhere in path)
-  // Note: These patterns exclude paths with __VF_CACHE_DIR__ token (already portable)
+  // Veryfront-specific cache directories anywhere in the path (any root),
+  // excluding already-portable paths that use the __VF_CACHE_DIR__ token.
   /file:\/\/(?!__VF_CACHE_DIR__)[^"'\s]*veryfront-http-bundle\//,
   /file:\/\/(?!__VF_CACHE_DIR__)[^"'\s]*veryfront-mdx-esm\//,
 ];
@@ -52,7 +48,7 @@ const HARDCODED_PATH_PATTERNS = [
  */
 export function hasHardcodedCachePaths(code: string): boolean {
   // Fast reject: every pattern requires a "file://" prefix, so if the code
-  // contains no file:// URL at all we skip the 12 full-string regex scans.
+  // contains no file:// URL at all we skip the full-string regex scans.
   // This runs on every cache write over whole (often 50-200KB) modules.
   if (!code.includes("file://")) return false;
   return HARDCODED_PATH_PATTERNS.some((pattern) => pattern.test(code));

@@ -34,7 +34,10 @@ export function isInternalHost(host: string): boolean {
 /** Monitoring paths that should skip domain lookup */
 export const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health"]);
 
-/** Cached request timeout value (lazy-loaded to avoid module-level env access) */
+/** Cached request timeout value (lazy-loaded to avoid module-level env access).
+ *  Intentionally cached: the timeout env var is expected to be stable for the process
+ *  lifetime and is read at first use (after bootstrap env loading completes).
+ *  If you need to read a live env var change, call getTimeoutFromEnv() directly. */
 let _requestTimeoutMs: number | null = null;
 
 /** Get request timeout in milliseconds (configurable via getRequestTimeout() env var) */

@@ -9,6 +9,7 @@ import type {
 import type { AuthConfig } from "./middleware/types.ts";
 import { Buffer } from "node:buffer";
 import { constantTimeEqual } from "../utils/constant-time.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 
 function encodeBase64(value: string): string {
   if (typeof globalThis.btoa === "function") {
@@ -87,7 +88,11 @@ export class AuthHandler extends BaseHandler {
       return;
     }
 
-    if ((globalThis as Record<string, unknown>).__vfTestEnv === true) return;
+    // `__vfTestEnv` lets the test harness skip env-var credential loading so
+    // tests run without auth. It must NEVER short-circuit auth in production:
+    // guard it behind the environment check so a stray/injected global can't
+    // silently disable authentication on a live deployment.
+    if (!isProduction() && (globalThis as Record<string, unknown>).__vfTestEnv === true) return;
 
     this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") ?? "";
     this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") ?? "";

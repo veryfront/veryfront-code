@@ -227,13 +227,22 @@ export class Sandbox {
 
       for (const line of lines) {
         if (line.trim()) {
-          yield JSON.parse(line) as ExecStreamEvent;
+          try {
+            yield JSON.parse(line) as ExecStreamEvent;
+          } catch {
+            // Malformed NDJSON line (e.g. truncated network chunk); skip and
+            // continue streaming so already-buffered output is not lost.
+          }
         }
       }
     }
 
     if (buffer.trim()) {
-      yield JSON.parse(buffer) as ExecStreamEvent;
+      try {
+        yield JSON.parse(buffer) as ExecStreamEvent;
+      } catch {
+        // Malformed final chunk; discard rather than surfacing a SyntaxError.
+      }
     }
   }
 

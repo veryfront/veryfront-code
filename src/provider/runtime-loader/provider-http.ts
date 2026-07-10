@@ -1,6 +1,12 @@
 import { readRecord } from "./provider-records.ts";
 
-export type ProviderKind = "anthropic" | "openai" | "google";
+/**
+ * Which provider runtime a request is being sent to.
+ * `mistral` and `moonshotai` use the OpenAI-compatible wire format and are
+ * therefore treated as "openai" for error classification purposes; they are
+ * listed here so call sites can pass accurate labels without a cast.
+ */
+export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moonshotai";
 
 /**
  * Base class for typed provider errors. The `retryable` flag is the
@@ -103,8 +109,25 @@ export async function buildProviderError(
     });
   }
 
-  // OpenAI / Google 503 = overloaded.
-  if ((provider === "openai" || provider === "google") && status === 503) {
+  // Anthropic 429 = rate limiting. Retryable; honor Retry-After if present.
+  if (provider === "anthropic" && status === 429) {
+    return new ProviderRateLimitError({
+      provider,
+      status,
+      message,
+      retryable: true,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    });
+  }
+
+  // OpenAI / Mistral / Moonshotai / Google 503 = overloaded.
+  // Mistral and Moonshotai use the OpenAI-compatible wire format so their
+  // error shapes are structurally identical to OpenAI's.
+  if (
+    (provider === "openai" || provider === "mistral" || provider === "moonshotai" ||
+      provider === "google") &&
+    status === 503
+  ) {
     return new ProviderOverloadedError({
       provider,
       status,
@@ -114,10 +137,13 @@ export async function buildProviderError(
     });
   }
 
-  // OpenAI 429 splits based on the error code in the body:
+  // OpenAI / Mistral / Moonshotai 429 splits based on the error code in the body:
   //  - insufficient_quota → hard quota, non-retryable
   //  - rate_limit_exceeded / tokens_per_min_exceeded → retry with Retry-After
-  if (provider === "openai" && status === 429) {
+  // Mistral and Moonshotai use the same OpenAI-compatible error envelope.
+  if (
+    (provider === "openai" || provider === "mistral" || provider === "moonshotai") && status === 429
+  ) {
     if (errorCode === "insufficient_quota") {
       return new ProviderQuotaError({
         provider,

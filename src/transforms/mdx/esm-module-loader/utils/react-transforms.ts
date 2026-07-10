@@ -11,6 +11,7 @@
 import { fileURLToPath } from "node:url";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { IS_TRUE_NODE } from "../constants.ts";
+import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 
 type ImportMetaWithResolve = ImportMeta & {
   resolve?: (specifier: string, parent?: string) => string;
@@ -65,22 +66,20 @@ export function resolveNodePackage(packageSpec: string): string | null {
 export async function transformReactImportsToAbsolute(code: string): Promise<string> {
   if (!IS_TRUE_NODE) return code;
 
-  const replacements: Array<[RegExp, string | null]> = [
-    [/from\s*['"]react\/jsx-runtime['"]/g, await resolveNodePackage("react/jsx-runtime")],
-    [
-      /from\s*['"]react\/jsx-dev-runtime['"]/g,
-      await resolveNodePackage("react/jsx-dev-runtime"),
-    ],
-    [/from\s*['"]react-dom['"]/g, await resolveNodePackage("react-dom")],
-    [/from\s*['"]react['"]/g, await resolveNodePackage("react")],
-  ];
+  // Resolve all React package paths up front so the replacer is synchronous.
+  const reactPaths: Record<string, string | null> = {
+    "react/jsx-runtime": await resolveNodePackage("react/jsx-runtime"),
+    "react/jsx-dev-runtime": await resolveNodePackage("react/jsx-dev-runtime"),
+    "react-dom": await resolveNodePackage("react-dom"),
+    "react": await resolveNodePackage("react"),
+  };
 
-  let result = code;
-
-  for (const [pattern, resolvedPath] of replacements) {
-    if (!resolvedPath) continue;
-    result = result.replace(pattern, `from "file://${resolvedPath}"`);
-  }
-
-  return result;
+  // Use the AST-aware lexer rather than a blanket regex so that only actual
+  // import specifiers are rewritten.  A string literal like
+  // `"import React from 'react'"` in a code comment or template would NOT be
+  // touched by replaceSpecifiers, unlike a plain `.replace(/from 'react'/g,…)`.
+  return replaceSpecifiers(code, (specifier) => {
+    const resolved = reactPaths[specifier];
+    return resolved ? `file://${resolved}` : null;
+  });
 }

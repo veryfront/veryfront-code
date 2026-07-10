@@ -32,24 +32,37 @@ export async function fetchProjectEnvVars(
     encodeURIComponent(environmentId)
   }&limit=${ENV_VARS_FETCH_LIMIT}`;
 
+  // Separate try-catch blocks eliminate the need to re-detect "our own" thrown errors
+  // by message string matching. Each catch handles a distinct failure mode.
+
+  let response: Response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
     });
+  } catch (error) {
+    logger.error("Env var fetch network error", {
+      projectSlug,
+      environmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 
-    if (!response.ok) {
-      await response.body?.cancel();
-      logger.warn("Failed to fetch env vars", {
-        projectSlug,
-        environmentId,
-        status: response.status,
-      });
-      throw NETWORK_ERROR.create({ detail: `Failed to fetch env vars: ${response.status}` });
-    }
+  if (!response.ok) {
+    await response.body?.cancel();
+    logger.warn("Failed to fetch env vars", {
+      projectSlug,
+      environmentId,
+      status: response.status,
+    });
+    throw NETWORK_ERROR.create({ detail: `Failed to fetch env vars: ${response.status}` });
+  }
 
+  try {
     const body = await response.json() as {
       data?: Array<{ key: string; value: string }>;
     };
@@ -69,10 +82,7 @@ export async function fetchProjectEnvVars(
 
     return result;
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Failed to fetch env vars")) {
-      throw error;
-    }
-    logger.error("Env var fetch error", {
+    logger.error("Env var fetch parse error", {
       projectSlug,
       environmentId,
       error: error instanceof Error ? error.message : String(error),

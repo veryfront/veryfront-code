@@ -330,9 +330,18 @@ if (import.meta.main) {
   onGlobalError((error, type) => {
     // Fatal errors that indicate corrupted process state — let the process crash
     // so the orchestrator (k8s) can restart it cleanly
-    const isFatal = (error.name === "RangeError" && error.message.includes("Maximum call stack")) ||
-      error.message.includes("out of memory") ||
+    // Stack overflow can be detected reliably via error.name + message.
+    const isStackOverflow = error.name === "RangeError" &&
+      error.message.includes("Maximum call stack");
+
+    // OOM detection relies on V8/Deno message strings which are engine implementation
+    // details (not standardized) and may change between versions. Treat as a best-effort
+    // heuristic: if these strings change, OOM errors will be absorbed as non-fatal until
+    // updated here. The OS / k8s OOMKiller will eventually terminate the process anyway.
+    const isOOM = error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
+
+    const isFatal = isStackOverflow || isOOM;
 
     globalLog.error(`${type}: Application error caught`, {
       message: error.message,
@@ -458,5 +467,9 @@ if (import.meta.main) {
     onSignal("SIGTERM", () => handleSignal("SIGTERM"));
   } catch (e) {
     logger.error("Failed to start production server:", e);
+    // Re-throw so the process exits with a non-zero code. A running process with no HTTP
+    // listener causes K8s readiness probes to fail eventually, but crashing immediately
+    // signals the orchestrator to restart the pod faster.
+    throw e;
   }
 }

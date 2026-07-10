@@ -67,12 +67,14 @@ export class CSSHandler extends BaseHandler {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
     const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
-    const lookup = () =>
-      runWithCacheKeyContext(cacheCtx, () =>
-        getCSSWithJITFallback(
-          cssHash,
-          ctx.projectSlug ?? ctx.projectId,
-        ));
+    const fetchCSS = () =>
+      getCSSWithJITFallback(
+        cssHash,
+        ctx.projectSlug ?? ctx.projectId,
+      );
+    // When no scoped cache context can be built (no project identity), fetch
+    // without a cache-key context rather than crashing the request.
+    const lookup = () => cacheCtx ? runWithCacheKeyContext(cacheCtx, fetchCSS) : fetchCSS();
 
     const css = ctx.projectSlug
       ? await runWithRequestContext(

@@ -71,8 +71,15 @@ export interface WorkspaceSyncResult {
   /** Total bytes downloaded */
   bytesDownloaded: number;
 
-  /** Files that were skipped (too large, excluded) */
+  /** Files that were skipped for benign reasons (too large, excluded by pattern) */
   skippedFiles: string[];
+
+  /**
+   * Files that failed to download (read threw). Kept separate from skippedFiles
+   * so a fetch/permission failure isn't silently indistinguishable from an
+   * intentional skip.
+   */
+  downloadErrors: Array<{ path: string; error: string }>;
 
   /** Duration in ms */
   duration: number;
@@ -82,8 +89,14 @@ export interface WorkspaceSyncResult {
  * Upload result
  */
 export interface UploadResult {
-  /** Files that were uploaded */
+  /** Files that were actually uploaded via the onUpload handler */
   uploaded: FileChange[];
+
+  /**
+   * Files that were NOT uploaded because no onUpload handler was provided.
+   * Distinct from `uploaded` so callers don't mistake a dry run for a real one.
+   */
+  skipped: FileChange[];
 
   /** Files that failed to upload */
   failed: Array<{ path: string; error: string }>;
@@ -104,11 +117,25 @@ async function checksum(content: string): Promise<string> {
 }
 
 /**
- * Check if path matches any pattern
+ * Check if a path matches any of the given patterns.
+ *
+ * This is a deliberately minimal matcher, NOT a full glob implementation. Only
+ * these four forms are recognized:
+ *
+ *   - a leading double-star + slash (e.g. "double-star/foo.ts") matches any
+ *     path ending in that suffix
+ *   - a trailing slash + double-star (e.g. "src/double-star") matches any path
+ *     under that prefix
+ *   - `*.ext` matches any path ending in `.ext`
+ *   - `exact/path` exact match (with or without a leading slash)
+ *
+ * Anything else (brace expansion `{a,b}`, single-segment `*`, `?`, character
+ * classes, mid-path `**`) is NOT supported and will simply fail to match. Keep
+ * include/exclude patterns within the forms above, or replace this with a real
+ * glob matcher (e.g. @std/path globToRegExp) if broader support is needed.
  */
 function matchesPattern(path: string, patterns: string[]): boolean {
   for (const pattern of patterns) {
-    // Simple glob matching
     if (pattern.startsWith("**/")) {
       // Match anywhere in path
       const suffix = pattern.slice(3);
@@ -176,6 +203,7 @@ export class WorkspaceSync {
   async initialize(): Promise<WorkspaceSyncResult> {
     const startTime = Date.now();
     const skippedFiles: string[] = [];
+    const downloadErrors: Array<{ path: string; error: string }> = [];
     let filesDownloaded = 0;
     let bytesDownloaded = 0;
 
@@ -241,20 +269,34 @@ export class WorkspaceSync {
           logger.info("Downloaded file", { path });
         }
       } catch (error) {
-        if (this.config.debug) {
-          logger.error("Failed to download file", { path }, error);
-        }
-        skippedFiles.push(path);
+        // A read failure is an error, not a benign skip — record it separately.
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("Failed to download workspace file", { path, error: message });
+        downloadErrors.push({ path, error: message });
       }
     }
 
     this.initialized = true;
+
+    // Surface a systemic download problem: if a meaningful fraction of files
+    // failed, the workspace is likely incomplete and callers should not treat
+    // it as a faithful copy of the project.
+    const consideredFiles = filesDownloaded + downloadErrors.length;
+    if (downloadErrors.length > 0 && consideredFiles > 0) {
+      const failureRate = downloadErrors.length / consideredFiles;
+      logger.warn("Workspace initialized with download errors", {
+        failed: downloadErrors.length,
+        downloaded: filesDownloaded,
+        failureRatePct: Math.round(failureRate * 100),
+      });
+    }
 
     const result: WorkspaceSyncResult = {
       workspaceDir: this.workspaceDir,
       filesDownloaded,
       bytesDownloaded,
       skippedFiles,
+      downloadErrors,
       duration: Date.now() - startTime,
     };
 
@@ -388,6 +430,7 @@ export class WorkspaceSync {
   ): Promise<UploadResult> {
     const startTime = Date.now();
     const uploaded: FileChange[] = [];
+    const skipped: FileChange[] = [];
     const failed: Array<{ path: string; error: string }> = [];
 
     for (const change of changes) {
@@ -408,12 +451,15 @@ export class WorkspaceSync {
           await options.onUpload(change.path, content, change.type);
           uploaded.push(change);
         } else {
-          // No upload handler - just log the change
+          // No upload handler: this is a dry run. Record as skipped (NOT
+          // uploaded) so the caller can tell nothing was persisted.
           if (this.config.debug) {
-            logger.info("Would upload file", { path: change.path, type: change.type });
+            logger.info("Would upload file (no onUpload handler)", {
+              path: change.path,
+              type: change.type,
+            });
           }
-          // Mark as uploaded for tracking, even though we didn't actually upload
-          uploaded.push(change);
+          skipped.push(change);
         }
       } catch (error) {
         failed.push({
@@ -425,6 +471,7 @@ export class WorkspaceSync {
 
     return {
       uploaded,
+      skipped,
       failed,
       duration: Date.now() - startTime,
     };

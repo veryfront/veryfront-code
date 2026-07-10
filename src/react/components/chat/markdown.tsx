@@ -309,23 +309,36 @@ export function Markdown({
   rehypePlugins,
 }: MarkdownProps): React.ReactElement {
   const [isLoaded, setIsLoaded] = React.useState(false);
+  // Incremented on transient import failure to trigger one automatic retry.
+  // Capped at 1: a second failure (persistent network error or CSP block)
+  // leaves the component on the plain-text fallback rather than looping.
+  const [loadAttempt, setLoadAttempt] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
 
     async function load(): Promise<void> {
-      if (!ReactMarkdown) {
-        const [rmModule, gfmModule] = await Promise.all([
-          importFromUrl<DefaultModule<unknown>>(ESM_REACT_MARKDOWN),
-          importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
-        ]);
+      try {
+        if (!ReactMarkdown) {
+          const [rmModule, gfmModule] = await Promise.all([
+            importFromUrl<DefaultModule<unknown>>(ESM_REACT_MARKDOWN),
+            importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
+          ]);
 
-        ReactMarkdown = rmModule.default as ReactMarkdownComponent;
-        remarkGfm = gfmModule.default;
+          ReactMarkdown = rmModule.default as ReactMarkdownComponent;
+          remarkGfm = gfmModule.default;
+        }
+
+        if (cancelled) return;
+        setIsLoaded(true);
+      } catch (_) {
+        // Reset module vars so a retry starts fresh (stale partial assignments
+        // would cause the next attempt to skip the import and call a null default).
+        ReactMarkdown = null;
+        remarkGfm = null;
+        // Schedule one automatic retry; cap at attempt 1 to avoid an infinite loop.
+        if (!cancelled && loadAttempt === 0) setLoadAttempt(1);
       }
-
-      if (cancelled) return;
-      setIsLoaded(true);
     }
 
     load();
@@ -333,7 +346,7 @@ export function Markdown({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   if (!isLoaded || !ReactMarkdown) {
     return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;

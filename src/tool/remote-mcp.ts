@@ -113,10 +113,26 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
-function isOauthInvalidGrantMessage(value: unknown): boolean {
+function isOauthExpiredMessage(value: unknown): boolean {
+  // Check structured OAuth error field first (RFC 6749 / RFC 6750 error codes).
+  if (typeof value === "object" && value !== null) {
+    const errorCode = (value as Record<string, unknown>).error;
+    if (
+      errorCode === "invalid_grant" ||
+      errorCode === "expired_token" ||
+      errorCode === "token_revoked"
+    ) {
+      return true;
+    }
+  }
+  // Fall back to substring scan for providers that embed the code in message text.
   const text = typeof value === "string" ? value : JSON.stringify(value);
   const normalized = text.toLowerCase();
-  return normalized.includes("invalid_grant");
+  return (
+    normalized.includes("invalid_grant") ||
+    normalized.includes("expired_token") ||
+    normalized.includes("token_revoked")
+  );
 }
 
 function getIntegrationIdFromToolName(toolName: string): string {
@@ -162,7 +178,7 @@ function normalizeKnownToolError(
   endpoint: string,
   context?: ToolExecutionContext,
 ): unknown {
-  if (!isOauthInvalidGrantMessage(value)) {
+  if (!isOauthExpiredMessage(value)) {
     return value;
   }
 

@@ -171,9 +171,17 @@ export function clearSnippetCacheForProject(projectSlug: string): void {
 function getModuleServerBase(moduleServerUrl?: string): string {
   if (!moduleServerUrl) return "http://localhost:3002";
 
-  if (moduleServerUrl.startsWith("http://")) return moduleServerUrl;
-  if (moduleServerUrl.startsWith("https://")) return moduleServerUrl;
+  if (moduleServerUrl.startsWith("http://") || moduleServerUrl.startsWith("https://")) {
+    return moduleServerUrl;
+  }
 
+  // The provided URL is not an http(s) URL (e.g. a bare hostname, ws:// address,
+  // or typo). Falling back silently to localhost:3002 would mask the
+  // misconfiguration with a confusing connection error — warn explicitly instead.
+  logger.warn(
+    "[SnippetRenderer] moduleServerUrl has an unrecognised scheme, falling back to localhost:3002",
+    { moduleServerUrl },
+  );
   return "http://localhost:3002";
 }
 

@@ -33,9 +33,14 @@ export class SecurityConfigLoader {
       const cfg = this.configOverride ?? (await getConfig(this.projectDir, this.adapter));
       this.applyConfig(cfg);
     } catch (error) {
-      // Config is optional, so we don't throw
-      logger.debug("Failed to load config", { error });
-      this.isLoaded = true; // Mark as loaded even on error to prevent retry
+      // A legitimately-absent config resolves (no throw) and is applied above.
+      // Reaching here means loading actually failed (e.g. transient FS error or
+      // a parse failure). Do NOT mark as loaded: marking loaded here would leave
+      // securityConfig null for the process lifetime, silently disabling CORS,
+      // CSRF, and CSP. Instead fail loud and clear loadPromise so the next
+      // ensureLoaded() retries rather than permanently degrading security.
+      logger.error("Failed to load security config; will retry on next request", { error });
+      this.loadPromise = null;
     }
   }
 

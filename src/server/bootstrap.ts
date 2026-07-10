@@ -400,6 +400,12 @@ export async function bootstrap(
       const originalConfig = config;
       const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
 
+      // HEURISTIC: detect whether FSAdapter returned a "default dev config" (i.e., the remote
+      // source had no config file) by checking for the exact default values veryfront uses when
+      // no config is found. Known limitation: a user whose real config happens to use port=3000,
+      // host=localhost, and no HMR block will have their config silently discarded here.
+      // A future improvement would be for FSAdapter to return an explicit "config not found"
+      // signal instead of the default-value object.
       const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
         reloadedConfig.dev?.host === "localhost" &&
         !reloadedConfig.dev?.hmr;

@@ -29,13 +29,6 @@ export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): strin
     getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 }
 
-function isControlPlaneVerificationError(error: unknown): boolean {
-  return error instanceof Error && (
-    error.message.includes("Control-plane") ||
-    error.message.includes("Unsupported")
-  );
-}
-
 export async function verifyControlPlaneRequest(
   req: Request,
   ctx: HandlerContext,
@@ -73,23 +66,17 @@ export async function verifyControlPlaneRequest(
       maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
     });
   } catch (error) {
-    if (isControlPlaneVerificationError(error)) {
-      logger.warn("Invalid control-plane signature", {
-        error,
-        projectSlug,
-        expectedSubject: options.expectedSubject,
-        expectedSurface: options.expectedSurface,
-      });
-      throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
-    }
-
-    logger.error("Unexpected error during control-plane verification", {
+    // verifyControlPlaneJws performs only crypto and claim validation with no
+    // external I/O — any error it throws means the signature is invalid.
+    // Mapping all errors to 401 is the safe-fail path: it avoids leaking
+    // internal error detail and doesn't depend on message-string matching
+    // that breaks when upstream wording changes.
+    logger.warn("Invalid control-plane signature", {
       error,
       projectSlug,
+      expectedSubject: options.expectedSubject,
+      expectedSurface: options.expectedSurface,
     });
-    throw new ControlPlaneRequestError(
-      HTTP_INTERNAL_SERVER_ERROR,
-      "Internal error during request verification",
-    );
+    throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
   }
 }

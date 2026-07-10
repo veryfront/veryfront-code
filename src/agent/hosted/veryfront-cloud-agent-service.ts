@@ -458,6 +458,10 @@ async function importOpenTelemetryNodeTelemetryProvider() {
   }
 }
 
+// Runtime heuristic: detects a missing optional npm/Deno package by error message text.
+// These strings come from Node, Deno, and bundler runtimes and can vary by version.
+// If the wording changes, a missing optional package will throw instead of returning null,
+// turning an optional dependency into a hard startup failure — the safe fallback.
 function isMissingOptionalPackageError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Cannot find package") ||

@@ -16,7 +16,21 @@ const RETRY_DELAY_MS = 500;
 
 /** Check if an error is likely transient (network issue or server error) */
 function isTransientError(error: unknown): boolean {
-  if (error instanceof TypeError && error.message.includes("fetch")) return true;
+  // Narrow TypeError to known fetch/network failure messages only.
+  // Bare `error.message.includes("fetch")` is too broad and can match
+  // non-network TypeErrors (e.g., type validation mentioning "fetch").
+  if (error instanceof TypeError) {
+    const msg = error.message;
+    if (
+      msg.includes("fetch failed") || // Deno runtime fetch failure
+      msg.includes("Failed to fetch") || // browser/undici fetch failure
+      msg.includes("error sending request") ||
+      msg.includes("NetworkError when attempting to fetch") ||
+      msg.includes("network error") // documented Fetch API network error string
+    ) {
+      return true;
+    }
+  }
 
   const status = (error as { status?: number })?.status;
   if (typeof status === "number" && status >= 500) return true;
@@ -26,8 +40,12 @@ function isTransientError(error: unknown): boolean {
     message.includes("ECONNRESET") ||
     message.includes("ECONNREFUSED") ||
     message.includes("ETIMEDOUT") ||
+    message.includes("ENETUNREACH") ||
     message.includes("socket hang up") ||
-    message.includes("network")
+    message.includes("network error") // specific phrase; see note below
+    // Note: bare "network" intentionally omitted — too broad, matches unrelated
+    // validation errors that mention "network settings" etc. The two-word
+    // "network error" phrase is specific enough to avoid those false positives.
   ) {
     return true;
   }

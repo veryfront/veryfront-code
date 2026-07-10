@@ -46,6 +46,13 @@ export function Floating({
     visibility: "hidden",
   });
 
+  // Stable ref for onDismiss so the layout effect doesn't tear down and
+  // re-register all scroll/resize/pointer/key listeners on every parent render
+  // when the caller passes an inline arrow. Without this, `pos` resets to
+  // `visibility: hidden` on each re-registration, causing visible flicker.
+  const onDismissRef = React.useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+
   React.useLayoutEffect(() => {
     if (!open) return;
     const update = () => {
@@ -82,10 +89,10 @@ export function Floating({
       if (
         ref.current && !ref.current.contains(t) &&
         !anchorRef.current?.contains(t)
-      ) onDismiss();
+      ) onDismissRef.current();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onDismiss();
+      if (e.key === "Escape") onDismissRef.current();
     };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -96,7 +103,7 @@ export function Floating({
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, align, matchTriggerWidth, onDismiss, anchorRef]);
+  }, [open, align, matchTriggerWidth, anchorRef]);
 
   if (!open) return null;
   // Portal into the nearest chat root rather than <body>: the design tokens are

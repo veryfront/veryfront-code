@@ -8,9 +8,22 @@ const logger = baseLogger.component("es-module-lexer");
 
 let initPromise: Promise<void> | null = null;
 
-// Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
-// Uses negative lookbehind to avoid matching URLs inside escaped quotes (like \")
+// Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes).
+// Uses negative lookbehind to avoid matching URLs inside escaped quotes (like \").
+//
+// Template literals with ${} interpolation: the pattern captures from the
+// opening backtick to the closing backtick, treating `${…}` as part of the
+// URL text.  This is intentional — mask/unmask is atomic, so the interpolation
+// is preserved verbatim.  Template literals with dynamic expressions are
+// correctly passed through; es-module-lexer will report their `n` field as
+// undefined, so the replacer skips them.
 const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
+
+// Placeholder prefix for masked HTTP URLs.  The hex suffix makes it
+// unlikely to collide with any identifier or string in user-supplied code.
+// Placeholders are session-local (never written to disk) so uniqueness only
+// needs to hold for the lifetime of a single parse call.
+const VFURL_PLACEHOLDER_PREFIX = "__VF_HTTP_MASK_e3c2_";
 
 type UrlMaskResult = {
   masked: string;
@@ -22,7 +35,7 @@ function maskHttpUrls(code: string): UrlMaskResult {
   let counter = 0;
 
   const masked = code.replace(HTTP_URL_PATTERN, (_match, quote: string, url: string) => {
-    const placeholder = `__VFURL_${counter++}__`;
+    const placeholder = `${VFURL_PLACEHOLDER_PREFIX}${counter++}__`;
     urlMap.set(placeholder, url);
     return `${quote}${placeholder}${quote}`;
   });

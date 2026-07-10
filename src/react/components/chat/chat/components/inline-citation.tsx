@@ -35,7 +35,13 @@ export function InlineCitation({
   const show = React.useCallback(() => {
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      // Position the card using fixed positioning to prevent overflow clipping
+      // Position the card using fixed positioning to prevent overflow clipping.
+      // Constants assume the card renders with the `w-80` class (Tailwind = 320px):
+      //   160 = 320 / 2 — centers the card horizontally on the trigger button
+      //   328 = 320 + 8 — keeps an 8px gap between the card's right edge and the viewport
+      //   8   = minimum left margin from the viewport edge
+      // If `cardClassName` overrides the card width, update these constants or
+      // replace with a ref that measures the rendered card dimensions.
       const el = buttonRef.current;
       if (el) {
         const rect = el.getBoundingClientRect();

@@ -184,7 +184,8 @@ function validateConfigShape(userConfig: unknown): void {
   }
 }
 
-function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
+/** @internal Exported for tests: merges user config over fresh defaults (deep for nested objects). */
+export function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
   const defaults = createFreshDefaults();
 
   const merged = {
@@ -196,6 +197,16 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
       veryfront: {
         ...defaults.fs?.veryfront,
         ...userConfig.fs?.veryfront,
+        // Nested sub-objects would otherwise be replaced wholesale by a partial
+        // user override, dropping the default cache/retry fields.
+        cache: {
+          ...defaults.fs?.veryfront?.cache,
+          ...userConfig.fs?.veryfront?.cache,
+        },
+        retry: {
+          ...defaults.fs?.veryfront?.retry,
+          ...userConfig.fs?.veryfront?.retry,
+        },
       },
     },
     dev: {
@@ -205,14 +216,30 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
     theme: {
       ...defaults.theme,
       ...userConfig.theme,
+      // Deep-merge colors so a user setting one color keeps the default palette.
+      colors: {
+        ...defaults.theme?.colors,
+        ...userConfig.theme?.colors,
+      },
     },
     build: {
       ...defaults.build,
       ...userConfig.build,
+      // Deep-merge esbuild so a partial override keeps default wasmURL/worker.
+      esbuild: {
+        ...defaults.build?.esbuild,
+        ...userConfig.build?.esbuild,
+      },
     },
     cache: {
       ...defaults.cache,
       ...userConfig.cache,
+      // Deep-merge render so `cache: { dir: "/custom" }` doesn't drop the default
+      // render sub-object (whose absence crashed callers reading cache.render.type).
+      render: {
+        ...defaults.cache?.render,
+        ...userConfig.cache?.render,
+      },
     },
     resolve: {
       ...defaults.resolve,
@@ -268,6 +295,9 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
 }
 
 function isConfigError(error: unknown): boolean {
+  // Prefer the structured slug check. The message-prefix check is only a fallback
+  // for errors thrown before they were migrated to the VeryfrontError registry;
+  // it is intentionally narrow to avoid misclassifying third-party errors.
   if (error instanceof VeryfrontError && error.slug === "config-validation-failed") return true;
   return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
 }

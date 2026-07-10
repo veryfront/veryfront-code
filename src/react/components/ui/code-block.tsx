@@ -82,13 +82,22 @@ async function loadHighlighter(): Promise<ShikiHighlighter | null> {
   if (!isBrowserEnvironment()) return null;
   if (highlighter) return highlighter;
 
-  highlighterPromise ??= (async () => {
-    shikiModule ??= await importFromUrl<ShikiModule>(ESM_SHIKI);
-    return await shikiModule.createHighlighter({
-      themes: ["github-light", "github-dark"],
-      langs: ["text"],
+  if (!highlighterPromise) {
+    highlighterPromise = (async () => {
+      shikiModule ??= await importFromUrl<ShikiModule>(ESM_SHIKI);
+      return await shikiModule.createHighlighter({
+        themes: ["github-light", "github-dark"],
+        langs: ["text"],
+      });
+    })();
+    // Reset the cached promise on failure so the next call can retry. Without
+    // this, a transient network error (e.g. CSP, CDN blip) permanently locks
+    // every subsequent highlight attempt against the same rejected promise —
+    // the only recovery would be a full page reload.
+    highlighterPromise.catch(() => {
+      highlighterPromise = null;
     });
-  })();
+  }
 
   highlighter = await highlighterPromise;
   return highlighter;
@@ -109,8 +118,10 @@ async function ensureLanguage(lang: string): Promise<void> {
       loadedLangs.add(lang);
     })
     .catch(() => {
-      // Unknown/unsupported grammar — fall back to plain rendering.
-      loadedLangs.add(lang);
+      // Remove from the pending map so the next call can retry. Do NOT add
+      // to loadedLangs — that would permanently mark a transiently-failed
+      // load as succeeded and suppress all future retries for this language.
+      langLoadPromises.delete(lang);
     });
   langLoadPromises.set(lang, load);
   await load;
@@ -273,6 +284,14 @@ export interface UseClipboardResult {
 /** Clipboard copy hook: copies `text`, flips `copied` for ~2s. */
 export function useClipboard(text: string): UseClipboardResult {
   const [copied, setCopied] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  React.useEffect(() => {
+    return () => {
+      clearTimeout(timerRef.current);
+    };
+  }, []);
+
   const copy = React.useCallback(() => {
     void (async () => {
       try {
@@ -287,7 +306,8 @@ export function useClipboard(text: string): UseClipboardResult {
         document.body.removeChild(textarea);
       }
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 2000);
     })();
   }, [text]);
   return { copied, copy };

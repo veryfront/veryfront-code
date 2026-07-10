@@ -295,7 +295,13 @@ export class OAuthProvider {
 
   async revokeToken(token: string): Promise<boolean> {
     const { revocationUrl } = this.config;
-    if (!revocationUrl) return false;
+    if (!revocationUrl) {
+      // No revocation endpoint configured — nothing was ever sent to the
+      // provider. Logged at debug so a false return is distinguishable from an
+      // attempted-but-failed revocation.
+      logger.debug("Token revocation skipped: no revocationUrl configured");
+      return false;
+    }
 
     try {
       const response = await fetch(revocationUrl, {
@@ -304,9 +310,19 @@ export class OAuthProvider {
         body: new URLSearchParams({ token }).toString(),
       });
 
+      if (!response.ok) {
+        logger.warn("Token revocation request rejected by provider", {
+          status: response.status,
+        });
+      }
       return response.ok;
-    } catch (_) {
-      // expected: network failure during token revocation
+    } catch (error) {
+      // Network failure: the request may never have reached the provider, so
+      // the token could still be live. Surface it rather than swallowing it, so
+      // security-critical disconnect flows don't report success on a no-op.
+      logger.warn("Token revocation request failed to reach provider", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

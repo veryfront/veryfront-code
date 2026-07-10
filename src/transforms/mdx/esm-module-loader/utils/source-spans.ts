@@ -25,7 +25,22 @@ export function replaceSourceSpans(
   replacements: SourceSpanReplacement[],
 ): string {
   let result = source;
+  // Sort descending by start so we apply back-to-front and earlier spans stay valid.
   const sorted = [...replacements].sort((left, right) => right.start - left.start);
+
+  // Detect overlapping or duplicate-start spans before touching `result`.
+  // When two replacements share (or overlap on) the same start position the
+  // second would be applied to already-mutated text while `expected` is still
+  // validated against the original `source`, silently producing garbled output.
+  for (let i = 0; i + 1 < sorted.length; i++) {
+    const later = sorted[i]!; // larger start (rightmost)
+    const earlier = sorted[i + 1]!; // smaller start
+    if (earlier.end > later.start) {
+      throw new RangeError(
+        `Overlapping source replacement spans: [${earlier.start},${earlier.end}) and [${later.start},${later.end})`,
+      );
+    }
+  }
 
   for (const { start, end, replacement, expected } of sorted) {
     if (start < 0 || end < start || end > source.length) {

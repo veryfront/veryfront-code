@@ -348,7 +348,16 @@ export async function executeAgUiDetachedStart(
           error,
         });
       }
-    })().catch(() => undefined);
+    })().catch((error) => {
+      // The inner try/catch handles all expected errors (execution failure, onError, failRun).
+      // Reaching here means the session manager or onError callback itself threw — log so
+      // the broken error-reporting pipeline is visible and the run is not silently abandoned.
+      console.error(
+        "[detachedStart] Unexpected error escaped inner error handler for run",
+        input.request.runId,
+        error,
+      );
+    });
 
     scheduleDetachedTask(input.requestOrCtx, detachedTask);
 

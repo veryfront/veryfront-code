@@ -225,8 +225,17 @@ export class WorkflowWorker {
     }
 
     this.pollTimeout = setTimeout(async () => {
-      await this.poll();
-      this.scheduleNextPoll();
+      // poll() has its own try/catch, but guard here too: if it ever rejects
+      // (or a future refactor removes that guard) the finally still reschedules
+      // so the loop can't silently die and leave the worker alive-but-idle.
+      try {
+        await this.poll();
+      } catch (error) {
+        this.recordError(error);
+        logger.error("Unhandled poll error:", error);
+      } finally {
+        this.scheduleNextPoll();
+      }
     }, this.config.pollInterval);
   }
 

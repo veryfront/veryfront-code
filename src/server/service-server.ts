@@ -381,17 +381,21 @@ function installSignalHandlers(options: {
 
       void options.stop()
         .then(() => {
-          clearTimeout(hardTimeout);
           options.signalRuntime?.exit?.(0);
         })
         .catch((error: unknown) => {
-          clearTimeout(hardTimeout);
           options.logger.error?.("Veryfront service server shutdown failed", {
             signal,
             runtime: options.runtime,
             error: error instanceof Error ? error.message : String(error),
           });
           options.signalRuntime?.exit?.(1);
+        })
+        .finally(() => {
+          // Always cancel the hard-shutdown timer — exit() is synchronous so this
+          // only matters when signalRuntime.exit is undefined, but using finally
+          // ensures the timer never leaks regardless of how the promise settles.
+          clearTimeout(hardTimeout);
         });
     };
 

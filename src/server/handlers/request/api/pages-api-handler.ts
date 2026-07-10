@@ -47,18 +47,24 @@ function getCacheKey(ctx: HandlerContext): string {
   if (!ctx.projectSlug) return ctx.projectDir;
 
   const cacheContext = getApiHandlerCacheContext(ctx);
+  // No safe scoped key (e.g. production without a releaseId): fall back to the
+  // project-specific dir key rather than a shared bucket.
+  if (!cacheContext) return ctx.projectDir;
   return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}`;
 }
 
 function shouldCacheApiHandler(ctx: HandlerContext): boolean {
   if (!ctx.projectSlug) return true;
 
-  return getApiHandlerCacheContext(ctx).mode === "production";
+  // Cannot confirm a production context → do not cache.
+  return getApiHandlerCacheContext(ctx)?.mode === "production";
 }
 
 async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
   if (!ctx.projectSlug) return;
-  if (getApiHandlerCacheContext(ctx).mode === "production") return;
+  const cacheContext = getApiHandlerCacheContext(ctx);
+  // Skip when production, or when the context is indeterminate.
+  if (!cacheContext || cacheContext.mode === "production") return;
 
   await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
 }
