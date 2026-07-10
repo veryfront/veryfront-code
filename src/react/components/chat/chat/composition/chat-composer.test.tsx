@@ -1,5 +1,6 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -295,5 +296,22 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     } finally {
       restore();
     }
+  });
+
+  describe("ChatInput.Toolbar", () => {
+    it("is a function component", () => {
+      assertEquals(typeof ChatInput.Toolbar, "function");
+    });
+
+    it("renders its children and merges the className as a layout slot", () => {
+      const html = renderToString(
+        <ChatInput.Toolbar className="vf-tb">
+          <button>x</button>
+        </ChatInput.Toolbar>,
+      );
+      assert(html.includes("vf-tb"), "Expected the toolbar className to render");
+      assert(html.includes("<button>x</button>"), "Expected the child to render");
+      assert(html.includes('role="toolbar"'), "Expected the toolbar role to render");
+    });
   });
 });

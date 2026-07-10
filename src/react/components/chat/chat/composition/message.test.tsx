@@ -125,6 +125,30 @@ describe("Message.Content — composability contract", () => {
   });
 });
 
+// The header's name + timestamp are addressable leaves a consumer can restyle,
+// reorder, or replace by composing — without re-implementing the header.
+describe("Message.Header — sub-parts", () => {
+  it("exposes Name and Timestamp as functions", () => {
+    assert(typeof Message.Header.Name === "function");
+    assert(typeof Message.Header.Timestamp === "function");
+  });
+
+  it("renders a composed header that surfaces the agent name", () => {
+    const named: ChatMessage = {
+      ...assistantMessage,
+      metadata: { agentName: "Ada" },
+    };
+    const html = renderToString(
+      <Message.Root message={named}>
+        <Message.Header>
+          <Message.Header.Name />
+        </Message.Header>
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Ada");
+  });
+});
+
 // The 4th, headless access point to a message's parts (§K tier-1): read them as
 // data and render however you like, without reimplementing part grouping.
 describe("useMessageParts — headless parts data", () => {

@@ -62,7 +62,7 @@ describe("AgentPicker — composability contract", () => {
   });
 
   it("exposes every documented sub-part off the compound", () => {
-    for (const part of ["Root", "Trigger", "Content", "List", "Item"]) {
+    for (const part of ["Root", "Trigger", "Content", "Search", "List", "Item"]) {
       assertEquals(
         typeof (AgentPicker as unknown as Record<string, unknown>)[part] !==
           "undefined",
@@ -83,5 +83,29 @@ describe("AgentPicker — composability contract", () => {
       threw = true;
     }
     assertEquals(threw, true);
+  });
+});
+
+describe("AgentPicker.Search", () => {
+  it("is a function component addressable off the compound", () => {
+    assertEquals(typeof AgentPicker.Search, "function");
+  });
+
+  it("composes inside Content without throwing", () => {
+    // The Content surface portals through `Floating`, so nothing renders
+    // server-side — we only assert the composed tree does not throw.
+    const html = renderToString(
+      <AgentPicker agents={agents} value="inbox" onValueChange={() => {}}>
+        <AgentPicker.Trigger />
+        <AgentPicker.Content>
+          <AgentPicker.Search />
+          <AgentPicker.List>
+            <AgentPicker.Item agent={agents[0]!} />
+          </AgentPicker.List>
+        </AgentPicker.Content>
+      </AgentPicker>,
+    );
+    // Only the (non-portalled) trigger renders server-side.
+    assertStringIncludes(html, "Inbox Helper");
   });
 });

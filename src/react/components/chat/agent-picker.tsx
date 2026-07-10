@@ -254,6 +254,27 @@ function AgentPickerTrigger(
 }
 AgentPickerTrigger.displayName = "AgentPicker.Trigger";
 
+/** Props for `AgentPicker.Search` — the addressable search input leaf. */
+export interface AgentPickerSearchProps {
+  /** Search input placeholder. */
+  placeholder?: string;
+  className?: string;
+}
+
+/**
+ * The search input row. An addressable leaf so a consumer composing
+ * `AgentPicker.Content` can place / restyle / omit it. Reads the filter query
+ * state straight from the enclosing `Command` context (via `CommandInput`) —
+ * no prop-drilling. This is the same markup `AgentPicker.Content` renders for
+ * its default (search-gated) anatomy.
+ */
+function AgentPickerSearch(
+  { placeholder = "Search agents...", className }: AgentPickerSearchProps,
+): React.ReactElement {
+  return <CommandInput placeholder={placeholder} className={className} />;
+}
+AgentPickerSearch.displayName = "AgentPicker.Search";
+
 /** Props for `AgentPicker.Content` — the popover surface + `Command` shell. */
 export interface AgentPickerContentProps {
   /** Show the search input above the list. */
@@ -279,7 +300,7 @@ function AgentPickerContent(
       className={cn("min-w-[280px] p-0! rounded-lg", className)}
     >
       <Command className="bg-transparent">
-        {showSearch && <CommandInput placeholder={searchPlaceholder} />}
+        {showSearch && <AgentPickerSearch placeholder={searchPlaceholder} />}
         {children}
       </Command>
     </PopoverContent>
@@ -515,6 +536,7 @@ export const AgentPicker = Object.assign(AgentPickerRoot, {
   Root: AgentPickerRoot,
   Trigger: AgentPickerTrigger,
   Content: AgentPickerContent,
+  Search: AgentPickerSearch,
   List: AgentPickerList,
   Item: AgentPickerItem,
 });

@@ -228,6 +228,8 @@ MessageAvatar.displayName = "Message.Avatar";
 
 interface MessageHeaderProps {
   className?: string;
+  /** Compose the header's inner row yourself; omit for the default anatomy. */
+  children?: React.ReactNode;
 }
 
 /** Format a timestamp as a short `HH:MM` label (matches Studio's meta line). */
@@ -238,14 +240,74 @@ function formatTimestamp(createdAt: ChatMessage["createdAt"]): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Props for `Message.Header.Name`. */
+export interface MessageHeaderNameProps {
+  className?: string;
+  /** Override the default agent/author label. */
+  children?: React.ReactNode;
+}
+
+/**
+ * The agent/author name shown in the header. Reads the same identity from
+ * `MessageContext` (+ optional `ChatContext`) the default header uses — with no
+ * agent it falls back to the `"Assistant"` placeholder. Pass `children` to
+ * replace the text without losing the styling/position.
+ */
+function MessageHeaderName(
+  { className, children }: MessageHeaderNameProps,
+): React.ReactElement {
+  const { message } = useMessageContext();
+  const chat = useChatContextOptional();
+  // The label carries the "Assistant" placeholder; the avatar deliberately does
+  // NOT (so `AgentAvatar` can fall back to the provider logomark for `model`).
+  const agentName = metadataString(message.metadata, "agentName") ??
+    chat?.agent?.name ??
+    metadataString(message.metadata, "agentId");
+  const displayName = agentName ?? "Assistant";
+  return (
+    <span className={cn("min-w-0 truncate font-medium", className)}>
+      {children ?? displayName}
+    </span>
+  );
+}
+MessageHeaderName.displayName = "Message.Header.Name";
+
+/** Props for `Message.Header.Timestamp`. */
+export interface MessageHeaderTimestampProps {
+  className?: string;
+}
+
+/**
+ * The right-aligned `HH:MM` timestamp in the header (`ml-auto`). Reads
+ * `message.createdAt` from context and renders nothing when there's no valid
+ * time — identical to the default header's inline behaviour.
+ */
+function MessageHeaderTimestamp(
+  { className }: MessageHeaderTimestampProps,
+): React.ReactElement | null {
+  const { message } = useMessageContext();
+  const timestamp = formatTimestamp(message.createdAt);
+  if (!timestamp) return null;
+  return (
+    <span
+      className={cn("ml-auto text-sm text-[var(--faint)]", className)}
+      suppressHydrationWarning
+    >
+      {timestamp}
+    </span>
+  );
+}
+MessageHeaderTimestamp.displayName = "Message.Header.Timestamp";
+
 /**
  * Assistant message header — agent avatar (`size-8`) + name on the left, a
  * right-aligned timestamp. Ported 1:1 from Studio's `ChatMessageHeader`
  * (`pt-px pb-2`, `flex items-center gap-2`, name `font-medium`, timestamp
- * `text-sm ml-auto`). User turns have no header.
+ * `text-sm ml-auto`). User turns have no header. Pass `children` to recompose
+ * the inner row from `Message.Header.Name` / `Message.Header.Timestamp`.
  */
 function MessageHeader(
-  { className }: MessageHeaderProps,
+  { className, children }: MessageHeaderProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
   const chat = useChatContextOptional();
@@ -258,34 +320,35 @@ function MessageHeader(
   const agentName = metadataString(message.metadata, "agentName") ??
     chat?.agent?.name ??
     metadataString(message.metadata, "agentId");
-  const displayName = agentName ?? "Assistant";
   const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
     chat?.agent?.avatarUrl;
-  const timestamp = formatTimestamp(message.createdAt);
 
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
     // is `items-start`, which would otherwise shrink the header to its content.
     <div className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
-      <AvatarImpl
-        name={agentName}
-        avatarUrl={avatarUrl}
-        model={metadataString(message.metadata, "model")}
-        className="size-8"
-      />
-      <span className="min-w-0 truncate font-medium">{displayName}</span>
-      {timestamp && (
-        <span
-          className="ml-auto text-sm text-[var(--faint)]"
-          suppressHydrationWarning
-        >
-          {timestamp}
-        </span>
+      {children ?? (
+        <>
+          <AvatarImpl
+            name={agentName}
+            avatarUrl={avatarUrl}
+            model={metadataString(message.metadata, "model")}
+            className="size-8"
+          />
+          <MessageHeaderName />
+          <MessageHeaderTimestamp />
+        </>
       )}
     </div>
   );
 }
 MessageHeader.displayName = "Message.Header";
+
+/** `Message.Header` compound — the header row plus its addressable leaves. */
+const MessageHeaderCompound = Object.assign(MessageHeader, {
+  Name: MessageHeaderName,
+  Timestamp: MessageHeaderTimestamp,
+});
 
 // ---------------------------------------------------------------------------
 // Message.Content
@@ -963,7 +1026,7 @@ MessageComponent.displayName = "Message";
 export const Message = Object.assign(MessageComponent, {
   Root: MessageRoot,
   Avatar: MessageAvatar,
-  Header: MessageHeader,
+  Header: MessageHeaderCompound,
   Content: MessageContent,
   Part: MessagePart,
   Sources: MessageSources,

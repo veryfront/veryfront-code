@@ -100,12 +100,12 @@ async function walk(
 // big files from growing back.
 const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/index.tsx": 383,
-  "src/react/components/chat/chat/composition/message.tsx": 978,
+  "src/react/components/chat/chat/composition/message.tsx": 1041,
   // Bumped once for E4: the ChatSidebar.Item menu compound (Item.Menu/.Rename/
   // .Delete). Extracting Item into its own file is a tracked follow-up.
   "src/react/components/chat/chat/components/sidebar.tsx": 754,
-  "src/react/components/chat/chat/composition/chat-composer.tsx": 650,
-  "src/react/components/chat/agent-picker.tsx": 520,
+  "src/react/components/chat/chat/composition/chat-composer.tsx": 678,
+  "src/react/components/chat/agent-picker.tsx": 542,
   "src/react/components/chat/chat-actions.tsx": 515,
   "src/react/components/chat/chat/controlled-chat.tsx": 329,
   "src/react/components/chat/chat/app-mode-chat.tsx": 211,

@@ -314,6 +314,33 @@ export function ChatInputAttach(
   );
 }
 
+/** Props accepted by `<ChatInput.Toolbar>`. */
+export interface ChatInputToolbarProps {
+  className?: string;
+  children?: React.ReactNode;
+}
+
+/**
+ * `ChatInput.Toolbar` — a semantic layout slot for the composer's action row.
+ * Group/reorder the action sub-parts (`ChatInput.Attach`/`.Model`/`.Voice`/
+ * `.Send`) inside it without re-implementing the composer. Pure layout: the
+ * children read their own `ComposerContext`, so `<ChatInput.Toolbar>` just
+ * mirrors the default action-row wrapper classes.
+ */
+export function ChatInputToolbar(
+  { className, children }: ChatInputToolbarProps,
+): React.ReactElement {
+  return (
+    <div
+      role="toolbar"
+      className={cn("flex items-center gap-1.5 md:gap-2", className)}
+    >
+      {children}
+    </div>
+  );
+}
+ChatInputToolbar.displayName = "ChatInput.Toolbar";
+
 // ---------------------------------------------------------------------------
 // ChatInput — batteries-included composer
 // ---------------------------------------------------------------------------
@@ -647,4 +674,5 @@ export const ChatInput = Object.assign(ChatInputBase, {
   Voice: ChatInputVoice,
   Model: ChatInputModel,
   Attach: ChatInputAttach,
+  Toolbar: ChatInputToolbar,
 });
