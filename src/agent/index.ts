@@ -542,6 +542,7 @@ export {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  buildProjectServiceTraceAttributes,
   buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
   isAgentTraceAttributeValue,

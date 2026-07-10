@@ -612,11 +612,156 @@ type SpanExporterLike = {
 
 type ReadableSpanLike = {
   attributes?: Record<string, unknown>;
+  resource?: {
+    attributes?: Record<string, unknown>;
+  };
+  instrumentationScope?: {
+    name?: string;
+    version?: string;
+    schemaUrl?: string;
+  };
+  spanContext?: (() => { traceId?: string }) | { traceId?: string };
 };
 
 function isGenAiSpan(span: unknown): boolean {
   const attributes = (span as ReadableSpanLike).attributes;
   return typeof attributes?.["gen_ai.operation.name"] === "string";
+}
+
+type LlmObservabilityServiceIdentity = {
+  serviceName: string;
+  serviceVersion: string;
+  deploymentEnvironment: string;
+};
+
+function getStringAttribute(
+  attributes: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = attributes?.[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getSpanTraceId(span: unknown): string | undefined {
+  const context = (span as ReadableSpanLike).spanContext;
+  const spanContext = typeof context === "function" ? context.call(span) : context;
+  return typeof spanContext?.traceId === "string" ? spanContext.traceId : undefined;
+}
+
+function resolveLlmObservabilityServiceIdentity(
+  span: unknown,
+  fallback?: LlmObservabilityServiceIdentity,
+): LlmObservabilityServiceIdentity | null {
+  const readableSpan = span as ReadableSpanLike;
+  const spanAttributes = readableSpan.attributes;
+  const resourceAttributes = readableSpan.resource?.attributes;
+  const serviceName = getStringAttribute(spanAttributes, "service.name") ??
+    getStringAttribute(spanAttributes, "service") ??
+    fallback?.serviceName;
+  if (!serviceName) return null;
+
+  const serviceVersion = getStringAttribute(spanAttributes, "service.version") ??
+    getStringAttribute(spanAttributes, "version") ??
+    fallback?.serviceVersion ??
+    getStringAttribute(resourceAttributes, "service.version") ??
+    getStringAttribute(resourceAttributes, "version") ??
+    VERSION;
+  const deploymentEnvironment = getStringAttribute(spanAttributes, "deployment.environment.name") ??
+    getStringAttribute(spanAttributes, "deployment.environment") ??
+    getStringAttribute(spanAttributes, "env") ??
+    fallback?.deploymentEnvironment ??
+    getStringAttribute(resourceAttributes, "deployment.environment.name") ??
+    getStringAttribute(resourceAttributes, "deployment.environment") ??
+    getStringAttribute(resourceAttributes, "env") ??
+    "development";
+
+  return { serviceName, serviceVersion, deploymentEnvironment };
+}
+
+function cloneResourceWithAttributes(
+  resource: ReadableSpanLike["resource"],
+  attributes: Record<string, string>,
+): ReadableSpanLike["resource"] {
+  if (!resource) return { attributes };
+  const clone = Object.create(Object.getPrototypeOf(resource)) as ReadableSpanLike["resource"];
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(resource));
+  Object.defineProperty(clone, "attributes", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: {
+      ...(resource.attributes ?? {}),
+      ...attributes,
+    },
+  });
+  return clone;
+}
+
+function cloneInstrumentationScopeWithName(
+  instrumentationScope: ReadableSpanLike["instrumentationScope"],
+  name: string,
+): ReadableSpanLike["instrumentationScope"] {
+  return {
+    ...(instrumentationScope ?? {}),
+    name,
+  };
+}
+
+function cloneReadableSpanWithResource(
+  span: unknown,
+  resource: ReadableSpanLike["resource"],
+  instrumentationScope: ReadableSpanLike["instrumentationScope"],
+): unknown {
+  const clone = Object.create(Object.getPrototypeOf(span));
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(span));
+  Object.defineProperty(clone, "resource", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: resource,
+  });
+  Object.defineProperty(clone, "instrumentationScope", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: instrumentationScope,
+  });
+  return clone;
+}
+
+export function rewriteLlmObservabilitySpanResource(
+  span: unknown,
+  fallback?: LlmObservabilityServiceIdentity,
+): unknown {
+  const identity = resolveLlmObservabilityServiceIdentity(span, fallback);
+  if (!identity) return span;
+
+  const readableSpan = span as ReadableSpanLike;
+  const resource = cloneResourceWithAttributes(
+    readableSpan.resource,
+    unifiedServiceResourceAttributes(identity),
+  );
+  const instrumentationScope = cloneInstrumentationScopeWithName(
+    readableSpan.instrumentationScope,
+    identity.serviceName,
+  );
+  return cloneReadableSpanWithResource(span, resource, instrumentationScope);
+}
+
+function rewriteLlmObservabilitySpanResources(spans: unknown[]): unknown[] {
+  const identitiesByTraceId = new Map<string, LlmObservabilityServiceIdentity>();
+  for (const span of spans) {
+    const traceId = getSpanTraceId(span);
+    if (!traceId) continue;
+    const identity = resolveLlmObservabilityServiceIdentity(span);
+    if (identity) identitiesByTraceId.set(traceId, identity);
+  }
+
+  return spans.map((span) =>
+    rewriteLlmObservabilitySpanResource(span, identitiesByTraceId.get(getSpanTraceId(span) ?? ""))
+  );
 }
 
 class FilteringSpanExporter {
@@ -630,7 +775,7 @@ class FilteringSpanExporter {
     spans: unknown[],
     resultCallback: (result: { code: number; error?: Error }) => void,
   ): void {
-    const includedSpans = spans.filter(this.includeSpan);
+    const includedSpans = rewriteLlmObservabilitySpanResources(spans.filter(this.includeSpan));
     if (includedSpans.length === 0) {
       resultCallback({ code: this.successCode });
       return;

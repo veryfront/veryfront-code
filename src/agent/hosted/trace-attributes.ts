@@ -1,4 +1,5 @@
 type TracePrimitive = string | number | boolean;
+type EnvReader = (name: string) => string | undefined;
 /** Public API contract for a value can be used as an agent trace attribute. */
 export type AgentTraceAttributeValue =
   | TracePrimitive
@@ -27,6 +28,20 @@ function compactTraceAttributes(attributes: AgentTraceAttributes): AgentTraceAtt
 
 function getNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function parseResourceAttributes(value: string | undefined): Record<string, string> {
+  if (!value) return {};
+
+  const attributes: Record<string, string> = {};
+  for (const part of value.split(",")) {
+    const [rawKey, ...rawValueParts] = part.split("=");
+    const key = rawKey?.trim();
+    if (!key || rawValueParts.length === 0) continue;
+    const attributeValue = rawValueParts.join("=").trim();
+    if (attributeValue) attributes[key] = attributeValue;
+  }
+  return attributes;
 }
 
 function isAgentTraceAttributePrimitive(value: unknown): value is TracePrimitive {
@@ -71,6 +86,44 @@ export function buildScheduleTraceAttributes(
     "schedule.name": scheduleName,
     "run.trigger.kind": scheduleId ? "schedule" : undefined,
     "run.trigger.id": scheduleId,
+  });
+}
+
+/** Builds Datadog unified service trace attributes for a hosted project run. */
+export function buildProjectServiceTraceAttributes(input: {
+  projectSlug?: string | null;
+  readEnv: EnvReader;
+}): AgentTraceAttributes {
+  const resourceAttributes = parseResourceAttributes(input.readEnv("OTEL_RESOURCE_ATTRIBUTES"));
+  const projectSlug = getNonEmptyString(input.projectSlug);
+  const serviceName = getNonEmptyString(input.readEnv("OTEL_SERVICE_NAME")) ??
+    getNonEmptyString(resourceAttributes["service.name"]) ??
+    getNonEmptyString(input.readEnv("DD_SERVICE")) ??
+    projectSlug ??
+    "veryfront-agent-service";
+  const serviceVersion = getNonEmptyString(resourceAttributes["service.version"]) ??
+    getNonEmptyString(input.readEnv("OTEL_SERVICE_VERSION")) ??
+    getNonEmptyString(input.readEnv("DD_VERSION")) ??
+    getNonEmptyString(input.readEnv("VERYFRONT_VERSION")) ??
+    getNonEmptyString(input.readEnv("RELEASE_VERSION"));
+  const deploymentEnvironment = getNonEmptyString(
+    resourceAttributes["deployment.environment.name"],
+  ) ??
+    getNonEmptyString(resourceAttributes["deployment.environment"]) ??
+    getNonEmptyString(input.readEnv("OTEL_DEPLOYMENT_ENVIRONMENT")) ??
+    getNonEmptyString(input.readEnv("DD_ENV")) ??
+    getNonEmptyString(input.readEnv("APP_ENVIRONMENT")) ??
+    getNonEmptyString(input.readEnv("VERYFRONT_ENVIRONMENT"));
+
+  return compactTraceAttributes({
+    "project.slug": projectSlug,
+    "service.name": serviceName,
+    "service": serviceName,
+    "service.version": serviceVersion,
+    "version": serviceVersion,
+    "deployment.environment.name": deploymentEnvironment,
+    "deployment.environment": deploymentEnvironment,
+    "env": deploymentEnvironment,
   });
 }
 

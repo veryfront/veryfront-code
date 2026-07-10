@@ -9,7 +9,7 @@ import {
   isMissingFirstPartyExtensionModule,
 } from "#veryfront/extensions/first-party-import.ts";
 import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
-import { cwd, env } from "#veryfront/platform/compat/process.ts";
+import { cwd, env, getEnv } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -45,6 +45,7 @@ import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
 import {
   buildAgentRunTraceAttributes,
   buildExecuteToolTraceAttributes,
+  buildProjectServiceTraceAttributes,
   buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
 } from "./trace-attributes.ts";
@@ -838,6 +839,7 @@ function setPrepareChatExecutionResultAttributes(
     spawnedFromToolCallId?: string;
     runtimeKind: "framework";
     forwardedProps?: Record<string, unknown>;
+    projectServiceTraceAttributes?: ReturnType<typeof buildProjectServiceTraceAttributes>;
   },
 ): void {
   const scheduleTraceAttributes = buildScheduleTraceAttributes(input.forwardedProps);
@@ -865,6 +867,7 @@ function setPrepareChatExecutionResultAttributes(
   );
   span?.setAttributes({
     "agent.runtime.kind": input.runtimeKind,
+    ...input.projectServiceTraceAttributes,
     ...scheduleTraceAttributes,
   });
 }
@@ -929,6 +932,10 @@ async function prepareChatExecution(
     spawnedFromToolCallId,
   } = req;
   const config = context.infrastructure.getConfig();
+  const projectServiceTraceAttributes = buildProjectServiceTraceAttributes({
+    projectSlug: req.projectSlug,
+    readEnv: getEnv,
+  });
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
@@ -985,6 +992,7 @@ async function prepareChatExecution(
     spawnedFromToolCallId,
     runtimeKind,
     forwardedProps: req.forwardedProps,
+    projectServiceTraceAttributes,
   });
 
   return {
@@ -1004,7 +1012,10 @@ async function prepareChatExecution(
     upstreamParentConversationId,
     upstreamParentRunId,
     spawnedFromToolCallId,
-    traceAttributes: buildScheduleTraceAttributes(req.forwardedProps),
+    traceAttributes: {
+      ...projectServiceTraceAttributes,
+      ...buildScheduleTraceAttributes(req.forwardedProps),
+    },
   };
 }
 
