@@ -10,6 +10,8 @@ import { createApiClient, readConfigFile, resolveConfig, resolveConfigWithAuth }
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
+import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
+import { deleteToken, saveToken } from "../auth/token-store.ts";
 
 function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
   return {
@@ -150,6 +152,81 @@ describe("resolveConfigWithAuth", () => {
     const config = await resolveConfigWithAuth("/tmp/test-dir", env);
 
     assertEquals(config.apiUrl, "https://api.veryfront.com");
+  });
+
+  it("prefers the token store over a project .env API token for management commands", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const configHome = await Deno.makeTempDir();
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      await Deno.writeTextFile(join(tempDir, ".env"), "VERYFRONT_API_TOKEN=runtime-token\n");
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiToken: "runtime-token",
+        projectSlug: "test-project",
+        xdgConfigHome: configHome,
+      });
+      await saveToken("stored-user-token", env);
+
+      const config = await resolveConfigWithAuth(tempDir, env);
+
+      assertEquals(config.apiToken, "stored-user-token");
+    } finally {
+      await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+      __resetEnvLoaderForTests();
+
+      if (originalApiToken === undefined) {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } else {
+        Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+    }
+  });
+
+  it("prefers veryfront.json token over project .env and token store for management commands", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const configHome = await Deno.makeTempDir();
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      await Deno.writeTextFile(join(tempDir, ".env"), "VERYFRONT_API_TOKEN=runtime-token\n");
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ apiToken: "config-token", projectSlug: "test-project" }),
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiToken: "runtime-token",
+        projectSlug: "test-project",
+        xdgConfigHome: configHome,
+      });
+      await saveToken("stored-user-token", env);
+
+      const config = await resolveConfigWithAuth(tempDir, env);
+
+      assertEquals(config.apiToken, "config-token");
+      assertEquals(config.apiTokenSource, "config-file");
+    } finally {
+      await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+      __resetEnvLoaderForTests();
+
+      if (originalApiToken === undefined) {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } else {
+        Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+    }
   });
 
   it("uses tenant project context when explicit project slug is absent", async () => {
@@ -304,6 +381,34 @@ describe("createApiClient", () => {
         globalThis.fetch = originalFetch;
       }
     });
+  });
+
+  it("explains project .env token shadowing on auth-like management API failures", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+      return Promise.resolve(
+        new Response(JSON.stringify({ message: "API request failed: 403 Forbidden" }), {
+          status: 403,
+          statusText: "Forbidden",
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const client = createApiClient(makeConfig({
+        apiToken: "runtime-token",
+        apiTokenSource: "env-file",
+      }));
+
+      await assertRejects(
+        () => client.get("/projects/test/files"),
+        Error,
+        "VERYFRONT_API_TOKEN was loaded from a project .env file",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   describe("retry on transient failures for idempotent requests", () => {
