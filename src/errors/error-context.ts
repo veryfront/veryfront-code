@@ -31,11 +31,7 @@ function getErrorStack(error: unknown): string | undefined {
 function logError(
   error: unknown,
   context: ErrorContext,
-  // Default to "warn": a swallowed failure with a returned fallback is invisible
-  // at debug level in production, which hides real errors (e.g., a permissions
-  // failure masquerading as "file not found"). Callers for whom a miss is truly
-  // expected (e.g., ENOENT stat/read lookups) pass "debug" explicitly.
-  logLevel: LogLevel = "warn",
+  logLevel: LogLevel = "debug",
   includeStack = false,
 ): void {
   const message = getErrorMessage(error);
@@ -159,7 +155,7 @@ export function createErrorScope(operationPrefix: string): {
       operation: () => Promise<T>,
       details: Omit<ErrorContext, "operation">,
       fallback: T,
-      logLevel: LogLevel = "warn",
+      logLevel: LogLevel = "debug",
     ): Promise<T> {
       return withErrorContext(operation, buildContext(details), { fallback, logLevel });
     },
@@ -168,7 +164,7 @@ export function createErrorScope(operationPrefix: string): {
       operation: () => T,
       details: Omit<ErrorContext, "operation">,
       fallback: T,
-      logLevel: LogLevel = "warn",
+      logLevel: LogLevel = "debug",
     ): T {
       return withErrorContextSync(operation, buildContext(details), { fallback, logLevel });
     },

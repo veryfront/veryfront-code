@@ -1,6 +1,5 @@
 import type { RSCPayload } from "./types.ts";
 import { HASH_SEED_FNV1A } from "#veryfront/utils";
-import { escapeHTML } from "#veryfront/html/html-escape.ts";
 
 export class RSCProductionOptimizer {
   static optimizePayload(payload: RSCPayload): RSCPayload {
@@ -13,16 +12,7 @@ export class RSCProductionOptimizer {
   }
 
   private static minifyHTML(html: string): string {
-    return html
-      // Preserve React hydration marker comments (<!--$-->, <!--/$-->, <!--$?-->, <!--$!-->).
-      // Strip only comments that are clearly not hydration-critical (those not starting with $).
-      .replace(/<!--(?!\$)[\s\S]*?-->/g, "")
-      // Collapse runs of whitespace between tags to a single space rather than
-      // removing it entirely, so inline elements (e.g. <span>A</span> <span>B</span>)
-      // keep their meaningful separating space while indentation/newlines are still
-      // squeezed out.
-      .replace(/>\s+</g, "> <")
-      .trim();
+    return html.replace(/<!--[\s\S]*?-->/g, "").replace(/>\s+</g, "><").trim();
   }
 
   static getCacheHeaders(
@@ -103,9 +93,7 @@ export class RSCProductionOptimizer {
 
   static generatePreloadLinks(clientRefs: Record<string, string>): string[] {
     return Object.values(clientRefs).map(
-      // Attribute-escape path: a value containing '"' would otherwise break out
-      // of the href attribute and allow injection.
-      (path) => `<link rel="modulepreload" href="${escapeHTML(path)}" as="script" crossorigin>`,
+      (path) => `<link rel="modulepreload" href="${path}" as="script" crossorigin>`,
     );
   }
 

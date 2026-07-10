@@ -127,6 +127,27 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.config.prefix}index:runs`;
   }
 
+  /**
+   * Enumerate every run id. Prefers the maintained all-runs index (avoids a
+   * blocking KEYS scan on the hot path), but falls back to a one-time KEYS
+   * enumeration when the index is empty — so a backend upgraded from a version
+   * that predates `index:runs` still lists pre-existing runs — and backfills
+   * the index so subsequent calls use the fast path. An empty result when there
+   * genuinely are no runs is cheap (KEYS on a no-match pattern returns quickly).
+   */
+  private async enumerateAllRunIds(client: RedisAdapter): Promise<string[]> {
+    const indexed = await client.smembers(this.allRunsIndexKey());
+    if (indexed.length > 0) return indexed;
+
+    const prefix = `${this.config.prefix}run:`;
+    const keys = await client.keys(`${prefix}*`);
+    const runIds = keys.map((k) => k.replace(prefix, ""));
+    if (runIds.length > 0) {
+      await client.sadd(this.allRunsIndexKey(), ...runIds);
+    }
+    return runIds;
+  }
+
   private lockKey(runId: string): string {
     return `${this.config.prefix}lock:${runId}`;
   }
@@ -380,9 +401,7 @@ export class RedisBackend implements WorkflowBackend {
       const all = await Promise.all(statuses.map((s) => client.smembers(this.statusIndexKey(s))));
       runIds = [...new Set(all.flat())];
     } else {
-      // Enumerate via the maintained all-runs index instead of a blocking
-      // KEYS scan over the whole keyspace.
-      runIds = await client.smembers(this.allRunsIndexKey());
+      runIds = await this.enumerateAllRunIds(client);
     }
 
     const runs: WorkflowRun[] = [];
@@ -437,7 +456,7 @@ export class RedisBackend implements WorkflowBackend {
       return new Set(all.flat()).size;
     }
 
-    return (await client.smembers(this.allRunsIndexKey())).length;
+    return (await this.enumerateAllRunIds(client)).length;
   }
 
   async saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {

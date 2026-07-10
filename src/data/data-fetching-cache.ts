@@ -12,19 +12,6 @@ function isLruIntervalDisabled(): boolean {
   return globalFlag === true || getDisableLruIntervalEnv();
 }
 
-/**
- * Match a cache key against a clear pattern by segment-aware prefix, not a raw
- * substring. `includes()` over-deleted: clearPattern("/api") would also wipe
- * "/apiary" or a key that merely contained "/api" mid-string. A key matches only
- * when it equals the pattern or continues at a segment boundary (`/` or `:`).
- */
-function matchesKeyPrefix(key: string, pattern: string): boolean {
-  if (!key.startsWith(pattern)) return false;
-  if (key.length === pattern.length) return true;
-  const nextChar = key[pattern.length];
-  return nextChar === "/" || nextChar === ":";
-}
-
 export class CacheManager {
   private cache = new LRUCache<string, CacheEntry>({
     maxEntries: DATA_FETCHING_MAX_ENTRIES,
@@ -49,7 +36,7 @@ export class CacheManager {
 
   clearPattern(pattern: string): void {
     for (const key of this.cache.keys()) {
-      if (!matchesKeyPrefix(key, pattern)) continue;
+      if (!key.includes(pattern)) continue;
       this.cache.delete(key);
     }
   }
