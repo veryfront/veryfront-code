@@ -31,6 +31,12 @@ interface StaleMdxEsmRecoveryOptions {
   pagePath: string;
 }
 
+// HEURISTIC: detect stale-cache ESM export mismatches by matching runtime
+// error messages. Both the "does not provide an export named" phrasing and the
+// "requested module / import" context check are taken from V8/Deno's wording.
+// If the runtime changes its error message, this detection stops firing and
+// the stale-cache recovery path becomes a dead code path — verify after
+// runtime upgrades.
 export function isMdxEsmExportMismatchError(error: unknown): boolean {
   const message = getErrorMessage(error);
   return /does not provide an export named/i.test(message) &&

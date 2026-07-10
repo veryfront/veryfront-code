@@ -71,6 +71,41 @@ async function resolveReleaseAssetManifestForHTML(
   );
 }
 
+/**
+ * Locate the opening `<html>` tag in `html`, respecting quoted attribute values
+ * so that a `>` inside an attribute value (e.g. `data-foo="a>b"`) does not
+ * truncate the tag prematurely.
+ *
+ * Returns the start index, the exclusive end index (points past the `>`), and
+ * the raw attribute string between `<html` and `>`. Returns null if no tag is
+ * found or the tag is not properly closed.
+ */
+function findHtmlOpeningTag(
+  html: string,
+): { tagStart: number; tagEnd: number; attrs: string } | null {
+  const lower = html.toLowerCase();
+  const tagStart = lower.indexOf("<html");
+  if (tagStart === -1) return null;
+
+  const afterHtml = tagStart + 5;
+  // Must be followed by whitespace, >, or / to be a genuine <html> element
+  const boundary = lower[afterHtml];
+  if (boundary && !/[\s>\/]/.test(boundary)) return null;
+
+  let activeQuote: string | null = null;
+  for (let i = afterHtml; i < html.length; i++) {
+    const ch = html[i];
+    if (activeQuote) {
+      if (ch === activeQuote) activeQuote = null;
+    } else if (ch === '"' || ch === "'") {
+      activeQuote = ch;
+    } else if (ch === ">") {
+      return { tagStart, tagEnd: i + 1, attrs: html.slice(afterHtml, i) };
+    }
+  }
+  return null; // unclosed tag
+}
+
 function applyExplicitThemeToDocument(
   html: string,
   colorScheme: "light" | "dark" | undefined,
@@ -78,36 +113,37 @@ function applyExplicitThemeToDocument(
 ): string {
   if (!enabled || !colorScheme) return html;
 
-  return html.replace(/<html\b([^>]*)>/i, (_match, attrs: string) => {
-    let nextAttrs = attrs;
+  const tag = findHtmlOpeningTag(html);
+  if (!tag) return html;
 
-    if (/\sdata-theme\s*=/i.test(nextAttrs)) {
-      nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
-    }
-    nextAttrs += ` data-theme="${colorScheme}"`;
+  let nextAttrs = tag.attrs;
 
-    const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
-    if (styleMatch) {
-      let styleValue = (styleMatch[2] ?? "").trim();
+  if (/\sdata-theme\s*=/i.test(nextAttrs)) {
+    nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
+  }
+  nextAttrs += ` data-theme="${colorScheme}"`;
 
-      if (/color-scheme\s*:/i.test(styleValue)) {
-        styleValue = styleValue.replace(
-          /color-scheme\s*:\s*[^;]+/i,
-          `color-scheme: ${colorScheme}`,
-        );
-      } else {
-        styleValue = styleValue
-          ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
-          : `color-scheme: ${colorScheme};`;
-      }
+  const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
+  if (styleMatch) {
+    let styleValue = (styleMatch[2] ?? "").trim();
 
-      nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
+    if (/color-scheme\s*:/i.test(styleValue)) {
+      styleValue = styleValue.replace(
+        /color-scheme\s*:\s*[^;]+/i,
+        `color-scheme: ${colorScheme}`,
+      );
     } else {
-      nextAttrs += ` style="color-scheme: ${colorScheme};"`;
+      styleValue = styleValue
+        ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
+        : `color-scheme: ${colorScheme};`;
     }
 
-    return `<html${nextAttrs}>`;
-  });
+    nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
+  } else {
+    nextAttrs += ` style="color-scheme: ${colorScheme};"`;
+  }
+
+  return html.slice(0, tag.tagStart) + `<html${nextAttrs}>` + html.slice(tag.tagEnd);
 }
 
 function injectThemePersistenceScript(

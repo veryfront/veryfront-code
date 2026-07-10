@@ -21,6 +21,9 @@ async function getS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
   if (s3Module) return s3Module;
 
   try {
+    // NOTE: the Deno import is pinned to @3.490.0 intentionally for
+    // reproducible builds. Bump deliberately (and in step with the Node dep)
+    // rather than floating to latest.
     s3Module = isDeno
       ? await import("https://esm.sh/@aws-sdk/client-s3@3.490.0")
       : await import("@aws-sdk/client-s3");

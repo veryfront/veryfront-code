@@ -614,7 +614,12 @@ export async function lookupMdxEsmCache(
   filePath: string,
   cacheDir: string,
   projectDir?: string,
-  _contentHash?: string, // Intentionally unused - kept for API compatibility
+  // _contentHash is accepted for API compatibility with callers that pass a
+  // content hash for validation purposes, but cache lookup is keyed solely on
+  // filePath + projectDir + reactVersion.  Content-hash validation is NOT
+  // performed here; the caller is responsible for invalidating stale entries
+  // via invalidateModulePaths when content changes.
+  _contentHash?: string,
   recoveryOptions?: { projectId: string; contentSourceId: string },
   reactVersion = REACT_DEFAULT_VERSION,
 ): Promise<CacheLookupResult> {

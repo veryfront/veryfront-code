@@ -12,6 +12,7 @@ import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.t
 import { extname } from "#veryfront/compat/path";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { logger } from "#veryfront/utils";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
 
 const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000;
@@ -197,8 +198,10 @@ class CloudScriptExecutor implements SkillScriptExecutor {
     } finally {
       try {
         await sandbox.close();
-      } catch {
-        // expected: best-effort cleanup
+      } catch (error) {
+        // Best-effort cleanup; log at warn so persistent failures (e.g. auth
+        // revoked) leave a trace rather than silently leaking sandbox pods.
+        logger.warn("[skill/executor] Failed to close sandbox", error);
       }
     }
   }

@@ -2,13 +2,12 @@ import { fetchOAuthToken, OAuthTokenRequestError, type TokenResponse } from "./o
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 import { MemoryCache } from "./cache/memory-cache.ts";
 import { ProxySpanNames, withSpan } from "./tracing.ts";
-import { CACHE_ERROR } from "#veryfront/errors";
 
 export type TokenScope = "preview" | "production";
 
 interface NegativeCacheEntry {
   status: number;
-  message: string;
+  responseText: string;
   cachedAt: number;
 }
 
@@ -62,7 +61,10 @@ export class TokenManager {
         const negEntry = this.negativeCache.get(cacheKey);
         if (negEntry) {
           if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL_MS) {
-            throw CACHE_ERROR.create({ detail: negEntry.message });
+            // Rethrow the structured token error (not a generic cache error) so
+            // callers can classify the cached failure by `.status`/response text
+            // exactly as they would a fresh failure, without scraping messages.
+            throw new OAuthTokenRequestError(negEntry.status, negEntry.responseText);
           }
           this.negativeCache.delete(cacheKey);
         }
@@ -150,7 +152,11 @@ export class TokenManager {
         }
         this.negativeCache.set(cacheKey, {
           status,
-          message: error instanceof Error ? error.message : String(error),
+          responseText: error instanceof OAuthTokenRequestError
+            ? error.responseText
+            : error instanceof Error
+            ? error.message
+            : String(error),
           cachedAt: Date.now(),
         });
       }

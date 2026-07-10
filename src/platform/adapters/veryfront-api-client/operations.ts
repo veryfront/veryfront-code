@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
-import { API_CLIENT_ERROR } from "./types.ts";
+import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
 import {
   getBranchFileDetailSchema,
   getEnvironmentFileDetailSchema,
@@ -486,7 +486,7 @@ export class VeryfrontAPIOperations {
 
           return response;
         } catch (error) {
-          if (error instanceof Error && error.message.includes("404")) {
+          if (error instanceof VeryfrontError && error.status === 404) {
             logger.debug("No project found for domain", { domain });
             return null;
           }

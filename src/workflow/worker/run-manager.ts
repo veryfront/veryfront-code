@@ -240,8 +240,16 @@ export class WorkflowRunManager {
     }
 
     this.pollTimeout = setTimeout(async () => {
-      await this.poll();
-      this.scheduleNextPoll();
+      // poll() guards itself, but reschedule from a finally so an unexpected
+      // rejection can never kill the loop (leaving the manager alive-but-idle).
+      try {
+        await this.poll();
+      } catch (error) {
+        this.recordError(error);
+        logger.error("Unhandled poll error:", error);
+      } finally {
+        this.scheduleNextPoll();
+      }
     }, this.config.pollInterval);
   }
 
@@ -411,6 +419,19 @@ export class WorkflowRunManager {
     };
 
     try {
+      // Mark running BEFORE spawning the execution. If we spawned first and then
+      // crashed before this update, a live process would sit behind a "pending"
+      // run that the next poll would execute again (duplicate execution). With
+      // the order reversed, a crash after this point leaves a "running" run with
+      // no process, which stalled-run recovery reclaims cleanly. A spawn failure
+      // is handled by the catch below, which marks the run failed.
+      await this.config.backend.updateRun(run.id, {
+        status: "running",
+        startedAt: new Date(),
+        heartbeatAt: new Date(),
+        workerId: `run-execution:${executionId}`,
+      });
+
       await this.config.executor.createRunExecution(executionConfig);
 
       const tracked: TrackedExecution = {
@@ -422,14 +443,6 @@ export class WorkflowRunManager {
 
       this.activeExecutions.set(run.id, tracked);
       this.stats.executionsCreated++;
-
-      // Mark workflow as running
-      await this.config.backend.updateRun(run.id, {
-        status: "running",
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-        workerId: `run-execution:${executionId}`,
-      });
 
       if (this.config.debug) {
         logger.info(`Created run execution ${executionId} for workflow ${run.id}`);

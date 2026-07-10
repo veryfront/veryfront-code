@@ -6,6 +6,7 @@ import {
   clearConfigCache,
   getCachedConfigSync,
   getConfig,
+  mergeConfigs,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
@@ -197,6 +198,30 @@ export default config as const;
 
       const config = await getConfig("/theme-test", adapter);
       assertEquals(config.theme?.colors?.primary, "#3B82F6");
+    });
+  });
+
+  describe("mergeConfigs deep merge", () => {
+    it("keeps default cache.render when user overrides only cache.dir", () => {
+      const merged = mergeConfigs({ cache: { dir: "/custom" } });
+      assertEquals(merged.cache?.dir, "/custom");
+      // render sub-object must survive the partial override (regression: shallow
+      // spread dropped it and crashed callers reading cache.render.type).
+      assertEquals(merged.cache?.render?.type, "memory");
+      assertEquals(merged.cache?.render?.maxEntries, 500);
+    });
+
+    it("keeps default build.esbuild fields when user overrides only build.outDir", () => {
+      const merged = mergeConfigs({ build: { outDir: "out" } });
+      assertEquals(merged.build?.outDir, "out");
+      assertEquals(merged.build?.esbuild?.worker, false);
+      assert(typeof merged.build?.esbuild?.wasmURL === "string");
+    });
+
+    it("keeps default theme colors when user sets an unrelated color", () => {
+      const merged = mergeConfigs({ theme: { colors: { secondary: "#000000" } } });
+      assertEquals(merged.theme?.colors?.primary, "#3B82F6");
+      assertEquals(merged.theme?.colors?.secondary, "#000000");
     });
   });
 });

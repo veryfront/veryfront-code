@@ -82,6 +82,10 @@ export async function collectAppRoutes(
 }
 
 function isForceDynamic(source: string): boolean {
+  // Regex-based heuristic: matches the common `export const dynamic = "force-dynamic"`
+  // declaration. Known limitations: will miss `"force-dynamic" as const`, template literals,
+  // and re-exports; will false-positive on commented-out lines. AST parsing would be more
+  // accurate but is too heavy for this build-time path.
   return /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']/.test(source);
 }
 

@@ -38,6 +38,9 @@ const logger = baseLogger.component("workflow-executor");
 /** Default polling interval for waiting on workflow result */
 const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
 
+/** Default max time waitForResult() polls before giving up (5 minutes) */
+const DEFAULT_RESULT_WAIT_TIMEOUT_MS = 5 * 60 * 1_000;
+
 /**
  * Workflow executor configuration
  */
@@ -56,6 +59,8 @@ export interface WorkflowExecutorConfig {
   lockDuration?: number;
   /** Enable distributed locking (default: true if backend supports it) */
   enableLocking?: boolean;
+  /** Max time result()/waitForResult waits for a terminal state (default: 300000) */
+  resultWaitTimeout?: number;
   /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
   /** Callback when workflow completes */
@@ -285,6 +290,23 @@ export class WorkflowExecutor {
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
     let heartbeatInFlight = false;
 
+    // If the heartbeat can no longer extend our lock, another worker may claim
+    // this run as stalled and execute it concurrently. We abort as soon as that
+    // happens: lockLostError, once set, is raced against the DAG execution so we
+    // stop acting on the run and skip writing any terminal status (which would
+    // clobber the new owner's progress).
+    let lockLostError: Error | undefined;
+    let signalLockLost: (() => void) | undefined;
+    const lockLostPromise = new Promise<never>((_, reject) => {
+      signalLockLost = () =>
+        reject(
+          lockLostError ??
+            ORCHESTRATION_ERROR.create({ detail: `Lost lock for run "${runId}"` }),
+        );
+    });
+    // Never let this reject go unobserved if execution finishes first.
+    lockLostPromise.catch(() => {});
+
     if (useLocking) {
       const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
       if (!acquired) {
@@ -317,8 +339,14 @@ export class WorkflowExecutor {
 
             if (useLocking && typeof this.config.backend.extendLock === "function") {
               const extended = await this.config.backend.extendLock(runId, lockDuration);
-              if (!extended) {
-                logger.warn("Failed to extend lock during heartbeat", { runId });
+              if (!extended && !lockLostError) {
+                lockLostError = ORCHESTRATION_ERROR.create({
+                  detail: `Lost lock for run "${runId}" during heartbeat; aborting to avoid ` +
+                    `concurrent execution by another worker.`,
+                });
+                logger.error("Lost workflow lock; aborting run", { runId });
+                if (heartbeatInterval) clearInterval(heartbeatInterval);
+                signalLockLost?.();
               }
             }
           } catch (error) {
@@ -343,7 +371,11 @@ export class WorkflowExecutor {
 
       const result = await runWithWorkflowTenant(run._tenant, () =>
         this.executeWithTimeout(
-          () => this.dagExecutor.execute(nodes, runWithTenantContext, startFromNode),
+          () =>
+            Promise.race([
+              this.dagExecutor.execute(nodes, runWithTenantContext, startFromNode),
+              lockLostPromise,
+            ]),
           workflow.timeout,
         ));
 
@@ -372,6 +404,15 @@ export class WorkflowExecutor {
       this.config.onError?.(run, error);
     } catch (error) {
       const normalizedError = ensureError(error);
+
+      // Lock lost: we no longer own the run, so a new owner (via stalled-run
+      // recovery) is responsible for it. Do NOT write a terminal status here or
+      // we would overwrite that worker's progress. Just release and rethrow.
+      if (lockLostError) {
+        logger.warn("Aborted run after losing lock; leaving status for new owner", { runId });
+        throw lockLostError;
+      }
+
       await this.failRun(runId, normalizedError, run.context, run.nodeStates);
 
       await workflow.onError?.(normalizedError, run.context);
@@ -585,7 +626,10 @@ export class WorkflowExecutor {
   private async waitForResult<TOutput>(
     runId: string,
     pollInterval = DEFAULT_RESULT_POLL_INTERVAL_MS,
+    timeoutMs = this.config.resultWaitTimeout ?? DEFAULT_RESULT_WAIT_TIMEOUT_MS,
   ): Promise<TOutput> {
+    const deadline = Date.now() + timeoutMs;
+
     while (true) {
       const run = await this.config.backend.getRun(runId);
       if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
@@ -598,8 +642,16 @@ export class WorkflowExecutor {
         throw ORCHESTRATION_ERROR.create({ detail: "Workflow was cancelled" });
       }
 
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw TIMEOUT_ERROR.create({
+          detail: `Timed out after ${timeoutMs}ms waiting for workflow run "${runId}" to reach a ` +
+            `terminal state (last status: "${run.status}").`,
+        });
+      }
+
       // no cleanup needed: one-shot
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(pollInterval, remaining)));
     }
   }
 

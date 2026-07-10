@@ -233,6 +233,19 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     return conversation;
   }, [store, select]);
 
+  // Refs for callbacks and derived props that are used inside async .then()
+  // continuations in the initial-load effect. The effect is keyed on the store
+  // only (it should not re-run when select/create/isControlled change), but the
+  // async callbacks inside must always see the *current* values — not the stale
+  // closure captured when the effect ran. Using refs achieves both goals without
+  // the eslint-disable workaround.
+  const createRef = React.useRef(create);
+  createRef.current = create;
+  const selectRef = React.useRef(select);
+  selectRef.current = select;
+  const isControlledRef = React.useRef(isControlled);
+  isControlledRef.current = isControlled;
+
   // Initial load: pull the list; auto-create a draft only when there's nothing
   // to open, otherwise land on the most-recent conversation (so a reload
   // restores where you were instead of spawning a fresh "New Chat"). Runs once
@@ -247,10 +260,10 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       setSummaries(list);
       setIsLoading(false);
       if (!didInit.current) {
-        if (list.length === 0) create();
-        else if (!isControlled && activeRef.current == null) {
+        if (list.length === 0) createRef.current();
+        else if (!isControlledRef.current && activeRef.current == null) {
           const firstId = list[0]?.id ?? null;
-          select(firstId);
+          selectRef.current(firstId);
           if (firstId) {
             void store.load(firstId).then((conversation) => {
               if (!cancelled) setActive(conversation);
@@ -267,8 +280,6 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       cancelled = true;
       unsubscribe?.();
     };
-    // `create` is stable enough; intentionally keyed on the store only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store]);
 
   // Load the full active conversation when the active id changes. Skip when we

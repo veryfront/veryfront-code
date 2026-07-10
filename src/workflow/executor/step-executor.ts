@@ -6,6 +6,7 @@ import {
   runWithCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
 import {
   AGENT_NOT_FOUND,
   INITIALIZATION_ERROR,
@@ -188,21 +189,34 @@ export class StepExecutor {
     };
   }
 
+  /** HTTP-style statuses worth retrying: timeout, rate limit, and transient 5xx. */
+  private static readonly RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+  /**
+   * Node/Deno transient network error codes. Matched as whole tokens against
+   * error.code (or, when a plain Error carries no code, its message). Unlike
+   * "429"/"503"/"timeout", these tokens are specific enough not to appear
+   * incidentally in unrelated error text.
+   */
+  private static readonly RETRYABLE_CODE_RE =
+    /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
+
   private isRetryableError(error: Error, config: RetryConfig): boolean {
     if (config.retryIf) return config.retryIf(error);
 
-    const retryablePatterns = [
-      /timeout/i,
-      /ECONNRESET/i,
-      /ECONNREFUSED/i,
-      /ETIMEDOUT/i,
-      /rate limit/i,
-      /429/,
-      /503/,
-      /502/,
-    ];
+    // Prefer structured signals over substring-matching the message: an error
+    // whose text merely contains "429" or "timeout" (e.g. "Found 429 items")
+    // must NOT be retried. VeryfrontError carries an HTTP-style status, so HTTP
+    // conditions (429/503/timeout) are classified by status, not text.
+    if (isVeryfrontError(error)) {
+      return StepExecutor.RETRYABLE_STATUSES.has(error.status);
+    }
 
-    return retryablePatterns.some((pattern) => pattern.test(error.message));
+    // System/network errors: use the stable `code` when present, else fall back
+    // to the message but only for the specific code tokens above.
+    const code = (error as { code?: unknown }).code;
+    const subject = typeof code === "string" ? code : error.message;
+    return StepExecutor.RETRYABLE_CODE_RE.test(subject);
   }
 
   private calculateRetryDelay(attempt: number, config: RetryConfig): number {

@@ -6,6 +6,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 export const LOG_PREFIX = "[SSR-VF-MODULES]";
 
@@ -43,11 +44,23 @@ export const frameworkWriteFlight = new Singleflight<string>();
 // modules importing the same veryfront/* module do not receive cycle placeholders.
 export const frameworkTransformFlight = new Singleflight<string>();
 
-// Cache for already-transformed #veryfront/ dependencies to avoid cycles and redundant work
-export const veryfrontTransformCache = new Map<string, string>();
+// Maximum entries for the per-process framework transform caches.
+// The framework source tree is large but finite; 500 entries comfortably covers
+// a full build while bounding memory in long-running servers.  Evicted entries
+// are simply recomputed on the next request.
+const FRAMEWORK_CACHE_MAX_ENTRIES = 500;
 
-// Cache for transformed framework files by absolute path to prevent cycles and redundant work
-export const frameworkFileCache = new Map<string, string>();
+// Cache for already-transformed #veryfront/ dependencies to avoid cycles and redundant work.
+// Bounded with LRUCache to prevent unbounded memory growth in long-running servers.
+export const veryfrontTransformCache = new LRUCache<string, string>({
+  maxEntries: FRAMEWORK_CACHE_MAX_ENTRIES,
+});
+
+// Cache for transformed framework files by absolute path to prevent cycles and redundant work.
+// Bounded with LRUCache to prevent unbounded memory growth in long-running servers.
+export const frameworkFileCache = new LRUCache<string, string>({
+  maxEntries: FRAMEWORK_CACHE_MAX_ENTRIES,
+});
 
 // Track files currently being transformed to detect cycles
 export const transformingFiles = new Set<string>();

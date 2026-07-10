@@ -192,7 +192,8 @@ function autoInitializeFromEnv(): void {
       throw toError(createError({
         type: "config",
         message:
-          "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models.",
+          "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models " +
+          "(Mistral uses the OpenAI-compatible wire format and is routed through the openai extension).",
       }));
     });
   }

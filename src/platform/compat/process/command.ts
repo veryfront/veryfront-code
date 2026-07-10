@@ -289,9 +289,20 @@ export async function runCommand(
       });
     });
 
-    child.on("error", () => {
+    child.on("error", (spawnError: Error) => {
       timeout.clear();
-      resolve({ success: false, code: 1 });
+      // Include the spawn error message so callers can distinguish ENOENT
+      // ("command not found"), EACCES ("permission denied"), etc.
+      resolve({
+        success: false,
+        code: 1,
+        stdout: capture ? stdout : undefined,
+        stderr: capture
+          ? (stderr
+            ? `${stderr}\nSpawn error: ${spawnError.message}`
+            : `Spawn error: ${spawnError.message}`)
+          : undefined,
+      });
     });
   });
 }

@@ -158,6 +158,10 @@ export const getPendingApprovalSchema = defineSchema((v) =>
     decidedBy: v.string().optional(),
     decidedAt: v.date().optional(),
     comment: v.string().optional(),
+    // Set when the approval notifier failed: the approval exists but approvers
+    // were not informed. Surfaced so operators can re-notify instead of the
+    // workflow silently hanging until expiry.
+    notificationError: v.string().optional(),
   })
 );
 

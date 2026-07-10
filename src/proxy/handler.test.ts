@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import {
@@ -75,6 +75,53 @@ export async function signTestJwt(
   const b = base64url(JSON.stringify(body));
   const sig = await hmacSha(alg, secret, `${h}.${b}`);
   return `${h}.${b}.${sig}`;
+}
+
+function encodePem(label: string, der: ArrayBuffer): string {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+  const lines = base64.match(/.{1,64}/g) ?? [base64];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
+}
+
+function base64urlBytes(bytes: Uint8Array): string {
+  return base64url(String.fromCharCode(...bytes));
+}
+
+/**
+ * Mint a valid, freshly-signed control-plane JWS and export the matching
+ * public key PEM. Used to exercise the proxy's cryptographic verification of
+ * internal control-plane requests (isVerifiedInternalControlPlaneRequest).
+ */
+async function mintControlPlaneJws(
+  overrides: Partial<{ iss: string; iat: number; exp: number }> = {},
+): Promise<{ jws: string; publicKeyPem: string }> {
+  const keyPair = await crypto.subtle.generateKey("Ed25519", true, [
+    "sign",
+    "verify",
+  ]) as CryptoKeyPair;
+  const der = await crypto.subtle.exportKey("spki", keyPair.publicKey);
+  const publicKeyPem = encodePem("PUBLIC KEY", der);
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "EdDSA", typ: "JWT" };
+  const claims = {
+    iss: overrides.iss ?? "veryfront-api",
+    aud: "protected-project",
+    sub: "control-plane",
+    surface: "channels",
+    project_id: "proj-123",
+    request_hash: "n/a",
+    iat: overrides.iat ?? now,
+    exp: overrides.exp ?? now + 60,
+  };
+  const encodedHeader = base64url(JSON.stringify(header));
+  const encodedPayload = base64url(JSON.stringify(claims));
+  const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+  const signature = await crypto.subtle.sign("Ed25519", keyPair.privateKey, signingInput);
+  return {
+    publicKeyPem,
+    jws: `${encodedHeader}.${encodedPayload}.${base64urlBytes(new Uint8Array(signature))}`,
+  };
 }
 
 function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
@@ -1565,7 +1612,7 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("allows signed control-plane run stream requests through protected preview using inbound token", async () => {
+    it("allows cryptographically signed control-plane run stream requests through protected preview using inbound token", async () => {
       let tokenEndpointHits = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -1592,7 +1639,10 @@ describe("Proxy Handler", () => {
         return createNotFoundResponse();
       });
 
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
       try {
+        const { jws, publicKeyPem } = await mintControlPlaneJws();
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
         const handler = createHandler(port);
 
         const req = new Request(
@@ -1601,7 +1651,7 @@ describe("Proxy Handler", () => {
             headers: {
               host: "protected-project.preview.veryfront.com",
               "x-token": "project-agent-token",
-              "x-veryfront-control-plane-jws": "signed-request",
+              "x-veryfront-control-plane-jws": jws,
             },
           },
         );
@@ -1616,6 +1666,78 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
+    it("rejects control-plane requests with a forged (unverifiable) signature on a protected environment", async () => {
+      let tokenEndpointHits = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenEndpointHits += 1;
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      // Configure a real key, then present a JWS whose signature was NOT minted
+      // by the corresponding private key. Header presence must no longer grant
+      // the internal bypass.
+      const { publicKeyPem } = await mintControlPlaneJws();
+      const forged = await mintControlPlaneJws(); // different, unrelated keypair
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
+          {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              "x-token": "attacker-supplied-token",
+              "x-veryfront-control-plane-jws": forged.jws,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        // Protected environment with no user cookie and an unverifiable
+        // signature must be redirected to auth, not allowed through, and the
+        // attacker-supplied x-token must not be adopted as the upstream bearer.
+        assertEquals(ctx.error?.status, 302);
+        assertNotEquals(ctx.token, "attacker-supplied-token");
+
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
         await server.shutdown();
       }
     });

@@ -103,17 +103,24 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   // SECURITY: Escape HTML first to prevent XSS attacks
   const escaped = escapeHtml(jsonStr);
 
+  // After escapeHtml, `"` → `&quot;`, `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`.
+  // The inner character class allows any escaped entity except `&quot;` itself
+  // (which signals the string boundary), so keys/values containing `&`, `<`, `>`
+  // are matched correctly. Without this, `[^&]*` would stop at the first `&amp;`
+  // inside a key or value and the span would be omitted.
+  const ESCAPED_STRING_INNER = "(?:[^&]|&(?:amp|lt|gt|apos|#\\d+);)*";
   const highlighted = escaped
     .replace(
-      /&quot;([^&]*)&quot;:/g,
+      new RegExp(`&quot;(${ESCAPED_STRING_INNER})&quot;:`, "g"),
       '<span class="text-green-600">&quot;$1&quot;</span>:',
     )
     .replace(
-      /: &quot;([^&]*)&quot;/g,
+      new RegExp(`: &quot;(${ESCAPED_STRING_INNER})&quot;`, "g"),
       ': <span class="text-amber-600">&quot;$1&quot;</span>',
     )
-    .replace(/: (\d+)/g, ': <span class="text-blue-600">$1</span>')
-    .replace(/: (true|false)/g, ': <span class="text-purple-600">$1</span>');
+    // Match integers, floats, and scientific notation; also values inside arrays.
+    .replace(/: (-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g, ': <span class="text-blue-600">$1</span>')
+    .replace(/: (true|false)\b/g, ': <span class="text-purple-600">$1</span>');
 
   return (
     <pre

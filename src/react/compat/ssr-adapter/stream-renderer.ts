@@ -45,7 +45,11 @@ async function renderToReadableStreamImpl(
   const start = performance.now();
 
   const controller = new AbortController();
+  // Track whether the abort was triggered by our own timeout so we can detect
+  // it reliably in the catch block without string-matching error messages.
+  let timedOut = false;
   const timeoutId = setTimeout(() => {
+    timedOut = true;
     logger.error("SSR_TIMEOUT aborting React render", { timeoutMs: ssrTimeoutMs });
     controller.abort(new Error(`SSR timeout: React render exceeded ${ssrTimeoutMs}ms`));
   }, ssrTimeoutMs);
@@ -84,10 +88,10 @@ async function renderToReadableStreamImpl(
     clearTimeout(timeoutId);
 
     const durationMs = Math.round(performance.now() - start);
-    const isAbort = error instanceof Error &&
-      (error.name === "AbortError" ||
-        error.message.includes("SSR timeout") ||
-        error.message.includes("aborted"));
+    // Detect abort via our own flag (most reliable) or the standard AbortError
+    // name. Avoids brittle substring matching on error messages that could
+    // false-positive on unrelated errors mentioning "aborted".
+    const isAbort = timedOut || (error instanceof Error && error.name === "AbortError");
 
     if (isAbort) {
       logger.error("SSR_TIMEOUT React render was aborted", {
@@ -129,6 +133,9 @@ function renderToPipeableStreamImpl(
 
   const renderToPipeableStream = server.renderToPipeableStream;
   const start = performance.now();
+  // Track whether the rejection was caused by our own timeout so the catch
+  // block can detect it without string-matching the error message.
+  let timedOut = false;
 
   const promise = new Promise<SSRResult>((resolve, reject) => {
     let abortFn: (() => void) | undefined;
@@ -137,6 +144,7 @@ function renderToPipeableStreamImpl(
     const timeoutId = setTimeout(() => {
       if (settled) return;
       settled = true;
+      timedOut = true;
 
       logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs: ssrTimeoutMs });
 
@@ -200,12 +208,11 @@ function renderToPipeableStreamImpl(
 
   return promise.catch(async (error) => {
     const durationMs = Math.round(performance.now() - start);
-    const isTimeout = error instanceof Error && error.message.includes("SSR timeout");
 
-    if (!isTimeout) logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
+    if (!timedOut) logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
     options.onError?.(error as Error);
 
-    if (isTimeout) throw error;
+    if (timedOut) throw error;
 
     try {
       const html = await renderToStringAdapter(element, options);

@@ -7,7 +7,7 @@ import {
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
-import { buildNonceAttribute } from "./html-escape.ts";
+import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import {
   getDevScripts,
@@ -79,8 +79,11 @@ export function injectHTMLContent(
   let html = template;
 
   html = html.replace(/{{\s*content\s*}}/gi, content);
-  html = html.replace(/{{\s*title\s*}}/gi, metadata.title ?? "");
-  html = html.replace(/{{\s*description\s*}}/gi, metadata.description ?? "");
+  // Escape title and description: these come from user-authored frontmatter and
+  // may appear in both text nodes and attribute values (e.g. <title> and <meta
+  // content="">). escapeHTML handles &, <, >, ", and ' for both contexts.
+  html = html.replace(/{{\s*title\s*}}/gi, escapeHTML(metadata.title ?? ""));
+  html = html.replace(/{{\s*description\s*}}/gi, escapeHTML(metadata.description ?? ""));
 
   if (/{{\s*meta\s*}}/i.test(html)) {
     html = html.replace(/{{\s*meta\s*}}/gi, generateMetaTags(metadata));

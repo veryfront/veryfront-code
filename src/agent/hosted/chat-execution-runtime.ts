@@ -222,8 +222,14 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
   };
 }
 
+// `invoke_agent` can legitimately run longer than the idle timeout (it delegates
+// to a sub-agent), so hosted runs must exempt it from the watchdog's idle abort.
+// The shared watchdog no longer bakes this product-specific name into its default,
+// so the exemption is passed explicitly here at the hosted call site.
+const HOSTED_LONG_RUNNING_TOOL_NAMES = ["invoke_agent"] as const;
+
 function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
-  return createChatStreamWatchdog();
+  return createChatStreamWatchdog({ longRunningToolNames: HOSTED_LONG_RUNNING_TOOL_NAMES });
 }
 
 function resolveStreamBootstrapKeepaliveIntervalMs(intervalMs: number | undefined): number {

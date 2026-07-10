@@ -270,7 +270,7 @@ async function runRecord(
   record.checks = checks;
 
   if (isBlockingFailure(record)) {
-    record.completed = record.completed && true;
+    record.completed = false;
   }
 
   return record;

@@ -59,18 +59,6 @@ function getApiErrorDetails(error: unknown): ApiErrorDetails | null {
   return apiErrorDetails.responseText || apiErrorDetails.url ? apiErrorDetails : null;
 }
 
-function getProblemDetail(error: unknown): string | null {
-  const responseText = getApiErrorDetails(error)?.responseText;
-  if (!responseText) return null;
-
-  try {
-    const parsed = JSON.parse(responseText) as { detail?: unknown };
-    return typeof parsed.detail === "string" ? parsed.detail : null;
-  } catch {
-    return null;
-  }
-}
-
 export function getPushRefFallbackBranch(
   error: unknown,
   branch: string | null | undefined,
@@ -87,11 +75,9 @@ export function getPushRefFallbackBranch(
     return null;
   }
 
-  const detail = getProblemDetail(error);
-  if (detail && !detail.includes(`Branch '${branch}' not found`)) {
-    return null;
-  }
-
+  // The 404 + URL pattern checks above already narrow this to a branch-not-found
+  // response. Avoid string-matching the error detail message (fragile against
+  // API wording changes); rely on the structured status/URL checks instead.
   return "main";
 }
 
@@ -416,10 +402,20 @@ export class ProxyFSAdapterManager {
       if (releaseId) {
         context = { sourceType: "release", projectSlug, releaseId };
       } else {
-        context = { sourceType: "environment", projectSlug, environmentName: environmentName! };
+        if (!environmentName) {
+          throw new Error(
+            `[ProxyFSAdapterManager] createAdapter: productionMode=true requires environmentName when no releaseId is provided (projectSlug=${projectSlug})`,
+          );
+        }
+        context = { sourceType: "environment", projectSlug, environmentName };
       }
     } else {
-      context = { sourceType: "branch", projectSlug, branch: branch! };
+      if (!branch) {
+        throw new Error(
+          `[ProxyFSAdapterManager] createAdapter: productionMode=false requires branch (projectSlug=${projectSlug})`,
+        );
+      }
+      context = { sourceType: "branch", projectSlug, branch };
     }
 
     logger.debug("CONTENT_CONTEXT_SET", {

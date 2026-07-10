@@ -40,14 +40,25 @@ import type {
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-/** Internal /_veryfront/ prefixes that are safe to exempt from CSRF (dev assets, static JS). */
+/** Internal /_veryfront/ directory prefixes that only ever serve static assets. */
 const CSRF_EXEMPT_PREFIXES = [
   "/_veryfront/modules/",
   "/_veryfront/lib/",
   "/_veryfront/chunks/",
-  "/_veryfront/preview-hmr",
-  "/_veryfront/studio-bridge",
 ];
+
+/**
+ * Exact internal asset paths safe to exempt from CSRF. These are GET-only
+ * static JS handlers (`exact: true` patterns). They were previously exempted by
+ * the bare `/_veryfront/preview-hmr` / `/_veryfront/studio-bridge` prefixes,
+ * which also matched any sibling path (e.g. `.../studio-bridge/submit`) and
+ * would have left a future state-changing endpoint under that prefix
+ * CSRF-unprotected. Matching the exact `.js` paths keeps the exemption tight.
+ */
+const CSRF_EXEMPT_EXACT_PATHS = new Set([
+  "/_veryfront/preview-hmr.js",
+  "/_veryfront/studio-bridge.js",
+]);
 
 export class CsrfHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -70,6 +81,7 @@ export class CsrfHandler extends BaseHandler {
     const { pathname } = new URL(req.url);
 
     // Only exempt internal asset/dev paths, NOT action endpoints
+    if (CSRF_EXEMPT_EXACT_PATHS.has(pathname)) return this.continue();
     if (CSRF_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) {
       return this.continue();
     }

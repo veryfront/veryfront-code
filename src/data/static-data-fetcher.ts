@@ -21,6 +21,11 @@ const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALI
 /**
  * Per-project revalidation tracking for multi-tenant fairness.
  * Prevents one project with many stale entries from starving other projects.
+ *
+ * Bounded in practice: an entry is created on slot acquire and deleted in
+ * releaseRevalidationSlot once its count returns to 0, so the map only holds
+ * projects with in-flight revalidations. Its high-water mark is the number of
+ * projects revalidating concurrently, not the total number of projects seen.
  */
 const projectRevalidationCounts = new Map<string, number>();
 

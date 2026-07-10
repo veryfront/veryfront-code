@@ -52,11 +52,13 @@ describe("agent/hosted-child-status", () => {
       }),
       true,
     );
+    // Message-only objects without a structured terminalErrorCode are not blocked —
+    // the code-based check is the authoritative signal; message text is unstable.
     assertEquals(
       shouldBlockHostedChildSameTurnRetry({
         terminalErrorMessage: "Child run cancelled",
       }),
-      true,
+      false,
     );
     assertEquals(
       shouldBlockHostedChildSameTurnRetry({

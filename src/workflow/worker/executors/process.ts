@@ -301,8 +301,11 @@ export class ProcessRunExecutor implements RunExecutor {
             logger.debug(`[RunExecution ${execution.executionId}] ${text}`);
           }
         }
-      })().catch(() => {
-        // Ignore stream errors
+      })().catch((error) => {
+        logger.debug(
+          `[RunExecution ${execution.executionId}] stdout stream error:`,
+          error,
+        );
       });
     }
 
@@ -316,8 +319,13 @@ export class ProcessRunExecutor implements RunExecutor {
             logger.error(`[RunExecution ${execution.executionId}] ${text}`);
           }
         }
-      })().catch(() => {
-        // Ignore stream errors
+      })().catch((error) => {
+        // stderr often carries the only diagnostic for a failing subprocess —
+        // don't discard a failure to read it.
+        logger.warn(
+          `[RunExecution ${execution.executionId}] stderr stream error:`,
+          error,
+        );
       });
     }
   }

@@ -53,12 +53,11 @@ export function shouldBlockHostedChildSameTurnRetry(
   }
 
   const terminalErrorCode = getOptionalStringProperty(result, "terminalErrorCode");
-  const terminalErrorMessage = getOptionalStringProperty(result, "terminalErrorMessage");
 
+  // Rely only on the structured error code — message text is an unstable implementation detail.
   return (
     terminalErrorCode === "CANCELLED" ||
-    terminalErrorCode === hostedChildTerminalErrorCodes.cancelled ||
-    terminalErrorMessage === "Child run cancelled"
+    terminalErrorCode === hostedChildTerminalErrorCodes.cancelled
   );
 }
 
@@ -128,6 +127,9 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+/** Maximum number of consecutive poll failures before the monitor aborts. */
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+
 /** Input payload for monitor hosted child run status. */
 export interface MonitorHostedChildRunStatusInput {
   authToken: string;
@@ -136,12 +138,16 @@ export interface MonitorHostedChildRunStatusInput {
   abortSignal?: AbortSignal;
   pollIntervalMs: number;
   onTerminal: (error: HostedChildTerminalStateError) => void;
+  /** Called when a poll attempt fails; receives the error and consecutive failure count. */
+  onMonitoringError?: (error: unknown, consecutiveFailures: number) => void;
 }
 
 /** Monitor hosted child run status helper. */
 export async function monitorHostedChildRunStatus(
   input: MonitorHostedChildRunStatusInput,
 ): Promise<void> {
+  let consecutiveFailures = 0;
+
   while (!input.abortSignal?.aborted) {
     await waitForHostedChildStatusPoll(input.pollIntervalMs, input.abortSignal);
     if (input.abortSignal?.aborted) {
@@ -157,6 +163,8 @@ export async function monitorHostedChildRunStatus(
         abortSignal: input.abortSignal,
       });
 
+      consecutiveFailures = 0;
+
       if (isActiveHostedChildStatus(run.status)) {
         continue;
       }
@@ -170,6 +178,17 @@ export async function monitorHostedChildRunStatus(
       return;
     } catch (error) {
       if (input.abortSignal?.aborted || isAbortError(error)) {
+        return;
+      }
+
+      consecutiveFailures++;
+      input.onMonitoringError?.(error, consecutiveFailures);
+
+      if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        console.error(
+          `[monitorHostedChildRunStatus] Aborting status monitor after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures for run ${input.identifiers.childRunId}`,
+          error,
+        );
         return;
       }
     }

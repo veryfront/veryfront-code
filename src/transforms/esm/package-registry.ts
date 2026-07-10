@@ -6,6 +6,8 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
+
+const logger = rendererLogger.component("package-registry");
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   buildReactUrl,
@@ -135,7 +137,20 @@ export async function readProjectDependencyVersions(
     dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront });
 
     return { react, veryfront };
-  } catch (_) {
+  } catch (error) {
+    // ENOENT means there is no package.json in the project dir — expected for
+    // framework-only environments.  Any other error (permission denied, malformed
+    // JSON, etc.) is logged at warn so it is visible without crashing the server.
+    const isNotFound = error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: unknown }).code === "ENOENT";
+    if (!isNotFound) {
+      logger.warn("Failed to read project dependency versions", {
+        packageJsonPath,
+        error: String(error),
+      });
+    }
     return {};
   }
 }

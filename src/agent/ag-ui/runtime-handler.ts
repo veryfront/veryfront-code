@@ -43,9 +43,11 @@ function invokeLifecycleCallback(
 
   try {
     const result = callback(context);
-    void Promise.resolve(result).catch(() => undefined);
-  } catch {
-    return;
+    void Promise.resolve(result).catch((error) => {
+      console.error("[AgUiRuntime] Lifecycle callback rejected:", error);
+    });
+  } catch (error) {
+    console.error("[AgUiRuntime] Lifecycle callback threw:", error);
   }
 }
 
@@ -57,8 +59,8 @@ async function invokeLifecycleCallbackAndWait(
 
   try {
     await callback(context);
-  } catch {
-    return;
+  } catch (error) {
+    console.error("[AgUiRuntime] Lifecycle callback (await) threw:", error);
   }
 }
 

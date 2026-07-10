@@ -42,6 +42,7 @@
     "npm:@opentelemetry/sdk-node@0.219.0": "0.219.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/sdk-trace-base@2.8.0": "2.8.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/semantic-conventions@1.41.1": "1.41.1",
+    "npm:@redis/client@1.5.8": "1.5.8",
     "npm:@types/better-sqlite3@7.6.13": "7.6.13",
     "npm:@types/hast@3.0.3": "3.0.3",
     "npm:@types/mdast@4.0.3": "4.0.3",
@@ -1616,7 +1617,15 @@
     "@redis/bloom@5.11.0_@redis+client@5.11.0": {
       "integrity": "sha512-KYiVilAhAFN3057afUb/tfYJpsEyTkQB+tQcn5gVVA7DgcNOAj8lLxe4j8ov8BF6I9C1Fe/kwlbuAICcTMX8Lw==",
       "dependencies": [
-        "@redis/client"
+        "@redis/client@5.11.0"
+      ]
+    },
+    "@redis/client@1.5.8": {
+      "integrity": "sha512-xzElwHIO6rBAqzPeVnCzgvrnBEcFL1P0w8P65VNLRkdVW8rOE58f52hdj0BDgmsdOm4f1EoXPZtH4Fh7M/qUpw==",
+      "dependencies": [
+        "cluster-key-slot",
+        "generic-pool",
+        "yallist"
       ]
     },
     "@redis/client@5.11.0": {
@@ -1628,19 +1637,19 @@
     "@redis/json@5.11.0_@redis+client@5.11.0": {
       "integrity": "sha512-1iAy9kAtcD0quB21RbPTbUqqy+T2Uu2JxucwE+B4A+VaDbIRvpZR6DMqV8Iqaws2YxJYB3GC5JVNzPYio2ErUg==",
       "dependencies": [
-        "@redis/client"
+        "@redis/client@5.11.0"
       ]
     },
     "@redis/search@5.11.0_@redis+client@5.11.0": {
       "integrity": "sha512-g1l7f3Rnyk/xI99oGHIgWHSKFl45Re5YTIcO8j/JE8olz389yUFyz2+A6nqVy/Zi031VgPDWscbbgOk8hlhZ3g==",
       "dependencies": [
-        "@redis/client"
+        "@redis/client@5.11.0"
       ]
     },
     "@redis/time-series@5.11.0_@redis+client@5.11.0": {
       "integrity": "sha512-TWFeOcU4xkj0DkndnOyhtxvX1KWD+78UHT3XX3x3XRBUGWeQrKo3jqzDsZwxbggUgf9yLJr/akFHXru66X5UQA==",
       "dependencies": [
-        "@redis/client"
+        "@redis/client@5.11.0"
       ]
     },
     "@standard-schema/spec@1.1.0": {
@@ -2331,6 +2340,9 @@
         "google-logging-utils",
         "json-bigint"
       ]
+    },
+    "generic-pool@3.9.0": {
+      "integrity": "sha512-hymDOu5B53XvN4QT9dBmZxPX4CWhBPPLguTZ9MMFeFa/Kg0xWVfylOVNlJji/E7yTZWFd/q9GO5TxDLq156D7g=="
     },
     "get-caller-file@2.0.5": {
       "integrity": "sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg=="
@@ -3691,7 +3703,7 @@
       "integrity": "sha512-YwXjATVDT+AuxcyfOwZn046aml9jMlQPvU1VXIlLDVAExe0u93aTfPYSeRgG4p9Q/Jlkj+LXJ1XEoFV+j2JKcQ==",
       "dependencies": [
         "@redis/bloom",
-        "@redis/client",
+        "@redis/client@5.11.0",
         "@redis/json",
         "@redis/search",
         "@redis/time-series"
@@ -4298,6 +4310,9 @@
     },
     "y18n@5.0.8": {
       "integrity": "sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA=="
+    },
+    "yallist@4.0.0": {
+      "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A=="
     },
     "yaml@2.9.0": {
       "integrity": "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==",

@@ -100,7 +100,19 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   return null;
 }
 
-/** Message shape for is credit limit. */
+// ─── Message-text heuristics ─────────────────────────────────────────────────
+// The functions below classify provider errors by matching natural-language
+// substrings in error messages. This is intentional: providers often do not
+// include structured error codes in all response shapes, so text matching is
+// the only reliable signal. Keep these as the fallback path — wherever the
+// provider DOES return a structured `type` field (e.g. Anthropic's `body.type`)
+// the structured code is preferred (handled above in parseKnownProviderBody).
+//
+// MAINTENANCE: If a provider rewords an error message, the affected check will
+// silently fall back to EXTERNAL_SERVICE_ERROR. Update the relevant substring
+// list and add a test case when that happens.
+
+/** Returns true when the normalizedMessage indicates a credit or spend limit error. */
 export function isCreditLimitMessage(normalizedMessage: string): boolean {
   return (
     normalizedMessage.includes("credit limit") ||
@@ -124,6 +136,11 @@ function isAssistantPrefillUnsupportedMessage(message: string): boolean {
   return mentionsAssistantPrefill && rejectsAssistantPrefill;
 }
 
+// Detects provider-side billing errors reported via invalid_request_error messages.
+// Requires three independent signals to reduce false positives: the message must
+// mention (a) a known provider API, (b) billing/account, and (c) low credit balance.
+// If any provider stops including all three signals, this silently returns false —
+// the call site falls through to EXTERNAL_SERVICE_ERROR, which is the safe default.
 function isProviderBillingMessage(normalizedMessage: string): boolean {
   const mentionsProviderApi = normalizedMessage.includes("anthropic api") ||
     normalizedMessage.includes("openai api") ||

@@ -9,7 +9,16 @@ import { isDenoCompiled } from "./runtime.ts";
 import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
 
 function getTempDir(): string {
-  return Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ?? Deno.env.get("TMP") ?? "/tmp";
+  // Guard against the `Deno` global being absent when this module is imported
+  // in a non-Deno context (e.g., tree-shaken bundles or Node.js test runners).
+  // In practice this function is only called from within the `isDenoCompiled`
+  // guard at module level, so Deno.env is always available on the happy path.
+  // The "/tmp" fallback is intentional: TMPDIR/TEMP/TMP cover all major
+  // platforms; "/tmp" is the POSIX standard location used as a last resort.
+  if (typeof Deno !== "undefined" && typeof Deno.env?.get === "function") {
+    return Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ?? Deno.env.get("TMP") ?? "/tmp";
+  }
+  return process.env["TMPDIR"] ?? process.env["TEMP"] ?? process.env["TMP"] ?? "/tmp";
 }
 
 function getEsbuildCacheDir(): string {

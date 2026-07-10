@@ -228,7 +228,10 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
     idleTimeoutMs: options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
     toolRunningTimeoutMs: options?.toolRunningTimeoutMs ??
       DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
-    longRunningToolNames: new Set(options?.longRunningToolNames ?? ["invoke_agent"]),
+    // Default to an empty set — callers must opt in to exempt specific tool names
+    // from the idle timeout. Embedding product-specific names here as a default
+    // couples this shared utility to application concerns.
+    longRunningToolNames: new Set(options?.longRunningToolNames ?? []),
     setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
     clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
   };

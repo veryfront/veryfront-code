@@ -180,6 +180,11 @@ class TTLCache {
         }
       }
     }, TTL_CLEANUP_INTERVAL_MS);
+
+    // Unref so this timer does not keep the process alive when all other work
+    // is done. destroy() handles explicit cleanup when the cache is torn down.
+    const interval = this.cleanupInterval as { unref?: () => void };
+    interval.unref?.();
   }
 }
 
@@ -241,15 +246,21 @@ export function createCache(config: CacheConfig): {
   };
 }
 
+// FNV-1a 64-bit hash — far fewer collisions than a 32-bit DJB2 for the long
+// prompt strings used as cache keys. BigInt keeps arithmetic exact across the
+// full 64-bit range without overflow.
 function hashString(str: string): string {
-  let hash = 0;
+  const FNV_OFFSET_BASIS = 14695981039346656037n;
+  const FNV_PRIME = 1099511628211n;
+  const MASK_64 = (1n << 64n) - 1n;
 
+  let hash = FNV_OFFSET_BASIS;
   for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash &= hash;
+    hash ^= BigInt(str.charCodeAt(i));
+    hash = (hash * FNV_PRIME) & MASK_64;
   }
 
-  return Math.abs(hash).toString(36);
+  return hash.toString(36);
 }
 
 /**

@@ -40,13 +40,28 @@ import { buildFrameworkVfModuleCacheFileName } from "../../../mdx/esm-module-loa
 const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
 /**
+ * Unique token embedded in every cycle-detection placeholder as an extra
+ * collision guard. Detection keys off the stable `/* Cycle detected:` prefix
+ * (below); the marker is additional insurance and is not required for a match,
+ * so placeholders produced before this marker existed are still recognized.
+ */
+const CYCLE_PLACEHOLDER_MARKER = "vf-cycle-9f4a21b7";
+
+/**
+ * Prefix that every cycle-detection placeholder starts with. A real bundler
+ * would never emit this exact string at position 0 of transformed output, so
+ * it is a reliable sentinel on its own.
+ */
+const CYCLE_PLACEHOLDER_PREFIX = "/* Cycle detected:";
+
+/**
  * Check if a transformed code string is a cycle placeholder.
  * Cycle placeholders are returned when transformFrameworkCode detects a cycle
  * (a file that's already being transformed). These should never be cached
  * to disk as they represent an in-progress state, not the final transform.
  */
 export function isCyclePlaceholder(code: string): boolean {
-  return code.startsWith("/* Cycle detected:") && code.includes("export {};");
+  return code.startsWith(CYCLE_PLACEHOLDER_PREFIX);
 }
 
 /**
@@ -355,8 +370,9 @@ export async function transformFrameworkCode(
   // Check if we're in a cycle (another request is currently transforming this file)
   if (transformingFiles.has(sourcePath)) {
     logger.debug(`${LOG_PREFIX} Detected cycle, skipping`, { sourcePath: sourcePath.slice(-60) });
-    // Return a placeholder that will fail at runtime but won't cause infinite loop
-    return `/* Cycle detected: ${sourcePath} */\nexport {};`;
+    // Return a placeholder that will fail at runtime but won't cause infinite loop.
+    // The CYCLE_PLACEHOLDER_MARKER makes isCyclePlaceholder() unambiguous.
+    return `/* Cycle detected: ${sourcePath} ${CYCLE_PLACEHOLDER_MARKER} */\nexport {};`;
   }
 
   // Mark as being transformed

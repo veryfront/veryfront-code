@@ -29,7 +29,15 @@ function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
     }
   }
 
-  return request.headers.get("x-real-ip") || "unknown";
+  // `x-real-ip` is a proxy-set header. Honor it only when we trust the proxy;
+  // otherwise a client can spoof it to mint a fresh rate-limit key per request
+  // and evade limits entirely. Untrusted requests share the "unknown" bucket.
+  if (trustProxy) {
+    const realIp = request.headers.get("x-real-ip");
+    if (realIp) return realIp;
+  }
+
+  return "unknown";
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {

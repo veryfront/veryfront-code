@@ -106,13 +106,15 @@ export function useOptimisticCompat<State, OptimisticState = State>(
         return;
       }
 
-      const nextState = updateFn
-        ? updateFn(optimisticState, action)
-        : (action as State & OptimisticState);
-
-      setOptimisticState(nextState);
+      // Use the updater form to avoid reading stale `optimisticState` from
+      // the closure. Without this, a consumer that captures `updateOptimisticState`
+      // in an event handler from a previous render would silently apply
+      // `updateFn` against an outdated base value.
+      setOptimisticState((current) =>
+        updateFn ? updateFn(current, action) : (action as State & OptimisticState)
+      );
     },
-    [optimisticState, updateFn],
+    [updateFn],
   );
 
   return [optimisticState, updateOptimisticState];

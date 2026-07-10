@@ -94,6 +94,53 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
       };
       assertEquals(rewriteBodyImports("", config), "");
     });
+
+    it("rewrites multiline destructured import for SSR", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "server",
+      };
+      const body = `import {\n  Foo,\n  Bar\n} from "./utils.js";`;
+      const result = rewriteBodyImports(body, config);
+      assertEquals(result.includes("file://"), true);
+      // The from specifier must be rewritten; Foo/Bar bindings are preserved
+      assertEquals(result.includes("Foo"), true);
+      assertEquals(result.includes("Bar"), true);
+      assertEquals(result.includes("./utils.js"), false);
+    });
+
+    it("rewrites multiline destructured import for browser", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "browser",
+      };
+      const body = `import {\n  Alpha,\n  Beta\n} from "./components.js";`;
+      const result = rewriteBodyImports(body, config);
+      assertEquals(result.includes("/_veryfront/fs/"), true);
+      assertEquals(result.includes("Alpha"), true);
+      assertEquals(result.includes("Beta"), true);
+    });
+
+    it("rewrites multiple imports where one is multiline", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "server",
+      };
+      const body = [
+        `import { A } from "./a.js";`,
+        `import {`,
+        `  B,`,
+        `  C`,
+        `} from "./bc.js";`,
+        `const x = A;`,
+      ].join("\n");
+      const result = rewriteBodyImports(body, config);
+      // Both imports must be rewritten
+      assertEquals(result.includes("./a.js"), false);
+      assertEquals(result.includes("./bc.js"), false);
+      assertEquals(result.split("file://").length - 1 >= 2, true);
+      assertEquals(result.includes("const x = A"), true);
+    });
   });
 
   describe("rewriteCompiledImports", () => {

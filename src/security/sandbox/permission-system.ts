@@ -100,6 +100,18 @@ function requestDenoPermission(
   );
 }
 
+let warnedNonDenoAutoGrant = false;
+
+function warnNonDenoAutoGrantOnce(): void {
+  if (warnedNonDenoAutoGrant) return;
+  warnedNonDenoAutoGrant = true;
+  logger.warn(
+    "Permission sandbox is a no-op on non-Deno runtimes: all permission " +
+      "requests are auto-granted. Do not rely on this guard for isolation " +
+      "when running outside Deno.",
+  );
+}
+
 export function requestPermission(
   request: PermissionRequest,
 ): Promise<PermissionResult> {
@@ -109,6 +121,11 @@ export function requestPermission(
       try {
         if (isDeno) return await requestDenoPermission(request);
 
+        // On non-Deno runtimes there is no OS-level permission API to consult,
+        // so every request is auto-granted — this guard provides NO isolation
+        // here. Warn loudly (once) so an operator running the runtime outside
+        // Deno cannot mistake this for an enforced sandbox.
+        warnNonDenoAutoGrantOnce();
         serverLogger.debug(
           "[permissions] Permission auto-granted (non-Deno runtime)",
           { permission: request.name },

@@ -205,6 +205,11 @@ export async function loadModule(
     return await import(moduleUrl);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
+    // HEURISTIC: extract the bundle hash by matching the cache-path pattern in
+    // the error message. This relies on the path format
+    // `veryfront-http-bundle/http-<hash>.mjs` remaining stable. If the cache
+    // layout changes, this recovery silently stops firing — update the regex
+    // alongside any cache-dir rename.
     const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
 
     if (bundleMatch) {

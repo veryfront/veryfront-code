@@ -21,7 +21,7 @@ export async function openKv(path?: string): Promise<Kv> {
       try {
         return await open(path);
       } catch (error) {
-        serverLogger.debug("Native Deno KV failed, trying other options:", error);
+        serverLogger.warn("Native Deno KV failed, trying other options:", error);
       }
     }
   }
@@ -34,7 +34,10 @@ export async function openKv(path?: string): Promise<Kv> {
       // cast to satisfy the SqliteKv constructor's nominal type check.
       return new SqliteKv(db as unknown as SqliteDatabase);
     } catch (error) {
-      serverLogger.debug("SqliteStore.openSqliteDatabase failed, using memory KV:", error);
+      serverLogger.warn(
+        "SqliteStore.openSqliteDatabase failed, falling back to in-memory KV (data will not survive restart):",
+        error,
+      );
     }
   } else {
     serverLogger.debug(
@@ -43,6 +46,12 @@ export async function openKv(path?: string): Promise<Kv> {
     );
   }
 
+  // In-memory KV: all data is lost on process restart. Log at warn so operators
+  // can detect unintentional memory-only mode in production.
+  serverLogger.warn(
+    "openKv: falling back to in-memory KV store — data will not persist across restarts. " +
+      "Configure Deno KV or install @veryfront/ext-db-sqlite for durable storage.",
+  );
   return new MemoryKv();
 }
 
