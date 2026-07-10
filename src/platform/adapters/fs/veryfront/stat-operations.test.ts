@@ -245,6 +245,22 @@ describe("StatOperations", () => {
 
       assertEquals(await statOps.exists("nonexistent.tsx"), false);
     });
+
+    it("should not route existence misses through the public stat span", async () => {
+      const statOps = createStatOps(
+        createMockClient(),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+      let publicStatCalled = false;
+      statOps.stat = async () => {
+        publicStatCalled = true;
+        throw new Error("stat should not be called by exists");
+      };
+
+      assertEquals(await statOps.exists("nonexistent.tsx"), false);
+      assertEquals(publicStatCalled, false);
+    });
   });
 
   describe("resolveFile", () => {
