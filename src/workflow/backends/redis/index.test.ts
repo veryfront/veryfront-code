@@ -894,4 +894,27 @@ describe("RedisBackend", () => {
       assertEquals(results[0]!.approval.id, "ap-x");
     });
   });
+
+  describe("run indexes", () => {
+    it("backfills the all-runs index for runs created before the index existed", async () => {
+      await backend.createRun(createTestRun("legacy-run"));
+      mockRedis.sets.delete("test:index:runs");
+
+      const runs = await backend.listRuns({});
+
+      assertEquals(runs.map((run) => run.id), ["legacy-run"]);
+      assertEquals([...mockRedis.sets.get("test:index:runs")!], ["legacy-run"]);
+    });
+
+    it("counts the intersection of workflow and status indexes", async () => {
+      await backend.createRun(createTestRun("pending-x", { workflowId: "wf-x" }));
+      await backend.createRun(
+        createTestRun("running-x", { workflowId: "wf-x", status: "running" }),
+      );
+      await backend.createRun(createTestRun("pending-y", { workflowId: "wf-y" }));
+
+      assertEquals(await backend.countRuns({ workflowId: "wf-x", status: "pending" }), 1);
+      assertEquals(await backend.countRuns({ workflowId: "wf-x" }), 2);
+    });
+  });
 });
