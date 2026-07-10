@@ -11,8 +11,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}-{2}', github.workflow, github.ref, github.sha) }}
+  # Only cancel superseded pull_request runs. Never cancel push runs on main:
+  # a push run can be publishing a stable release (npm publish, git tag, GitHub
+  # release, downstream deploy dispatch), and cancelling it mid-publish leaves a
+  # partially released version. Push runs also need unique groups because
+  # GitHub keeps at most one pending run per concurrency group; a later main
+  # push can otherwise replace an earlier queued release run even when
+  # cancel-in-progress is false. See veryfront-studio#5544.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ============================================
