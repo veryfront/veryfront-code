@@ -3,7 +3,8 @@ import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, toError, VeryfrontError } from "#veryfront/errors";
+import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
 import {
@@ -25,6 +26,15 @@ const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
 const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
 
+function isFileNotFoundError(error: unknown): boolean {
+  if (error instanceof VeryfrontError && error.slug === "file-not-found") {
+    return true;
+  }
+
+  const veryfrontError = fromError(error);
+  return veryfrontError?.type === "file" && veryfrontError.message.startsWith("File not found:");
+}
+
 export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
@@ -41,116 +51,114 @@ export class StatOperations extends VeryfrontOperationsBase {
   });
 
   stat(path: string): Promise<FileInfo> {
-    return withSpan(
-      "fs.veryfront.stat",
-      async () => {
-        const normalizedPath = this.normalizer.normalize(path);
-        const ctx = this.contextProvider?.getContentContext();
-        const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
+    return withSpan("fs.veryfront.stat", () => this.statWithoutSpan(path), { "fs.path": path });
+  }
 
-        logger.debug("stat called", { path, normalizedPath, cacheKey });
+  private async statWithoutSpan(path: string): Promise<FileInfo> {
+    const normalizedPath = this.normalizer.normalize(path);
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
 
-        await this.ensureIndexBuilt();
+    logger.debug("stat called", { path, normalizedPath, cacheKey });
 
-        const fileIdx = this.fileIndex;
-        const dirIdx = this.directoryIndex;
+    await this.ensureIndexBuilt();
 
-        if (!fileIdx || !dirIdx) {
-          logger.debug("stat - no index available", { normalizedPath });
-          throw toError(
-            createError({
-              type: "file",
-              message: `Index not available for: ${normalizedPath}`,
-            }),
-          );
-        }
+    const fileIdx = this.fileIndex;
+    const dirIdx = this.directoryIndex;
 
-        const file = fileIdx.get(normalizedPath);
-        if (file) {
-          logger.debug("stat found file", { normalizedPath });
-          return {
-            size: file.size,
-            mtime: new Date(file.updated_at),
-            isDirectory: false,
-            isFile: true,
-            isSymlink: false,
-          };
-        }
+    if (!fileIdx || !dirIdx) {
+      logger.debug("stat - no index available", { normalizedPath });
+      throw toError(
+        createError({
+          type: "file",
+          message: `Index not available for: ${normalizedPath}`,
+        }),
+      );
+    }
 
-        if (dirIdx.has(normalizedPath)) {
-          logger.debug("stat found directory", { normalizedPath });
-          return {
-            size: 0,
-            mtime: new Date(),
-            isDirectory: true,
-            isFile: false,
-            isSymlink: false,
-          };
-        }
+    const file = fileIdx.get(normalizedPath);
+    if (file) {
+      logger.debug("stat found file", { normalizedPath });
+      return {
+        size: file.size,
+        mtime: new Date(file.updated_at),
+        isDirectory: false,
+        isFile: true,
+        isSymlink: false,
+      };
+    }
 
-        // File not in index - try API pattern search as fallback for project files
-        // Skip for framework paths (node_modules, _veryfront, etc.)
-        if (!isFrameworkSourcePath(normalizedPath) && this.apiSearchCircuitBreaker.canSearch()) {
-          const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
-          if (hasKnownExt) {
-            logger.debug("stat file not in index, trying API search", {
-              normalizedPath,
-              indexSize: fileIdx.size,
-            });
+    if (dirIdx.has(normalizedPath)) {
+      logger.debug("stat found directory", { normalizedPath });
+      return {
+        size: 0,
+        mtime: new Date(),
+        isDirectory: true,
+        isFile: false,
+        isSymlink: false,
+      };
+    }
 
-            try {
-              // Search for the exact file path
-              const matches = await this.client.searchFiles(normalizedPath);
-              this.apiSearchCircuitBreaker.recordSuccess();
-
-              const exactMatch = matches.find((m) => m.path === normalizedPath);
-              if (exactMatch) {
-                logger.debug("stat found via API search", { normalizedPath });
-                // Add to index for future lookups
-                fileIdx.set(normalizedPath, {
-                  id: exactMatch.id,
-                  version_id: undefined,
-                  path: normalizedPath,
-                  content: undefined,
-                  type: "file",
-                  size: 0,
-                  updated_at: new Date().toISOString(),
-                });
-                return {
-                  size: 0,
-                  mtime: new Date(),
-                  isDirectory: false,
-                  isFile: true,
-                  isSymlink: false,
-                };
-              }
-            } catch (error) {
-              const result = this.apiSearchCircuitBreaker.recordFailure();
-              if (result.tripped) {
-                logger.warn("stat API search circuit breaker tripped", {
-                  failures: result.failures,
-                });
-              }
-              logger.debug("stat API search failed", {
-                normalizedPath,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }
-        }
-
-        logger.debug("stat file not found (not in index)", {
+    // File not in index - try API pattern search as fallback for project files
+    // Skip for framework paths (node_modules, _veryfront, etc.)
+    if (!isFrameworkSourcePath(normalizedPath) && this.apiSearchCircuitBreaker.canSearch()) {
+      const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
+      if (hasKnownExt) {
+        logger.debug("stat file not in index, trying API search", {
           normalizedPath,
           indexSize: fileIdx.size,
         });
-        throw toError(
-          createError({
-            type: "file",
-            message: `File not found: ${normalizedPath}`,
-          }),
-        );
-      },
-      { "fs.path": path },
+
+        try {
+          // Search for the exact file path
+          const matches = await this.client.searchFiles(normalizedPath);
+          this.apiSearchCircuitBreaker.recordSuccess();
+
+          const exactMatch = matches.find((m) => m.path === normalizedPath);
+          if (exactMatch) {
+            logger.debug("stat found via API search", { normalizedPath });
+            // Add to index for future lookups
+            fileIdx.set(normalizedPath, {
+              id: exactMatch.id,
+              version_id: undefined,
+              path: normalizedPath,
+              content: undefined,
+              type: "file",
+              size: 0,
+              updated_at: new Date().toISOString(),
+            });
+            return {
+              size: 0,
+              mtime: new Date(),
+              isDirectory: false,
+              isFile: true,
+              isSymlink: false,
+            };
+          }
+        } catch (error) {
+          const result = this.apiSearchCircuitBreaker.recordFailure();
+          if (result.tripped) {
+            logger.warn("stat API search circuit breaker tripped", {
+              failures: result.failures,
+            });
+          }
+          logger.debug("stat API search failed", {
+            normalizedPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    logger.debug("stat file not found (not in index)", {
+      normalizedPath,
+      indexSize: fileIdx.size,
+    });
+    throw toError(
+      createError({
+        type: "file",
+        message: `File not found: ${normalizedPath}`,
+      }),
     );
   }
 
@@ -453,14 +461,21 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   async exists(path: string): Promise<boolean> {
-    const normalizedPath = this.normalizer.normalize(path);
-    try {
-      await this.stat(normalizedPath);
-      return true;
-    } catch (_) {
-      /* expected: stat throws when file does not exist */
-      return false;
-    }
+    return withSpan(
+      "fs.veryfront.exists",
+      async () => {
+        try {
+          await this.statWithoutSpan(path);
+          return true;
+        } catch (error) {
+          if (isFileNotFoundError(error)) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      { "fs.path": path },
+    );
   }
 
   async resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
