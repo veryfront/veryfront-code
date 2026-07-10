@@ -10,6 +10,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -54,11 +55,13 @@ export const getResolvedConfigSchema = defineSchema((v) =>
   v.object({
     apiUrl: v.string(),
     apiToken: v.string(),
+    apiTokenSource: v.enum(["env", "env-file", "config-file", "token-store"]).optional(),
     projectSlug: v.string(),
   })
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
+type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
@@ -151,6 +154,44 @@ function resolveTenantProjectReference(): string | undefined {
     undefined;
 }
 
+async function resolveApiTokenForMode(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  interactive: boolean,
+): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
+  const envToken = env.apiToken;
+  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
+  const storedToken = await readToken(env);
+
+  if (envToken && envSource.source !== "env-file") {
+    return {
+      apiToken: envToken,
+      apiTokenSource: "env",
+    };
+  }
+
+  if (configFile?.apiToken) {
+    return { apiToken: configFile.apiToken, apiTokenSource: "config-file" };
+  }
+
+  if (interactive && envToken && envSource.source === "env-file" && storedToken) {
+    return { apiToken: storedToken, apiTokenSource: "token-store" };
+  }
+
+  if (envToken) {
+    return {
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+    };
+  }
+
+  if (storedToken) {
+    return { apiToken: storedToken, apiTokenSource: "token-store" };
+  }
+
+  return { apiToken: null };
+}
+
 async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
@@ -161,12 +202,13 @@ async function resolveConfigBase(
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
 
-  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
+  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
 
   if (!apiToken && interactive) {
     const userInfo = await ensureAuthenticated(env);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
+    apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
   }
 
@@ -186,7 +228,7 @@ async function resolveConfigBase(
     );
   }
 
-  return { apiUrl, apiToken, projectSlug };
+  return { apiUrl, apiToken, ...(apiTokenSource ? { apiTokenSource } : {}), projectSlug };
 }
 
 function createConfigResolver(interactive: boolean) {
@@ -233,6 +275,13 @@ export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
 
+  function addTokenSourceHint(message: string, status: number): string {
+    if (config.apiTokenSource !== "env-file") return message;
+    if (status !== 401 && status !== 403 && status !== 404) return message;
+
+    return `${message}. VERYFRONT_API_TOKEN was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
+  }
+
   async function requestOnce<T>(
     method: string,
     url: string,
@@ -261,6 +310,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         // Keep default error message if JSON parsing fails
       }
 
+      errorMessage = addTokenSourceHint(errorMessage, response.status);
       const err = new Error(errorMessage) as Error & { status: number };
       err.status = response.status;
       throw err;
