@@ -161,8 +161,6 @@ export interface AttachmentPillContextValue {
   label: string;
   /** Legacy dimming for the old `status="uploading"` API. */
   legacyUploading: boolean;
-  /** Whether the remove control should render. */
-  showRemove: boolean;
   /** The state glyph for the icon box (null → render the extension text). */
   stateGlyph: React.ReactNode;
   /** Tailwind classes for the icon box background/foreground. */
@@ -220,8 +218,6 @@ function AttachmentPillRoot({
   const label = getStateLabel(attachment, ext, mediaType);
   // Legacy dimming only applies to the old `status` API (new states stay solid).
   const legacyUploading = !state && attachment.status === "uploading";
-  const showRemove = Boolean(onRemove) &&
-    (Boolean(state) || attachment.status !== "uploading");
 
   // The left box shows a state glyph when a lifecycle `state` is set, otherwise
   // the file-type extension badge (default behaviour).
@@ -256,7 +252,6 @@ function AttachmentPillRoot({
     shimmerTitle,
     label,
     legacyUploading,
-    showRemove,
     stateGlyph,
     boxClass,
   };
@@ -411,8 +406,8 @@ AttachmentPillRetry.displayName = "AttachmentPill.Retry";
 function AttachmentPillRemove(
   { className, icon }: { className?: string; icon?: React.ReactNode },
 ): React.JSX.Element | null {
-  const { attachment, showRemove, onRemove } = useAttachmentPill();
-  if (!showRemove) return null;
+  const { attachment, onRemove, legacyUploading } = useAttachmentPill();
+  if (!onRemove || legacyUploading) return null;
   return (
     <Button
       type="button"
