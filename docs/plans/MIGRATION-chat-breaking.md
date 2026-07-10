@@ -16,8 +16,10 @@ Styling and icons are set on the piece you mean, not smuggled through the parent
 | Removed | Replacement | Status |
 | --- | --- | --- |
 | `<ChatSidebar icons={{ more, rename, delete, newConversation }}>` + `ChatSidebarIcons` | `<ChatSidebar.Item.Menu icon>`, `<ChatSidebar.Item.Rename icon>`, `<ChatSidebar.Item.Delete icon>`, `<ChatSidebar.NewButton icon>` | **[done]** |
-| `<Message.Content contentClassName>` / `cardClassName` | single root `className` on `Message.Content` (and compose `Message.Part` for card styling) | **[planned]** |
-| `icons={{}}` bags on `AgentPicker`, `AttachmentsPanel`, `ModelSelector`, … (9 remaining) | per-leaf singular `icon` prop on each compound's sub-components (as done for `ChatSidebar`) | **[planned]** |
+| `AgentPickerIcons` / `ChatInputIcons` / `AttachmentPillIcons` bags | per-leaf `icon` on `AgentPicker.Trigger`/`.Item`, `ChatInput.Send`/`.Stop`/`.Voice`/`.Attach`, `AttachmentPill.Retry`/`.Remove` | **[done]** |
+| `MessageActionBarIcons` / `BranchPickerIcons` / `MessageFeedbackIcons` bags | **removed** — these flat multi-button leaves render fixed default glyphs (no icon override; compose a variant if you need custom icons) | **[done]** |
+| `AttachmentPill` `showRemove` (internal context flag) | presence-driven: the `.Remove` leaf renders when `onRemove` is set and not uploading | **[done]** |
+| `<Message.Content contentClassName>` / `InlineCitation cardClassName` | needs the nested element exposed as a sub-component first (compound-ify), then a single root `className` per part | **[planned]** |
 
 ```diff
 - <ChatSidebar icons={{ rename: <MyPencil/>, delete: <MyTrash/> }} … />
