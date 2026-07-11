@@ -5,12 +5,48 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withToolInputStatusTransitions } from "./runtime-loader.ts";
 import { createOpenAIModelRuntime } from "../../extensions/ext-llm-openai/src/openai-provider.ts";
 
-async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+};
+
+function deferred<T = void>(description: string, timeoutMs = 1_000): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Timed out waiting for ${description}`));
+    }, timeoutMs);
+    resolve = (value) => {
+      clearTimeout(timeoutId);
+      resolvePromise(value);
+    };
+  });
+
+  return { promise, resolve };
+}
+
+async function collectAsync<T>(
+  iterable: AsyncIterable<T>,
+  onValue?: (value: T, values: T[]) => void,
+): Promise<T[]> {
   const values: T[] = [];
   for await (const value of iterable) {
     values.push(value);
+    onValue?.(value, values);
   }
   return values;
+}
+
+function isToolStatusEvent(
+  event: unknown,
+  status: "pending_input" | "streaming_input",
+): event is { type: "data-tool-call-status"; data: { toolCallId: string; status: string } } {
+  return (
+    !!event &&
+    typeof event === "object" &&
+    (event as { type?: string }).type === "data-tool-call-status" &&
+    (event as { data?: { status?: string } }).data?.status === status
+  );
 }
 
 function readRequestBody(init: RequestInit | undefined): string | null {
@@ -22,21 +58,37 @@ function readRequestBody(init: RequestInit | undefined): string | null {
 
 describe("provider/runtime-loader", () => {
   it("emits pending_input and streaming_input transitions when tool input goes silent and resumes", async () => {
-    const events = await collectAsync(withToolInputStatusTransitions({
-      async *[Symbol.asyncIterator]() {
-        yield { type: "tool-input-start", id: "tool-1", toolName: "create_file" };
-        await new Promise((resolve) => setTimeout(resolve, 8));
-        yield { type: "tool-input-delta", id: "tool-1", delta: '{"path":"docs/report.md"' };
-        await new Promise((resolve) => setTimeout(resolve, 8));
-        yield {
-          type: "tool-call",
-          toolCallId: "tool-1",
-          toolName: "create_file",
-          input: { path: "docs/report.md" },
-        };
-        yield { type: "finish", finishReason: "tool-calls" };
+    const pendingAfterStart = deferred("pending_input after tool-input-start");
+    const pendingAfterDelta = deferred("pending_input after tool-input-delta");
+    let pendingCount = 0;
+
+    const events = await collectAsync(
+      withToolInputStatusTransitions({
+        async *[Symbol.asyncIterator]() {
+          yield { type: "tool-input-start", id: "tool-1", toolName: "create_file" };
+          await pendingAfterStart.promise;
+          yield { type: "tool-input-delta", id: "tool-1", delta: '{"path":"docs/report.md"' };
+          await pendingAfterDelta.promise;
+          yield {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "create_file",
+            input: { path: "docs/report.md" },
+          };
+          yield { type: "finish", finishReason: "tool-calls" };
+        },
+      }, 0),
+      (event) => {
+        if (isToolStatusEvent(event, "pending_input")) {
+          pendingCount += 1;
+          if (pendingCount === 1) {
+            pendingAfterStart.resolve();
+          } else if (pendingCount === 2) {
+            pendingAfterDelta.resolve();
+          }
+        }
       },
-    }, 5));
+    );
 
     assertEquals(events, [
       { type: "tool-input-start", id: "tool-1", toolName: "create_file" },
@@ -64,28 +116,51 @@ describe("provider/runtime-loader", () => {
   });
 
   it("repeats pending_input heartbeats while create_file content stays silent after the path", async () => {
-    const events = await collectAsync(withToolInputStatusTransitions({
-      async *[Symbol.asyncIterator]() {
-        yield { type: "tool-input-start", id: "tool-1", toolName: "create_file" };
-        yield {
-          type: "tool-input-delta",
-          id: "tool-1",
-          delta: '{"path":"plans/ai-ontologies-research.md"',
-        };
-        await new Promise((resolve) => setTimeout(resolve, 18));
-        yield { type: "tool-input-delta", id: "tool-1", delta: ', "content":"# AI Ontologies"' };
-        yield {
-          type: "tool-call",
-          toolCallId: "tool-1",
-          toolName: "create_file",
-          input: {
-            path: "plans/ai-ontologies-research.md",
-            content: "# AI Ontologies",
-          },
-        };
-        yield { type: "finish", finishReason: "tool-calls" };
+    const repeatedPendingAfterPath = deferred("repeated pending_input after the path delta");
+    let pendingAfterPathCount = 0;
+    let sawPathDelta = false;
+
+    const events = await collectAsync(
+      withToolInputStatusTransitions({
+        async *[Symbol.asyncIterator]() {
+          yield { type: "tool-input-start", id: "tool-1", toolName: "create_file" };
+          yield {
+            type: "tool-input-delta",
+            id: "tool-1",
+            delta: '{"path":"plans/ai-ontologies-research.md"',
+          };
+          await repeatedPendingAfterPath.promise;
+          yield { type: "tool-input-delta", id: "tool-1", delta: ', "content":"# AI Ontologies"' };
+          yield {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "create_file",
+            input: {
+              path: "plans/ai-ontologies-research.md",
+              content: "# AI Ontologies",
+            },
+          };
+          yield { type: "finish", finishReason: "tool-calls" };
+        },
+      }, 0),
+      (event) => {
+        if (
+          event &&
+          typeof event === "object" &&
+          (event as { type?: string }).type === "tool-input-delta"
+        ) {
+          sawPathDelta = true;
+          return;
+        }
+
+        if (sawPathDelta && isToolStatusEvent(event, "pending_input")) {
+          pendingAfterPathCount += 1;
+          if (pendingAfterPathCount === 2) {
+            repeatedPendingAfterPath.resolve();
+          }
+        }
       },
-    }, 5));
+    );
 
     const firstDeltaIndex = events.findIndex((event) =>
       event && typeof event === "object" && (event as { type?: string }).type === "tool-input-delta"

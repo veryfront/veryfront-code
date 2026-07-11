@@ -57,6 +57,10 @@ function createTestWorker(projectId = "test-project"): ProjectWorker {
   });
 }
 
+async function assertWorkerReady(worker: ProjectWorker): Promise<void> {
+  assertEquals(await worker.isHealthy(30_000), true);
+}
+
 testSuite("ProjectWorker", () => {
   it("starts in idle state after start()", () => {
     const worker = createTestWorker();
@@ -193,6 +197,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute(
         {
           type: "unknown-request",
@@ -232,6 +238,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const first = await worker.execute({
         type: "execute-app-route",
         id: "first",
@@ -282,7 +290,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
-  it("does not leak overlapping projectEnv overlays between concurrent requests", async () => {
+  it("does not leak projectEnv overlays between queued back-to-back requests", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
     const requestAKey = "VERYFRONT_TEST_REQUEST_A_SECRET";
@@ -318,6 +326,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const first = worker.execute({
         type: "execute-app-route",
         id: "request-a",
@@ -334,9 +344,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectEnv: { [requestAKey]: "tenant-a" },
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
-      const second = await worker.execute({
+      const second = worker.execute({
         type: "execute-app-route",
         id: "request-b",
         modulePath,
@@ -352,12 +360,12 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectEnv: { [requestBKey]: "tenant-b" },
       });
 
-      const firstResponse = await first;
+      const [firstResponse, secondResponse] = await Promise.all([first, second]);
 
-      assertEquals(second.type, "result");
-      if (second.type !== "result") throw new Error("expected result response");
+      assertEquals(secondResponse.type, "result");
+      if (secondResponse.type !== "result") throw new Error("expected result response");
       assertEquals(
-        JSON.parse(new TextDecoder().decode(second.response.body ?? new Uint8Array())),
+        JSON.parse(new TextDecoder().decode(secondResponse.response.body ?? new Uint8Array())),
         { request: "b", requestA: null, requestB: "tenant-b" },
       );
 
@@ -423,6 +431,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "env-allowlist",
@@ -483,6 +493,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "direct-read",
@@ -538,6 +550,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-fetch",
@@ -597,6 +611,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-connect",
@@ -656,6 +672,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-fetch-override",
