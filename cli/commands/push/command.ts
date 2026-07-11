@@ -21,12 +21,20 @@ import {
   writeProjectSlug,
 } from "#cli/shared/config";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import {
+  clearPushReceipt,
+  computeSourceDigest,
+  getProjectTarget,
+  normalizeControlPlane,
+  resolveGitSource,
+  writePushReceipt,
+} from "../../shared/deployment-provenance.ts";
 
 /**
  * Schema factory for push command arguments
@@ -316,6 +324,29 @@ function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
   return buildOpParts(ops, toDelete, (count) => `upload ${count}`, (count) => `delete ${count}`);
 }
 
+async function recordPushReceipt(
+  client: ApiClient,
+  config: ResolvedConfig,
+  projectDir: string,
+  branch: string,
+  files: UploadOp[],
+): Promise<void> {
+  const [project, gitSource, sourceDigest] = await Promise.all([
+    getProjectTarget(client, config.projectSlug),
+    resolveGitSource(projectDir),
+    computeSourceDigest(files),
+  ]);
+  await writePushReceipt(projectDir, {
+    controlPlane: normalizeControlPlane(config.apiUrl),
+    projectId: project.id,
+    projectSlug: project.slug,
+    branch,
+    commitSha: gitSource.commitSha,
+    sourceDigest,
+    clean: gitSource.clean,
+  });
+}
+
 export function pushCommand(options: PushOptions = {}): Promise<void> {
   return withSpan(
     "cli.command.push",
@@ -363,7 +394,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         // Project doesn't exist yet - create it on first push
         if (getErrorStatus(error) === 404) {
           spinner.update("Creating project...");
-          const reserveResult = await reserveProjectSlug(config.projectSlug, config.apiToken);
+          const reserveResult = await reserveProjectSlug(
+            config.projectSlug,
+            config.apiToken,
+            undefined,
+            config.apiUrl,
+          );
           if (reserveResult.slug !== config.projectSlug) {
             await writeProjectSlug(projectDir, reserveResult.slug);
             logInfo(`Project slug: ${reserveResult.slug}`);
@@ -390,7 +426,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const toDelete = target.remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
 
       if (ops.length === 0 && toDelete.length === 0) {
-        spinner.stop();
+        try {
+          if (!dryRun) {
+            await clearPushReceipt(projectDir);
+            spinner.update("Verifying push target...");
+            await recordPushReceipt(client, config, projectDir, branchName, ops);
+          }
+        } finally {
+          spinner.stop();
+        }
         if (!quiet) logInfo("No changes to push.");
         return;
       }
@@ -434,6 +478,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         return;
       }
 
+      await clearPushReceipt(projectDir);
+
       let branchId = target.branchId;
       const uploadMsg = isMainBranch
         ? "Pushing to main..."
@@ -466,7 +512,18 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         deleteResult = await deleteFiles(client, config.projectSlug, branchId, toDelete, false);
       }
 
-      spinner.stop();
+      const failedTotal = uploadResult.failed + deleteResult.failed;
+      if (failedTotal > 0) {
+        spinner.stop();
+        throw new Error(`Push failed for ${failedTotal} file${failedTotal === 1 ? "" : "s"}`);
+      }
+
+      spinner.update("Verifying push target...");
+      try {
+        await recordPushReceipt(client, config, projectDir, branchName, ops);
+      } finally {
+        spinner.stop();
+      }
 
       if (quiet) return;
 
@@ -484,9 +541,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           logInfo(`Merge:   https://veryfront.com/projects/${config.projectSlug}/branches`);
         }
       }
-
-      const failedTotal = uploadResult.failed + deleteResult.failed;
-      if (failedTotal > 0) logWarning(`Failed: ${failedTotal} files.`);
     },
     { "cli.dryRun": options.dryRun ?? false },
   );

@@ -6,6 +6,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { triggerDeploy, vfTriggerDeploy } from "./deploy-tool.ts";
 
 // ---------------------------------------------------------------------------
@@ -158,60 +160,136 @@ describe("mcp/tools/deploy-tool", () => {
   describe("triggerDeploy happy path", () => {
     it("creates release and deployment, returns structured result", async () => {
       const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalGithubSha = Deno.env.get("GITHUB_SHA");
+      const projectDir = await Deno.makeTempDir();
       try {
         Deno.env.set("VERYFRONT_API_TOKEN", "test-token-abc");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+        _resetEnvironmentConfig();
+
+        const runGit = async (...args: string[]) => {
+          const output = await new Deno.Command("git", {
+            args,
+            cwd: projectDir,
+            clearEnv: true,
+            env: Object.fromEntries(
+              Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+            ),
+            stdout: "null",
+            stderr: "piped",
+          }).output();
+          assertEquals(output.success, true, new TextDecoder().decode(output.stderr));
+        };
+        await runGit("init", "--quiet");
+        await runGit("config", "user.email", "test@veryfront.com");
+        await runGit("config", "user.name", "Veryfront Test");
+        await runGit("commit", "--allow-empty", "--quiet", "-m", "initial");
+        const commitSha = new TextDecoder().decode(
+          (await new Deno.Command("git", {
+            args: ["rev-parse", "HEAD"],
+            cwd: projectDir,
+            clearEnv: true,
+            env: Object.fromEntries(
+              Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+            ),
+            stdout: "piped",
+          }).output()).stdout,
+        ).trim();
+        Deno.env.set("GITHUB_SHA", commitSha);
+        const sourceDigest = await computeSourceDigest([]);
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: "project-1",
+          projectSlug: "my-app",
+          branch: "main",
+          commitSha,
+          sourceDigest,
+          clean: true,
+        });
 
         const capturedRequests: { method: string; url: string }[] = [];
+        let environmentReads = 0;
+        let releaseFiles: Array<{ path: string; data: string }> = [];
 
-        const result = await withMockFetch(
-          async (input: string | URL | Request, init?: RequestInit) => {
-            const request = input instanceof Request ? input : new Request(input, init);
-            const url = request.url;
-            const method = request.method;
-            capturedRequests.push({ method, url });
+        const handleRequest = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = request.url;
+          const pathname = new URL(url).pathname;
+          const method = request.method;
+          capturedRequests.push({ method, url });
 
-            // GET /projects/my-app/environments
-            if (method === "GET" && url.includes("/environments")) {
-              return Response.json({
-                data: [
-                  { id: "env-1", name: "production", protected: true },
-                  { id: "env-2", name: "staging", protected: false },
-                ],
-              });
-            }
+          if (method === "GET" && pathname.endsWith("/projects/my-app")) {
+            return Response.json({ id: "project-1", slug: "my-app" });
+          }
 
-            // POST /projects/my-app/releases
-            if (method === "POST" && url.includes("/releases")) {
-              return Response.json({
-                id: "rel-42",
-                name: "Release 42",
-                version: "v1.0.42",
-                export_status: "completed",
-                build_status: "completed",
-                deploy_status: "pending",
-              });
-            }
+          if (method === "GET" && url.includes("/environments")) {
+            environmentReads++;
+            return Response.json({
+              data: [
+                {
+                  id: "env-1",
+                  name: "production",
+                  protected: true,
+                  deployment: environmentReads === 1
+                    ? null
+                    : { id: "deploy-99", release: { id: "rel-42" } },
+                },
+              ],
+            });
+          }
 
-            // POST /projects/my-app/deployments
-            if (method === "POST" && url.includes("/deployments")) {
-              return Response.json({
-                id: "deploy-99",
-                release: "rel-42",
-                environment: "env-1",
-              });
-            }
+          if (method === "POST" && url.includes("/releases")) {
+            return Response.json({
+              id: "rel-42",
+              name: "Release 42",
+              version: "v1.0.42",
+              export_status: "completed",
+              build_status: "completed",
+              deploy_status: "pending",
+            });
+          }
 
-            return new Response("Not Found", { status: 404 });
-          },
-          async () =>
-            await triggerDeploy({
-              projectSlug: "my-app",
-              environment: "production",
-              branch: "main",
-            }),
-        );
+          if (method === "POST" && url.includes("/deployments")) {
+            return Response.json({
+              id: "deploy-99",
+              release: "rel-42",
+              environment: "env-1",
+            });
+          }
 
-        assertEquals(result.success, true);
+          if (method === "GET" && pathname.endsWith("/deployments/deploy-99")) {
+            return Response.json({
+              id: "deploy-99",
+              release: { id: "rel-42" },
+              environment: { id: "env-1" },
+            });
+          }
+
+          if (method === "GET" && pathname.endsWith("/releases/rel-42/versions")) {
+            return Response.json({ data: releaseFiles, page_info: {} });
+          }
+
+          if (method === "GET" && pathname.endsWith("/releases/rel-42")) {
+            return Response.json({
+              id: "rel-42",
+              name: "Release 42",
+              version: "v1.0.42",
+            });
+          }
+
+          return new Response("Not Found", { status: 404 });
+        };
+        const runDeploy = () =>
+          triggerDeploy({
+            projectSlug: "my-app",
+            environment: "production",
+            branch: "main",
+          }, { projectDir });
+
+        const result = await withMockFetch(handleRequest, runDeploy);
+
+        assertEquals(result.success, true, result.error);
         assertEquals(result.deploymentId, "deploy-99");
         assertEquals(result.release, {
           id: "rel-42",
@@ -222,21 +300,58 @@ describe("mcp/tools/deploy-tool", () => {
           id: "env-1",
           name: "production",
         });
+        assertEquals(result.project, { id: "project-1", slug: "my-app" });
+        assertEquals(result.commitSha, commitSha);
+        assertEquals(result.sourceDigest, sourceDigest);
+        assertEquals(result.controlPlane, "https://control.example.test/api");
 
         // Verify correct API calls were made
-        assertEquals(capturedRequests.length, 3);
-        assertEquals(capturedRequests[0].method, "GET");
-        assertEquals(capturedRequests[0].url.includes("/environments"), true);
-        assertEquals(capturedRequests[1].method, "POST");
-        assertEquals(capturedRequests[1].url.includes("/releases"), true);
-        assertEquals(capturedRequests[2].method, "POST");
-        assertEquals(capturedRequests[2].url.includes("/deployments"), true);
+        assertEquals(
+          capturedRequests.map(({ method, url }) => `${method} ${new URL(url).pathname}`),
+          [
+            "GET /api/projects/my-app",
+            "GET /api/projects/project-1/environments",
+            "POST /api/projects/project-1/releases",
+            "GET /api/projects/project-1/releases/rel-42",
+            "GET /api/projects/project-1/releases/rel-42/versions",
+            "POST /api/projects/project-1/deployments",
+            "GET /api/projects/project-1/deployments/deploy-99",
+            "GET /api/projects/project-1/environments",
+          ],
+        );
+
+        releaseFiles = [{
+          path: "app.ts",
+          data: JSON.stringify({ body: "changed after push\n", path: "app.ts" }),
+        }];
+        capturedRequests.length = 0;
+        environmentReads = 0;
+        const mismatchResult = await withMockFetch(handleRequest, runDeploy);
+
+        assertEquals(mismatchResult.success, false);
+        assertEquals(mismatchResult.error?.includes("does not match pushed commit"), true);
+        assertEquals(
+          capturedRequests.map(({ method, url }) => `${method} ${new URL(url).pathname}`),
+          [
+            "GET /api/projects/my-app",
+            "GET /api/projects/project-1/environments",
+            "POST /api/projects/project-1/releases",
+            "GET /api/projects/project-1/releases/rel-42",
+            "GET /api/projects/project-1/releases/rel-42/versions",
+          ],
+        );
       } finally {
         if (originalToken !== undefined) {
           Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
         } else {
           Deno.env.delete("VERYFRONT_API_TOKEN");
         }
+        if (originalApiUrl !== undefined) Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+        else Deno.env.delete("VERYFRONT_API_URL");
+        if (originalGithubSha !== undefined) Deno.env.set("GITHUB_SHA", originalGithubSha);
+        else Deno.env.delete("GITHUB_SHA");
+        _resetEnvironmentConfig();
+        await Deno.remove(projectDir, { recursive: true });
       }
     });
   });
@@ -254,6 +369,10 @@ describe("mcp/tools/deploy-tool", () => {
         const result = await withMockFetch(
           async (input: string | URL | Request, init?: RequestInit) => {
             const request = input instanceof Request ? input : new Request(input, init);
+
+            if (request.method === "GET" && request.url.endsWith("/projects/my-app")) {
+              return Response.json({ id: "project-1", slug: "my-app" });
+            }
 
             if (request.method === "GET" && request.url.includes("/environments")) {
               return Response.json({ data: [] });

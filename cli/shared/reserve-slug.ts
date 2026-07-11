@@ -38,12 +38,13 @@ export async function reserveProjectSlug(
   slug: string,
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  apiUrl: string = getApiUrl(env),
 ): Promise<ReserveResult> {
   const name = slugToName(slug);
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
-    const result = await tryCreateProject(currentSlug, name, token, env);
+    const result = await tryCreateProject(currentSlug, name, token, apiUrl);
 
     if (result.success) {
       return {
@@ -67,10 +68,10 @@ async function tryCreateProject(
   slug: string,
   name: string,
   token: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
+  apiUrl: string,
 ): Promise<CreateProjectResult> {
   try {
-    const response = await fetch(`${getApiUrl(env)}/projects`, {
+    const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/projects`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
