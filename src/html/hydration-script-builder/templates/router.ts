@@ -660,7 +660,19 @@ export const getRouterScript = () => `
     // ============================================
     // Render page from page data
     // ============================================
+    async function loadPageDataComponent(pageData, path) {
+      if (!pageData.isolatedClientPage) return loadComponent(path);
+
+      const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
+      const module = await import(moduleUrl);
+      return module.MDXLayout || module.MainLayout || module.default || module;
+    }
+
     async function renderPageFromData(pageData, targetPath) {
+      if (pageData.requiresFullDocumentNavigation) {
+        throw new Error('Server layout requires full document navigation');
+      }
+
       if (window.__veryfrontSetReleaseId) {
         window.__veryfrontSetReleaseId(pageData.releaseId || null);
       }
@@ -671,7 +683,9 @@ export const getRouterScript = () => `
       perfStart('render:loadAll');
       const allPaths = getPageDataModulePaths(pageData);
       const modulesStartedAt = routeTimingNow();
-      const components = await Promise.all(allPaths.map((path) => loadComponent(path)));
+      const components = await Promise.all(
+        allPaths.map((path) => loadPageDataComponent(pageData, path))
+      );
       emitRouteTiming('modules', targetPath, modulesStartedAt, { count: allPaths.length });
       perfEnd('render:loadAll');
 
@@ -754,7 +768,9 @@ export const getRouterScript = () => `
       tree = React.createElement(PageContextProvider, { pageContext, children: tree });
       tree = React.createElement(RouterProvider, { router, children: tree });
 
-      const container = document.getElementById('root');
+      const container = pageData.isolatedClientPage
+        ? document.getElementById('veryfront-page-island')
+        : document.getElementById('root');
 
       if (!hydrationCompleted && !hydrationFailed) {
         log('Waiting for hydration to complete before SPA render...');
@@ -859,7 +875,7 @@ export const getRouterScript = () => `
     }
 
     async function preloadModulesForPageData(pageData, path) {
-      if (!pageData) return;
+      if (!pageData || pageData.requiresFullDocumentNavigation) return;
       if (pageData.releaseId && window.__veryfrontSetReleaseId) {
         window.__veryfrontSetReleaseId(pageData.releaseId);
       }
@@ -871,7 +887,9 @@ export const getRouterScript = () => `
       if (modulePaths.length === 0) return;
 
       try {
-        await Promise.all(modulePaths.map((modulePath) => loadComponent(modulePath)));
+        await Promise.all(
+          modulePaths.map((modulePath) => loadPageDataComponent(pageData, modulePath))
+        );
       } catch (error) {
         logBackgroundFetchFailure('Module prefetch', path, error);
       }

@@ -17,6 +17,8 @@ export interface DAGExecutorConfig {
   onNodeStart?: (nodeId: string) => void;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
   onWaiting?: (nodeId: string, waitConfig: WaitNodeConfig) => void;
+  /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */
+  cancellationGracePeriod?: number;
   debug?: boolean;
 }
 

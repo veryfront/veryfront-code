@@ -8,7 +8,10 @@ import {
   generateStyleTags,
 } from "./tag-generators.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
-import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import {
+  escapeInlineJsonText,
+  jsonForInlineScript,
+} from "#veryfront/security/client/html-sanitizer.ts";
 import {
   getDevScripts,
   getDevStyles,
@@ -104,8 +107,9 @@ export function injectHTMLContent(
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
   if (options.importMapJson && /<\/head>/i.test(html)) {
     const nonceAttr = buildNonceAttribute(options.nonce);
-    const importMapTag =
-      `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
+    const importMapTag = `<script type="importmap"${nonceAttr}>\n${
+      escapeInlineJsonText(options.importMapJson)
+    }\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
   }
 

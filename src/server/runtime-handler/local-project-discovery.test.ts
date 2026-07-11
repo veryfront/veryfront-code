@@ -87,6 +87,17 @@ describe("local-project-discovery", () => {
       assertEquals(localProjectCache.get("myproject"), "/custom/path");
     });
 
+    it("accepts a headerPath project that declares custom source directories", async () => {
+      const adapter = createMockAdapter({
+        "/custom/path": { isDirectory: true },
+        "/custom/path/veryfront.config.ts": { isDirectory: false },
+      });
+
+      const path = await findLocalProjectPath("custom-roots", adapter, "/custom/path");
+
+      assertEquals(path, "/custom/path");
+    });
+
     it("ignores invalid headerPath override", async () => {
       const adapter = createMockAdapter({
         "/custom/path": { isDirectory: true },
@@ -141,6 +152,17 @@ describe("local-project-discovery", () => {
       const path = await findLocalProjectPath("demo", adapter);
 
       assertEquals(path?.endsWith("projects/demo"), true);
+    });
+
+    it("discovers a project whose source roots are configured", async () => {
+      const adapter = createMockAdapter({
+        "projects/custom": { isDirectory: true },
+        "projects/custom/veryfront.config.mjs": { isDirectory: false },
+      });
+
+      const path = await findLocalProjectPath("custom", adapter);
+
+      assertEquals(path?.endsWith("projects/custom"), true);
     });
 
     it("returns undefined for non-existent project", async () => {

@@ -65,6 +65,63 @@ describe("rendering/page-resolution/page-resolver", () => {
   });
 
   describe("resolvePage", () => {
+    it("resolves static and dynamic pages from the configured pages directory", async () => {
+      const files = new Map([
+        ["/project/src/content/index.tsx", "export default function Page() { return null; }"],
+        ["/project/src/content/[slug].tsx", "export default function Page() { return null; }"],
+      ]);
+      const adapter = {
+        fs: {
+          readFile: async (path: string) => {
+            const source = files.get(path);
+            if (source === undefined) throw new Error("File not found");
+            return source;
+          },
+          resolveFile: async (path: string) => {
+            if (path === "/project/src/content/index") {
+              return "/project/src/content/index.tsx";
+            }
+            return null;
+          },
+          stat: async (path: string) => {
+            if (files.has(path)) {
+              return { isFile: true, isDirectory: false, isSymlink: false };
+            }
+            if (path === "/project/src/content") {
+              return { isFile: false, isDirectory: true, isSymlink: false };
+            }
+            throw new Error("File not found");
+          },
+          exists: async (path: string) => path === "/project/src/content",
+          readDir: async function* (path: string) {
+            if (path === "/project/src/content") {
+              yield { name: "index.tsx", isFile: true, isDirectory: false };
+              yield { name: "[slug].tsx", isFile: true, isDirectory: false };
+            }
+          },
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig({
+          router: "pages",
+          directories: { pages: "src/content" },
+        }),
+        adapter,
+      });
+
+      const root = await resolver.resolvePage("/");
+      const dynamic = await resolver.resolvePage("article");
+
+      assertEquals(root.entity.path, "/project/src/content/index.tsx");
+      assertEquals(root.entity.slug, "");
+      assertEquals(dynamic.entity.path, "/project/src/content/[slug].tsx");
+      assertEquals(dynamic.entity.slug, "article");
+    });
+
     it("keeps auto router detection aligned with the structural app router", async () => {
       const adapter = {
         fs: {

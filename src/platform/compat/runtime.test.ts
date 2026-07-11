@@ -75,6 +75,19 @@ describe("Runtime Detection", () => {
   });
 
   describe("testDenoCompiledDetection (binary name detection)", () => {
+    it("prefers Deno's standalone runtime signal over the executable name", () => {
+      assertEquals(
+        testDenoCompiledDetection("/opt/homebrew/bin/deno", true),
+        true,
+        "Deno.build.standalone is authoritative for compiled executables",
+      );
+      assertEquals(
+        testDenoCompiledDetection("/usr/local/bin/custom-deno-name", false),
+        false,
+        "a non-standalone Deno runtime is not compiled even when renamed",
+      );
+    });
+
     it("should NOT detect standard Deno runtime (binary named 'deno')", () => {
       const denoPaths = [
         "/home/user/.deno/bin/deno",

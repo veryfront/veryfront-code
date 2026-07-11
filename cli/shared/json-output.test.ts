@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { refreshLoggerConfig } from "veryfront/utils";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -29,6 +31,25 @@ describe("json-output", () => {
       setJsonMode(true);
       setJsonMode(false);
       assertEquals(isJsonMode(), false);
+    });
+
+    it("restores an absent LOG_LEVEL after leaving JSON mode", () => {
+      setJsonMode(false);
+      const originalLogLevel = getEnv("LOG_LEVEL");
+
+      try {
+        deleteEnv("LOG_LEVEL");
+        setJsonMode(true);
+        assertEquals(getEnv("LOG_LEVEL"), "ERROR");
+
+        setJsonMode(false);
+        assertEquals(getEnv("LOG_LEVEL"), undefined);
+      } finally {
+        setJsonMode(false);
+        if (originalLogLevel === undefined) deleteEnv("LOG_LEVEL");
+        else setEnv("LOG_LEVEL", originalLogLevel);
+        refreshLoggerConfig();
+      }
     });
   });
 

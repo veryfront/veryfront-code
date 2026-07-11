@@ -815,6 +815,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      isLocalProject: ctx.isLocalProject === true,
     });
 
     const ssrOrchestrator = new SSROrchestrator({
@@ -854,6 +855,11 @@ export class Renderer {
       adapter: ctx.adapter,
       mode: ctx.mode,
       projectDir: ctx.projectDir,
+      isLocalProject: ctx.isLocalProject === true,
+      projectId: ctx.projectId,
+      contentSourceId: ctx.contentSourceId,
+      config: ctx.config,
+      directories: ctx.config.directories,
       queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
     });
 

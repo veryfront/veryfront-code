@@ -9,14 +9,34 @@ import { createErrorResponse } from "#veryfront/errors/http-error.ts";
 import { wrapUnknownError } from "#veryfront/errors/middleware/wrap-unknown.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
+import { compileContent, extractFrontmatter } from "#veryfront/transforms/mdx/compiler/index.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+
+interface RenderHandlerModuleOptions {
+  adapter?: RuntimeAdapter;
+  projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  reactVersion?: Promise<string>;
+}
 
 const logger = serverLogger.component("rsc");
+const fs = createFileSystem();
+
+function isContentComponent(componentPath: string): boolean {
+  return /\.(?:md|mdx)$/i.test(componentPath);
+}
 
 export class RenderHandler {
   constructor(
     private projectDir: string,
     private getRenderer: () => RSCRenderer | null,
-    private isLocalProject: boolean = false,
+    private mode: "development" | "production" = "production",
+    private appDir: string = "app",
+    private moduleOptions: RenderHandlerModuleOptions = {},
   ) {}
 
   async handle(
@@ -35,7 +55,12 @@ export class RenderHandler {
   }
 
   private async loadComponent(pathname: string): Promise<React.ComponentType<RenderProps>> {
-    const componentPath = await resolveComponentPath(pathname, this.projectDir);
+    const componentPath = await resolveComponentPath(
+      pathname,
+      this.projectDir,
+      this.moduleOptions.adapter?.fs,
+      this.appDir,
+    );
     if (!componentPath) {
       throw toError(
         createError({
@@ -45,7 +70,7 @@ export class RenderHandler {
       );
     }
 
-    const module = (await import(componentPath)) as Record<string, unknown>;
+    const module = await this.loadComponentModule(componentPath);
     const Component = (module.default ?? module.Page ?? module) as unknown;
 
     if (typeof Component !== "function") {
@@ -58,6 +83,49 @@ export class RenderHandler {
     }
 
     return Component as React.ComponentType<RenderProps>;
+  }
+
+  private async loadComponentModule(componentPath: string): Promise<Record<string, unknown>> {
+    const adapter = this.moduleOptions.adapter;
+
+    if (isContentComponent(componentPath)) {
+      const source = adapter
+        ? await adapter.fs.readFile(componentPath)
+        : await fs.readTextFile(componentPath);
+      const { body, frontmatter } = extractFrontmatter(source);
+      const compiled = await compileContent(
+        this.mode,
+        this.projectDir,
+        body,
+        frontmatter,
+        componentPath,
+        "server",
+      );
+
+      return await mdxRenderer.loadModuleESM(
+        compiled.compiledCode,
+        adapter,
+        this.moduleOptions.projectId ?? this.projectDir,
+        this.projectDir,
+        this.moduleOptions.projectSlug,
+        this.moduleOptions.contentSourceId,
+        await this.moduleOptions.reactVersion,
+      ) as Record<string, unknown>;
+    }
+
+    if (!adapter) {
+      return (await import(componentPath)) as Record<string, unknown>;
+    }
+
+    const source = await adapter.fs.readFile(componentPath);
+    return await loadModuleFromSource(source, componentPath, this.projectDir, adapter, {
+      projectId: this.moduleOptions.projectId ?? this.projectDir,
+      projectSlug: this.moduleOptions.projectSlug,
+      contentSourceId: this.moduleOptions.contentSourceId,
+      dev: this.mode === "development",
+      mode: this.mode === "development" ? "preview" : "production",
+      reactVersion: await this.moduleOptions.reactVersion,
+    });
   }
 
   private buildProps(pathname: string, searchParams: URLSearchParams): RenderProps {
@@ -91,7 +159,7 @@ export class RenderHandler {
       );
     }
 
-    return this.isLocalProject ? payload : RSCProductionOptimizer.optimizePayload(payload);
+    return this.mode === "development" ? payload : RSCProductionOptimizer.optimizePayload(payload);
   }
 
   private createResponse(payload: RSCPayload, request?: Request): Response {
@@ -111,7 +179,7 @@ export class RenderHandler {
   }
 
   private buildHeaders(etag: string): Record<string, string> {
-    const isProd = !this.isLocalProject;
+    const isProd = this.mode === "production";
 
     const headers: Record<string, string> = {
       "content-type": "application/json",

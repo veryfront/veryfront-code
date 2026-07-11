@@ -36,6 +36,7 @@ export class MDXRenderer {
     projectDir?: string,
     projectSlug?: string,
     contentSourceId?: string,
+    reactVersion?: string,
   ): Promise<MDXModule> {
     const context: ESMLoaderContext = {
       esmCacheDir: undefined,
@@ -45,6 +46,7 @@ export class MDXRenderer {
       projectDir,
       projectSlug,
       contentSourceId,
+      reactVersion,
     };
 
     return loadModuleESM(compiledProgramCode, context);

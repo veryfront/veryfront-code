@@ -238,6 +238,27 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(getRouterScript(), "async function renderPageFromData(pageData, targetPath)");
     });
 
+    it("should load isolated page-island modules through the hardened RSC endpoint", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "async function loadPageDataComponent(pageData, path)");
+      assertIncludes(
+        result,
+        "const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);",
+      );
+      assertIncludes(result, "const module = await import(moduleUrl);");
+      assertIncludes(
+        result,
+        "allPaths.map((path) => loadPageDataComponent(pageData, path))",
+      );
+    });
+
+    it("should fall back to document navigation for server-layout page targets", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "if (pageData.requiresFullDocumentNavigation) {");
+      assertIncludes(result, "throw new Error('Server layout requires full document navigation');");
+      assertIncludes(result, "window.location.href = href;");
+    });
+
     it("should install release asset modules from SPA page data before loading components", () => {
       const result = getRouterScript();
       assertIncludes(result, "pageData.releaseAssetModules");
@@ -261,9 +282,22 @@ describe("hydration-script-builder/templates/router", () => {
       const result = getRouterScript();
       assertIncludes(result, "function prefetchPage(href)");
       assertIncludes(result, "function preloadModulesForPageData(pageData, path)");
-      assertIncludes(result, "loadComponent(modulePath)");
+      assertIncludes(result, "loadPageDataComponent(pageData, modulePath)");
       assertIncludes(result, "PREFETCH_DELAY_MS");
       assertIncludes(result, "MAX_PREFETCH_PATHS = 100");
+    });
+
+    it("should prefetch isolated modules securely and skip document-navigation targets", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "async function loadPageDataComponent(pageData, path)");
+      assertIncludes(
+        result,
+        "if (!pageData || pageData.requiresFullDocumentNavigation) return;",
+      );
+      assertIncludes(
+        result,
+        "modulePaths.map((modulePath) => loadPageDataComponent(pageData, modulePath))",
+      );
     });
 
     it("should schedule capped idle and viewport prefetch for eligible internal links", () => {

@@ -1,6 +1,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
+import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { createFileSystem } from "./fs.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
 
@@ -24,6 +25,11 @@ function hasDangerousSegments(candidate: string): boolean {
   // legitimately contain `%`.
   if (candidate.includes("%")) return true;
   return false;
+}
+
+/** Return whether an untrusted framework-relative source key is safe to probe. */
+export function isSafeFrameworkSourceKey(candidate: string): boolean {
+  return !hasDangerousSegments(candidate);
 }
 
 export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
@@ -59,21 +65,27 @@ export interface ResolveFrameworkSourcePathOptions {
   extraLookupDirs?: string[];
   extensions?: readonly string[];
   includeIndexFallback?: boolean;
+  /** Override runtime detection, primarily for deterministic tests. */
+  compiled?: boolean;
 }
 
 export interface ResolveRelativeFrameworkSourceImportOptions {
   fileSystem?: FrameworkSourceFileSystem;
   exists?: (path: string) => Promise<boolean>;
   extensions?: readonly string[];
+  /** Override runtime detection, primarily for deterministic tests. */
+  compiled?: boolean;
 }
 
-export function getFrameworkSourceLookupDirs(extraLookupDirs: string[] = []): string[] {
+export function getFrameworkSourceLookupDirs(
+  extraLookupDirs: string[] = [],
+  compiled = isCompiledBinary(),
+): string[] {
   const seen = new Set<string>();
-  const ordered = [
-    join(FRAMEWORK_ROOT, "src"),
-    FRAMEWORK_EMBEDDED_SRC_DIR,
-    ...extraLookupDirs,
-  ];
+  const runtimeDirs = compiled
+    ? [FRAMEWORK_EMBEDDED_SRC_DIR, FRAMEWORK_SRC_DIR]
+    : [FRAMEWORK_SRC_DIR, FRAMEWORK_EMBEDDED_SRC_DIR];
+  const ordered = [...runtimeDirs, ...extraLookupDirs];
 
   return ordered.filter((dir) => {
     if (seen.has(dir)) return false;
@@ -87,8 +99,10 @@ export function isFrameworkSourcePath(path: string): boolean {
     path.startsWith(`${FRAMEWORK_EMBEDDED_SRC_DIR}/`);
 }
 
-function expandFrameworkCandidatePaths(candidatePath: string): string[] {
-  const candidates = [candidatePath];
+function expandFrameworkCandidatePaths(
+  candidatePath: string,
+  compiled = isCompiledBinary(),
+): string[] {
   const candidateRoot = getFrameworkRoot(candidatePath);
   const candidateSrcDir = candidateRoot ? join(candidateRoot, "src") : FRAMEWORK_SRC_DIR;
   const candidateEmbeddedDir = candidateRoot
@@ -97,10 +111,27 @@ function expandFrameworkCandidatePaths(candidatePath: string): string[] {
 
   if (candidatePath.startsWith(`${candidateSrcDir}/`)) {
     const relativePath = candidatePath.slice(candidateSrcDir.length + 1);
-    candidates.push(join(candidateEmbeddedDir, relativePath));
+    const embeddedPath = join(candidateEmbeddedDir, relativePath);
+    const embeddedCandidates = embeddedPath.endsWith(".src")
+      ? [embeddedPath]
+      : [`${embeddedPath}.src`, embeddedPath];
+    return compiled
+      ? [...new Set([...embeddedCandidates, candidatePath])]
+      : [...new Set([candidatePath, ...embeddedCandidates])];
   }
 
-  return [...new Set(candidates)];
+  if (candidatePath.startsWith(`${candidateEmbeddedDir}/`)) {
+    const relativePath = candidatePath.slice(candidateEmbeddedDir.length + 1);
+    const sourcePath = join(candidateSrcDir, relativePath).replace(/\.src$/, "");
+    const embeddedCandidates = candidatePath.endsWith(".src")
+      ? [candidatePath]
+      : [`${candidatePath}.src`, candidatePath];
+    return compiled
+      ? [...new Set([...embeddedCandidates, sourcePath])]
+      : [...new Set([sourcePath, ...embeddedCandidates])];
+  }
+
+  return [candidatePath];
 }
 
 async function findExistingFrameworkCandidate(
@@ -117,7 +148,7 @@ async function findExistingFrameworkCandidate(
     }
   });
 
-  for (const candidate of expandFrameworkCandidatePaths(candidatePath)) {
+  for (const candidate of expandFrameworkCandidatePaths(candidatePath, options.compiled)) {
     if (await exists(candidate)) return candidate;
   }
 
@@ -131,10 +162,10 @@ export async function resolveFrameworkSourcePath(
   // VULN-FS-3: Reject any candidate containing traversal indicators
   // (plain or percent-encoded) before joining with the framework lookup dir.
   // The public /_vf_modules/... route reaches this function with user input.
-  if (hasDangerousSegments(relativePathWithoutExt)) return null;
+  if (!isSafeFrameworkSourceKey(relativePathWithoutExt)) return null;
 
   const fs = options.fileSystem ?? createFileSystem();
-  const lookupDirs = getFrameworkSourceLookupDirs(options.extraLookupDirs);
+  const lookupDirs = getFrameworkSourceLookupDirs(options.extraLookupDirs, options.compiled);
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
   const candidates = [relativePathWithoutExt];
 

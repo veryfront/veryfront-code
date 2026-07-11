@@ -24,6 +24,7 @@ export class VeryfrontRenderer {
   private moduleServerUrl?: string;
   private projectDir: string;
   private mode: "development" | "production";
+  private isLocalProject: boolean;
   private preloadedConfig?: VeryfrontConfig;
   private projectId: string;
   private projectSlug: string;
@@ -37,6 +38,7 @@ export class VeryfrontRenderer {
   constructor(options: RendererOptions) {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
+    this.isLocalProject = options.isLocalProject === true;
     this.adapter = options.adapter;
     this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
@@ -132,6 +134,7 @@ export class VeryfrontRenderer {
       adapter,
       config,
       mode,
+      isLocalProject: this.isLocalProject,
     });
 
     this.ssrOrchestrator = new SSROrchestrator({
@@ -151,6 +154,11 @@ export class VeryfrontRenderer {
       adapter,
       mode,
       projectDir,
+      isLocalProject: this.isLocalProject,
+      projectId: this.projectId,
+      contentSourceId: this.contentSourceId,
+      config,
+      directories: config.directories,
     });
   }
 

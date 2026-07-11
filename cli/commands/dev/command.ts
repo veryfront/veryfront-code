@@ -32,6 +32,7 @@ export interface DevOptions {
   port: number;
   projectDir: string;
   hmr?: boolean;
+  open?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
   demoMode?: boolean;
 }
@@ -67,7 +68,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
   return withSpan(
     "cli.command.dev",
     async () => {
-      const { port, projectDir, hmr = true, demoMode = false } = options;
+      const { port, projectDir, hmr = true, open = false, demoMode = false } = options;
 
       let doneResolve: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {
@@ -259,6 +260,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
       console.log();
 
+      if (open) {
+        try {
+          await openBrowser(serverUrl);
+        } catch {
+          console.log(`  ${dim("Could not open browser automatically.")}`);
+        }
+      }
+
       if (!demoMode) {
         keyboardHandler = createKeyboardHandler({
           onOpen: () => void openBrowser(serverUrl),
@@ -354,6 +363,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       "cli.port": options.port,
       "cli.projectDir": options.projectDir,
       "cli.hmr": options.hmr ?? true,
+      "cli.open": options.open ?? false,
     },
   );
 }

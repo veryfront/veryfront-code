@@ -19,6 +19,7 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import { sha256HexBytes } from "#veryfront/release-assets/hash.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 export const LOCAL_RELEASE_ASSET_MANIFEST_PATH = "_veryfront/release-asset-manifest.json";
 
@@ -27,6 +28,7 @@ export interface LocalReleaseAssetOptions {
   projectDir: string;
   outputDir: string;
   dryRun: boolean;
+  config?: VeryfrontConfig;
   projectId?: string;
   releaseId?: string;
   vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
@@ -60,7 +62,10 @@ export async function generateLocalReleaseAssetManifest(
 
   try {
     try {
-      const reactVersion = await resolveProjectReactVersion({ projectDir: options.projectDir });
+      const reactVersion = await resolveProjectReactVersion({
+        projectDir: options.projectDir,
+        config: options.config,
+      });
       const built = await buildReactImportMapDependencyAssets({
         tempDir,
         reactVersion,

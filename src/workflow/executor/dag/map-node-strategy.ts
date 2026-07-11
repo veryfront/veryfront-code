@@ -58,9 +58,11 @@ export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
   const { node, config, context, nodeStates, runtime } = input;
+  runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
 
   const items = typeof config.items === "function" ? await config.items(context) : config.items;
+  runtime.abortSignal?.throwIfAborted();
 
   if (!Array.isArray(items)) {
     throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
@@ -98,6 +100,7 @@ export async function executeMapNodeStrategy(
     },
     config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
   );
+  runtime.abortSignal?.throwIfAborted();
 
   Object.assign(nodeStates, result.nodeStates);
 

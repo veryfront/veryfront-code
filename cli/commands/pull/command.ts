@@ -31,7 +31,7 @@ import {
   INVALID_ARGUMENT,
   RESOURCE_NOT_FOUND,
   VeryfrontError,
-} from "#veryfront/errors";
+} from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 

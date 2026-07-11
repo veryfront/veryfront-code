@@ -24,24 +24,23 @@ export class SecurityConfigLoader {
     if (this.isLoaded) return;
     if (this.loadPromise) return this.loadPromise;
 
-    this.loadPromise = this.load();
-    return this.loadPromise;
+    const loadPromise = this.load();
+    this.loadPromise = loadPromise;
+
+    try {
+      await loadPromise;
+    } catch (error) {
+      // Fail this request closed, but allow a later request to retry after a
+      // transient filesystem, import, or parse failure.
+      if (Object.is(this.loadPromise, loadPromise)) this.loadPromise = null;
+      logger.error("Failed to load security config; will retry on next request", { error });
+      throw error;
+    }
   }
 
   private async load(): Promise<void> {
-    try {
-      const cfg = this.configOverride ?? (await getConfig(this.projectDir, this.adapter));
-      this.applyConfig(cfg);
-    } catch (error) {
-      // A legitimately-absent config resolves (no throw) and is applied above.
-      // Reaching here means loading actually failed (e.g. transient FS error or
-      // a parse failure). Do NOT mark as loaded: marking loaded here would leave
-      // securityConfig null for the process lifetime, silently disabling CORS,
-      // CSRF, and CSP. Instead fail loud and clear loadPromise so the next
-      // ensureLoaded() retries rather than permanently degrading security.
-      logger.error("Failed to load security config; will retry on next request", { error });
-      this.loadPromise = null;
-    }
+    const cfg = this.configOverride ?? (await getConfig(this.projectDir, this.adapter));
+    this.applyConfig(cfg);
   }
 
   private applyConfig(cfg?: VeryfrontConfig): void {

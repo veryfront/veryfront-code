@@ -50,8 +50,9 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-const ESM_REACT_MARKDOWN =
-  "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
+export function getReactMarkdownModuleUrl(reactVersion = React.version): string {
+  return `https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@${reactVersion}`;
+}
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
 // Self-contained prose styling. Studio's ChatMessageText leans on the
@@ -321,7 +322,7 @@ export function Markdown({
       try {
         if (!ReactMarkdown) {
           const [rmModule, gfmModule] = await Promise.all([
-            importFromUrl<DefaultModule<unknown>>(ESM_REACT_MARKDOWN),
+            importFromUrl<DefaultModule<unknown>>(getReactMarkdownModuleUrl()),
             importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
           ]);
 

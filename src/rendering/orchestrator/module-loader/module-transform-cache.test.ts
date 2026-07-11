@@ -32,6 +32,44 @@ function createDeps(
 }
 
 describe("module-loader/module-transform-cache", () => {
+  it("isolates outer transform cache keys by React version and runtime mode", async () => {
+    const cacheKeys: string[] = [];
+    const deps = createDeps({
+      getOrComputeTransform: async (key, compute) => {
+        cacheKeys.push(key);
+        return { code: await compute(), cacheHit: false };
+      },
+      transformToESM: (_code, _filePath, _projectDir, _adapter, options) =>
+        Promise.resolve(`export const version = ${JSON.stringify(options.reactVersion)};`),
+    });
+    const baseInput = {
+      fileContent: "export const page = 1;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      adapter: {} as RuntimeAdapter,
+      deps,
+    };
+
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "production",
+      reactVersion: "18.3.1",
+    });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "production",
+      reactVersion: "19.0.0",
+    });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "development",
+      reactVersion: "19.0.0",
+    });
+
+    assertEquals(new Set(cacheKeys).size, 3);
+  });
+
   it("re-transforms cached code when HTTP bundle validation fails", async () => {
     const setCalls: Array<{ key: string; code: string; hash: string; ttl: number }> = [];
     let transformCalls = 0;

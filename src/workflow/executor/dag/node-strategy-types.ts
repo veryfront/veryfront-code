@@ -14,4 +14,5 @@ export type ExecuteChildGraph = (
 export interface NodeStrategyRuntime {
   executeChildGraph: ExecuteChildGraph;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
+  abortSignal?: AbortSignal;
 }

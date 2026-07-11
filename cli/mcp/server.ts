@@ -30,6 +30,24 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
+const ALLOWED_HTTP_ORIGIN_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "veryfront.me",
+]);
+
+function isAllowedHttpOrigin(origin: string): boolean {
+  if (!origin) return true;
+
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" && ALLOWED_HTTP_ORIGIN_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
   stdio?: boolean;
@@ -92,10 +110,7 @@ export class MCPDevServer {
 
       // CORS headers - allow localhost and veryfront dev domains
       const origin = req.headers.get("Origin") ?? "";
-      const isAllowedOrigin = origin === "" ||
-        origin.startsWith("http://localhost") ||
-        origin.startsWith("http://127.0.0.1") ||
-        origin.startsWith("http://veryfront.me");
+      const isAllowedOrigin = isAllowedHttpOrigin(origin);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -299,8 +314,8 @@ export class MCPDevServer {
         },
         {
           uri: "veryfront://config",
-          name: "Project Config",
-          description: "Resolved project configuration",
+          name: "Runtime Config",
+          description: "Non-sensitive runtime configuration",
           mimeType: "application/json",
         },
         {
@@ -384,11 +399,23 @@ export class MCPDevServer {
         if (uri === "veryfront://config") {
           const { getEnvironmentConfig } = await import("veryfront/config");
           const config = getEnvironmentConfig();
+          const safeConfig = {
+            nodeEnv: config.nodeEnv,
+            veryfrontEnv: config.veryfrontEnv,
+            veryfrontMode: config.veryfrontMode,
+            proxyMode: config.proxyMode,
+            debug: config.debug,
+            ci: config.ci,
+            denoTesting: config.denoTesting,
+            perfEnabled: config.perfEnabled,
+            experimentalRsc: config.experimentalRsc,
+            port: config.port,
+          };
           return {
             contents: [{
               uri,
               mimeType: "application/json",
-              text: JSON.stringify(config, null, 2),
+              text: JSON.stringify(safeConfig, null, 2),
             }],
           };
         }

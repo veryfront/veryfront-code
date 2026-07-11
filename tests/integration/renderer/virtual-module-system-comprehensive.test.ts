@@ -1,8 +1,9 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { stop as stopBundler } from "veryfront/extensions/bundler";
 import { cwd, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
   exists,
@@ -77,6 +78,10 @@ function createMockAdapter(): RuntimeAdapter {
 }
 
 describe("VirtualModuleSystem", () => {
+  afterAll(async () => {
+    await stopBundler();
+  });
+
   it("registers, serves and clears modules", async () => {
     const adapter = createMockAdapter();
     const vms = new VirtualModuleSystem("/_vf/modules", adapter);

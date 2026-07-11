@@ -73,7 +73,7 @@ export function getReadyNodes(
 
   for (const [nodeId, degree] of inDegree) {
     const state = nodeStates[nodeId];
-    if (degree === 0 && (!state || state.status === "pending")) {
+    if (degree === 0 && (!state || state.status === "pending" || state.status === "failed")) {
       ready.push(nodeId);
     }
   }

@@ -7,6 +7,7 @@ import {
   __resetRSCHandlerForTests,
   getRSCHandler,
   type HandlerCache,
+  invalidateRSCHandlersForProject,
 } from "./handler-registry.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
@@ -22,6 +23,9 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
     set(key: string, value: RSCDevServerHandler) {
       entries.set(key, value);
     },
+    delete(key: string) {
+      return entries.delete(key);
+    },
     clear() {
       entries.clear();
     },
@@ -34,6 +38,30 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
 describe("server/services/rsc/endpoints/handler-registry", () => {
   afterEach(() => {
     __destroyRSCHandlerForTests();
+  });
+
+  describe("invalidateRSCHandlersForProject", () => {
+    it("evicts every handler variant for only the changed project", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const staleProduction = getRSCHandler("/project/a", "project-a");
+      const staleDevelopment = getRSCHandler("/project/a", "project-a", {
+        mode: "development",
+      });
+      const otherProject = getRSCHandler("/project/b", "project-b");
+
+      invalidateRSCHandlersForProject("/project/a", "project-a");
+
+      assertEquals(cache.size, 1);
+      assertEquals(getRSCHandler("/project/a", "project-a") !== staleProduction, true);
+      assertEquals(
+        getRSCHandler("/project/a", "project-a", { mode: "development" }) !==
+          staleDevelopment,
+        true,
+      );
+      assertEquals(getRSCHandler("/project/b", "project-b"), otherProject);
+    });
   });
 
   describe("getRSCHandler", () => {
@@ -61,8 +89,8 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       __injectCacheForTests(cache);
 
       getRSCHandler("/dir", "proj-123");
-      assertEquals(cache.entries.has("proj-123"), true);
-      assertEquals(cache.entries.has("/dir"), false);
+      assertEquals(cache.entries.has('["proj-123",false,"production","app",null]'), true);
+      assertEquals(cache.entries.has('["/dir",false,"production","app",null]'), false);
     });
 
     it("should use projectDir as cache key when projectId is undefined", () => {
@@ -70,7 +98,10 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       __injectCacheForTests(cache);
 
       getRSCHandler("/project/dir");
-      assertEquals(cache.entries.has("/project/dir"), true);
+      assertEquals(
+        cache.entries.has('["/project/dir",false,"production","app",null]'),
+        true,
+      );
     });
 
     it("should create separate handlers for different projects", () => {
@@ -80,6 +111,68 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       const handler1 = getRSCHandler("/dir1");
       const handler2 = getRSCHandler("/dir2");
       assertEquals(handler1 !== handler2, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("separates cached handlers by trusted local mode and configured app directory", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const remote = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "app" } },
+        isLocalProject: false,
+      });
+      const local = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "app" } },
+        isLocalProject: true,
+      });
+      const customApp = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "frontend" } },
+        isLocalProject: false,
+      });
+      const remotePreview = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "app" } },
+        isLocalProject: false,
+        mode: "development",
+      });
+
+      assertEquals(remote !== local, true);
+      assertEquals(remote !== customApp, true);
+      assertEquals(remote !== remotePreview, true);
+      assertEquals(cache.size, 4);
+    });
+
+    it("separates cached handlers by configured React version", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const react18 = getRSCHandler("/dir", "project", {
+        config: { react: { version: "18.3.1" } },
+      });
+      const react19 = getRSCHandler("/dir", "project", {
+        config: { client: { cdn: { versions: { react: "19.1.1" } } } },
+      });
+
+      assertEquals(react18 !== react19, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("isolates production handlers by release and content source", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const releaseA = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-a",
+        contentSourceId: "release-release-a",
+      });
+      const releaseB = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-b",
+        contentSourceId: "release-release-b",
+      });
+
+      assertEquals(releaseA !== releaseB, true);
       assertEquals(cache.size, 2);
     });
   });

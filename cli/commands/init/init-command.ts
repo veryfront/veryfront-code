@@ -271,6 +271,7 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
 export async function initCommand(options: InitOptions): Promise<void> {
   const { name, features = [], quiet = false } = options;
   const { integrations = [] } = options;
+  const parentDir = options.parentDir ?? cwd();
 
   function log(msg: string): void {
     if (!quiet) logger.info(msg);
@@ -284,15 +285,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (name) {
     const nameError = validateProjectName(name);
     if (nameError) {
-      console.error(red(nameError));
-      return;
+      throw toError(createError({ type: "config", message: nameError }));
     }
   }
 
   // Check if directory already exists before entering the wizard
   if (name && !options.force) {
     const fs = createFileSystem();
-    const targetDir = join(cwd(), name);
+    const targetDir = join(parentDir, name);
     if (await fs.exists(targetDir)) {
       console.error(
         red(
@@ -325,7 +325,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   // "bun"/"deno" force the matching pm.
   const pmPreference: PackageManager = runtime === "node" ? "npm" : runtime;
 
-  const projectDir = projectName ? join(cwd(), projectName) : cwd();
+  const projectDir = projectName ? join(parentDir, projectName) : parentDir;
   const fs = createFileSystem();
 
   validateOrThrow("features", features, validateFeatures);

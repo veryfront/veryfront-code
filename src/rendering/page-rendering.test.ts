@@ -1,11 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
 import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
+import {
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "../react/compat/ssr-adapter/server-loader.ts";
 
 function createMDXPageInfo(content: string): EntityInfo {
   return {
@@ -25,6 +30,11 @@ function createMDXPageInfo(content: string): EntityInfo {
 }
 
 describe("rendering/page-rendering", () => {
+  afterEach(() => {
+    resetReactCache();
+    __setServerModuleLoaderForTests(null);
+  });
+
   it("keeps SSR module code separate from the browser client bundle", async () => {
     const pageInfo = createMDXPageInfo(
       [
@@ -132,6 +142,48 @@ describe("rendering/page-rendering", () => {
 
       assertEquals(loadAttempts, 2);
       assertEquals(sourceRefreshes, 1);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("creates MDX elements with the requested project React version", async () => {
+    const loadedUrls: string[] = [];
+    let moduleReactVersion: unknown;
+    __setServerModuleLoaderForTests((url) => {
+      loadedUrls.push(url);
+      return Promise.resolve({ default: React });
+    });
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
+      moduleReactVersion = args[6];
+      return Promise.resolve({ default: () => null });
+    }) as typeof mdxRenderer.loadModuleESM;
+
+    try {
+      await handleMDXPage(
+        createMDXPageInfo("# React version probe"),
+        "probe",
+        "/project",
+        {},
+        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        {
+          fs: {},
+        } as unknown as RuntimeAdapter,
+        {
+          projectId: "project-18",
+          contentSourceId: "preview-main",
+          studioEmbed: true,
+          reactVersion: "18.3.1",
+        },
+      );
+
+      assertEquals(loadedUrls.some((url) => url.includes("react@18.3.1")), true);
+      assertEquals(moduleReactVersion, "18.3.1");
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }

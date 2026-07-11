@@ -12,6 +12,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -83,13 +84,23 @@ async function isValidLocalProjectPath(path: string, adapter: RuntimeAdapter): P
     }
   };
 
-  const [hasApp, hasPages, hasComponents] = await Promise.all([
+  const checkFile = async (subPath: string): Promise<boolean> => {
+    try {
+      const s = await adapter.fs.stat(subPath);
+      return s !== null && !s.isDirectory;
+    } catch {
+      return false;
+    }
+  };
+
+  const [hasApp, hasPages, hasComponents, ...configMarkers] = await Promise.all([
     checkDir(`${path}/app`),
     checkDir(`${path}/pages`),
     checkDir(`${path}/components`),
+    ...VERYFRONT_CONFIG_FILES.map((file) => checkFile(`${path}/${file}`)),
   ]);
 
-  return hasApp || hasPages || hasComponents;
+  return hasApp || hasPages || hasComponents || configMarkers.some(Boolean);
 }
 
 /**

@@ -14,6 +14,7 @@ import type { ReleaseAssetHttpDependencyVendor } from "#veryfront/release-assets
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { generateLocalReleaseAssetManifest } from "./local-release-assets.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 function makeAdapter() {
   const writes = new Map<string, string>();
@@ -165,6 +166,31 @@ describe("build/production-build/local-release-assets", () => {
     );
     assertEquals(await hasEsmShReactImport(headAsset), false);
     assertEquals(removed.includes("/tmp/vf-local-release-assets-test"), true);
+  });
+
+  it("uses config.react.version for local release dependency assets", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, writes } = makeAdapter();
+
+    const manifest = await generateLocalReleaseAssetManifest({
+      // deno-lint-ignore no-explicit-any
+      adapter: adapter as any,
+      projectDir: "/project",
+      outputDir: "/project/dist",
+      dryRun: false,
+      config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+      vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: fakeFrameworkTransform,
+    });
+
+    assertExists(manifest);
+    const reactDependency = manifest.dependencies.react;
+    assertExists(reactDependency);
+    const reactAsset = writes.get(
+      `/project/dist/_vf/assets/${reactDependency.contentHash}.js`,
+    );
+    assertExists(reactAsset);
+    assertStringIncludes(reactAsset, "react@18.3.1");
   });
 
   it("includes existing cached HTTP dependency assets in the local manifest", async () => {

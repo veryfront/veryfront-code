@@ -78,6 +78,27 @@ describe("html/html-injection", () => {
       assertEquals(html.includes("my-slug"), false);
     });
 
+    it("should escape script-closing sequences in prebuilt import maps", () => {
+      const hostileImportMap = JSON.stringify({
+        imports: {
+          hostile: "</script><script>globalThis.__veryfrontImportMapBreakout = true</script>",
+        },
+      });
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          importMapJson: hostileImportMap,
+        },
+      );
+
+      assertEquals(html.includes("</script><script>"), false);
+      assertEquals(html.includes("\\u003c/script"), true);
+    });
+
     it("should clear dev placeholders in production mode", () => {
       const html = injectHTMLContent(
         "<div>{{ devScripts }}{{ devStyles }}</div><body></body>",

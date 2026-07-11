@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -197,6 +198,201 @@ describe(
       );
       assertEquals(errors.length, 0, `unexpected errors: ${JSON.stringify(errors)}`);
       assertEquals(output.includes("z = 1") || output.includes("var z"), true);
+    });
+  },
+);
+
+describe(
+  "createRelativeFsPlugin - browser server boundary",
+  () => {
+    afterEach(async () => {
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+    });
+
+    async function bundleClientDependency(
+      dependencySource: string,
+      failDependencyRead = false,
+      extension = ".ts",
+      symlinkSegment: "directory" | "file" | null = null,
+      importSpecifier = `./dependency${extension}`,
+    ): Promise<{ errors: ReadonlyArray<{ text: string }>; output: string }> {
+      const projectDir = "/project";
+      const dependencyPath = `${projectDir}/app/dependency${extension}`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(dependencyPath, dependencySource);
+
+      if (symlinkSegment) {
+        const readDir = adapter.fs.readDir;
+        adapter.fs.readDir = (path: string) =>
+          symlinkSegment === "directory" && path === projectDir
+            ? (async function* () {
+              yield {
+                name: "app",
+                isFile: false,
+                isDirectory: false,
+                isSymlink: true,
+              };
+            })()
+            : symlinkSegment === "file" && path === `${projectDir}/app`
+            ? (async function* () {
+              yield {
+                name: `dependency${extension}`,
+                isFile: false,
+                isDirectory: false,
+                isSymlink: true,
+              };
+            })()
+            : readDir(path);
+      }
+
+      if (failDependencyRead) {
+        const readFile = adapter.fs.readFile;
+        adapter.fs.readFile = (path: string) =>
+          path === dependencyPath
+            ? Promise.reject(new Error("dependency read unavailable"))
+            : readFile(path);
+      }
+
+      const { build } = await import("veryfront/extensions/bundler");
+      try {
+        const result = await build({
+          bundle: true,
+          write: false,
+          format: "esm",
+          platform: "browser",
+          target: "es2020",
+          stdin: {
+            contents: [
+              '"use client";',
+              `import { marker } from "${importSpecifier}";`,
+              "console.log(marker);",
+            ].join("\n"),
+            loader: "js",
+            sourcefile: "/app/entry.js",
+            resolveDir: `${projectDir}/app`,
+          },
+          plugins: [
+            createRelativeFsPlugin(projectDir, adapter, {
+              enforceBrowserBoundaries: true,
+            }),
+          ],
+        });
+        return { errors: [], output: result.outputFiles?.[0]?.text ?? "" };
+      } catch (error) {
+        const errors = (error as { errors?: ReadonlyArray<{ text: string }> }).errors ?? [
+          { text: error instanceof Error ? error.message : String(error) },
+        ];
+        return { errors, output: "" };
+      }
+    }
+
+    it("rejects a relative dependency with a top-level use-server directive", async () => {
+      const marker = "SERVER_DEPENDENCY_MARKER";
+      const { errors, output } = await bundleClientDependency(
+        `'use server';\nexport const marker = "${marker}";`,
+      );
+
+      assertEquals(errors.some(({ text }) => text.includes("declares use server")), true);
+      assertEquals(output.includes(marker), false);
+    });
+
+    it("rejects use-server dependencies with explicit module-type extensions", async () => {
+      for (const extension of [".mts", ".cts", ".mjs", ".cjs"] as const) {
+        const marker = `SERVER_${extension.slice(1).toUpperCase()}_DEPENDENCY_MARKER`;
+        const { errors, output } = await bundleClientDependency(
+          `'use server';\nexport const marker = "${marker}";`,
+          false,
+          extension,
+        );
+
+        assertEquals(errors.some(({ text }) => text.includes("declares use server")), true);
+        assertEquals(output.includes(marker), false);
+      }
+    });
+
+    it("does not treat hybrid CommonJS or ESM JSX suffixes as script modules", async () => {
+      for (const extension of [".mtsx", ".ctsx", ".mjsx", ".cjsx"] as const) {
+        const marker = `UNSUPPORTED_${extension.slice(1).toUpperCase()}_MARKER`;
+        const explicit = await bundleClientDependency(
+          `export const marker = "${marker}";`,
+          false,
+          extension,
+        );
+        const extensionless = await bundleClientDependency(
+          `export const marker = "${marker}";`,
+          false,
+          extension,
+          null,
+          "./dependency",
+        );
+
+        assertEquals(explicit.errors.length > 0, true);
+        assertEquals(explicit.output.includes(marker), false);
+        assertEquals(extensionless.errors.length > 0, true);
+        assertEquals(extensionless.output.includes(marker), false);
+      }
+    });
+
+    it("rejects a dependency with conflicting client and server directives", async () => {
+      const { errors, output } = await bundleClientDependency(
+        `'use client';\n'use server';\nexport const marker = "conflicting";`,
+      );
+
+      assertEquals(errors.some(({ text }) => text.includes("conflicting")), true);
+      assertEquals(output, "");
+    });
+
+    it("rejects a dependency with a function-local server action", async () => {
+      const marker = "FUNCTION_LOCAL_SERVER_SECRET_MARKER";
+      const { errors, output } = await bundleClientDependency(
+        [
+          "export async function save() {",
+          '  "use server";',
+          `  return "${marker}";`,
+          "}",
+          "export const marker = save;",
+        ].join("\n"),
+      );
+
+      assertEquals(errors.some(({ text }) => text.includes("function-local use server")), true);
+      assertEquals(output.includes(marker), false);
+    });
+
+    it("preserves shared dependencies without boundary directives", async () => {
+      const marker = "SHARED_DEPENDENCY_MARKER";
+      const { errors, output } = await bundleClientDependency(
+        `export const marker = "${marker}";`,
+      );
+
+      assertEquals(errors, []);
+      assertEquals(output.includes(marker), true);
+    });
+
+    it("fails closed when a dependency cannot be read", async () => {
+      const marker = "UNREADABLE_DEPENDENCY_MARKER";
+      const { errors, output } = await bundleClientDependency(
+        `export const marker = "${marker}";`,
+        true,
+      );
+
+      assertEquals(errors.length > 0, true);
+      assertEquals(output.includes(marker), false);
+    });
+
+    it("rejects relative dependencies with symbolic-link path segments", async () => {
+      const marker = "SYMLINKED_DEPENDENCY_MARKER";
+      for (const symlinkSegment of ["directory", "file"] as const) {
+        const { errors, output } = await bundleClientDependency(
+          `export const marker = "${marker}";`,
+          false,
+          ".ts",
+          symlinkSegment,
+        );
+
+        assertEquals(errors.some(({ text }) => text.includes("symbolic link")), true);
+        assertEquals(output.includes(marker), false);
+      }
     });
   },
 );

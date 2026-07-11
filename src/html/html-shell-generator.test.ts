@@ -10,6 +10,7 @@ import { wrapInHTMLShell } from "./html-shell-generator.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("html-generation/html-shell-generator", () => {
   const mockConfig = {
@@ -115,6 +116,21 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "https://cdn.example.com/lib.js");
     });
 
+    it("should not allow custom import maps to close the import-map script", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          importMap: {
+            hostile: "</script><script>globalThis.__veryfrontImportMapBreakout = true</script>",
+          },
+        }),
+      );
+
+      assertEquals(result.includes("</script><script>"), false);
+      assertStringIncludes(result, "\\u003c/script");
+    });
+
     it("should preload react/jsx-runtime to eliminate waterfall delay", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
@@ -133,6 +149,24 @@ describe("html-generation/html-shell-generator", () => {
         preloadIndex < bodyIndex,
         "jsx-runtime preload should be in <head>, before <body>",
       );
+    });
+
+    it("escapes custom jsx-runtime URLs in modulepreload attributes", async () => {
+      const hostileRuntimeUrl =
+        'https://cdn.example.com/jsx-runtime.js?value="><script>alert(1)</script>';
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          importMap: { "react/jsx-runtime": hostileRuntimeUrl },
+        }),
+      );
+
+      assertStringIncludes(
+        result,
+        'href="https://cdn.example.com/jsx-runtime.js?value=&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"',
+      );
+      assertEquals(result.includes(`href="${hostileRuntimeUrl}"`), false);
     });
 
     it("does not re-parse generated import map JSON for jsx-runtime preload", async () => {
@@ -185,6 +219,165 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(
         result,
         '<link rel="modulepreload" href="/_vf_modules/_veryfront/react/components/BenchInteractiveButton.js">',
+      );
+    });
+
+    it("escapes legacy route-manifest URLs in modulepreload attributes", async () => {
+      clearAllManifests();
+      recordSSRModules("hostile-project", "test-page", [
+        'modules/evil"><script>alert(1)</script>.js',
+      ]);
+
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          pagePath: "pages/test-page.tsx",
+          projectSlug: "hostile-project",
+        }),
+      );
+      clearAllManifests();
+
+      assertStringIncludes(
+        result,
+        'href="/_vf_modules/modules/evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
+      );
+      assertEquals(
+        result.includes(
+          'href="/_vf_modules/modules/evil"><script>alert(1)</script>.js"',
+        ),
+        false,
+      );
+    });
+
+    it("omits page and layout preloads outside the project directory", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          projectDir: "/project",
+          pagePath: "/private/workspace/secret-pages/dashboard.tsx",
+          nestedLayouts: [
+            { kind: "tsx", path: "/private/workspace/secret-layouts/root.tsx" },
+          ],
+        }),
+      );
+
+      assertEquals(result.includes("/private/workspace/"), false);
+      assertEquals(result.includes("secret-pages/dashboard.js"), false);
+      assertEquals(result.includes("secret-layouts/root.js"), false);
+    });
+
+    it("rejects project-directory prefix collisions in module preloads", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          projectDir: "/project",
+          pagePath: "/project-secret/pages/admin.tsx",
+          nestedLayouts: [
+            { kind: "tsx", path: "/project-secret/app/layout.tsx" },
+          ],
+        }),
+      );
+
+      assertEquals(result.includes("secret/pages/admin.js"), false);
+      assertEquals(result.includes("secret/app/layout.js"), false);
+      assertEquals(result.includes("/project-secret/"), false);
+    });
+
+    it("preserves module preloads for paths inside the project directory", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          projectDir: "/project",
+          pagePath: "/project/pages/dashboard.tsx",
+          nestedLayouts: [
+            { kind: "tsx", path: "/project/app/layout.tsx" },
+          ],
+        }),
+      );
+
+      assertStringIncludes(
+        result,
+        '<link rel="modulepreload" href="/_vf_modules/pages/dashboard.js">',
+      );
+      assertStringIncludes(
+        result,
+        '<link rel="modulepreload" href="/_vf_modules/app/layout.js">',
+      );
+    });
+
+    it("escapes in-project filenames in modulepreload attributes", async () => {
+      const hostilePagePath = '/project/pages/dashboard"><script>alert(1)</script>.tsx';
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          projectDir: "/project",
+          pagePath: hostilePagePath,
+        }),
+      );
+
+      assertStringIncludes(
+        result,
+        'href="/_vf_modules/pages/dashboard&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
+      );
+      assertEquals(
+        result.includes(
+          'href="/_vf_modules/pages/dashboard"><script>alert(1)</script>.js"',
+        ),
+        false,
+      );
+    });
+
+    it("escapes release-manifest URLs in modulepreload attributes", async () => {
+      const hostileHash = 'hash"><script>alert(1)</script>';
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project",
+        releaseId: "release",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "source",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "pages/dashboard.tsx": {
+            contentHash: hostileHash,
+            size: 1,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes: {
+          "/dashboard": { modules: ["pages/dashboard.tsx"], css: [] },
+        },
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+      const options = {
+        ...createOptions({
+          projectDir: "/project",
+          pagePath: "/project/pages/dashboard.tsx",
+        }),
+        releaseAssetManifest: manifest,
+      };
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        options,
+      );
+
+      assertStringIncludes(
+        result,
+        'href="/_vf/assets/hash&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
+      );
+      assertEquals(
+        result.includes('href="/_vf/assets/hash"><script>alert(1)</script>.js"'),
+        false,
       );
     });
 

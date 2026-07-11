@@ -53,7 +53,13 @@ try {
   // .env file doesn't exist - that's fine
 }
 
-describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false, timeout: 600_000 }, () => {
+const COMPILED_BINARY_E2E_OPTIONS = {
+  sanitizeOps: false,
+  sanitizeResources: false,
+  timeout: 600_000,
+};
+
+describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
   beforeAll(async () => {
     await ensureBinaryCompiled();
   });
@@ -1503,7 +1509,14 @@ export default function ClientPage() {
     await Deno.writeTextFile(
       join(projectDir, "app", "layout.tsx"),
       `export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html><body>{children}</body></html>;
+  return (
+    <html>
+      <body>
+        <header id="server-layout-header">Server layout header</header>
+        <main id="server-layout-main">{children}</main>
+      </body>
+    </html>
+  );
 }
 `,
     );
@@ -1541,6 +1554,14 @@ export default function ClientPage() {
           expectedPagePath: "app/page.tsx",
           expectedModulePath: "/_veryfront/rsc/module",
           expectedCounterCount: 1,
+          assertBeforeClick: async () => {
+            assertEquals(await page.textContent("#server-layout-header"), "Server layout header");
+            assertEquals(await page.locator("#server-layout-main #counter").count(), 1);
+          },
+          assertAfterClick: async () => {
+            assertEquals(await page.textContent("#server-layout-header"), "Server layout header");
+            assertEquals(await page.locator("#server-layout-main #counter").count(), 1);
+          },
         });
 
         assertNoBrowserHydrationErrors(diagnostics, "Unexpected hydration errors");

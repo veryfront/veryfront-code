@@ -9,7 +9,11 @@ export interface ActionBody {
 export interface ActionRequestParams {
   req: Request;
   projectDir: string;
+  projectId?: string;
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
+  config?: VeryfrontConfig;
+  mode?: "development" | "production";
 }
 
 export interface RSCEndpointParams {
@@ -17,7 +21,12 @@ export interface RSCEndpointParams {
   pathname: string;
   projectDir: string;
   projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  releaseId?: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
+  isLocalProject?: boolean;
+  mode?: "development" | "production";
   nonce?: string;
 }

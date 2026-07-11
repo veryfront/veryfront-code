@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { renderAppRouteToHTML } from "./build-app-route-renderer.ts";
@@ -7,11 +12,20 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
+import { getProjectReact } from "#veryfront/react";
+import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
-async function makeProject(): Promise<{ projectDir: string; pageFile: string }> {
+// React's server scheduler owns one process-lifetime MessagePort. Initialize it
+// during module setup so per-test sanitizers only track resources each render owns.
+await Promise.all([getProjectReact(), getReactDOMServer()]);
+
+async function makeProject(
+  appDirectory = "app",
+): Promise<{ projectDir: string; pageFile: string }> {
   const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-renderer-" });
 
-  const appDir = join(projectDir, "app");
+  const appDir = join(projectDir, appDirectory);
   await Deno.mkdir(appDir, { recursive: true });
   await Deno.writeTextFile(
     join(appDir, "layout.tsx"),
@@ -60,6 +74,72 @@ export default function Page() {
   return { projectDir, pageFile };
 }
 
+async function makeNestedPageIslandProject(): Promise<{
+  projectDir: string;
+  pageFile: string;
+}> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-page-island-" });
+  const appDir = join(projectDir, "app");
+  const sectionDir = join(appDir, "section");
+  const reportsDir = join(sectionDir, "reports");
+  const detailDir = join(reportsDir, "detail");
+  await Deno.mkdir(detailDir, { recursive: true });
+
+  await Deno.writeTextFile(
+    join(appDir, "layout.tsx"),
+    `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <html><body><header data-testid="server-header">Header</header><main data-testid="server-document">{children}</main><footer data-testid="server-footer">Footer</footer></body></html>;
+}
+`,
+  );
+  await Deno.writeTextFile(
+    join(sectionDir, "layout.tsx"),
+    `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <section data-testid="server-section">{children}</section>;
+}
+`,
+  );
+  await Deno.writeTextFile(
+    join(reportsDir, "layout.tsx"),
+    `"use client";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return <div data-testid="client-reports-layout">{children}</div>;
+}
+`,
+  );
+  await Deno.writeTextFile(
+    join(detailDir, "layout.tsx"),
+    `"use client";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return <div data-testid="client-detail-layout">{children}</div>;
+}
+`,
+  );
+  const pageFile = join(detailDir, "page.tsx");
+  await Deno.writeTextFile(
+    pageFile,
+    `"use client";
+
+export default function Page() {
+  return <button id="counter" type="button">Count: 0</button>;
+}
+`,
+  );
+
+  return { projectDir, pageFile };
+}
+
+async function cleanupProject(projectDir: string): Promise<void> {
+  try {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  } finally {
+    await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+  }
+}
+
 function extractHydrationData(html: string): Record<string, unknown> {
   const match = html.match(
     /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/i,
@@ -77,11 +157,9 @@ function extractImportMapImports(html: string): Record<string, string> {
 Deno.test({
   name:
     "server/build-app-route-renderer renders App Router HTML with Veryfront hydration data and runtime",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
-    const { projectDir, pageFile } = await makeProject();
+    const { projectDir, pageFile } = await makeProject("src/app");
 
     try {
       const html = await renderAppRouteToHTML({
@@ -90,6 +168,7 @@ Deno.test({
         routePath: "/",
         pageFile,
         contentSourceId: "test-content-source",
+        config: { directories: { app: "src/app" } },
       });
 
       assertStringIncludes(html, 'id="root"');
@@ -100,10 +179,12 @@ Deno.test({
       assertEquals(html.includes("/_veryfront/app.js"), false);
 
       const hydrationData = extractHydrationData(html);
-      assertEquals(hydrationData.pagePath, "app/page.tsx");
+      assertEquals(hydrationData.pagePath, "src/app/page.tsx");
       assertEquals(hydrationData.slug, "");
+      assertEquals(hydrationData.appRouterRoot, "src/app");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
-      assertEquals(hydrationData.layouts, [{ kind: "tsx", path: "app/layout.tsx" }]);
+      assertEquals(hydrationData.isolatedClientPage, true);
+      assertEquals(hydrationData.layouts, []);
 
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
       const reactHash = "1".repeat(64);
@@ -159,6 +240,7 @@ Deno.test({
         routePath: "/",
         pageFile,
         contentSourceId: "test-content-source",
+        config: { directories: { app: "src/app" } },
         releaseAssetManifest: manifest,
       });
 
@@ -166,7 +248,101 @@ Deno.test({
       assertEquals(extractImportMapImports(releaseHtml).react, `/_vf/assets/${reactHash}.js`);
     } finally {
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name: "server/build-app-route-renderer fails when an existing layout is invalid",
+  async fn() {
+    const { projectDir, pageFile } = await makeProject();
+
+    try {
+      await Deno.writeTextFile(
+        join(projectDir, "app", "layout.tsx"),
+        "export default 42;\n",
+      );
+
+      await assertRejects(
+        () =>
+          renderAppRouteToHTML({
+            adapter: denoAdapter,
+            projectDir,
+            routePath: "/",
+            pageFile,
+            contentSourceId: "test-content-source",
+          }),
+        Error,
+        "Invalid layout component",
+      );
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "server/build-app-route-renderer isolates a client page from server layouts and hydrates only the client layout suffix",
+  async fn() {
+    const { projectDir, pageFile } = await makeNestedPageIslandProject();
+
+    try {
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/section/reports/detail",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      const headerIndex = html.indexOf('data-testid="server-header"');
+      const documentIndex = html.indexOf('data-testid="server-document"');
+      const sectionIndex = html.indexOf('data-testid="server-section"');
+      const islandIndex = html.indexOf(`id="${CLIENT_PAGE_ISLAND_ID}"`);
+      const reportsLayoutIndex = html.indexOf('data-testid="client-reports-layout"');
+      const detailLayoutIndex = html.indexOf('data-testid="client-detail-layout"');
+      const pageIndex = html.indexOf('id="counter"');
+      const footerIndex = html.indexOf('data-testid="server-footer"');
+
+      assertEquals(
+        [
+          headerIndex,
+          documentIndex,
+          sectionIndex,
+          islandIndex,
+          reportsLayoutIndex,
+          detailLayoutIndex,
+          pageIndex,
+          footerIndex,
+        ].every((index) => index >= 0),
+        true,
+      );
+      assertEquals(headerIndex < documentIndex, true);
+      assertEquals(documentIndex < sectionIndex, true);
+      assertEquals(sectionIndex < islandIndex, true);
+      assertEquals(islandIndex < reportsLayoutIndex, true);
+      assertEquals(reportsLayoutIndex < detailLayoutIndex, true);
+      assertEquals(detailLayoutIndex < pageIndex, true);
+      assertEquals(pageIndex < footerIndex, true);
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.isolatedClientPage, true);
+      assertEquals(hydrationData.layouts, [
+        { kind: "tsx", path: "app/section/reports/layout.tsx" },
+        { kind: "tsx", path: "app/section/reports/detail/layout.tsx" },
+      ]);
+      assertEquals(
+        JSON.stringify(hydrationData.layouts).includes("app/layout.tsx"),
+        false,
+      );
+      assertEquals(
+        JSON.stringify(hydrationData.layouts).includes("app/section/layout.tsx"),
+        false,
+      );
+    } finally {
+      await cleanupProject(projectDir);
     }
   },
 });
@@ -174,8 +350,6 @@ Deno.test({
 Deno.test({
   name:
     "server/build-app-route-renderer unwraps App Router document layouts before writing the root",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const { projectDir, pageFile } = await makeDocumentLayoutProject();
 
@@ -194,7 +368,114 @@ Deno.test({
       assertEquals(html.includes('<div id="root"><html>'), false);
       assertEquals(html.includes("<body><html>"), false);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "server/build-app-route-renderer discovers route-group and dynamic layouts from the page filesystem path",
+  async fn() {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-filesystem-layouts-" });
+    const appDir = join(projectDir, "app");
+    const groupDir = join(appDir, "(marketing)");
+    const dynamicDir = join(groupDir, "[slug]");
+    const pageFile = join(dynamicDir, "page.tsx");
+
+    try {
+      await Deno.mkdir(dynamicDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(appDir, "layout.tsx"),
+        `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <main data-testid="root-layout">{children}</main>;
+}
+`,
+      );
+      await Deno.writeTextFile(
+        join(groupDir, "layout.tsx"),
+        `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <section data-testid="route-group-layout">{children}</section>;
+}
+`,
+      );
+      await Deno.writeTextFile(
+        join(dynamicDir, "layout.tsx"),
+        `"use client";
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return <article data-testid="dynamic-layout">{children}</article>;
+}
+`,
+      );
+      await Deno.writeTextFile(
+        pageFile,
+        `"use client";
+export default function Page() {
+  return <button id="dynamic-page">Open</button>;
+}
+`,
+      );
+
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/launch",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, 'data-testid="root-layout"');
+      assertStringIncludes(html, 'data-testid="route-group-layout"');
+      assertStringIncludes(html, 'data-testid="dynamic-layout"');
+      assertStringIncludes(html, 'id="dynamic-page"');
+      assertEquals(extractHydrationData(html).layouts, [
+        { kind: "tsx", path: "app/(marketing)/[slug]/layout.tsx" },
+      ]);
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name: "server/build-app-route-renderer discovers and unwraps JavaScript document layouts",
+  async fn() {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-js-layout-" });
+    const appDir = join(projectDir, "app");
+    const pageFile = join(appDir, "page.tsx");
+
+    try {
+      await Deno.mkdir(appDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(appDir, "layout.jsx"),
+        `export default function Layout({ children }) {
+  return <html><body><main data-testid="javascript-layout">{children}</main></body></html>;
+}
+`,
+      );
+      await Deno.writeTextFile(
+        pageFile,
+        `"use client";
+export default function Page() {
+  return <button id="javascript-layout-page">Open</button>;
+}
+`,
+      );
+
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, 'data-testid="javascript-layout"');
+      assertStringIncludes(html, 'id="javascript-layout-page"');
+      assertEquals(html.includes('<div id="root"><html>'), false);
+      assertEquals(html.includes("<body><html>"), false);
+    } finally {
+      await cleanupProject(projectDir);
     }
   },
 });

@@ -1,4 +1,5 @@
 import type { VeryfrontConfig } from "#veryfront/config";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateDevComponentManifestScript(
@@ -10,6 +11,6 @@ export function generateDevComponentManifestScript(
 
   return `
   <script${nonceAttr}>
-    window.__veryfrontComponents = ${JSON.stringify(components)};
+    window.__veryfrontComponents = ${jsonForInlineScript(components)};
   </script>`;
 }

@@ -15,6 +15,7 @@ import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
+import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
@@ -313,7 +314,7 @@ export class HTMLGenerator {
       isClientPage,
       params: context.options?.params,
       environment: context.options?.environment,
-      isLocalProject: this.config.mode === "development",
+      isLocalProject: this.config.isLocalProject === true,
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
@@ -344,7 +345,7 @@ export class HTMLGenerator {
   private async detectUseClientDirective(pagePath: string): Promise<boolean> {
     try {
       const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      const isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
+      const isClientPage = hasUseClientDirective(pageContent, pagePath);
 
       if (isClientPage) {
         logger.debug(`Detected 'use client' page: ${pagePath}`);
@@ -472,6 +473,29 @@ export class HTMLGenerator {
       profilePhase("html.load_global_css", () => this.loadProjectFile(stylesheetPath)),
     ]);
     const appComponentPath = appComponentPathOrNull ?? undefined;
+    const clientLayoutPaths = new Set(
+      context.options?.clientPageIsland?.clientLayoutPaths ?? [],
+    );
+    const hydrationLayouts = context.options?.clientPageIsland
+      ? context.nestedLayouts.filter((layout) =>
+        clientLayoutPaths.has(layout.componentPath ?? layout.path ?? "")
+      )
+      : context.nestedLayouts;
+    const hydrationLayoutPaths = new Set(
+      hydrationLayouts.map((layout) =>
+        extractRelativePath(
+          layout.componentPath ?? layout.path ?? "",
+          this.config.projectDir,
+        )
+      ),
+    );
+    const hydrationLayoutProps = context.options?.layoutProps
+      ? Object.fromEntries(
+        Object.entries(context.options.layoutProps).filter(([path]) =>
+          hydrationLayoutPaths.has(path)
+        ),
+      )
+      : undefined;
     const projectClasses = await profilePhase(
       "html.route_candidates",
       () => extractProjectClassesForRoute(this.config, context, appComponentPath),
@@ -514,12 +538,14 @@ export class HTMLGenerator {
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,
-      nestedLayouts: context.nestedLayouts.map((l) => ({
+      nestedLayouts: hydrationLayouts.map((l) => ({
         kind: l.kind,
         path: l.path,
         componentPath: l.componentPath,
       })),
-      appPath: appComponentPath,
+      appPath: context.options?.clientPageIsland ? undefined : appComponentPath,
+      isolatedClientPage: context.options?.clientPageIsland ? true : undefined,
+      layoutProps: hydrationLayoutProps,
       pagePath,
       pageType,
       nonce: context.options?.nonce,
@@ -537,7 +563,7 @@ export class HTMLGenerator {
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,
-      isLocalProject: this.config.mode === "development",
+      isLocalProject: this.config.isLocalProject === true,
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
       ...(context.options?.releaseAssetManifest !== undefined

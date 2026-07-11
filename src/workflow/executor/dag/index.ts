@@ -34,6 +34,7 @@ import { buildGraph, getReadyNodes, hasCycle, updateInDegreesForCompletedNodes }
 import { executeLoopNodeStrategy } from "./loop-node-strategy.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
+import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
 
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
@@ -50,7 +51,9 @@ export class DAGExecutor {
     nodes: WorkflowNode[],
     run: WorkflowRun,
     startFromNode?: string,
+    abortSignal?: AbortSignal,
   ): Promise<DAGExecutionResult> {
+    abortSignal?.throwIfAborted();
     const context = { ...run.context };
     const nodeStates = { ...run.nodeStates };
 
@@ -71,12 +74,16 @@ export class DAGExecutor {
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
 
     while (ready.length > 0) {
+      abortSignal?.throwIfAborted();
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
       const results = await Promise.allSettled(
-        batch.map((nodeId) => this.executeNode(nodeMap.get(nodeId)!, context, nodeStates)),
+        batch.map((nodeId) =>
+          this.executeNode(nodeMap.get(nodeId)!, context, nodeStates, abortSignal)
+        ),
       );
+      abortSignal?.throwIfAborted();
 
       // Record the state of EVERY node in the batch before deciding the batch's
       // outcome. The whole batch already ran (Promise.allSettled), so returning
@@ -186,7 +193,9 @@ export class DAGExecutor {
     node: WorkflowNode,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
+    abortSignal?.throwIfAborted();
     const nodeId = node.id;
 
     const existingState = nodeStates[nodeId];
@@ -197,6 +206,7 @@ export class DAGExecutor {
     this.config.onNodeStart?.(nodeId);
 
     if (node.config.skip && (await node.config.skip(context))) {
+      abortSignal?.throwIfAborted();
       const state = this.config.stepExecutor.createSkippedState(nodeId);
       this.config.onNodeComplete?.(nodeId, state);
       return { state, contextUpdates: {}, waiting: false };
@@ -206,36 +216,70 @@ export class DAGExecutor {
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context);
+        return this.executeStepNode(node, context, abortSignal);
       case "parallel":
-        return this.executeParallelNode(node, config, context, nodeStates);
-      case "map":
-        return executeMapNodeStrategy({
+        return executeCompositeNodeWithPolicy({
           node,
-          config,
-          context,
-          nodeStates,
-          runtime: {
-            executeChildGraph: (nodes, run, options) => this.executeChildGraph(nodes, run, options),
-            onNodeComplete: this.config.onNodeComplete,
-          },
+          parentSignal: abortSignal,
+          cancellationGracePeriod: this.config.cancellationGracePeriod,
+          execute: (attemptSignal) =>
+            this.executeParallelNode(node, config, context, nodeStates, attemptSignal),
+        });
+      case "map":
+        return executeCompositeNodeWithPolicy({
+          node,
+          parentSignal: abortSignal,
+          cancellationGracePeriod: this.config.cancellationGracePeriod,
+          execute: (attemptSignal) =>
+            executeMapNodeStrategy({
+              node,
+              config,
+              context,
+              nodeStates,
+              runtime: {
+                executeChildGraph: (nodes, run, options) =>
+                  this.executeChildGraph(nodes, run, options, attemptSignal),
+                onNodeComplete: this.config.onNodeComplete,
+                abortSignal: attemptSignal,
+              },
+            }),
         });
       case "branch":
-        return this.executeBranchNode(node, config, context, nodeStates);
+        return executeCompositeNodeWithPolicy({
+          node,
+          parentSignal: abortSignal,
+          cancellationGracePeriod: this.config.cancellationGracePeriod,
+          execute: (attemptSignal) =>
+            this.executeBranchNode(node, config, context, nodeStates, attemptSignal),
+        });
       case "wait":
         return this.executeWaitNode(node, config, context);
       case "subWorkflow":
-        return this.executeSubWorkflowNode(node, config, context);
-      case "loop":
-        return executeLoopNodeStrategy({
+        return executeCompositeNodeWithPolicy({
           node,
-          config,
-          context,
-          nodeStates,
-          runtime: {
-            executeChildGraph: (nodes, run) => this.executeChildGraph(nodes, run),
-            onNodeComplete: this.config.onNodeComplete,
-          },
+          parentSignal: abortSignal,
+          cancellationGracePeriod: this.config.cancellationGracePeriod,
+          execute: (attemptSignal) =>
+            this.executeSubWorkflowNode(node, config, context, attemptSignal),
+        });
+      case "loop":
+        return executeCompositeNodeWithPolicy({
+          node,
+          parentSignal: abortSignal,
+          cancellationGracePeriod: this.config.cancellationGracePeriod,
+          execute: (attemptSignal) =>
+            executeLoopNodeStrategy({
+              node,
+              config,
+              context,
+              nodeStates,
+              runtime: {
+                executeChildGraph: (nodes, run) =>
+                  this.executeChildGraph(nodes, run, undefined, attemptSignal),
+                onNodeComplete: this.config.onNodeComplete,
+                abortSignal: attemptSignal,
+              },
+            }),
         });
       default:
         throw INVALID_ARGUMENT.create({
@@ -249,8 +293,10 @@ export class DAGExecutor {
   private async executeStepNode(
     node: WorkflowNode,
     context: WorkflowContext,
+    abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
-    const result = await this.config.stepExecutor.execute(node, context);
+    const result = await this.config.stepExecutor.execute(node, context, abortSignal);
+    abortSignal?.throwIfAborted();
 
     const state: NodeState = {
       nodeId: node.id,
@@ -277,23 +323,31 @@ export class DAGExecutor {
     config: ParallelNodeConfig,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
+    abortSignal?.throwIfAborted();
     const startTime = Date.now();
 
-    const result = await this.execute(config.nodes, {
-      id: `${node.id}_parallel`,
-      workflowId: "",
-      status: "running",
-      input: context.input,
-      // Carry already-accumulated child states so completed children are
-      // skipped on resume instead of re-executing (H8).
-      nodeStates,
-      currentNodes: [],
-      context,
-      checkpoints: [],
-      pendingApprovals: [],
-      createdAt: new Date(),
-    });
+    const result = await this.execute(
+      config.nodes,
+      {
+        id: `${node.id}_parallel`,
+        workflowId: "",
+        status: "running",
+        input: context.input,
+        // Carry already-accumulated child states so completed children are
+        // skipped on resume instead of re-executing (H8).
+        nodeStates,
+        currentNodes: [],
+        context,
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+      },
+      undefined,
+      abortSignal,
+    );
+    abortSignal?.throwIfAborted();
 
     Object.assign(nodeStates, result.nodeStates);
 
@@ -321,10 +375,13 @@ export class DAGExecutor {
     config: BranchNodeConfig,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
+    abortSignal?.throwIfAborted();
     const startTime = Date.now();
 
     const conditionResult = await config.condition(context);
+    abortSignal?.throwIfAborted();
     const branchNodes = conditionResult ? config.then : (config.else ?? []);
 
     if (branchNodes.length === 0) {
@@ -340,20 +397,26 @@ export class DAGExecutor {
       return { state, contextUpdates: {}, waiting: false };
     }
 
-    const result = await this.execute(branchNodes, {
-      id: `${node.id}_branch`,
-      workflowId: "",
-      status: "running",
-      input: context.input,
-      // Carry already-accumulated child states so completed children are
-      // skipped on resume instead of re-executing (H8).
-      nodeStates,
-      currentNodes: [],
-      context,
-      checkpoints: [],
-      pendingApprovals: [],
-      createdAt: new Date(),
-    });
+    const result = await this.execute(
+      branchNodes,
+      {
+        id: `${node.id}_branch`,
+        workflowId: "",
+        status: "running",
+        input: context.input,
+        // Carry already-accumulated child states so completed children are
+        // skipped on resume instead of re-executing (H8).
+        nodeStates,
+        currentNodes: [],
+        context,
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+      },
+      undefined,
+      abortSignal,
+    );
+    abortSignal?.throwIfAborted();
 
     Object.assign(nodeStates, result.nodeStates);
 
@@ -413,7 +476,9 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
+    abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
+    abortSignal?.throwIfAborted();
     const startTime = Date.now();
 
     if (typeof config.workflow === "string") {
@@ -428,29 +493,38 @@ export class DAGExecutor {
     const input = typeof config.input === "function"
       ? await config.input(context)
       : (config.input ?? context.input);
+    abortSignal?.throwIfAborted();
 
     const steps = typeof workflowDef.steps === "function"
       ? workflowDef.steps({ input, context })
       : workflowDef.steps;
+    abortSignal?.throwIfAborted();
 
     const subRunId = `${node.id}_sub_${generateId()}`;
 
-    const result = await this.execute(steps, {
-      id: subRunId,
-      workflowId: workflowDef.id,
-      status: "running",
-      input,
-      nodeStates: {},
-      currentNodes: [],
-      context: { input },
-      checkpoints: [],
-      pendingApprovals: [],
-      createdAt: new Date(),
-    });
+    const result = await this.execute(
+      steps,
+      {
+        id: subRunId,
+        workflowId: workflowDef.id,
+        status: "running",
+        input,
+        nodeStates: {},
+        currentNodes: [],
+        context: { input },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+      },
+      undefined,
+      abortSignal,
+    );
+    abortSignal?.throwIfAborted();
 
     let finalOutput: unknown = result.context;
     if (result.completed && config.output) {
       finalOutput = config.output(result.context);
+      abortSignal?.throwIfAborted();
     }
 
     const state: NodeState = {
@@ -497,9 +571,10 @@ export class DAGExecutor {
     nodes: WorkflowNode[],
     run: WorkflowRun,
     options?: ChildGraphExecutionOptions,
+    abortSignal?: AbortSignal,
   ): Promise<DAGExecutionResult> {
     if (!options?.maxConcurrency) {
-      return await this.execute(nodes, run);
+      return await this.execute(nodes, run, undefined, abortSignal);
     }
 
     // Run the child graph on a scoped executor rather than mutating
@@ -510,6 +585,6 @@ export class DAGExecutor {
       ...this.config,
       maxConcurrency: options.maxConcurrency,
     });
-    return await childExecutor.execute(nodes, run);
+    return await childExecutor.execute(nodes, run, undefined, abortSignal);
   }
 }

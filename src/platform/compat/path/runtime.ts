@@ -9,7 +9,9 @@ let nodePath: NodePathModule | null = null;
 
 if (hasNodeApis) {
   try {
-    const nodeRequire = typeof require !== "undefined" ? require : null;
+    const nodeRequire = (globalThis as {
+      require?: (specifier: string) => unknown;
+    }).require;
     if (nodeRequire) {
       nodePath = nodeRequire("node:path") as NodePathModule;
     }

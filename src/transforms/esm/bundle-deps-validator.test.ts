@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { extractBundleDeps } from "./bundle-deps-validator.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { extractBundleDeps, findParentBundleWithEmbeddedUrl } from "./bundle-deps-validator.ts";
+import { embedSourceUrl } from "./source-url-embed.ts";
 
 describe("transforms/esm/bundle-deps-validator", () => {
   describe("extractBundleDeps", () => {
@@ -81,5 +84,40 @@ describe("transforms/esm/bundle-deps-validator", () => {
       assertEquals(deps.length, 1);
       assertEquals(deps[0]!.hash, "999999999");
     });
+
+    it("extracts full SHA-256 bundle hashes", () => {
+      const hash = "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412";
+      const code = `
+        import "file:///cache/veryfront-http-bundle/http-${hash}.mjs";
+        import "./http-${hash}.mjs";
+      `;
+
+      assertEquals(extractBundleDeps(code), [{
+        path: `/cache/veryfront-http-bundle/http-${hash}.mjs`,
+        hash,
+      }]);
+    });
+  });
+
+  it("finds SHA-256-named parent bundles during local recovery", async () => {
+    const cacheDir = await Deno.makeTempDir();
+    const parentHash = "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412";
+    const targetHash = "915c2e2f2105f33640de7ae9d5252b1edb798614e5958f63cd7acef23e501124";
+    const parentPath = join(cacheDir, `http-${parentHash}.mjs`);
+    const sourceUrl = "https://modules.example.com/parent.js";
+
+    try {
+      await Deno.writeTextFile(
+        parentPath,
+        embedSourceUrl(`import "./http-${targetHash}.mjs";`, sourceUrl),
+      );
+
+      assertEquals(
+        await findParentBundleWithEmbeddedUrl(targetHash, cacheDir, createFileSystem()),
+        { path: parentPath, sourceUrl },
+      );
+    } finally {
+      await Deno.remove(cacheDir, { recursive: true });
+    }
   });
 });

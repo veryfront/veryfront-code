@@ -26,6 +26,8 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
       )
       .optional(),
     appPath: v.string().optional(),
+    appRouterRoot: v.string().optional(),
+    isolatedClientPage: v.boolean().optional(),
     pagePath: v.string().optional(),
     pageType: getPageTypeSchema().optional(),
     nonce: v.string().optional(),
@@ -71,6 +73,9 @@ export const getHydrationDataSchema = defineSchema((v) =>
       }),
     ),
     appPath: v.string().optional(),
+    appRouterRoot: v.string().optional(),
+    isolatedClientPage: v.boolean().optional(),
+    layoutProps: v.record(v.string(), v.record(v.string(), v.unknown())).optional(),
     pagePath: v.string().optional(),
     clientModuleStrategy: getClientModuleStrategySchema().optional(),
   })

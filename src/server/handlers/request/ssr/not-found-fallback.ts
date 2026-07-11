@@ -2,6 +2,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 
 export async function tryNotFoundFallback(
   req: Request,
@@ -10,7 +11,10 @@ export async function tryNotFoundFallback(
   builder: ResponseBuilder,
 ): Promise<Response | null> {
   try {
-    const appRoot = joinPath(ctx.projectDir, "app");
+    const appRoot = joinPath(
+      ctx.projectDir,
+      ctx.config?.directories?.app ?? "app",
+    );
 
     try {
       const st = await ctx.adapter.fs.stat(appRoot);
@@ -27,6 +31,10 @@ export async function tryNotFoundFallback(
     );
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: ctx.projectDir,
+      config: ctx.config,
+    });
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
         !!ctx.isLocalProject,
@@ -43,20 +51,21 @@ export async function tryNotFoundFallback(
       ctx.adapter,
       ctx.projectId,
       contentSourceId,
+      reactVersion,
     );
 
     if (!NotFoundComp) return null;
 
-    const React = await import("react");
-    const { renderToStringAdapter } = await import(
+    const { getProjectReact, renderToStringAdapter } = await import(
       "#veryfront/react/compat/ssr-adapter/index.ts"
     );
+    const React = await getProjectReact(reactVersion);
 
     const element = React.createElement(NotFoundComp, {});
     let inner: string;
 
     try {
-      inner = await renderToStringAdapter(element);
+      inner = await renderToStringAdapter(element, { reactVersion });
     } catch (_) {
       /* expected: SSR render may fail, fall back to text extraction */
       inner = (await extractNotFoundText(dirs, ctx)) ?? "<p>Not Found</p>";

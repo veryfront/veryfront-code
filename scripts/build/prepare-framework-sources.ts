@@ -2,7 +2,7 @@
 /**
  * Prepare Framework Sources for Binary Compilation
  *
- * This script copies framework source files (src/react/, src/lib/, etc.) to
+ * This script copies runtime framework source files from src/ to
  * dist/framework-src/ with a .src extension. This allows them to be embedded
  * in compiled binaries via `--include dist/framework-src` without Deno trying
  * to parse them as modules.
@@ -11,7 +11,7 @@
  * and caches the results - exactly like it does for source files in dev mode.
  *
  * Usage:
- *   deno run --allow-all scripts/prepare-framework-sources.ts
+ *   deno run --allow-all scripts/build/prepare-framework-sources.ts
  *
  * This is run automatically before `deno compile` in production builds.
  */
@@ -22,84 +22,75 @@ import { dirname, fromFileUrl, join, relative } from "#std/path.ts";
 const FRAMEWORK_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const SRC_ROOT = join(FRAMEWORK_ROOT, "src");
 const OUTPUT_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
-const METADATA_FILE = join(OUTPUT_DIR, ".compile-metadata.json");
-
-// Directories containing framework code that may be imported by user projects.
-// These are embedded in the compiled binary and served via /_vf_modules/_veryfront/.
-const FRAMEWORK_DIRS = [
-  "react",
-  "lib",
-  "markdown",
-  "chat",
-  "mdx",
-  "agent",
-  "workflow",
-  "embedding",
-];
 
 // Extensions to process
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
-async function main() {
-  console.log("[prepare-framework-sources] Starting...");
-  console.log(`  Source: ${SRC_ROOT}`);
-  console.log(`  Output: ${OUTPUT_DIR}`);
+export interface PrepareFrameworkSourcesOptions {
+  srcRoot?: string;
+  outputDir?: string;
+}
+
+export interface PrepareFrameworkSourcesResult {
+  fileCount: number;
+  totalBytes: number;
+}
+
+/** Embed every non-test runtime source so internal imports cannot outgrow a hand-maintained list. */
+export async function prepareFrameworkSources(
+  options: PrepareFrameworkSourcesOptions = {},
+): Promise<PrepareFrameworkSourcesResult> {
+  const srcRoot = options.srcRoot ?? SRC_ROOT;
+  const outputDir = options.outputDir ?? OUTPUT_DIR;
 
   // Clean output directory
   try {
-    await Deno.remove(OUTPUT_DIR, { recursive: true });
+    await Deno.remove(outputDir, { recursive: true });
   } catch {
-    // Doesn't exist
+    /* expected: output may not exist */
   }
 
   let fileCount = 0;
   let totalBytes = 0;
+  const encoder = new TextEncoder();
 
-  for (const dir of FRAMEWORK_DIRS) {
-    const srcDir = join(SRC_ROOT, dir);
-
-    try {
-      await Deno.stat(srcDir);
-    } catch {
-      console.log(`  Skipping ${dir}/ (not found)`);
+  for await (const entry of walk(srcRoot, {
+    exts: SOURCE_EXTENSIONS.map((extension) => extension.slice(1)),
+    includeDirs: false,
+  })) {
+    const relativePath = relative(srcRoot, entry.path);
+    const normalizedPath = relativePath.replaceAll("\\", "/");
+    if (
+      normalizedPath.split("/").some((segment) =>
+        segment === "__tests__" || segment === "__fixtures__"
+      ) ||
+      /\.(?:test|spec|test-helpers|bench)\./.test(entry.name)
+    ) {
       continue;
     }
 
-    for await (const entry of walk(srcDir, {
-      exts: SOURCE_EXTENSIONS.map((e) => e.slice(1)), // Remove leading dot
-      includeDirs: false,
-    })) {
-      // Skip test files
-      if (entry.name.includes(".test.") || entry.name.includes(".spec.")) {
-        continue;
-      }
+    const outputPath = join(outputDir, relativePath + ".src");
 
-      const relativePath = relative(SRC_ROOT, entry.path);
-      const outputPath = join(OUTPUT_DIR, relativePath + ".src");
+    const content = await Deno.readTextFile(entry.path);
 
-      // Read source
-      const content = await Deno.readTextFile(entry.path);
+    await Deno.mkdir(dirname(outputPath), { recursive: true });
+    await Deno.writeTextFile(outputPath, content);
 
-      // Create output directory
-      await Deno.mkdir(dirname(outputPath), { recursive: true });
-
-      // Write with .src extension
-      await Deno.writeTextFile(outputPath, content);
-
-      fileCount++;
-      totalBytes += content.length;
-    }
+    fileCount++;
+    totalBytes += encoder.encode(content).byteLength;
   }
 
-  // Write metadata file for debugging
-  const metadata = {
-    frameworkRoot: FRAMEWORK_ROOT,
-    embeddedSrcDir: OUTPUT_DIR,
-    generatedAt: new Date().toISOString(),
-  };
-  await Deno.writeTextFile(METADATA_FILE, JSON.stringify(metadata, null, 2));
+  return { fileCount, totalBytes };
+}
+
+async function main(): Promise<void> {
+  console.log("[prepare-framework-sources] Starting...");
+  console.log(`  Source: ${SRC_ROOT}`);
+  console.log(`  Output: ${OUTPUT_DIR}`);
+
+  const { fileCount, totalBytes } = await prepareFrameworkSources();
 
   console.log(`[prepare-framework-sources] Complete: ${fileCount} files, ${(totalBytes / 1024).toFixed(1)} KB`);
 }
 
-main();
+if (import.meta.main) await main();

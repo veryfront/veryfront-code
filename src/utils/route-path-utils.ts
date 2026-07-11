@@ -79,19 +79,37 @@ interface RouterBasePath {
   relativePath: string | null;
 }
 
+export interface RouterDirectories {
+  app?: string;
+  pages?: string;
+}
+
+function extractPathBelowRoot(pageEntityId: string, root: string): string | null {
+  const normalizedPath = `/${pageEntityId.replaceAll("\\", "/").replace(/^\/+/, "")}`;
+  const normalizedRoot = root.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (!normalizedRoot) return null;
+
+  const marker = `/${normalizedRoot}/`;
+  const rootIndex = normalizedPath.lastIndexOf(marker);
+  return rootIndex === -1 ? null : normalizedPath.substring(rootIndex + marker.length);
+}
+
 /**
  * Extract the router base path from a page entity ID.
  * Detects whether it's an App Router (/app/) or Pages Router (/pages/) path.
  */
-export function extractRouterBasePath(pageEntityId: string): RouterBasePath {
-  const appIndex = pageEntityId.indexOf("/app/");
-  if (appIndex !== -1) {
-    return { type: "app", relativePath: pageEntityId.substring(appIndex + 5) };
+export function extractRouterBasePath(
+  pageEntityId: string,
+  directories: RouterDirectories = {},
+): RouterBasePath {
+  const appRelativePath = extractPathBelowRoot(pageEntityId, directories.app ?? "app");
+  if (appRelativePath !== null) {
+    return { type: "app", relativePath: appRelativePath };
   }
 
-  const pagesIndex = pageEntityId.indexOf("/pages/");
-  if (pagesIndex !== -1) {
-    return { type: "pages", relativePath: pageEntityId.substring(pagesIndex + 7) };
+  const pagesRelativePath = extractPathBelowRoot(pageEntityId, directories.pages ?? "pages");
+  if (pagesRelativePath !== null) {
+    return { type: "pages", relativePath: pagesRelativePath };
   }
 
   return { type: null, relativePath: null };
@@ -113,10 +131,14 @@ interface ExtractedRouteParams {
  * @param slug - The URL slug to match against
  * @returns Extracted parameters and whether matching succeeded
  */
-export function extractRouteParams(pageEntityId: string, slug: string): ExtractedRouteParams {
+export function extractRouteParams(
+  pageEntityId: string,
+  slug: string,
+  directories: RouterDirectories = {},
+): ExtractedRouteParams {
   const params: Record<string, string | string[]> = {};
 
-  const { relativePath } = extractRouterBasePath(pageEntityId);
+  const { relativePath } = extractRouterBasePath(pageEntityId, directories);
   if (!relativePath) return { params, matched: false };
 
   const pathSegments = relativePath

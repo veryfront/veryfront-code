@@ -100,6 +100,17 @@ describe("package-registry", () => {
       assertEquals(version, "18.3.1");
     });
 
+    it("uses the documented top-level React version override", async () => {
+      const version = await resolveProjectReactVersion({
+        projectDir: "/nonexistent/path",
+        config: {
+          react: { version: "18.3.1" },
+        },
+      });
+
+      assertEquals(version, "18.3.1");
+    });
+
     it("should strip range prefix from config override", async () => {
       const version = await resolveProjectReactVersion({
         config: {

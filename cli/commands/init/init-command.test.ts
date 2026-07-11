@@ -7,6 +7,10 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import { initCommand } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -29,6 +33,29 @@ describe("InitCommand Types", () => {
   });
 
   describe("InitOptions", () => {
+    it("creates a named project beneath parentDir", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-parent-" });
+      const name = `parent-target-${crypto.randomUUID()}`;
+      const cwdTarget = join(cwd(), name);
+
+      try {
+        await initCommand({
+          name,
+          parentDir,
+          template: "minimal",
+          skipInstall: true,
+          skipEnvPrompt: true,
+          quiet: true,
+        });
+
+        assertEquals(await exists(join(parentDir, name, "app")), true);
+        assertEquals(await exists(cwdTarget), false);
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+        await remove(cwdTarget, { recursive: true }).catch(() => {});
+      }
+    });
+
     it("should allow empty options", () => {
       const options: InitOptions = {};
       assertExists(options);

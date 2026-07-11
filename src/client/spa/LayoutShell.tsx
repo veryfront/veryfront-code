@@ -1,4 +1,11 @@
-import { type ComponentType, type ReactNode, Suspense, useEffect, useState } from "react";
+import {
+  type ComponentType,
+  type ReactElement,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useState,
+} from "react";
 import { getCachedComponent, loadComponent } from "./component-loader.ts";
 
 export interface LayoutInfo {
@@ -18,7 +25,7 @@ interface LayoutWrapperProps {
   children: ReactNode;
 }
 
-function LayoutLoading(): JSX.Element {
+function LayoutLoading(): ReactElement {
   return (
     <div className="veryfront-layout-loading" style={{ minHeight: "100vh" }}>
       <span className="sr-only">Loading layout...</span>
@@ -28,7 +35,7 @@ function LayoutLoading(): JSX.Element {
 
 type LayoutComponentType = ComponentType<{ children: ReactNode; [key: string]: unknown }>;
 
-function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): JSX.Element {
+function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): ReactElement {
   const [LayoutComponent, setLayoutComponent] = useState<LayoutComponentType | null>(() => {
     return getCachedComponent(layout.path) as LayoutComponentType | null;
   });
@@ -58,13 +65,13 @@ function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): J
 
 export function LayoutShell(
   { layouts, layoutProps = {}, children }: LayoutShellProps,
-): JSX.Element {
+): ReactElement {
   if (layouts.length === 0) return <>{children}</>;
 
   let tree: ReactNode = children;
 
   for (let i = layouts.length - 1; i >= 0; i--) {
-    const layout = layouts[i];
+    const layout = layouts[i]!;
     const props = layoutProps[layout.path] ?? {};
 
     tree = (

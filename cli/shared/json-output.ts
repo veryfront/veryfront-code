@@ -7,13 +7,28 @@
  * @module cli/shared/json-output
  */
 
+import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
+import { refreshLoggerConfig } from "veryfront/utils";
+
 /** Whether the current command should output JSON */
 let _jsonMode = false;
+let _previousLogLevel: string | undefined | null = null;
 
 /** Whether the current command should write output to a file */
 let _outputPath: string | null = null;
 
 export function setJsonMode(enabled: boolean): void {
+  if (enabled && !_jsonMode) {
+    _previousLogLevel = getEnv("LOG_LEVEL");
+    setEnv("LOG_LEVEL", "ERROR");
+    refreshLoggerConfig();
+  } else if (!enabled && _jsonMode) {
+    if (_previousLogLevel === undefined) deleteEnv("LOG_LEVEL");
+    else if (_previousLogLevel !== null) setEnv("LOG_LEVEL", _previousLogLevel);
+    refreshLoggerConfig();
+    _previousLogLevel = null;
+  }
+
   _jsonMode = enabled;
 }
 
