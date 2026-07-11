@@ -302,6 +302,93 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
   });
 
+  it("selects a requested agent and its local tools from a multi-agent runtime", async () => {
+    const agents = new Map([
+      ["assistant-1", createAgent("assistant-1")],
+      [
+        "assistant-2",
+        createAgentWithConfig("assistant-2", {
+          tools: { local_lookup: true },
+        }),
+      ],
+    ]);
+    let localToolsAgentId: string | undefined;
+    let runtimeAgentId: string | undefined;
+    let runtimeToolNames: string[] | undefined;
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => agents.get(id),
+      getAllAgentIds: () => [...agents.keys()],
+      getLocalTools: (agentId) => {
+        localToolsAgentId = agentId;
+        return { local_lookup: true };
+      },
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent, mergedTools) => {
+        runtimeAgentId = runtimeAgent.id;
+        runtimeToolNames = mergedTools && mergedTools !== true
+          ? Object.keys(mergedTools).sort()
+          : [];
+
+        return {
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "selected assistant-2",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: undefined,
+              metadata: { finishReason: "stop" },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "text-1",
+                    delta: "selected assistant-2",
+                  }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = createAgentStreamRequestBody({ agentId: "assistant-2" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    await result.response.text();
+    assertEquals(localToolsAgentId, "assistant-2");
+    assertEquals(runtimeAgentId, "assistant-2");
+    assertEquals(runtimeToolNames, ["local_lookup", "studio_focus_component"]);
+  });
+
   it("accepts the canonical runtime AG-UI request shape on the control-plane run stream route", async () => {
     let streamContext: Record<string, unknown> | undefined;
 

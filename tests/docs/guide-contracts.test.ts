@@ -63,7 +63,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/channels.md",
     ],
-    snippets: ["startAgentService", "VERYFRONT_AGENT_SERVICE_URL", "/api/runs"],
+    snippets: [
+      "startAgentService",
+      "VERYFRONT_AGENT_SERVICE_URL",
+      "/api/runs",
+      "managed dedicated servers",
+      "`veryfront serve`",
+      "do not require a `service.ts`",
+    ],
   },
   "guides/agents.md": {
     references: ["../api-reference/veryfront/agent.md"],
