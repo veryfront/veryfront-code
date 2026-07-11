@@ -60,12 +60,12 @@ export class WorkflowClient {
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
-          userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId);
           return;
         }
 
         if (input.type !== "approval") {
-          userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId);
           return;
         }
 
@@ -83,7 +83,7 @@ export class WorkflowClient {
           logger.error("Failed to create approval", error);
         }
 
-        userOnWaiting?.(run, nodeId);
+        await userOnWaiting?.(run, nodeId);
       },
     });
 

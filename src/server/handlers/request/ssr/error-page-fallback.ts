@@ -89,7 +89,7 @@ export async function tryErrorPageFallback(
     // The user's custom error page failed to compile/load. Surface at warn so
     // they learn it's broken, before falling back to the default error output.
     logger.warn("Failed to load custom error page; falling back to default", {
-      error: e instanceof Error ? e.message : String(e),
+      errorName: e instanceof Error ? e.name : typeof e,
     });
     return null;
   }

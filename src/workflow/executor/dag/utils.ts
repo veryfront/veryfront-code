@@ -10,7 +10,19 @@ export function shouldCheckpoint(node: WorkflowNode): boolean {
   return node.config.checkpoint ?? false;
 }
 
-export function sleep(ms: number): Promise<void> {
-  // no cleanup needed: one-shot
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export function sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  abortSignal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      abortSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      abortSignal?.removeEventListener("abort", onAbort);
+      reject(abortSignal?.reason);
+    };
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    if (abortSignal?.aborted) onAbort();
+  });
 }

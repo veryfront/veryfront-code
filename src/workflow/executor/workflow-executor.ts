@@ -57,6 +57,8 @@ export interface WorkflowExecutorConfig {
   debug?: boolean;
   /** Lock duration in milliseconds for distributed execution (default: 30000) */
   lockDuration?: number;
+  /** Heartbeat and remote-cancellation poll interval in milliseconds (default: 10000) */
+  heartbeatInterval?: number;
   /** Enable distributed locking (default: true if backend supports it) */
   enableLocking?: boolean;
   /** Max time result()/waitForResult waits for a terminal state (default: 300000) */
@@ -68,7 +70,7 @@ export interface WorkflowExecutorConfig {
   /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
   /** Callback when workflow is waiting */
-  onWaiting?: (run: WorkflowRun, nodeId: string) => void;
+  onWaiting?: (run: WorkflowRun, nodeId: string) => void | Promise<void>;
 }
 
 /** Controller for a running workflow. */
@@ -237,9 +239,19 @@ export class WorkflowExecutor {
   /**
    * Resume a paused/waiting workflow
    */
-  async resume(runId: string, fromCheckpoint?: string): Promise<void> {
+  async resume(
+    runId: string,
+    fromCheckpoint?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Cannot resume workflow run because execution ownership has changed",
+      });
+    }
 
     if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
       throw ORCHESTRATION_ERROR.create({
@@ -264,14 +276,26 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      await this.config.backend.updateRun(runId, {
-        status: "running",
-        context: resumeInfo.context,
-        nodeStates: resumeInfo.nodeStates,
-      });
+      const resumed = await this.updateRunIfStatus(
+        runId,
+        [run.status],
+        {
+          status: "running",
+          context: resumeInfo.context,
+          nodeStates: resumeInfo.nodeStates,
+        },
+        expectedWorkerId,
+      );
+      if (!resumed) {
+        const current = await this.config.backend.getRun(runId);
+        if (current?.status === "cancelled") return;
+        throw ORCHESTRATION_ERROR.create({
+          detail: `Cannot resume workflow run "${runId}": current status is "${current?.status}"`,
+        });
+      }
     }
 
-    await this.executeAsync(runId, resumeInfo?.startFromNode);
+    await this.executeAsync(runId, resumeInfo?.startFromNode, expectedWorkerId);
   }
 
   /**
@@ -280,7 +304,11 @@ export class WorkflowExecutor {
    * Uses distributed locking (when backend supports it) to prevent
    * concurrent execution of the same workflow run.
    */
-  async executeAsync(runId: string, startFromNode?: string): Promise<void> {
+  async executeAsync(
+    runId: string,
+    startFromNode?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
@@ -292,24 +320,13 @@ export class WorkflowExecutor {
     const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
     const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
-    let heartbeatInFlight = false;
+    let heartbeatTask: Promise<void> | undefined;
 
     // If the heartbeat can no longer extend our lock, another worker may claim
-    // this run as stalled and execute it concurrently. We abort as soon as that
-    // happens: lockLostError, once set, is raced against the DAG execution so we
-    // stop acting on the run and skip writing any terminal status (which would
-    // clobber the new owner's progress).
+    // this run as stalled and execute it concurrently. The execution controller
+    // stops cooperative work while keeping cleanup inside this method's finally.
     let lockLostError: Error | undefined;
-    let signalLockLost: (() => void) | undefined;
-    const lockLostPromise = new Promise<never>((_, reject) => {
-      signalLockLost = () =>
-        reject(
-          lockLostError ??
-            ORCHESTRATION_ERROR.create({ detail: `Lost lock for run "${runId}"` }),
-        );
-    });
-    // Never let this reject go unobserved if execution finishes first.
-    lockLostPromise.catch(() => {});
+    let ownershipLostError: Error | undefined;
 
     // Acquire the lock BEFORE registering any per-run state (cancelSignals). If
     // acquisition fails we throw here, and registering the cancel signal earlier
@@ -326,40 +343,103 @@ export class WorkflowExecutor {
       }
       logger.debug("Acquired lock for run", { runId });
     }
+    const releaseExecutionLock = async (): Promise<void> => {
+      if (!useLocking || !lockToken) return;
+      const token = lockToken;
+      await this.config.backend.releaseLock!(runId, token);
+      lockToken = null;
+      logger.debug("Released lock for run", { runId });
+    };
 
-    // Cancellation: cancel() writes "cancelled" to the backend and triggers this
-    // signal so in-flight execution stops promptly (raced against DAG execution,
-    // mirroring the lock-lost abort). Once aborted we skip writing any terminal
-    // status so we don't clobber the persisted "cancelled" state. Registered only
-    // after a successful lock acquire so it is always cleaned up by the finally.
-    let signalCancelled: (() => void) | undefined;
-    const cancelledPromise = new Promise<never>((_, reject) => {
-      signalCancelled = () =>
-        reject(ORCHESTRATION_ERROR.create({ detail: `Workflow run "${runId}" was cancelled` }));
+    const executionAbortController = new AbortController();
+    const abortForOwnershipLoss = (): Error => {
+      if (!ownershipLostError) {
+        ownershipLostError = ORCHESTRATION_ERROR.create({
+          detail: "Workflow execution ownership changed",
+        });
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        if (!executionAbortController.signal.aborted) {
+          executionAbortController.abort(ownershipLostError);
+        }
+      }
+      return ownershipLostError;
+    };
+    this.cancelSignals.set(runId, () => {
+      if (!executionAbortController.signal.aborted) {
+        executionAbortController.abort(
+          ORCHESTRATION_ERROR.create({ detail: "Workflow run was cancelled" }),
+        );
+      }
     });
-    cancelledPromise.catch(() => {});
-    this.cancelSignals.set(runId, () => signalCancelled?.());
 
     try {
       const now = new Date();
-      await this.config.backend.updateRun(runId, {
-        status: "running",
-        startedAt: run.startedAt || now,
-        heartbeatAt: now,
-      });
+      const started = await this.updateRunIfStatus(
+        runId,
+        ["pending", "waiting", "running"],
+        {
+          status: "running",
+          startedAt: run.startedAt || now,
+          heartbeatAt: now,
+        },
+        expectedWorkerId,
+      );
+      if (!started) {
+        const current = await this.config.backend.getRun(runId);
+        if (current?.status === "cancelled") return;
+        if (expectedWorkerId !== undefined) throw abortForOwnershipLoss();
+        throw ORCHESTRATION_ERROR.create({
+          detail: `Cannot execute workflow run "${runId}": current status is "${current?.status}"`,
+        });
+      }
 
       heartbeatInterval = setInterval(() => {
-        if (heartbeatInFlight) return;
-        heartbeatInFlight = true;
+        if (heartbeatTask) return;
 
-        void (async () => {
+        heartbeatTask = (async () => {
           try {
-            await this.config.backend.updateRun(runId, {
-              heartbeatAt: new Date(),
-            });
+            const persistedRun = await this.config.backend.getRun(runId);
+            if (persistedRun?.status === "cancelled") {
+              this.cancelledRuns.add(runId);
+              if (heartbeatInterval) clearInterval(heartbeatInterval);
+              if (!executionAbortController.signal.aborted) {
+                executionAbortController.abort(
+                  ORCHESTRATION_ERROR.create({
+                    detail: "Workflow run was cancelled",
+                  }),
+                );
+              }
+              return;
+            }
+
+            const heartbeatUpdated = await this.updateRunIfStatus(
+              runId,
+              ["running"],
+              { heartbeatAt: new Date() },
+              expectedWorkerId,
+            );
+            if (!heartbeatUpdated) {
+              const current = await this.config.backend.getRun(runId);
+              if (current?.status === "cancelled") {
+                this.cancelledRuns.add(runId);
+                if (heartbeatInterval) clearInterval(heartbeatInterval);
+                if (!executionAbortController.signal.aborted) {
+                  executionAbortController.abort(
+                    ORCHESTRATION_ERROR.create({ detail: "Workflow run was cancelled" }),
+                  );
+                }
+              } else if (expectedWorkerId !== undefined) {
+                abortForOwnershipLoss();
+              }
+              return;
+            }
 
             if (useLocking && typeof this.config.backend.extendLock === "function") {
-              const extended = await this.config.backend.extendLock(runId, lockDuration);
+              const extended = await this.config.backend.extendLock(
+                runId,
+                lockDuration,
+                lockToken ?? undefined,
+              );
               if (!extended && !lockLostError) {
                 lockLostError = ORCHESTRATION_ERROR.create({
                   detail: `Lost lock for run "${runId}" during heartbeat; aborting to avoid ` +
@@ -367,16 +447,16 @@ export class WorkflowExecutor {
                 });
                 logger.error("Lost workflow lock; aborting run", { runId });
                 if (heartbeatInterval) clearInterval(heartbeatInterval);
-                signalLockLost?.();
+                executionAbortController.abort(lockLostError);
               }
             }
           } catch (error) {
             logger.warn("Heartbeat update failed", { runId }, error);
           } finally {
-            heartbeatInFlight = false;
+            heartbeatTask = undefined;
           }
         })();
-      }, WorkflowExecutor.HEARTBEAT_INTERVAL_MS);
+      }, this.config.heartbeatInterval ?? WorkflowExecutor.HEARTBEAT_INTERVAL_MS);
 
       const updatedRun = await this.config.backend.getRun(runId);
       this.config.onStart?.(updatedRun!);
@@ -392,23 +472,32 @@ export class WorkflowExecutor {
 
       const result = await runWithWorkflowTenant(run._tenant, () =>
         this.executeWithTimeout(
-          () =>
-            Promise.race([
-              this.dagExecutor.execute(nodes, runWithTenantContext, startFromNode),
-              lockLostPromise,
-              cancelledPromise,
-            ]),
+          (executionSignal) =>
+            this.dagExecutor.execute(
+              nodes,
+              runWithTenantContext,
+              startFromNode,
+              executionSignal,
+              expectedWorkerId ? { runId, workerId: expectedWorkerId } : undefined,
+            ),
           workflow.timeout,
+          executionAbortController.signal,
         ));
 
       if (result.completed) {
-        const finalRun = await this.completeRun(runId, result.context, result.nodeStates);
+        const output = this.determineOutput(this.toPublicContext(result.context));
+        workflow.outputSchema?.parse(output);
+        const finalRun = await this.completeRun(
+          runId,
+          result.context,
+          result.nodeStates,
+          output,
+          expectedWorkerId,
+        );
 
         // A concurrent cancel() may have won: completeRun leaves the "cancelled"
         // status intact, so don't run completion side-effects in that case.
-        if (this.cancelledRuns.has(runId) || finalRun.status === "cancelled") return;
-
-        workflow.outputSchema?.parse(finalRun.output);
+        if (!finalRun || this.cancelledRuns.has(runId) || finalRun.status !== "completed") return;
 
         await workflow.onComplete?.(finalRun.output, finalRun.context);
         this.config.onComplete?.(finalRun);
@@ -416,10 +505,27 @@ export class WorkflowExecutor {
       }
 
       if (result.waiting) {
-        await this.pauseRun(runId, result.waitingNode!, result.context, result.nodeStates);
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = undefined;
+        }
+        const activeHeartbeat = heartbeatTask;
+        if (activeHeartbeat) await activeHeartbeat;
+
+        const paused = await this.pauseRun(
+          runId,
+          result.waitingNode!,
+          result.context,
+          result.nodeStates,
+          expectedWorkerId,
+        );
+        if (!paused) return;
 
         const pausedRun = await this.config.backend.getRun(runId);
-        this.config.onWaiting?.(pausedRun!, result.waitingNode!);
+        // Waiting is durable now, so release execution ownership before callbacks
+        // persist or notify an approval that may immediately resume this run.
+        await releaseExecutionLock();
+        await this.config.onWaiting?.(pausedRun!, result.waitingNode!);
         return;
       }
 
@@ -427,7 +533,14 @@ export class WorkflowExecutor {
       if (this.cancelledRuns.has(runId)) return;
 
       const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
-      await this.failRun(runId, error, result.context, result.nodeStates);
+      const failed = await this.failRun(
+        runId,
+        error,
+        result.context,
+        result.nodeStates,
+        expectedWorkerId,
+      );
+      if (!failed) return;
 
       await workflow.onError?.(error, result.context);
       this.config.onError?.(run, error);
@@ -438,7 +551,7 @@ export class WorkflowExecutor {
       // (and likely triggered this abort). Do not write a terminal status or fire
       // error callbacks — that would clobber the cancellation.
       if (this.cancelledRuns.has(runId)) {
-        logger.warn("Run cancelled; leaving cancelled status for run", { runId });
+        logger.warn("Run cancelled; leaving cancelled status unchanged");
         return;
       }
 
@@ -450,7 +563,19 @@ export class WorkflowExecutor {
         throw lockLostError;
       }
 
-      await this.failRun(runId, normalizedError, run.context, run.nodeStates);
+      if (ownershipLostError) {
+        logger.warn("Aborted run after execution ownership changed");
+        throw ownershipLostError;
+      }
+
+      const failed = await this.failRun(
+        runId,
+        normalizedError,
+        run.context,
+        run.nodeStates,
+        expectedWorkerId,
+      );
+      if (!failed) return;
 
       await workflow.onError?.(normalizedError, run.context);
       this.config.onError?.(run, normalizedError);
@@ -460,14 +585,13 @@ export class WorkflowExecutor {
       if (heartbeatInterval) {
         clearInterval(heartbeatInterval);
       }
+      const activeHeartbeat = heartbeatTask;
+      if (activeHeartbeat) await activeHeartbeat;
 
       this.cancelSignals.delete(runId);
       this.cancelledRuns.delete(runId);
 
-      if (useLocking && lockToken) {
-        await this.config.backend.releaseLock!(runId, lockToken);
-        logger.debug("Released lock for run", { runId });
-      }
+      await releaseExecutionLock();
     }
   }
 
@@ -548,22 +672,59 @@ export class WorkflowExecutor {
    * Uses Promise.race() to properly handle timeout cleanup.
    * The timeout is always cleared in the finally block to prevent memory leaks.
    */
-  private async executeWithTimeout<T>(fn: () => Promise<T>, timeout?: string | number): Promise<T> {
-    if (!timeout) return fn();
+  private async executeWithTimeout<T>(
+    fn: (abortSignal: AbortSignal) => Promise<T>,
+    timeout?: string | number,
+    parentSignal?: AbortSignal,
+  ): Promise<T> {
+    if (!timeout) {
+      const executionSignal = parentSignal ?? new AbortController().signal;
+      executionSignal.throwIfAborted();
+      return fn(executionSignal);
+    }
 
     const timeoutMs = parseDuration(timeout);
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const forwardParentAbort = () => {
+      if (!controller.signal.aborted) controller.abort(parentSignal?.reason);
+    };
 
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(TIMEOUT_ERROR.create({ detail: `Workflow timed out after ${timeoutMs}ms` }));
-      }, timeoutMs);
-    });
+    if (parentSignal) {
+      parentSignal.addEventListener("abort", forwardParentAbort, { once: true });
+      if (parentSignal.aborted) forwardParentAbort();
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let execution: Promise<T> | undefined;
 
     try {
-      return await Promise.race([fn(), timeoutPromise]);
+      controller.signal.throwIfAborted();
+      execution = fn(controller.signal);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const error = TIMEOUT_ERROR.create({
+            detail: `Workflow timed out after ${timeoutMs}ms`,
+          });
+          if (!controller.signal.aborted) controller.abort(error);
+          reject(error);
+        }, timeoutMs);
+      });
+
+      try {
+        const result = await Promise.race([execution, timeoutPromise]);
+        controller.signal.throwIfAborted();
+        return result;
+      } catch (error) {
+        if (controller.signal.aborted) {
+          await execution.catch(() => {});
+          controller.signal.throwIfAborted();
+        }
+        throw error;
+      }
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
+      parentSignal?.removeEventListener("abort", forwardParentAbort);
     }
   }
 
@@ -574,23 +735,28 @@ export class WorkflowExecutor {
     runId: string,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
-  ): Promise<WorkflowRun> {
-    // Don't overwrite a run that was cancelled out from under us.
-    const current = await this.config.backend.getRun(runId);
-    if (current?.status === "cancelled") return current;
-
+    output: unknown,
+    expectedWorkerId?: string,
+  ): Promise<WorkflowRun | null> {
     const publicContext = this.toPublicContext(context);
-    const output = this.determineOutput(publicContext);
 
-    await this.config.backend.updateRun(runId, {
-      status: "completed",
-      output,
-      context: publicContext,
-      nodeStates,
-      completedAt: new Date(),
-    });
+    const completed = await this.updateRunIfStatus(
+      runId,
+      ["running"],
+      {
+        status: "completed",
+        output,
+        context: publicContext,
+        nodeStates,
+        completedAt: new Date(),
+      },
+      expectedWorkerId,
+    );
+    if (!completed) return null;
 
-    return (await this.config.backend.getRun(runId))!;
+    const current = await this.config.backend.getRun(runId);
+    if (!current) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    return current;
   }
 
   /**
@@ -601,23 +767,25 @@ export class WorkflowExecutor {
     error: Error,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
-  ): Promise<void> {
-    // Don't overwrite a run that was cancelled out from under us.
-    const current = await this.config.backend.getRun(runId);
-    if (current?.status === "cancelled") return;
-
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
     const publicContext = this.toPublicContext(context);
 
-    await this.config.backend.updateRun(runId, {
-      status: "failed",
-      context: publicContext,
-      nodeStates,
-      error: {
-        message: error.message,
-        stack: error.stack,
+    return await this.updateRunIfStatus(
+      runId,
+      ["running"],
+      {
+        status: "failed",
+        context: publicContext,
+        nodeStates,
+        error: {
+          message: error.message,
+          stack: error.stack,
+        },
+        completedAt: new Date(),
       },
-      completedAt: new Date(),
-    });
+      expectedWorkerId,
+    );
   }
 
   /**
@@ -628,15 +796,49 @@ export class WorkflowExecutor {
     waitingNode: string,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
-  ): Promise<void> {
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
     const publicContext = this.toPublicContext(context);
 
-    await this.config.backend.updateRun(runId, {
-      status: "waiting",
-      currentNodes: [waitingNode],
-      context: publicContext,
-      nodeStates,
-    });
+    return await this.updateRunIfStatus(
+      runId,
+      ["running"],
+      {
+        status: "waiting",
+        currentNodes: [waitingNode],
+        context: publicContext,
+        nodeStates,
+      },
+      expectedWorkerId,
+    );
+  }
+
+  private async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    patch: Partial<WorkflowRun>,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (expectedWorkerId !== undefined) {
+      if (!this.config.backend.updateRunIfStatusAndWorker) return false;
+      return await this.config.backend.updateRunIfStatusAndWorker(
+        runId,
+        expectedStatuses,
+        expectedWorkerId,
+        patch,
+      );
+    }
+
+    if (this.config.backend.updateRunIfStatus) {
+      return await this.config.backend.updateRunIfStatus(runId, expectedStatuses, patch);
+    }
+
+    // Compatibility fallback for third-party backends that predate conditional
+    // updates. Built-in backends implement the atomic method above.
+    const current = await this.config.backend.getRun(runId);
+    if (!current || !expectedStatuses.includes(current.status)) return false;
+    await this.config.backend.updateRun(runId, patch);
+    return true;
   }
 
   /**
@@ -717,21 +919,33 @@ export class WorkflowExecutor {
       });
     }
 
-    // If this process is running the run, mark it cancelled before persisting so
-    // its in-flight executeAsync() sees the flag when the abort fires and skips
-    // writing a terminal status. Runs executing elsewhere are still protected by
-    // the cancelled-status re-read in completeRun()/failRun().
     const activeAbort = this.cancelSignals.get(runId);
-    if (activeAbort) this.cancelledRuns.add(runId);
 
-    await this.config.backend.updateRun(runId, {
-      status: "cancelled",
-      completedAt: new Date(),
-    });
+    try {
+      const cancelled = await this.updateRunIfStatus(runId, ["pending", "running", "waiting"], {
+        status: "cancelled",
+        completedAt: new Date(),
+      });
+      if (!cancelled) {
+        const current = await this.config.backend.getRun(runId);
+        if (current?.status !== "cancelled") {
+          if (activeAbort) this.cancelledRuns.delete(runId);
+          throw ORCHESTRATION_ERROR.create({
+            detail: `Cannot cancel workflow run "${runId}": run has already ${current?.status}. ` +
+              `Only active runs (pending, running, waiting) can be cancelled.`,
+          });
+        }
+      }
 
-    // Abort in-flight execution so it stops promptly instead of running to
-    // completion and clobbering the cancelled status.
-    activeAbort?.();
+      // Only publish the in-process cancellation flag after the persisted
+      // status transition wins. A speculative flag can suppress completion
+      // callbacks when a concurrent completion commits first.
+      if (activeAbort) this.cancelledRuns.add(runId);
+      activeAbort?.();
+    } catch (error) {
+      if (activeAbort) this.cancelledRuns.delete(runId);
+      throw error;
+    }
   }
 
   /**

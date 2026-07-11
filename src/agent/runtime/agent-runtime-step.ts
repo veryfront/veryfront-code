@@ -71,6 +71,12 @@ export async function prepareAgentRuntimeStep(
     input.systemPrompt,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  // Runtime context is caller-controlled. Only the execution layer may provide
+  // the cancellation signal used by model and tool work.
+  delete toolContext.abortSignal;
+  if (input.toolContextBase?.abortSignal) {
+    toolContext.abortSignal = input.toolContextBase.abortSignal;
+  }
   if (input.activeSkillId !== undefined) {
     toolContext.activeSkillId = input.activeSkillId;
   }

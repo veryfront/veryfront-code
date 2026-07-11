@@ -170,6 +170,7 @@ Run the agent and return a complete response. Accepts a string or message array 
 | `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L336) |
 | `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L338) |
 | `maxOutputTokens?` | `number` | Override the maximum model output tokens for this request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L340) |
+| `abortSignal?` | `AbortSignal` | Abort the request and any cooperative model or tool work. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L347) |
 
 **Returns:** <code>Promise&lt;AgentResponse&gt;</code>
 

@@ -4,7 +4,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "#veryfront/errors";
 
 const logger = agentLogger.component("local-blob-storage");
 
@@ -106,10 +106,9 @@ export class LocalBlobStorage implements BlobStorage {
       if (isNotFoundError(error)) return null;
       // Genuine I/O failure (EACCES, disk error): don't mask it as "not found".
       logger.warn("Failed to read blob text", {
-        id,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
-      throw error;
+      throw UNKNOWN_ERROR.create({ detail: "Failed to read blob text from local storage" });
     }
   }
 
@@ -120,10 +119,9 @@ export class LocalBlobStorage implements BlobStorage {
       if (isNotFoundError(error)) return null;
       // Genuine I/O failure (EACCES, disk error): don't mask it as "not found".
       logger.warn("Failed to read blob bytes", {
-        id,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
-      throw error;
+      throw UNKNOWN_ERROR.create({ detail: "Failed to read blob bytes from local storage" });
     }
   }
 

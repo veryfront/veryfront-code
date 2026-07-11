@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -197,6 +197,69 @@ describe("runtime-bridge", () => {
         },
       },
     ]);
+  });
+
+  it("rejects a second stream view started after direct consumption", async () => {
+    const model = createStreamModel("test", "test/late-second-stream", async () => ({
+      stream: ReadableStream.from([
+        { type: "text-delta", delta: "Hel" },
+        { type: "text-delta", delta: "lo" },
+      ]),
+    }));
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    const fullIterator = result.fullStream[Symbol.asyncIterator]();
+    assertEquals(await fullIterator.next(), {
+      value: { type: "text-delta", text: "Hel" },
+      done: false,
+    });
+    await assertRejects(
+      () => collectAsync(result.textStream),
+      Error,
+      "must start consumption concurrently",
+    );
+    await fullIterator.return?.();
+  });
+
+  it("cancels a sole stream consumer without waiting for an unused branch", async () => {
+    let cancelled = false;
+    const model = createStreamModel("test", "test/sole-stream-cancel", async () => ({
+      stream: new ReadableStream({
+        pull(controller) {
+          controller.enqueue({ type: "text-delta", delta: "chunk" });
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    }));
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    for await (const _part of result.fullStream) break;
+
+    assertEquals(cancelled, true);
+  });
+
+  it("handles an abandoned stream request rejection", async () => {
+    let called = false;
+    const model = createStreamModel("test", "test/abandoned-stream", async () => {
+      called = true;
+      throw new Error("stream failed");
+    });
+
+    streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(called, true);
   });
 
   it("forwards reasoning options to direct stream models", async () => {

@@ -44,6 +44,41 @@ describe("worker-egress-guard", () => {
     assertEquals(isInternalEgressIp("1.1.1.1"), false);
   });
 
+  it("identifies hexadecimal IPv4-mapped IPv6 forms of internal addresses", () => {
+    assertEquals(isInternalEgressIp("::ffff:7f00:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:a00:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:a9fe:a9fe"), true);
+    assertEquals(isInternalEgressIp("::ffff:6440:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:c612:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:5db8:d822"), false);
+  });
+
+  it("blocks a URL containing a hexadecimal IPv4-mapped loopback address", async () => {
+    await assertRejects(
+      () => assertWorkerEgressAllowed("http://[::ffff:7f00:1]/"),
+      WorkerEgressBlockedError,
+      "Worker network egress blocked",
+    );
+  });
+
+  it("does not let malformed IPv6 syntax bypass hostname resolution", async () => {
+    let resolutionCount = 0;
+    for (const hostname of ["2001:::1", "2001::1:"]) {
+      await assertRejects(
+        () =>
+          assertWorkerHostEgressAllowed(hostname, {
+            resolveHost: () => {
+              resolutionCount++;
+              return Promise.resolve(["127.0.0.1"]);
+            },
+          }),
+        WorkerEgressBlockedError,
+        "resolved to internal address",
+      );
+    }
+    assertEquals(resolutionCount, 2);
+  });
+
   it("blocks direct metadata, private, link-local, and localhost targets", async () => {
     await assertRejects(
       () => assertWorkerEgressAllowed("http://169.254.169.254/latest/meta-data/"),

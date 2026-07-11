@@ -771,12 +771,12 @@ export class MCPServer {
     if (!taskId) {
       throw new JsonRpcError(-32602, "taskId is required");
     }
-    const cancelled = this.taskStore.cancel(String(taskId));
-    if (!cancelled) {
+    const id = String(taskId);
+    const task = this.taskStore.get(id);
+    if (!task || !this.taskStore.cancel(id)) {
       throw new JsonRpcError(-32002, `Cannot cancel task: ${taskId}`);
     }
-    this.pendingTasks.get(String(taskId))?.abortController.abort();
-    const task = this.taskStore.get(String(taskId));
+    this.pendingTasks.get(id)?.abortController.abort();
     return Promise.resolve({ ...task });
   }
 

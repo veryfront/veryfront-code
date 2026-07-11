@@ -21,8 +21,9 @@ const logger = baseLogger.component("process-run-executor");
 /**
  * Non-secret host env vars forwarded to the child when its environment is
  * cleared (clearEnv). These let the spawned Deno runtime locate its module
- * cache, temp dir, TLS roots and locale — none carry application secrets, which
- * are deliberately excluded so workflow code cannot read them.
+ * cache, temp dir, TLS roots and locale. clearEnv prevents ordinary environment
+ * inheritance, but it is not a sandbox boundary: this executor is for trusted
+ * local code because the child retains broad filesystem and network access.
  */
 const RUNTIME_INFRA_ENV_KEYS = [
   "PATH",
@@ -168,8 +169,8 @@ export class ProcessRunExecutor implements RunExecutor {
 
     // Spawn the process.
     // clearEnv drops the inherited host environment so the child sees ONLY the
-    // explicitly-assembled processEnv (mode/run IDs and tenant context) and never
-    // inherits host secrets (API keys, tokens) that the workflow code must not read.
+    // explicitly-assembled processEnv (mode/run IDs and tenant context). This
+    // prevents ordinary host-env inheritance but does not sandbox untrusted code.
     const command = new Deno.Command(this.config.command, {
       args: [...this.config.args, this.config.entrypointPath],
       cwd: this.config.cwd,

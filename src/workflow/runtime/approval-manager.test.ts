@@ -1,9 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ApprovalManager } from "./approval-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowContext, WorkflowRun } from "../types.ts";
+
+class CancelOnApprovalDecisionBackend extends MemoryBackend {
+  override async updateApproval(
+    runId: string,
+    approvalId: string,
+    decision: Parameters<MemoryBackend["updateApproval"]>[2],
+  ): Promise<void> {
+    await super.updateApproval(runId, approvalId, decision);
+    await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
+  }
+}
 
 describe("ApprovalManager", () => {
   let backend: MemoryBackend;
@@ -138,9 +149,73 @@ describe("ApprovalManager", () => {
       assertEquals(runB?.status, "failed");
       assertEquals(runC?.status, "running");
     });
+
+    it("does not overwrite cancellation while expiring an approval", async () => {
+      backend = new CancelOnApprovalDecisionBackend();
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-expiry-cancelled";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-expiry-cancelled",
+        nodeId: "review",
+        message: "expired",
+        payload: {},
+        requestedAt: pastDate(2000),
+        expiresAt: pastDate(1000),
+        status: "pending",
+      });
+
+      await manager.checkExpiredApprovals();
+
+      const run = await backend.getRun(runId);
+      assertExists(run);
+      assertEquals(run.status, "cancelled");
+      assertEquals(run.error, undefined);
+    });
   });
 
   describe("createApproval", () => {
+    it("rejects a stale owner before notifying or persisting approval", async () => {
+      let notifications = 0;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+
+      const runId = "run-stale-approval";
+      const staleRun = createTestRun(runId, {
+        status: "waiting",
+        workerId: "run-execution:old-owner",
+      });
+      await backend.createRun({
+        ...staleRun,
+        workerId: "run-execution:new-owner",
+      });
+
+      await assertRejects(
+        () =>
+          manager.createApproval(
+            staleRun,
+            "review-node",
+            {
+              type: "wait",
+              waitType: "approval",
+              message: "Please approve",
+            },
+            staleRun.context,
+          ),
+        Error,
+        "ownership changed",
+      );
+
+      assertEquals(notifications, 0);
+      assertEquals(await backend.getPendingApprovals(runId), []);
+    });
+
     it("persists approval with computed expiresAt and resolved payload", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
@@ -152,7 +227,7 @@ describe("ApprovalManager", () => {
         type: "wait",
         waitType: "approval",
         message: "Please approve",
-        payload: (ctx) => ({
+        payload: (ctx: WorkflowContext) => ({
           data: "resolved",
           inputTopic: (ctx.input as { topic: string }).topic,
         }),
@@ -273,6 +348,28 @@ describe("ApprovalManager", () => {
       // Decision context recorded on the run context.
       const decisionContext = run.context["decision-node"] as { approved: boolean };
       assertEquals(decisionContext.approved, true);
+    });
+
+    it("does not overwrite cancellation while rejecting an approval", async () => {
+      backend = new CancelOnApprovalDecisionBackend();
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-rejection-cancelled";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-rejection-cancelled",
+        nodeId: "review",
+        message: "reject me",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await manager.reject(runId, "apr-rejection-cancelled", "reviewer", "no");
+
+      const run = await backend.getRun(runId);
+      assertExists(run);
+      assertEquals(run.status, "cancelled");
+      assertEquals(run.error, undefined);
     });
   });
 });

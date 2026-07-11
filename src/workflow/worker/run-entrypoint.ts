@@ -6,6 +6,7 @@
  *
  * Environment variables:
  * - WORKFLOW_RUN_ID: The workflow run to execute
+ * - RUN_EXECUTION_ID: Immutable execution identity assigned by the run manager
  * - TENANT_PROJECT_SLUG: Tenant's project slug
  * - TENANT_TOKEN: Tenant's API token
  * - TENANT_PROJECT_ID: Tenant's project ID
@@ -28,8 +29,10 @@ import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowDefinition } from "../types.ts";
 import {
+  createIsolatedWorkflowExecutor,
   failRunExecution,
   getFinalRunExitCode,
+  getRunExecutionWorkerId,
   getTenantFromEnv,
   hydrateRunContextEnv,
   runWithTenantContext,
@@ -98,6 +101,7 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return EXIT_CODES.CONFIG_ERROR;
   }
+  const expectedWorkerId = getRunExecutionWorkerId();
 
   if (debug) {
     logger.info(`Starting execution for run: ${runId}`);
@@ -111,7 +115,7 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
       return EXIT_CODES.NOT_FOUND;
     }
 
-    run = await hydrateRunContextEnv(backend, runId, run);
+    run = await hydrateRunContextEnv(backend, runId, run, expectedWorkerId);
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;
@@ -123,7 +127,7 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
 
     // Execute workflow and determine exit code based on final status
     const executeWorkflow = async (): Promise<number> => {
-      await executor.resume(runId);
+      await executor.resume(runId, undefined, expectedWorkerId);
 
       return getFinalRunExitCode(
         logger,
@@ -139,7 +143,14 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
       try {
         return await executeWorkflow();
       } catch (error) {
-        return await failRunExecution(backend, logger, EXIT_CODES, runId, error);
+        return await failRunExecution(
+          backend,
+          logger,
+          EXIT_CODES,
+          runId,
+          error,
+          expectedWorkerId,
+        );
       }
     };
 
@@ -194,21 +205,19 @@ export async function createWorkflowRunEntrypoint(
 ): Promise<() => Promise<number>> {
   // Dynamic imports to avoid loading Redis if not needed
   const { RedisBackend } = await import("../backends/redis.ts");
-  const { WorkflowExecutor } = await import("../executor/workflow-executor.ts");
-
   const backend = new RedisBackend({
     url: options.redisUrl,
     debug: options.debug,
   });
 
-  const executor = new WorkflowExecutor({
+  const executor = createIsolatedWorkflowExecutor(
     backend,
-    debug: options.debug,
-    stepExecutor: {
+    options.debug,
+    {
       agentRegistry,
       toolRegistry,
     },
-  });
+  );
 
   // Register workflows
   for (const wf of options.workflows) {

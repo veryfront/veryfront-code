@@ -92,6 +92,39 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
+  updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status)) return Promise.resolve(false);
+
+    // updateRun mutates synchronously before returning, so the status check and
+    // patch are one atomic operation for this in-memory backend.
+    return this.updateRun(runId, patch).then(() => true);
+  }
+
+  updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
+
+    return this.updateRun(runId, patch).then(() => true);
+  }
+
   deleteRun(runId: string): Promise<void> {
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
@@ -161,6 +194,26 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
+  saveCheckpointIfStatusAndWorker(
+    storageRunId: string,
+    ownershipRunId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    checkpoint: Checkpoint,
+  ): Promise<boolean> {
+    const run = this.runs.get(ownershipRunId);
+    if (
+      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const checkpoints = this.checkpoints.get(storageRunId) ?? [];
+    checkpoints.push(structuredClone(checkpoint));
+    this.checkpoints.set(storageRunId, checkpoints);
+    return Promise.resolve(true);
+  }
+
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {
     const checkpoints = this.checkpoints.get(runId);
     if (!checkpoints?.length) return Promise.resolve(null);
@@ -206,6 +259,46 @@ export class MemoryBackend implements WorkflowBackend {
     const approvals = this.approvals.get(runId) ?? [];
     approvals.push(structuredClone(approval));
     this.approvals.set(runId, approvals);
+    return Promise.resolve();
+  }
+
+  savePendingApprovalIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    approval: PendingApproval,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (
+      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const approvals = this.approvals.get(runId) ?? [];
+    approvals.push(structuredClone(approval));
+    this.approvals.set(runId, approvals);
+    return Promise.resolve(true);
+  }
+
+  updatePendingApproval(
+    runId: string,
+    approvalId: string,
+    patch: Partial<PendingApproval>,
+  ): Promise<void> {
+    const approvals = this.approvals.get(runId);
+    const index = approvals?.findIndex((approval) => approval.id === approvalId) ?? -1;
+    if (!approvals || index === -1) {
+      return Promise.reject(
+        RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` }),
+      );
+    }
+
+    approvals[index] = {
+      ...approvals[index]!,
+      ...structuredClone(patch),
+      id: approvalId,
+    };
     return Promise.resolve();
   }
 
@@ -354,11 +447,12 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  extendLock(runId: string, duration: number): Promise<boolean> {
+  extendLock(runId: string, duration: number, lockId?: string): Promise<boolean> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
     if (!existing || existing.expiresAt <= now) return Promise.resolve(false);
+    if (lockId !== undefined && existing.lockId !== lockId) return Promise.resolve(false);
 
     existing.expiresAt = now + duration;
     return Promise.resolve(true);

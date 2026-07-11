@@ -69,6 +69,52 @@ if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
 redis.call('sadd', ARGV[3] .. ARGV[2], ARGV[1])
 return 1`;
 
+/** Atomically verify the current status, update fields, and move the status index. */
+const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
+local old = redis.call('hget', KEYS[1], 'status')
+local expectedCount = tonumber(ARGV[1])
+local allowed = false
+for i = 2, expectedCount + 1 do
+  if old == ARGV[i] then
+    allowed = true
+    break
+  end
+end
+if not allowed then return 0 end
+local nextStatus = ARGV[expectedCount + 2]
+local statusPrefix = ARGV[expectedCount + 3]
+local runId = ARGV[expectedCount + 4]
+local expectedWorkerId = ARGV[expectedCount + 5]
+if expectedWorkerId ~= '' and redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then
+  return 0
+end
+if nextStatus ~= '' and old ~= nextStatus then
+  redis.call('hset', KEYS[1], 'status', nextStatus)
+  redis.call('srem', statusPrefix .. old, runId)
+  redis.call('sadd', statusPrefix .. nextStatus, runId)
+end
+for i = expectedCount + 6, #ARGV, 2 do
+  redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+return 1`;
+
+/** Atomically verify canonical run ownership before appending auxiliary run state. */
+const APPEND_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-append
+local status = redis.call('hget', KEYS[1], 'status')
+local expectedCount = tonumber(ARGV[1])
+local allowed = false
+for i = 2, expectedCount + 1 do
+  if status == ARGV[i] then
+    allowed = true
+    break
+  end
+end
+if not allowed then return 0 end
+local expectedWorkerId = ARGV[expectedCount + 2]
+if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
+redis.call('rpush', ARGV[expectedCount + 3], ARGV[expectedCount + 4])
+return 1`;
+
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
@@ -175,6 +221,54 @@ export class RedisBackend implements WorkflowBackend {
       heartbeatAt: run.heartbeatAt?.toISOString() || "",
       completedAt: run.completedAt?.toISOString() || "",
     };
+  }
+
+  private serializeRunPatch(patch: Partial<WorkflowRun>): Record<string, string> {
+    const fields: Record<string, string> = {};
+    if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
+    if (patch._tenant !== undefined) {
+      fields.tenant = patch._tenant ? JSON.stringify(patch._tenant) : "";
+    }
+    if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
+    if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
+    if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
+    if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
+    if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
+    if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
+    if (patch.heartbeatAt !== undefined) fields.heartbeatAt = patch.heartbeatAt.toISOString();
+    if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
+    return fields;
+  }
+
+  private serializeApproval(approval: PendingApproval): string {
+    return JSON.stringify({
+      ...approval,
+      requestedAt: approval.requestedAt.toISOString(),
+      expiresAt: approval.expiresAt?.toISOString(),
+      decidedAt: approval.decidedAt?.toISOString(),
+    });
+  }
+
+  private async appendIfStatusAndWorker(
+    ownershipRunId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    storageKey: string,
+    value: string,
+  ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const result = await client.eval(
+      APPEND_IF_STATUS_AND_WORKER_SCRIPT,
+      [this.runKey(ownershipRunId)],
+      [
+        String(expectedStatuses.length),
+        ...expectedStatuses,
+        expectedWorkerId,
+        storageKey,
+        value,
+      ],
+    );
+    return Number(result) === 1;
   }
 
   private deserializeRun(data: Record<string, string>): WorkflowRun {
@@ -336,22 +430,9 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
-    const fields: Record<string, string> = {};
+    const fields = this.serializeRunPatch(patch);
     // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
     // move), so it is deliberately excluded from this plain hset.
-    if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
-    if (patch._tenant !== undefined) {
-      fields.tenant = patch._tenant ? JSON.stringify(patch._tenant) : "";
-    }
-    if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
-    if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
-    if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
-    if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
-    if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
-    if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
-    if (patch.heartbeatAt !== undefined) fields.heartbeatAt = patch.heartbeatAt.toISOString();
-    if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
-
     if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
 
     if (patch.status !== undefined) {
@@ -367,6 +448,58 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.status && patch.status !== "running") {
       await client.del(this.claimKey(runId));
     }
+  }
+
+  async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    return await this.updateRunConditionally(runId, expectedStatuses, patch);
+  }
+
+  async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    return await this.updateRunConditionally(
+      runId,
+      expectedStatuses,
+      patch,
+      expectedWorkerId,
+    );
+  }
+
+  private async updateRunConditionally(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    patch: Partial<WorkflowRun>,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const fields = this.serializeRunPatch(patch);
+    const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
+    const result = await client.eval(
+      UPDATE_RUN_IF_STATUS_SCRIPT,
+      [this.runKey(runId)],
+      [
+        String(expectedStatuses.length),
+        ...expectedStatuses,
+        patch.status ?? "",
+        `${this.config.prefix}index:status:`,
+        runId,
+        expectedWorkerId ?? "",
+        ...fieldArgs,
+      ],
+    );
+    const updated = Number(result) === 1;
+
+    if (updated && patch.status && patch.status !== "running") {
+      await client.del(this.claimKey(runId));
+    }
+    return updated;
   }
 
   async deleteRun(runId: string): Promise<void> {
@@ -470,6 +603,22 @@ export class RedisBackend implements WorkflowBackend {
     );
   }
 
+  saveCheckpointIfStatusAndWorker(
+    storageRunId: string,
+    ownershipRunId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    checkpoint: Checkpoint,
+  ): Promise<boolean> {
+    return this.appendIfStatusAndWorker(
+      ownershipRunId,
+      expectedStatuses,
+      expectedWorkerId,
+      this.checkpointsKey(storageRunId),
+      JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+    );
+  }
+
   async getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {
     const client = await this.ensureClient();
     const raw = await client.lindex(this.checkpointsKey(runId), -1);
@@ -496,12 +645,22 @@ export class RedisBackend implements WorkflowBackend {
 
     await client.rpush(
       this.approvalsKey(runId),
-      JSON.stringify({
-        ...approval,
-        requestedAt: approval.requestedAt.toISOString(),
-        expiresAt: approval.expiresAt?.toISOString(),
-        decidedAt: approval.decidedAt?.toISOString(),
-      }),
+      this.serializeApproval(approval),
+    );
+  }
+
+  savePendingApprovalIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    approval: PendingApproval,
+  ): Promise<boolean> {
+    return this.appendIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      this.approvalsKey(runId),
+      this.serializeApproval(approval),
     );
   }
 
@@ -524,6 +683,27 @@ export class RedisBackend implements WorkflowBackend {
   async getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
     const approvals = await this.getPendingApprovals(runId);
     return approvals.find((a) => a.id === approvalId) || null;
+  }
+
+  async updatePendingApproval(
+    runId: string,
+    approvalId: string,
+    patch: Partial<PendingApproval>,
+  ): Promise<void> {
+    const client = await this.ensureClient();
+    const key = this.approvalsKey(runId);
+    const rawList = await client.lrange(key, 0, -1);
+    const targetIndex = rawList.findIndex((raw) => JSON.parse(raw).id === approvalId);
+    if (targetIndex === -1) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+    }
+
+    const current = this.parseApproval(rawList[targetIndex]!);
+    await client.lset(
+      key,
+      targetIndex,
+      this.serializeApproval({ ...current, ...patch, id: approvalId }),
+    );
   }
 
   async updateApproval(
@@ -690,12 +870,10 @@ export class RedisBackend implements WorkflowBackend {
     return null;
   }
 
-  // Ownership is verified against the internally tracked token (this.lockValues);
-  // the optional lockId argument is accepted for interface parity.
-  async releaseLock(runId: string, _lockId?: string): Promise<void> {
+  async releaseLock(runId: string, lockId?: string): Promise<void> {
     const client = await this.ensureClient();
     const key = this.lockKey(runId);
-    const ourValue = this.lockValues.get(runId);
+    const ourValue = lockId ?? this.lockValues.get(runId);
 
     // Only release if we still own the lock (compare-and-delete). Without a
     // known token we never owned it, so do nothing.
@@ -704,13 +882,13 @@ export class RedisBackend implements WorkflowBackend {
     // Atomic GET + DEL via Lua so a stale owner cannot delete a lock that was
     // reacquired by another worker between the check and the delete (TOCTOU).
     await client.eval(RELEASE_LOCK_SCRIPT, [key], [ourValue]);
-    this.lockValues.delete(runId);
+    if (this.lockValues.get(runId) === ourValue) this.lockValues.delete(runId);
   }
 
-  async extendLock(runId: string, duration: number): Promise<boolean> {
+  async extendLock(runId: string, duration: number, lockId?: string): Promise<boolean> {
     const client = await this.ensureClient();
     const key = this.lockKey(runId);
-    const ourValue = this.lockValues.get(runId);
+    const ourValue = lockId ?? this.lockValues.get(runId);
 
     // Only extend if we still own the lock (compare-and-pexpire).
     if (ourValue === undefined) return false;

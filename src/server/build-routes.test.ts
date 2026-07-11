@@ -1,8 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { collectAppRoutes, collectPagesRoutes } from "./build-routes.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 // ---------- In-memory filesystem mock ----------
 
@@ -244,6 +249,89 @@ describe("server/build-routes", () => {
       const adapter = createMockAdapter({});
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes, []);
+    });
+
+    it("surfaces a missing directory discovered after the app root stat", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      adapter.fs.readDir = () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              Promise.reject(
+                Object.assign(new Error("nested directory disappeared"), { code: "ENOENT" }),
+              ),
+          };
+        },
+      });
+
+      const error = await assertRejects(() => collectAppRoutes(adapter, "/project"), Error);
+
+      assertEquals(
+        error.message,
+        "Failed to collect App Router routes for static site generation",
+      );
+    });
+
+    it("sanitizes route file read failures and surfaces the stable SSG error", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      adapter.fs.readFile = () =>
+        Promise.reject(
+          Object.assign(new Error("permission denied for <TOKEN> at <LOCAL_PATH>"), {
+            code: "EACCES",
+          }),
+        );
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      try {
+        const error = await assertRejects(() => collectAppRoutes(adapter, "/project"), Error);
+        assertEquals(
+          error.message,
+          "Failed to collect App Router routes for static site generation",
+        );
+      } finally {
+        __resetLogRecordEmitterForTests();
+      }
+
+      const serializedEntries = JSON.stringify(entries);
+      assertEquals(serializedEntries.includes("<TOKEN>"), false);
+      assertEquals(serializedEntries.includes("<LOCAL_PATH>"), false);
+      assertEquals(serializedEntries.includes("/project/app/page.tsx"), false);
+    });
+
+    it("sanitizes unexpected collection failures", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      adapter.fs.stat = () =>
+        Promise.reject(
+          Object.assign(new Error("permission denied for <TOKEN> at <LOCAL_PATH>"), {
+            code: "EACCES",
+          }),
+        );
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      try {
+        const error = await assertRejects(() => collectAppRoutes(adapter, "/project"));
+        assertEquals(
+          error.message,
+          "Failed to collect App Router routes for static site generation",
+        );
+      } finally {
+        __resetLogRecordEmitterForTests();
+      }
+
+      const failure = entries.find((entry) =>
+        entry.message === "Failed to collect App Router routes for SSG"
+      );
+      assertEquals(failure?.context, { errorName: "Error" });
+      assertEquals(JSON.stringify(entries).includes("<TOKEN>"), false);
+      assertEquals(JSON.stringify(entries).includes("<LOCAL_PATH>"), false);
     });
 
     it("discovers page.tsx at app root", async () => {

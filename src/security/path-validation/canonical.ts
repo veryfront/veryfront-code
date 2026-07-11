@@ -4,9 +4,65 @@
  **************************************************/
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 
 import { isWithinDirectory, normalizeSeparators, resolvePathSegments } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";
+
+function dirnamePreservingDriveRoot(path: string): string {
+  const parent = dirname(path);
+  return /^[A-Za-z]:$/.test(parent) && /^[A-Za-z]:\//.test(path) ? `${parent}/` : parent;
+}
+
+async function resolveThroughExistingAncestor(
+  path: string,
+  realPath: (candidate: string) => Promise<string>,
+  allowNormalizedRetry = true,
+): Promise<string | null> {
+  const unresolvedSegments: string[] = [];
+  const visited = new Set<string>();
+  let candidate = path;
+
+  while (!visited.has(candidate)) {
+    visited.add(candidate);
+    try {
+      const canonicalAncestor = normalizeSeparators(await realPath(candidate));
+      const unresolvedSuffix = unresolvedSegments.reverse().join("/");
+      return resolvePathSegments(
+        unresolvedSuffix ? join(canonicalAncestor, unresolvedSuffix) : canonicalAncestor,
+      );
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+
+      const parent = dirnamePreservingDriveRoot(candidate);
+      if (parent === candidate) break;
+
+      const segment = basename(candidate);
+      if (!segment || segment === "/") break;
+      if (segment === "." || segment === "..") {
+        // A missing component before a traversal segment prevents realPath from
+        // reaching an existing ancestor. Retry the lexically collapsed target,
+        // then resolve its ancestors physically so a later symlink cannot escape.
+        // If even that path has no canonical ancestor, fail closed.
+        const normalizedPath = resolvePathSegments(path);
+        if (allowNormalizedRetry && normalizedPath !== path) {
+          const resolved = await resolveThroughExistingAncestor(
+            normalizedPath,
+            realPath,
+            false,
+          );
+          if (resolved !== null) return resolved;
+        }
+        throw new Error("Cannot safely resolve a path through a missing traversal segment");
+      }
+      unresolvedSegments.push(segment);
+      candidate = parent;
+    }
+  }
+
+  return null;
+}
 
 export async function getCanonicalPath(
   path: string,
@@ -29,16 +85,16 @@ export async function getCanonicalPath(
     try {
       const info = await fs.lstat(path);
       isSymlink = info.isSymlink;
-    } catch (_) {
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       /* expected: path may not exist yet (e.g. writes/mkdir) */
     }
   }
 
-  // Resolve the PHYSICAL path so containment is checked against the real target:
-  // a symlink (including an intermediate symlinked component) whose real target
-  // escapes the base directory must be rejected. realPath() resolves the whole
-  // chain, so it also catches symlinked parent segments that lstat on the final
-  // component alone would miss.
+  // Resolve the PHYSICAL path so containment is checked against the real target.
+  // For a missing write target, resolve the nearest existing ancestor and append
+  // the unresolved suffix. Calling realPath() only on the full target would fail
+  // with ENOENT and let a symlinked parent escape via the lexical fallback.
   //
   // Residual gap: adapters that expose neither realPath nor lstat (virtual/remote
   // filesystems — Veryfront API, GitHub — which have no OS-level symlinks) fall
@@ -47,11 +103,12 @@ export async function getCanonicalPath(
   // hypothetical local-disk adapter lacking realPath would retain the pre-fix
   // lexical-only behavior for intermediate-symlink escapes.
   if (typeof fs.realPath === "function") {
-    try {
-      const real = await fs.realPath(path);
-      return { path: resolvePathSegments(normalizeSeparators(real)), isSymlink };
-    } catch (_) {
-      /* expected: path may not exist yet (e.g. writes/mkdir). Use lexical path. */
+    const real = await resolveThroughExistingAncestor(
+      normalizeSeparators(path),
+      (candidate) => fs.realPath!(candidate),
+    );
+    if (real !== null) {
+      return { path: real, isSymlink };
     }
   }
 
@@ -74,8 +131,9 @@ export async function getCanonicalBaseDir(
   if (fs && typeof fs.realPath === "function") {
     try {
       return normalizeSeparators(await fs.realPath(baseDir));
-    } catch (_) {
-      /* expected: base may not exist in tests/virtual fs. Use lexical base. */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      /* expected: base may not exist yet. Use the lexical base. */
     }
   }
   return baseDir;

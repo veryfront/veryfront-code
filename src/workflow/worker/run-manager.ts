@@ -14,7 +14,12 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasLockSupport,
+  hasWorkerSupport,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { RunExecutionConfig, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
@@ -386,10 +391,7 @@ export class WorkflowRunManager {
         if (tracked.missingPolls >= 2) {
           this.activeExecutions.delete(runId);
           this.stats.executionsFailed++;
-          logger.warn(
-            `[WorkflowRunManager] Run execution ${tracked.executionId} for run ${runId} ` +
-              `vanished from executor list; freeing concurrency slot`,
-          );
+          logger.warn("[WorkflowRunManager] Run execution vanished; freeing concurrency slot");
         }
       }
 
@@ -433,6 +435,7 @@ export class WorkflowRunManager {
    */
   private async createExecutionForWorkflow(run: WorkflowRun): Promise<void> {
     const executionId = generateId("run_exec");
+    const workerId = `run-execution:${executionId}`;
 
     const executionConfig: RunExecutionConfig = {
       executionId,
@@ -450,12 +453,16 @@ export class WorkflowRunManager {
       // the order reversed, a crash after this point leaves a "running" run with
       // no process, which stalled-run recovery reclaims cleanly. A spawn failure
       // is handled by the catch below, which marks the run failed.
-      await this.config.backend.updateRun(run.id, {
+      if (run.status !== "pending" && run.status !== "waiting" && run.status !== "running") {
+        return;
+      }
+      const claimed = await updateRunIfStatus(this.config.backend, run.id, [run.status], {
         status: "running",
         startedAt: new Date(),
         heartbeatAt: new Date(),
-        workerId: `run-execution:${executionId}`,
+        workerId,
       });
+      if (!claimed) return;
 
       await this.config.executor.createRunExecution(executionConfig);
 
@@ -477,8 +484,7 @@ export class WorkflowRunManager {
       logger.error(`Failed to create run execution for ${run.id}:`, error);
       this.stats.executionsFailed++;
 
-      // Mark workflow as failed
-      await this.config.backend.updateRun(run.id, {
+      await updateRunIfStatus(this.config.backend, run.id, ["running"], {
         status: "failed",
         error: {
           message: `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
@@ -486,7 +492,7 @@ export class WorkflowRunManager {
           }`,
         },
         completedAt: new Date(),
-      });
+      }, workerId);
     }
   }
 

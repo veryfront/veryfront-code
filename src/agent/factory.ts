@@ -171,7 +171,14 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () => runtime.generate(input.input, input.context, input.model, input.maxOutputTokens),
+        () =>
+          runtime.generate(
+            input.input,
+            input.context,
+            input.model,
+            input.maxOutputTokens,
+            input.abortSignal,
+          ),
         { "agent.id": id },
       );
     },

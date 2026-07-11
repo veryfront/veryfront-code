@@ -9,6 +9,7 @@ import { join, relative } from "#veryfront/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
+import { SSG_GENERATION_ERROR } from "#veryfront/errors";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
@@ -26,6 +27,15 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   if (include?.length && !include.some((p) => path.startsWith(p))) return false;
   if (exclude?.length && exclude.some((p) => path.startsWith(p))) return false;
   return true;
+}
+
+function throwAppRouteCollectionError(error: unknown): never {
+  logger.error("Failed to collect App Router routes for SSG", {
+    errorName: error instanceof Error ? error.name : typeof error,
+  });
+  throw SSG_GENERATION_ERROR.create({
+    detail: "Failed to collect App Router routes for static site generation",
+  });
 }
 
 export async function collectPagesRoutes(
@@ -66,28 +76,26 @@ export async function collectAppRoutes(
   include?: string[],
   exclude?: string[],
 ): Promise<AppRouteInfo[]> {
+  const appRoot = join(projectDir, "app");
+  try {
+    await adapter.fs.stat(appRoot);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      logger.debug("No app directory found for SSG");
+      return [];
+    }
+    throwAppRouteCollectionError(error);
+  }
+
   try {
     const collected: AppRouteInfo[] = [];
-    const appRoot = join(projectDir, "app");
-
-    await adapter.fs.stat(appRoot);
     await walkAppSSG(adapter, appRoot, [], [appRoot], collected);
 
     logger.debug(`Found ${collected.length} App Router static routes`);
 
     return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
-  } catch (e) {
-    // A missing app/ directory is the legitimately-expected empty case.
-    if (isNotFoundError(e)) {
-      logger.debug("No app directory found for SSG", e);
-      return [];
-    }
-    // Anything else (permission error, adapter failure, a bug thrown mid-traversal)
-    // must fail loudly so a broken SSG build doesn't silently emit zero routes.
-    logger.error("Failed to collect App Router routes for SSG", {
-      error: e instanceof Error ? e.message : String(e),
-    });
-    throw e;
+  } catch (error) {
+    throwAppRouteCollectionError(error);
   }
 }
 
@@ -110,30 +118,26 @@ async function walkAppSSG(
   if (isDynamicSegment(baseName)) return;
 
   for (const filePath of PAGE_CANDIDATES.map((n) => join(dir, n))) {
+    let isFile: boolean;
     try {
-      const st = await adapter.fs.stat(filePath);
-      if (!st.isFile) continue;
-
-      const src = (await adapter.fs.readFile(filePath).catch((error) => {
-        logger.warn("Failed to read route file for SSG analysis", {
-          filePath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return "";
-      })) ?? "";
-      if (isForceDynamic(src)) break;
-
-      const path = `/${segs.join("/")}`;
-      collected.push({
-        path: path === "/" ? "/" : path,
-        pageFile: filePath,
-        segments: [...segs],
-        segmentDirs: [...segDirs],
-      });
-      break;
-    } catch (_) {
-      /* expected: file may not exist for this candidate */
+      isFile = (await adapter.fs.stat(filePath)).isFile;
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
     }
+    if (!isFile) continue;
+
+    const src = (await adapter.fs.readFile(filePath)) ?? "";
+    if (isForceDynamic(src)) break;
+
+    const path = `/${segs.join("/")}`;
+    collected.push({
+      path: path === "/" ? "/" : path,
+      pageFile: filePath,
+      segments: [...segs],
+      segmentDirs: [...segDirs],
+    });
+    break;
   }
 
   for await (const entry of adapter.fs.readDir(dir)) {

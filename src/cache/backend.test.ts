@@ -122,6 +122,17 @@ Deno.test("MemoryCacheBackend TTL expiration", async () => {
   assertEquals(await cache.get("expires"), null);
 });
 
+Deno.test("MemoryCacheBackend reports remaining TTL without extending it", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10);
+
+  await cache.set("ttl", "value", 0.1);
+  const remaining = await cache.getRemainingTtlSeconds("ttl");
+
+  assertEquals(typeof remaining, "number");
+  assertEquals(remaining! > 0 && remaining! <= 0.1, true);
+});
+
 Deno.test("MemoryCacheBackend evicts oldest on capacity", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
@@ -591,6 +602,26 @@ Deno.test("RedisCacheBackend returns null without client", async () => {
 
   const cache = new RedisCacheBackend();
   assertEquals(await cache.get("any-key"), null);
+});
+
+Deno.test("RedisCacheBackend translates Redis TTL sentinel values", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  let ttl = 12;
+  const keys: string[] = [];
+  (cache as unknown as { client: { ttl: (key: string) => Promise<number> } }).client = {
+    ttl: (key: string) => {
+      keys.push(key);
+      return Promise.resolve(ttl);
+    },
+  };
+
+  assertEquals(await cache.getRemainingTtlSeconds("key"), 12);
+  ttl = -1;
+  assertEquals(await cache.getRemainingTtlSeconds("key"), Infinity);
+  ttl = -2;
+  assertEquals(await cache.getRemainingTtlSeconds("key"), null);
+  assertEquals(keys, ["vf:test:key", "vf:test:key", "vf:test:key"]);
 });
 
 Deno.test("RedisCacheBackend set is no-op without client", async () => {

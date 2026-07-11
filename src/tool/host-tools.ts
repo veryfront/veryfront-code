@@ -118,7 +118,10 @@ export function createToolsFromHostDefinitions(
           mcp: definition.mcp,
         });
     } catch (error) {
-      agentLogger.warn("Skipping host tool: schema conversion failed", { toolName, error });
+      agentLogger.warn("Skipping host tool: schema conversion failed", {
+        toolName,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       continue;
     }
   }

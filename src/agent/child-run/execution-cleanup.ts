@@ -40,9 +40,17 @@ export async function finalizeChildRunExecutionResources(
     input.closeRuntime?.(),
   ]);
   if (toolingResult.status === "rejected") {
-    agentLogger.warn("Child run teardown: closeTooling failed", { error: toolingResult.reason });
+    agentLogger.warn("Child run teardown: closeTooling failed", {
+      errorName: toolingResult.reason instanceof Error
+        ? toolingResult.reason.name
+        : typeof toolingResult.reason,
+    });
   }
   if (runtimeResult.status === "rejected") {
-    agentLogger.warn("Child run teardown: closeRuntime failed", { error: runtimeResult.reason });
+    agentLogger.warn("Child run teardown: closeRuntime failed", {
+      errorName: runtimeResult.reason instanceof Error
+        ? runtimeResult.reason.name
+        : typeof runtimeResult.reason,
+    });
   }
 }

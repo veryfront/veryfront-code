@@ -23,7 +23,14 @@ export class TaskStore {
   create(ttl: number): Task {
     this.lazySweep();
     if (this.tasks.size >= MAX_TASKS) {
-      this.evictOldest();
+      // The lazy sweep may be throttled even though the store just reached its
+      // hard bound. Reclaim newly expired entries before rejecting live work.
+      this.sweep();
+      if (this.tasks.size >= MAX_TASKS && !this.evictOldest()) {
+        throw new Error(
+          "Task store capacity reached. Wait for an existing task to finish or expire.",
+        );
+      }
     }
 
     const now = new Date().toISOString();
@@ -91,11 +98,10 @@ export class TaskStore {
   }
 
   private isExpired(task: Task): boolean {
-    // Only terminal tasks expire. A still-running ('working') or waiting
-    // ('input_required') task must not be deleted mid-flight while its tool is
-    // executing — expiry is measured from completion via lastUpdatedAt.
+    // TTL is anchored to task creation, but an active task must remain visible
+    // so the server can still cancel and account for its pending execution.
     if (!TERMINAL_STATUSES.has(task.status)) return false;
-    return Date.now() - new Date(task.lastUpdatedAt).getTime() > task.ttl;
+    return Date.now() - new Date(task.createdAt).getTime() > task.ttl;
   }
 
   private lazySweep(): void {
@@ -114,12 +120,10 @@ export class TaskStore {
     }
   }
 
-  private evictOldest(): void {
-    // Only evict terminal tasks. A running ('working') or waiting
-    // ('input_required') task must never be evicted — doing so would drop a
-    // task whose tool is still executing without aborting it. If every task is
-    // non-terminal the store is briefly allowed to exceed MAX_TASKS rather than
-    // discard live work.
+  private evictOldest(): boolean {
+    // Terminal state can be evicted without losing track of active execution.
+    // If every task is active, reject new work instead of exceeding the bound or
+    // silently orphaning an in-flight task.
     let oldestTerminal: string | undefined;
     let oldestTerminalTime = Infinity;
 
@@ -135,6 +139,9 @@ export class TaskStore {
     if (oldestTerminal) {
       this.tasks.delete(oldestTerminal);
       this.results.delete(oldestTerminal);
+      return true;
     }
+
+    return false;
   }
 }

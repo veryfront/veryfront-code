@@ -280,6 +280,24 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("does not surface remote HTTP error bodies", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const error = await assertRejects(
+      () =>
+        withMockFetch(
+          async () => new Response("private payload <TOKEN> at <LOCAL_PATH>", { status: 500 }),
+          async () => await source.listTools(),
+        ),
+      Error,
+    );
+
+    assertEquals(error.message, "Remote MCP request failed (500)");
+  });
+
   it("preserves caller accept types while adding the MCP-required media types", async () => {
     let acceptHeader = "";
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
@@ -249,6 +249,16 @@ describe("projectKnowledge", () => {
       assertEquals(secondPage.page_info.next, null);
       assertEquals(secondPage.data.map((item) => item.path), ["knowledge/login.md"]);
     });
+  });
+
+  it("does not expose malformed cursor contents", async () => {
+    const knowledge = projectKnowledge({ projectDir: "." });
+    const cursor = btoa("private cursor <TOKEN>");
+
+    const error = await assertRejects(() => knowledge.lookup({ query: "billing", cursor }));
+
+    assertEquals(error.message, "Invalid knowledge lookup cursor");
+    assertEquals(error.cause, undefined);
   });
 
   it("creates a local search_knowledge tool for parity with hosted MCP", async () => {

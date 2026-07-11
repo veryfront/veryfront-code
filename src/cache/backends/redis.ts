@@ -61,6 +61,21 @@ export class RedisCacheBackend implements CacheBackend {
     }
   }
 
+  async getRemainingTtlSeconds(key: string): Promise<number | null> {
+    if (!this.client?.ttl) return null;
+
+    try {
+      const remaining = await this.client.ttl(this.prefixKey(key));
+      if (remaining === -1) return Infinity;
+      return remaining >= 0 ? remaining : null;
+    } catch (error) {
+      logger.debug("TTL lookup failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      return null;
+    }
+  }
+
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
     if (keys.length === 0) return new Map<string, string | null>();
 

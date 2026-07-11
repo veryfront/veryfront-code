@@ -7,9 +7,14 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import { INVALID_ARGUMENT, PERMISSION_DENIED, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import {
+  INVALID_ARGUMENT,
+  ORCHESTRATION_ERROR,
+  PERMISSION_DENIED,
+  RESOURCE_NOT_FOUND,
+} from "#veryfront/errors";
 
 const logger = baseLogger.component("approval-manager");
 
@@ -105,9 +110,28 @@ export class ApprovalManager {
       runId: run.id,
     });
 
-    // Attempt notification before persisting so a failure is recorded ON the
-    // stored approval (savePendingApproval appends, so we cannot amend it after
-    // the fact without duplicating). The failure is also returned to the caller.
+    // Worker-owned approvals are reserved atomically before notification. This
+    // prevents a delayed onWaiting callback from notifying or appending after a
+    // replacement worker has claimed the run.
+    const ownerBound = run.workerId !== undefined;
+    if (ownerBound) {
+      const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
+      const saved = saveOwned
+        ? await saveOwned.call(
+          this.config.backend,
+          run.id,
+          [run.status],
+          run.workerId!,
+          approval,
+        )
+        : false;
+      if (!saved) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Workflow execution ownership changed before approval persistence",
+        });
+      }
+    }
+
     try {
       await this.config.notifier?.(approval, run);
     } catch (error) {
@@ -119,7 +143,19 @@ export class ApprovalManager {
       );
     }
 
-    await this.config.backend.savePendingApproval(run.id, approval);
+    if (ownerBound) {
+      if (approval.notificationError) {
+        await this.config.backend.updatePendingApproval?.(
+          run.id,
+          approval.id,
+          { notificationError: approval.notificationError },
+        );
+      }
+    } else {
+      // Preserve direct/ownerless behavior: resolve notification first so its
+      // delivery error is included in the initial append.
+      await this.config.backend.savePendingApproval(run.id, approval);
+    }
 
     return {
       approvalId: approval.id,
@@ -194,7 +230,7 @@ export class ApprovalManager {
       decidedAt: decidedAt.toISOString(),
     };
 
-    await this.config.backend.updateRun(runId, {
+    const runPatch: Partial<WorkflowRun> = {
       context: {
         ...run.context,
         [approval.nodeId]: decisionContext,
@@ -213,9 +249,17 @@ export class ApprovalManager {
           completedAt: decidedAt,
         },
       },
-    });
+    };
 
     if (decision.approved) {
+      const updated = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        ["pending", "running", "waiting"],
+        runPatch,
+      );
+      if (!updated) return;
+
       if (!this.config.executor) {
         return;
       }
@@ -229,7 +273,8 @@ export class ApprovalManager {
       return;
     }
 
-    await this.config.backend.updateRun(runId, {
+    await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
+      ...runPatch,
       status: "failed",
       error: {
         message: `Approval "${approvalId}" was rejected${
@@ -313,7 +358,7 @@ export class ApprovalManager {
         comment: "Approval expired",
       });
 
-      await this.config.backend.updateRun(runId, {
+      await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",
         error: { message: `Approval "${approval.id}" expired` },
         completedAt: new Date(),

@@ -17,6 +17,7 @@ interface ExecuteMapNodeStrategyInput {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   runtime: NodeStrategyRuntime;
+  abortSignal?: AbortSignal;
 }
 
 function isWorkflowDefinition(processor: unknown): processor is WorkflowDefinition {
@@ -57,10 +58,11 @@ function createMapChildNodes(
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime } = input;
+  const { node, config, context, nodeStates, runtime, abortSignal } = input;
   const startTime = Date.now();
 
   const items = typeof config.items === "function" ? await config.items(context) : config.items;
+  abortSignal?.throwIfAborted();
 
   if (!Array.isArray(items)) {
     throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
@@ -98,6 +100,7 @@ export async function executeMapNodeStrategy(
     },
     config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
   );
+  abortSignal?.throwIfAborted();
 
   Object.assign(nodeStates, result.nodeStates);
 

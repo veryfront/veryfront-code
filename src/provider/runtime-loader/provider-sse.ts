@@ -25,8 +25,8 @@ export function parseSseChunk(chunk: string): {
       return [JSON.parse(payload) as unknown];
     } catch (error) {
       logger.debug("Dropped malformed SSE event", {
-        error: error instanceof Error ? error.message : String(error),
-        payload: payload.slice(0, 200),
+        errorName: error instanceof Error ? error.name : typeof error,
+        payloadLength: payload.length,
       });
       return [];
     }

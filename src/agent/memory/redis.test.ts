@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { type RedisClient, RedisMemory } from "./redis.ts";
 
 /** Minimal in-memory RedisClient honoring the get/set/del/expire contract. */
@@ -101,5 +102,38 @@ describe("agent/memory/redis", () => {
     await assertRejects(() => memory.add({ role: "user", content: "x" }));
     // The corrupt value must NOT have been overwritten by add().
     assertEquals(client.store.get("veryfront:agent:memory:corrupt:anonymous"), "{not valid json");
+  });
+
+  it("does not log the Redis memory key when stored JSON is corrupt", async () => {
+    const client = createFakeRedis();
+    const agentId = "sensitive-agent-id";
+    const userId = "sensitive-user-id";
+    const key = `veryfront:agent:memory:${agentId}:${userId}`;
+    const memory = new RedisMemory(agentId, { type: "redis", client, userId });
+    client.store.set(key, "{");
+
+    const originalError = console.error;
+    let output = "";
+    console.error = (message: string) => {
+      output = message;
+    };
+    const originalFormat = Deno.env.get("LOG_FORMAT");
+    Deno.env.set("LOG_FORMAT", "json");
+    __resetLoggerConfigForTests();
+
+    try {
+      await assertRejects(() => memory.getMessages());
+    } finally {
+      console.error = originalError;
+      if (originalFormat === undefined) Deno.env.delete("LOG_FORMAT");
+      else Deno.env.set("LOG_FORMAT", originalFormat);
+      __resetLoggerConfigForTests();
+    }
+
+    assertEquals(output.includes(agentId), false);
+    assertEquals(output.includes(userId), false);
+    const entry = JSON.parse(output) as LogEntry;
+    assertEquals(entry.context?.keyLength, key.length);
+    assertEquals("key" in (entry.context ?? {}), false);
   });
 });

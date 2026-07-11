@@ -911,37 +911,38 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   // branch is never consumed at all) and doStream rejects.
   directResultPromise.catch(() => {});
 
-  // Do NOT eagerly tee. Per WHATWG, tee() buffers every chunk in whichever branch
-  // is not being read — and in practice callers consume only one of these streams
-  // (fullStream). Eager teeing would hold the entire LLM output in memory with no
-  // backpressure. Instead, the first branch to be consumed reads the source
-  // directly; we only tee if a second branch is also consumed (both generators
-  // set their flag synchronously before the first `await` below, so concurrent
-  // dual consumption is detected and teed correctly).
   const hasStarted: Record<"full" | "text", boolean> = { full: false, text: false };
-  let teed: Promise<[ReadableStream<unknown>, ReadableStream<unknown>]> | null = null;
+  let mode: "full" | "text" | "dual" | null = null;
+  let branches: [ReadableStream<unknown>, ReadableStream<unknown>] | null = null;
 
   const acquire = async (branch: "full" | "text"): Promise<ReadableStream<unknown>> => {
-    const other = branch === "full" ? "text" : "full";
+    hasStarted[branch] = true;
     const { stream } = await directResultPromise;
 
-    // Only one branch consumed (the common case): hand it the raw stream so it
-    // reads with full backpressure and nothing is buffered.
-    if (!hasStarted[other] && teed === null) return stream;
+    if (mode === null) {
+      if (hasStarted.full && hasStarted.text) {
+        branches = stream.tee();
+        mode = "dual";
+      } else {
+        // A single consumer reads the source directly, preserving backpressure
+        // and allowing early cancellation without an unread tee branch.
+        mode = branch;
+      }
+    }
 
-    // Both branches are consumed: tee once (memoized) so each sees every chunk.
-    if (teed === null) teed = Promise.resolve(stream.tee());
-    const [fullBranch, textBranch] = await teed;
-    return branch === "full" ? fullBranch : textBranch;
+    if (mode === "dual" && branches !== null) {
+      return branch === "full" ? branches[0] : branches[1];
+    }
+    if (mode === branch) return stream;
+
+    throw new Error("fullStream and textStream must start consumption concurrently");
   };
 
   return {
     fullStream: (async function* () {
-      hasStarted.full = true;
       yield* mapReadableStream(await acquire("full"));
     })(),
     textStream: (async function* () {
-      hasStarted.text = true;
       yield* textDeltasFromStream(await acquire("text"));
     })(),
   };

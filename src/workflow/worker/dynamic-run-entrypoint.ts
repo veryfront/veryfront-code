@@ -10,6 +10,7 @@
  *
  * Environment variables:
  * - WORKFLOW_RUN_ID: The workflow run to execute
+ * - RUN_EXECUTION_ID: Immutable execution identity assigned by the run manager
  * - TENANT_PROJECT_SLUG: Tenant's project slug
  * - TENANT_TOKEN: Tenant's API token
  * - TENANT_PROJECT_ID: Tenant's project ID
@@ -33,10 +34,11 @@ import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { discoverProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
-import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import {
+  createIsolatedWorkflowExecutor,
   failRunExecution,
   getFinalRunExitCode,
+  getRunExecutionWorkerId,
   getTenantFromEnv,
   hydrateRunContextEnv,
   runWithTenantContext,
@@ -88,6 +90,7 @@ export async function runDynamicWorkflowRun(
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
   }
+  const expectedWorkerId = getRunExecutionWorkerId();
 
   if (debug) {
     logger.info(`Starting execution for run: ${runId}`);
@@ -101,7 +104,7 @@ export async function runDynamicWorkflowRun(
       return DYNAMIC_EXIT_CODES.NOT_FOUND;
     }
 
-    run = await hydrateRunContextEnv(backend, runId, run);
+    run = await hydrateRunContextEnv(backend, runId, run, expectedWorkerId);
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;
@@ -182,20 +185,20 @@ export async function runDynamicWorkflowRun(
         }
 
         // Create executor and register the workflow
-        const executor = new WorkflowExecutor({
+        const executor = createIsolatedWorkflowExecutor(
           backend,
           debug,
-          stepExecutor: {
+          {
             agentRegistry,
             toolRegistry,
           },
-        });
+        );
 
         executor.register(workflow.definition);
 
         // Execute the workflow
         try {
-          await executor.resume(runId);
+          await executor.resume(runId, undefined, expectedWorkerId);
           return getFinalRunExitCode(
             logger,
             DYNAMIC_EXIT_CODES,
@@ -204,7 +207,14 @@ export async function runDynamicWorkflowRun(
             debug,
           );
         } catch (error) {
-          return await failRunExecution(backend, logger, DYNAMIC_EXIT_CODES, runId, error);
+          return await failRunExecution(
+            backend,
+            logger,
+            DYNAMIC_EXIT_CODES,
+            runId,
+            error,
+            expectedWorkerId,
+          );
         }
       },
     );

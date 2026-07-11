@@ -74,8 +74,8 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
       // single message and permanently destroy the stored history. Surface the
       // corruption so the caller aborts instead of silently truncating.
       agentLogger.error("Corrupted JSON in Redis memory; refusing to overwrite", {
-        key: this.getKey(),
-        error,
+        errorName: error instanceof Error ? error.name : typeof error,
+        keyLength: this.getKey().length,
       });
       throw error;
     }

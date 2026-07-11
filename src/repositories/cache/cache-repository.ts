@@ -159,6 +159,12 @@ class BackendTierAdapter implements CacheTier<string> {
     return this.backend.get(key);
   }
 
+  async getRemainingTtlSeconds(key: string): Promise<number | null> {
+    // Treat an unknowable authoritative TTL as unsafe to backfill. Otherwise a
+    // short-lived L3 entry would be revived with the repository default.
+    return await this.backend.getRemainingTtlSeconds?.(key) ?? null;
+  }
+
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
     await this.backend.set(key, value, ttlSeconds);
   }
@@ -298,7 +304,7 @@ class MemoryTier implements CacheTier<string> {
       return null;
     }
 
-    return Math.ceil(remainingMs / 1000);
+    return remainingMs / 1000;
   }
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {

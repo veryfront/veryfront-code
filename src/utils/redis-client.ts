@@ -16,6 +16,7 @@ export interface RedisClient {
     options?: { MATCH?: string; COUNT?: number },
   ): Promise<{ cursor: number; keys: string[] }>;
   expire(key: string, seconds: number): Promise<number>;
+  ttl?(key: string): Promise<number>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
   isOpen?: boolean;
 }

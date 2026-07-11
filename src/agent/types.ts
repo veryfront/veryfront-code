@@ -343,6 +343,8 @@ export interface Agent {
     model?: ModelString;
     /** Override the maximum model output tokens for this request. */
     maxOutputTokens?: number;
+    /** Abort signal for cooperative cancellation. */
+    abortSignal?: AbortSignal;
   }): Promise<AgentResponse>;
 
   stream(input: {

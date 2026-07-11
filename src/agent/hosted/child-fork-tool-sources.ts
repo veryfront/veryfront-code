@@ -207,7 +207,13 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       globalTools: mergedGlobalTools,
     });
     if (!toolSources.ok) {
-      await sandboxResult.closeSandbox();
+      try {
+        await sandboxResult.closeSandbox();
+      } catch (closeError) {
+        input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
+          errorName: closeError instanceof Error ? closeError.name : typeof closeError,
+        });
+      }
       return toolSources;
     }
 
@@ -223,7 +229,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       await sandboxResult.closeSandbox();
     } catch (closeError) {
       input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
-        error: closeError,
+        errorName: closeError instanceof Error ? closeError.name : typeof closeError,
       });
     }
     throw error;

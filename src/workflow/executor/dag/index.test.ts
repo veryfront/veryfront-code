@@ -12,7 +12,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/executor/dag/index.test
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import type { Checkpoint, WorkflowContext, WorkflowNode, WorkflowRun } from "../../types.ts";
@@ -283,6 +283,41 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       assertEquals(result.nodeStates["branch-empty"]!.status, "completed");
+    });
+
+    it("should not execute a branch after cancellation during its condition", async () => {
+      const controller = new AbortController();
+      const cancellationError = new Error("workflow cancelled");
+      let conditionStarted!: () => void;
+      const started = new Promise<void>((resolve) => conditionStarted = resolve);
+      let resolveCondition!: (value: boolean) => void;
+      const condition = new Promise<boolean>((resolve) => resolveCondition = resolve);
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [{
+        id: "branch-cancelled",
+        config: {
+          type: "branch",
+          condition: () => {
+            conditionStarted();
+            return condition;
+          },
+          then: [{ id: "must-not-run", config: { type: "step" } as any }],
+        } as any,
+      }];
+
+      const execution = exec.execute(nodes, createTestRun(), undefined, controller.signal);
+      await started;
+      controller.abort(cancellationError);
+      resolveCondition(true);
+
+      await assertRejects(() => execution, Error, cancellationError.message);
+      assertEquals(executed, []);
     });
   });
 

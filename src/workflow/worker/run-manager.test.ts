@@ -52,6 +52,33 @@ class FailingRunExecutor extends FakeRunExecutor {
   }
 }
 
+class CancelBeforeClaimBackend extends MemoryBackend {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "running") {
+      await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
+class CancelThenFailRunExecutor extends FakeRunExecutor {
+  constructor(private backend: MemoryBackend) {
+    super();
+  }
+
+  override async createRunExecution(config: RunExecutionConfig): Promise<string> {
+    await this.backend.updateRun(config.run.id, {
+      status: "cancelled",
+      completedAt: new Date(),
+    });
+    throw new Error("spawn failed after cancellation");
+  }
+}
+
 // A poll interval large enough that the first scheduled poll never fires during
 // a test; stop() clears the pending timer, so no work runs and no timer leaks.
 const NO_POLL = 1_000_000;
@@ -79,6 +106,12 @@ function createPendingRun(id: string): WorkflowRun {
 
 function pollOnce(manager: WorkflowRunManager): Promise<void> {
   return (manager as unknown as { poll(): Promise<void> }).poll();
+}
+
+function createExecution(manager: WorkflowRunManager, run: WorkflowRun): Promise<void> {
+  return (manager as unknown as {
+    createExecutionForWorkflow(run: WorkflowRun): Promise<void>;
+  }).createExecutionForWorkflow(run);
 }
 
 describe("workflow/worker/run-manager", () => {
@@ -227,6 +260,41 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(await backend.isLocked(run.id), false);
     assertEquals(manager.getActiveExecutions(), []);
     assertEquals(manager.getStats().executionsFailed, 1);
+  });
+
+  it("does not claim pending or waiting runs cancelled before the running transition", async () => {
+    for (const status of ["pending", "waiting"] as const) {
+      const backend = new CancelBeforeClaimBackend();
+      const executor = new FakeRunExecutor();
+      const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
+      track(manager);
+      const run = createPendingRun(`run-cancel-before-${status}`);
+      run.status = status;
+      await backend.createRun(run);
+
+      await createExecution(manager, run);
+
+      assertEquals((await backend.getRun(run.id))?.status, "cancelled");
+      assertEquals(executor.created.length, 0);
+      assertEquals(manager.getActiveExecutions(), []);
+    }
+  });
+
+  it("does not overwrite cancellation when spawning the execution fails", async () => {
+    const backend = new MemoryBackend();
+    const executor = new CancelThenFailRunExecutor(backend);
+    const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
+    track(manager);
+    const run = createPendingRun("run-cancel-during-spawn");
+    await backend.createRun(run);
+
+    await createExecution(manager, run);
+
+    const updatedRun = await backend.getRun(run.id);
+    assertExists(updatedRun);
+    assertEquals(updatedRun.status, "cancelled");
+    assertEquals(updatedRun.error, undefined);
+    assertEquals(manager.getActiveExecutions(), []);
   });
 
   it("createWorkflowRunManager builds a WorkflowRunManager", () => {

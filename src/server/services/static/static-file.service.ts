@@ -208,8 +208,8 @@ export class StaticFileService {
       // to happen a layer up, not here — tracked as a follow-up.
       if (!isNotFoundError(error)) {
         logger.debug("Static file candidate did not resolve", {
-          path: candidate.path,
-          error: error instanceof Error ? error.message : String(error),
+          source: candidate.source,
+          errorName: error instanceof Error ? error.name : typeof error,
         });
       }
       return null;

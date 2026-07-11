@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentConfig, Message } from "../types.ts";
@@ -23,6 +23,34 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
+  it("does not let runtime context shadow the trusted abort signal", async () => {
+    const trustedAbort = new AbortController();
+    const shadowAbort = new AbortController();
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base" } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      isLocalModel: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({
+        systemPrompt: "Base",
+        context: { abortSignal: shadowAbort.signal },
+      }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: { abortSignal: trustedAbort.signal },
+    });
+
+    assertStrictEquals(prepared.toolContext.abortSignal, trustedAbort.signal);
+  });
+
   it("resolves runtime state, merges tool context, and applies active skill policy", async () => {
     const messages: Message[] = [{
       id: "msg_1",
