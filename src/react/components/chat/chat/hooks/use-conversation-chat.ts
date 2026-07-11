@@ -176,8 +176,9 @@ export function useConversationChat(
       title,
       updatedAt: Date.now(),
     };
-    // Fold the derived title back onto the synthetic identity so later emits
-    // don't re-derive it every keystroke of a streamed reply.
+    if (agentIdRef.current) conversation.agentId = agentIdRef.current;
+    else delete conversation.agentId;
+    // Fold synthetic records back so later updates retain their identity and title.
     if (base === syntheticRef.current) syntheticRef.current = conversation;
     sink(conversation);
   }, [chat.messages, boundId, committedResetEpoch, sessionKey]);

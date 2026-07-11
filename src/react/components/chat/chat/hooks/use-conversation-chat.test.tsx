@@ -203,6 +203,103 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     }
   });
 
+  it("persists agent changes within one unbound session", async () => {
+    const restoreDom = installDom();
+    const saved: Conversation[] = [];
+    const placeholder = conversation("placeholder", []);
+    const unboundValue = {
+      ...contextValue(placeholder, (conversation) => saved.push(conversation)),
+      active: null,
+      activeId: null,
+    };
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture({ agentId }: { agentId: string | undefined }): null {
+      latest = useConversationChat({ agentId });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const renderAgent = (agentId: string | undefined) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={unboundValue}>
+            <Capture agentId={agentId} />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+    try {
+      const firstMessage = userMessage("first-message", "First message");
+      renderAgent("agent-a");
+      await settle();
+      flushSync(() => latest!.chat.setMessages([firstMessage]));
+      await settle();
+
+      const syntheticId = saved.at(-1)!.id;
+      assertEquals(saved.at(-1)?.agentId, "agent-a");
+
+      const secondMessage = userMessage("second-message", "Second message");
+      renderAgent("agent-b");
+      await settle();
+      flushSync(() => latest!.chat.setMessages([firstMessage, secondMessage]));
+      await settle();
+
+      assertEquals(saved.at(-1)?.id, syntheticId);
+      assertEquals(saved.at(-1)?.agentId, "agent-b");
+
+      const thirdMessage = userMessage("third-message", "Third message");
+      renderAgent("");
+      await settle();
+      flushSync(() => latest!.chat.setMessages([firstMessage, secondMessage, thirdMessage]));
+      await settle();
+
+      assertEquals(saved.at(-1)?.id, syntheticId);
+      assertEquals("agentId" in saved.at(-1)!, false);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("persists the fallback agent used by a bound conversation", async () => {
+    const restoreDom = installDom();
+    const bound = conversation("bound", [userMessage("first-message", "First message")]);
+    const saved: Conversation[] = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat({ agentId: "agent-b" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider
+            value={contextValue(bound, (conversation) => saved.push(conversation))}
+          >
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+      await settle();
+
+      const nextMessage = userMessage("next-message", "Next message");
+      flushSync(() => latest!.chat.setMessages([...bound.messages, nextMessage]));
+      await settle();
+
+      assertEquals(saved.at(-1)?.id, bound.id);
+      assertEquals(saved.at(-1)?.agentId, "agent-b");
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
   it("replaces message state before persisting a newly active conversation", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
