@@ -301,20 +301,20 @@ describe("ApiRouteMatcher", () => {
       assertEquals(match2.route.page, "pages/api/users.tsx");
     });
 
-    it("caches negative results", () => {
+    it("caches negative results but invalidates them when a route is added", () => {
       const router = createRouter();
       router.addRoute("/api/users", "pages/api/users.tsx");
 
+      // Negative result is cached...
       assertEquals(router.match("/api/posts"), null);
 
+      // ...but adding the matching route must invalidate that cached miss,
+      // otherwise late/hot-reloaded routes keep 404ing (the fixed bug).
       router.addRoute("/api/posts", "pages/api/posts.tsx");
 
-      assertEquals(router.match("/api/posts"), null);
-
-      router.clearCache();
-      const match3 = router.match("/api/posts");
-      assertExists(match3);
-      assertEquals(match3.route.page, "pages/api/posts.tsx");
+      const match2 = router.match("/api/posts");
+      assertExists(match2);
+      assertEquals(match2.route.page, "pages/api/posts.tsx");
     });
   });
 

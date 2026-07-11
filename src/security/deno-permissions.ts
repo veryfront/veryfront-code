@@ -25,6 +25,15 @@ export const SERVER_PERMISSIONS = [
 /**
  * WORKFLOW_RUN — `ProcessRunExecutor` (RESTRICTED).
  * Runs user-authored code — no `--allow-run`, `--allow-ffi`, or `--allow-sys`.
+ *
+ * `--allow-env` is intentionally left unscoped here rather than pinned to a
+ * static allowlist: the set of env vars a run legitimately needs (tenant
+ * context, MODE/run IDs, operator-supplied vars such as REDIS_URL) is assembled
+ * dynamically per execution and cannot be enumerated statically. Secret
+ * isolation is enforced at spawn time instead — `ProcessRunExecutor` starts the
+ * child with `clearEnv: true`, so the child's environment contains ONLY the
+ * per-run `processEnv` (intended vars plus non-secret runtime-infra vars) and
+ * never inherits arbitrary host secrets, making an unscoped `--allow-env` safe.
  */
 export const WORKFLOW_RUN_PERMISSIONS = [
   "--allow-read",

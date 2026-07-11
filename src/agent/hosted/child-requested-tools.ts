@@ -385,8 +385,9 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
     logger: input.logger,
   });
   if (!preparedTools.ok) {
-    await toolSources.closeTooling?.();
-    await toolSources.closeRuntime?.();
+    // Run both closers even if one rejects; closeRuntime tears down the live
+    // sandbox and must not be skipped when closeTooling fails.
+    await Promise.allSettled([toolSources.closeTooling?.(), toolSources.closeRuntime?.()]);
     return preparedTools;
   }
 

@@ -152,6 +152,10 @@ export class OAuthProvider {
       fallbackRefreshToken;
     const tokenType = str(mapping.tokenType ?? "token_type");
     const scope = str(mapping.scope ?? "scope");
+    // SECURITY: the id_token is captured verbatim and persisted WITHOUT any
+    // verification (no signature/aud/iss/exp/nonce validation). It MUST NOT be
+    // used for any authentication or authorization decision unless fully
+    // verified as a JWT first.
     const idToken = optStr("id_token");
 
     const tokens: OAuthTokens = {

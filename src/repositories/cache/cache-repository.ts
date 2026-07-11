@@ -288,6 +288,19 @@ class MemoryTier implements CacheTier<string> {
     return entry.value;
   }
 
+  async getRemainingTtlSeconds(key: string): Promise<number | null> {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+
+    const remainingMs = entry.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      this.store.delete(key);
+      return null;
+    }
+
+    return Math.ceil(remainingMs / 1000);
+  }
+
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     if (this.store.size >= this.maxEntries && !this.store.has(key)) {
       const oldest = this.store.keys().next().value;

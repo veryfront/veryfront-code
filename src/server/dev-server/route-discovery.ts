@@ -146,6 +146,14 @@ export class RouteDiscovery {
       logger.debug("Directory stat result", { path, isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
+      // A missing directory is the expected "no routes here" case and by far the
+      // common one (e.g. a project with no `.veryfront` dir yet). Returning false
+      // is correct for both a genuine absence and a transient adapter error, so
+      // this stays at debug: escalating to warn here fires on the ordinary
+      // missing-dir path (the not-found is wrapped by the fallback-wrapper, so it
+      // is not recognizable as ENOENT) and floods normal dev startup. Surfacing a
+      // genuine adapter failure distinctly needs not-found detection that sees
+      // through the fallback wrapper — tracked as a follow-up.
       logger.debug("Directory check failed", { path, error: String(error) });
       return false;
     }

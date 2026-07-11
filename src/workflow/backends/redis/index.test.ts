@@ -594,7 +594,7 @@ describe("RedisBackend", () => {
 
   describe("locking", () => {
     it("should acquire and release a lock", async () => {
-      assertEquals(await backend.acquireLock("run-lock", 5000), true);
+      assertExists(await backend.acquireLock("run-lock", 5000));
       assertEquals(await backend.isLocked("run-lock"), true);
 
       await backend.releaseLock("run-lock");
@@ -602,8 +602,8 @@ describe("RedisBackend", () => {
     });
 
     it("should fail to acquire lock when already held", async () => {
-      assertEquals(await backend.acquireLock("run-lock2", 5000), true);
-      assertEquals(await backend.acquireLock("run-lock2", 5000), false);
+      assertExists(await backend.acquireLock("run-lock2", 5000));
+      assertEquals(await backend.acquireLock("run-lock2", 5000), null);
     });
 
     it("should extend an existing lock", async () => {
@@ -617,7 +617,7 @@ describe("RedisBackend", () => {
 
     it("releaseLock should not delete a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertEquals(await backend.acquireLock("run-own", 5000), true);
+      assertExists(await backend.acquireLock("run-own", 5000));
       const lockKey = "test:lock:run-own";
 
       // Simulate lock expiry + worker B acquiring it: overwrite the stored
@@ -632,7 +632,7 @@ describe("RedisBackend", () => {
 
     it("extendLock should not extend a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertEquals(await backend.acquireLock("run-own2", 5000), true);
+      assertExists(await backend.acquireLock("run-own2", 5000));
       const lockKey = "test:lock:run-own2";
 
       // Simulate worker B taking over the lock.
@@ -664,7 +664,7 @@ describe("RedisBackend", () => {
         return realDel(...keys);
       };
 
-      assertEquals(await backend.acquireLock("run-atomic", 5000), true);
+      assertExists(await backend.acquireLock("run-atomic", 5000));
       await backend.releaseLock("run-atomic");
 
       // One atomic eval, and no separate get/del round-trips for the release.

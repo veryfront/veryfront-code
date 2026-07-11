@@ -102,6 +102,10 @@ export class WorkflowExecutor {
   // deno-lint-ignore no-explicit-any -- type-erased registry: register() accepts WorkflowDefinition<TInput, TOutput> with arbitrary type params
   private workflows = new Map<string, WorkflowDefinition<any, any>>();
   private blobResolver?: BlobResolver;
+  /** Runs cancelled in-process; guards terminal writes from clobbering "cancelled". */
+  private cancelledRuns = new Set<string>();
+  /** Per-run aborters that stop in-flight execution when cancel() is called. */
+  private cancelSignals = new Map<string, () => void>();
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30_000;
@@ -307,9 +311,13 @@ export class WorkflowExecutor {
     // Never let this reject go unobserved if execution finishes first.
     lockLostPromise.catch(() => {});
 
+    // Acquire the lock BEFORE registering any per-run state (cancelSignals). If
+    // acquisition fails we throw here, and registering the cancel signal earlier
+    // would leak it (and later poison cancelledRuns) on every lost lock race.
+    let lockToken: string | null = null;
     if (useLocking) {
-      const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
-      if (!acquired) {
+      lockToken = await this.config.backend.acquireLock!(runId, lockDuration);
+      if (!lockToken) {
         throw ORCHESTRATION_ERROR.create({
           detail:
             `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
@@ -318,6 +326,19 @@ export class WorkflowExecutor {
       }
       logger.debug("Acquired lock for run", { runId });
     }
+
+    // Cancellation: cancel() writes "cancelled" to the backend and triggers this
+    // signal so in-flight execution stops promptly (raced against DAG execution,
+    // mirroring the lock-lost abort). Once aborted we skip writing any terminal
+    // status so we don't clobber the persisted "cancelled" state. Registered only
+    // after a successful lock acquire so it is always cleaned up by the finally.
+    let signalCancelled: (() => void) | undefined;
+    const cancelledPromise = new Promise<never>((_, reject) => {
+      signalCancelled = () =>
+        reject(ORCHESTRATION_ERROR.create({ detail: `Workflow run "${runId}" was cancelled` }));
+    });
+    cancelledPromise.catch(() => {});
+    this.cancelSignals.set(runId, () => signalCancelled?.());
 
     try {
       const now = new Date();
@@ -375,12 +396,17 @@ export class WorkflowExecutor {
             Promise.race([
               this.dagExecutor.execute(nodes, runWithTenantContext, startFromNode),
               lockLostPromise,
+              cancelledPromise,
             ]),
           workflow.timeout,
         ));
 
       if (result.completed) {
         const finalRun = await this.completeRun(runId, result.context, result.nodeStates);
+
+        // A concurrent cancel() may have won: completeRun leaves the "cancelled"
+        // status intact, so don't run completion side-effects in that case.
+        if (this.cancelledRuns.has(runId) || finalRun.status === "cancelled") return;
 
         workflow.outputSchema?.parse(finalRun.output);
 
@@ -397,6 +423,9 @@ export class WorkflowExecutor {
         return;
       }
 
+      // A concurrent cancel() takes precedence over a failure result.
+      if (this.cancelledRuns.has(runId)) return;
+
       const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
       await this.failRun(runId, error, result.context, result.nodeStates);
 
@@ -404,6 +433,14 @@ export class WorkflowExecutor {
       this.config.onError?.(run, error);
     } catch (error) {
       const normalizedError = ensureError(error);
+
+      // Cancelled in-process: cancel() already persisted the "cancelled" status
+      // (and likely triggered this abort). Do not write a terminal status or fire
+      // error callbacks — that would clobber the cancellation.
+      if (this.cancelledRuns.has(runId)) {
+        logger.warn("Run cancelled; leaving cancelled status for run", { runId });
+        return;
+      }
 
       // Lock lost: we no longer own the run, so a new owner (via stalled-run
       // recovery) is responsible for it. Do NOT write a terminal status here or
@@ -424,8 +461,11 @@ export class WorkflowExecutor {
         clearInterval(heartbeatInterval);
       }
 
-      if (useLocking) {
-        await this.config.backend.releaseLock!(runId);
+      this.cancelSignals.delete(runId);
+      this.cancelledRuns.delete(runId);
+
+      if (useLocking && lockToken) {
+        await this.config.backend.releaseLock!(runId, lockToken);
         logger.debug("Released lock for run", { runId });
       }
     }
@@ -535,6 +575,10 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<WorkflowRun> {
+    // Don't overwrite a run that was cancelled out from under us.
+    const current = await this.config.backend.getRun(runId);
+    if (current?.status === "cancelled") return current;
+
     const publicContext = this.toPublicContext(context);
     const output = this.determineOutput(publicContext);
 
@@ -558,6 +602,10 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<void> {
+    // Don't overwrite a run that was cancelled out from under us.
+    const current = await this.config.backend.getRun(runId);
+    if (current?.status === "cancelled") return;
+
     const publicContext = this.toPublicContext(context);
 
     await this.config.backend.updateRun(runId, {
@@ -669,10 +717,21 @@ export class WorkflowExecutor {
       });
     }
 
+    // If this process is running the run, mark it cancelled before persisting so
+    // its in-flight executeAsync() sees the flag when the abort fires and skips
+    // writing a terminal status. Runs executing elsewhere are still protected by
+    // the cancelled-status re-read in completeRun()/failRun().
+    const activeAbort = this.cancelSignals.get(runId);
+    if (activeAbort) this.cancelledRuns.add(runId);
+
     await this.config.backend.updateRun(runId, {
       status: "cancelled",
       completedAt: new Date(),
     });
+
+    // Abort in-flight execution so it stops promptly instead of running to
+    // completion and clobbering the cancelled status.
+    activeAbort?.();
   }
 
   /**

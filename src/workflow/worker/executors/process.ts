@@ -19,6 +19,46 @@ import type {
 const logger = baseLogger.component("process-run-executor");
 
 /**
+ * Non-secret host env vars forwarded to the child when its environment is
+ * cleared (clearEnv). These let the spawned Deno runtime locate its module
+ * cache, temp dir, TLS roots and locale — none carry application secrets, which
+ * are deliberately excluded so workflow code cannot read them.
+ */
+const RUNTIME_INFRA_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "DENO_DIR",
+  "DENO_INSTALL_ROOT",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "DENO_TLS_CA_STORE",
+  "DENO_CERT",
+  "LANG",
+  "LC_ALL",
+  // Windows runtime essentials
+  "SYSTEMROOT",
+  "SystemRoot",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "USERPROFILE",
+  "PATHEXT",
+] as const;
+
+/** Collect the forwardable runtime-infra env vars present on the host. */
+function collectRuntimeInfraEnv(): Record<string, string> {
+  const infra: Record<string, string> = {};
+  if (typeof Deno === "undefined") return infra;
+  for (const key of RUNTIME_INFRA_ENV_KEYS) {
+    const value = Deno.env.get(key);
+    if (value !== undefined) infra[key] = value;
+  }
+  return infra;
+}
+
+/**
  * Process run executor configuration
  */
 export interface ProcessRunExecutorConfig {
@@ -97,8 +137,11 @@ export class ProcessRunExecutor implements RunExecutor {
   createRunExecution(executionConfig: RunExecutionConfig): Promise<string> {
     const { executionId, run, managerId, timeout, env, debug } = executionConfig;
 
-    // Build environment variables
+    // Build environment variables. Start from the forwarded runtime-infra vars
+    // (needed because the child spawns with clearEnv:true) so operator- and
+    // run-supplied values still take precedence over them.
     const processEnv: Record<string, string> = {
+      ...collectRuntimeInfraEnv(),
       ...this.config.env,
       ...env,
       MODE: "run",
@@ -123,10 +166,14 @@ export class ProcessRunExecutor implements RunExecutor {
       }
     }
 
-    // Spawn the process
+    // Spawn the process.
+    // clearEnv drops the inherited host environment so the child sees ONLY the
+    // explicitly-assembled processEnv (mode/run IDs and tenant context) and never
+    // inherits host secrets (API keys, tokens) that the workflow code must not read.
     const command = new Deno.Command(this.config.command, {
       args: [...this.config.args, this.config.entrypointPath],
       cwd: this.config.cwd,
+      clearEnv: true,
       env: processEnv,
       stdout: "piped",
       stderr: "piped",

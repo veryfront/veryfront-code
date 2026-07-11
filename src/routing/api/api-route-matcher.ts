@@ -90,6 +90,11 @@ export class ApiRouteMatcher {
       isOptionalCatchAll,
       isCatchAll,
     });
+
+    // A path may have been negatively cached (null / 404) before this route was
+    // registered (dev hot-reload / late route discovery). Invalidate so the newly
+    // added route becomes visible instead of the stale miss sticking forever.
+    this.routeCache.clear();
   }
 
   private normalizePathname(path: string): string {

@@ -218,7 +218,14 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       closeTooling: toolSources.closeStudioMcpTools,
     };
   } catch (error) {
-    await sandboxResult.closeSandbox();
+    // Never let a close failure mask the original error that triggered cleanup.
+    try {
+      await sandboxResult.closeSandbox();
+    } catch (closeError) {
+      input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
+        error: closeError,
+      });
+    }
     throw error;
   }
 }

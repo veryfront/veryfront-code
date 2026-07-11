@@ -31,11 +31,11 @@ export {
 
 export { validatePathBasics } from "./rules.ts";
 
-export { getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
+export { getCanonicalBaseDir, getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
 
 export { ValidationPresets } from "./presets.ts";
 
-import { getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
+import { getCanonicalBaseDir, getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
 import {
   isAbsolutePath,
   joinPaths,
@@ -102,7 +102,11 @@ export async function validatePath(
     };
   }
 
-  const allowResult = validateAllowedDirs(canonicalPath, baseDir, allowedDirs);
+  // Compare the physically-resolved candidate against a physically-resolved base
+  // so a symlink escape is caught while a symlinked base prefix does not cause a
+  // false OUTSIDE_BASE rejection.
+  const canonicalBaseDir = await getCanonicalBaseDir(baseDir, adapter);
+  const allowResult = validateAllowedDirs(canonicalPath, canonicalBaseDir, allowedDirs);
   if (!allowResult.valid) return allowResult;
 
   if (checkExists && adapter) {

@@ -43,10 +43,16 @@ function generatePromptId(): string {
 }
 
 function sanitizeVariableValue(value: string): string {
-  return BLOCKED_PROMPT_PATTERNS.reduce(
-    (sanitizedValue, pattern) => sanitizedValue.replace(pattern, ""),
-    value,
-  );
+  return BLOCKED_PROMPT_PATTERNS.reduce((sanitizedValue, pattern) => {
+    // The shared patterns are non-global, so a plain .replace() strips only the
+    // first match and is bypassable by repetition. Use a per-call global-flagged
+    // copy to strip every occurrence. A copy (not a mutation) is required because
+    // these same regex objects are consumed with stateful .test() in validator.ts.
+    const globalPattern = pattern.global
+      ? pattern
+      : new RegExp(pattern.source, `${pattern.flags}g`);
+    return sanitizedValue.replace(globalPattern, "");
+  }, value);
 }
 
 function interpolateVariables(

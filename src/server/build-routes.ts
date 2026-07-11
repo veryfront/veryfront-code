@@ -3,6 +3,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join, relative } from "#veryfront/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
@@ -76,8 +77,17 @@ export async function collectAppRoutes(
 
     return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
   } catch (e) {
-    logger.debug("No app directory found for SSG", e);
-    return [];
+    // A missing app/ directory is the legitimately-expected empty case.
+    if (isNotFoundError(e)) {
+      logger.debug("No app directory found for SSG", e);
+      return [];
+    }
+    // Anything else (permission error, adapter failure, a bug thrown mid-traversal)
+    // must fail loudly so a broken SSG build doesn't silently emit zero routes.
+    logger.error("Failed to collect App Router routes for SSG", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    throw e;
   }
 }
 

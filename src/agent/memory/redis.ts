@@ -13,6 +13,7 @@ import {
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /**
  * Redis client interface (compatible with ioredis and node-redis)
@@ -68,9 +69,15 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
     if (!data) return [];
     try {
       return JSON.parse(data);
-    } catch (_) {
-      /* expected: corrupted JSON in Redis, return empty message list */
-      return [];
+    } catch (error) {
+      // Do NOT swallow-and-return []: add() would then overwrite the key with a
+      // single message and permanently destroy the stored history. Surface the
+      // corruption so the caller aborts instead of silently truncating.
+      agentLogger.error("Corrupted JSON in Redis memory; refusing to overwrite", {
+        key: this.getKey(),
+        error,
+      });
+      throw error;
     }
   }
 
@@ -79,6 +86,10 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
       "agent.memory.redis.add",
       async () => {
         const key = this.getKey();
+        // NOTE: this GET -> push -> SET is not atomic. The RedisClient interface
+        // exposes only get/set/del/expire (no eval/rPush), so concurrent add()
+        // calls on the same key can lose updates (last writer wins). Given an
+        // atomic list op or Lua eval, prefer an atomic append here.
         let messages = this.parseMessages(await this.client.get(key));
 
         messages.push(message);

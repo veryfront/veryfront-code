@@ -137,6 +137,32 @@ describe("agent/data-stream", () => {
     assertEquals(entry.message, "Data stream reader cancellation failed during cleanup");
   });
 
+  it("drops malformed SSE data blocks and returns an empty events array", () => {
+    const parsed = parseDataStreamSseEvents("data: {invalid json}\n\n");
+    assertEquals(parsed.events, []);
+    assertEquals(parsed.remainder, "");
+  });
+
+  it("drops blocks that contain no data: lines (e.g. comment-only or blank blocks)", () => {
+    // A block with only a comment line has no data: lines — must yield [].
+    const withComment = parseDataStreamSseEvents("comment: ignored\n\n");
+    assertEquals(withComment.events, []);
+    assertEquals(withComment.remainder, "");
+
+    // A block that is just whitespace also has no data: lines.
+    const blankBlock = parseDataStreamSseEvents("\n\n");
+    assertEquals(blankBlock.events, []);
+    assertEquals(blankBlock.remainder, "");
+  });
+
+  it("drops the [DONE] sentinel block without throwing", () => {
+    // SSE streams commonly terminate with `data: [DONE]`. [DONE] is not valid
+    // JSON, so parseDataStreamSseEvents must drop it silently and return [].
+    const parsed = parseDataStreamSseEvents("data: [DONE]\n\n");
+    assertEquals(parsed.events, []);
+    assertEquals(parsed.remainder, "");
+  });
+
   it("normalizes streamed tool input placeholders consistently", () => {
     assertEquals(
       stripLeadingEmptyObjectPlaceholder('{} {"query":"Veryfront"}'),

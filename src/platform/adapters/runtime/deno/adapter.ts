@@ -193,6 +193,23 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    assertDenoRuntime("DenoFileSystemAdapter", "lstat");
+    const stat = await Deno.lstat(path);
+    return {
+      size: stat.size,
+      isFile: stat.isFile,
+      isDirectory: stat.isDirectory,
+      isSymlink: stat.isSymlink,
+      mtime: stat.mtime,
+    };
+  }
+
+  async realPath(path: string): Promise<string> {
+    assertDenoRuntime("DenoFileSystemAdapter", "realPath");
+    return await Deno.realPath(path);
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     assertDenoRuntime("DenoFileSystemAdapter", "mkdir");
     await Deno.mkdir(path, options);

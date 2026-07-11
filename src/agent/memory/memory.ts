@@ -244,7 +244,10 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       .map((text) => text.substring(0, 50))
       .join("; ");
 
-    this.summary = `Discussed: ${topics}`;
+    // Merge with the existing summary so earlier context accumulates instead of
+    // being discarded on each resummarization.
+    const newSummary = `Discussed: ${topics}`;
+    this.summary = this.summary ? `${this.summary}; ${newSummary}` : newSummary;
     this.messages = remaining;
 
     return Promise.resolve();

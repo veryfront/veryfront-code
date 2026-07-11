@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 
 describe("generate-api-reference", () => {
@@ -50,13 +50,16 @@ describe("generate-api-reference", () => {
         routerReference,
         "| Name | Description | Source |",
       );
-      assertStringIncludes(
+      // Alias re-exports must resolve to their target's JSDoc description and a
+      // source link. Assert the stable leading phrase + link rather than pinning
+      // the full prose, which evolves with the JSDoc.
+      assertMatch(
         routerReference,
-        "| `RouterProvider` | Provides the router context value used by `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L",
+        /\| `RouterProvider` \| Provides the router context[^|]*\| \[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/,
       );
-      assertStringIncludes(
+      assertMatch(
         routerReference,
-        "| `useRouter` | Reads the current router context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L",
+        /\| `useRouter` \| Reads the router context[^|]*\| \[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/,
       );
 
       const localHomePrefix = "/" + "Users/";

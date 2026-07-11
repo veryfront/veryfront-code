@@ -101,7 +101,10 @@ export function isCacheWriteRaceError(error: unknown): boolean {
   // Deno-specific NotFound
   if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) return true;
 
-  // os error 22 (EINVAL) on some platforms when path component is gone
+  // EINVAL (os error 22) on some platforms when a path component is gone.
+  // Prefer a structured errno code when present; the string match is brittle
+  // and kept only as a fallback for runtimes that don't expose `code`.
+  if ("code" in error && (error as Record<string, unknown>).code === "EINVAL") return true;
   if (error instanceof TypeError && error.message.includes("os error 22")) return true;
 
   return false;

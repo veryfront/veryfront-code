@@ -33,6 +33,10 @@ export async function executeLoopNodeStrategy(
   let iteration = 0;
   let exitReason: "condition" | "maxIterations" | "error" = "condition";
   let lastError: string | undefined;
+  // Tracks whether the loop terminated because `while` returned false. A loop
+  // that exhausts its iteration budget never trips this, so it is relabeled as
+  // "maxIterations" below.
+  let exitedViaCondition = false;
 
   const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
 
@@ -59,6 +63,7 @@ export async function executeLoopNodeStrategy(
 
     if (!(await config.while(context, loopContext))) {
       exitReason = "condition";
+      exitedViaCondition = true;
       break;
     }
 
@@ -132,7 +137,7 @@ export async function executeLoopNodeStrategy(
     iteration++;
   }
 
-  if (iteration >= config.maxIterations && exitReason !== "condition") {
+  if (exitReason !== "error" && !exitedViaCondition) {
     exitReason = "maxIterations";
   }
 
