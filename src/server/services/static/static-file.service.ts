@@ -196,15 +196,23 @@ export class StaticFileService {
         source: candidate.source,
       };
     } catch (error) {
-      // A genuinely missing file is the expected 404 path.
-      if (isNotFoundError(error)) return null;
-      // A real I/O error (EACCES, disk failure) must not be collapsed to a 404
-      // and CDN-cached as such. Surface it so it becomes a 500.
-      logger.warn("Static file I/O error while resolving candidate", {
-        path: candidate.path,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+      // Candidate probing uses exceptions as control flow: this method is called
+      // once per candidate location (dist, public, ...). A missing file, or a
+      // candidate the security layer rejects (outside the allowed roots), just
+      // means "this candidate does not apply" — resolveFile() must still try the
+      // remaining candidates, so we fall through to null rather than throwing.
+      // Genuinely unexpected errors are logged for diagnosability but must not
+      // fail resolution of a sibling candidate that would have matched.
+      // NOTE: distinguishing a transient I/O failure (which should surface as a
+      // 500 rather than a CDN-cacheable 404) from an ordinary probe miss needs
+      // to happen a layer up, not here — tracked as a follow-up.
+      if (!isNotFoundError(error)) {
+        logger.debug("Static file candidate did not resolve", {
+          path: candidate.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return null;
     }
   }
 

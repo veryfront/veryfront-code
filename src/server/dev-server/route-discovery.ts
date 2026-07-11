@@ -5,7 +5,7 @@ import type { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
-import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("server");
 
@@ -146,18 +146,15 @@ export class RouteDiscovery {
       logger.debug("Directory stat result", { path, isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
-      // A missing directory is the expected "no routes here" case.
-      if (isNotFoundError(error)) {
-        logger.debug("Directory check failed", { path, error: String(error) });
-        return false;
-      }
-      // A transient/adapter error (permission, I/O) must not be silently misread
-      // as "directory absent" and vanish routes. Log loudly; return false so a
-      // single failing candidate doesn't abort discovery of the others.
-      logger.warn("Directory existence check failed with a non-not-found error", {
-        path,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // A missing directory is the expected "no routes here" case and by far the
+      // common one (e.g. a project with no `.veryfront` dir yet). Returning false
+      // is correct for both a genuine absence and a transient adapter error, so
+      // this stays at debug: escalating to warn here fires on the ordinary
+      // missing-dir path (the not-found is wrapped by the fallback-wrapper, so it
+      // is not recognizable as ENOENT) and floods normal dev startup. Surfacing a
+      // genuine adapter failure distinctly needs not-found detection that sees
+      // through the fallback wrapper — tracked as a follow-up.
+      logger.debug("Directory check failed", { path, error: String(error) });
       return false;
     }
   }
