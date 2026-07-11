@@ -1,114 +1,174 @@
-# Migration guide — `veryfront/chat` composition overhaul (breaking batch E8–E11)
+# Migrate the `veryfront/chat` composition breaking batch
 
-The additive replacement layer (E0–E6) landed first: every removal below has a
-composition replacement that already ships. This is the batched breaking change
-— one migration for consumers, not many. Each removal burns a ratchet in
-`scripts/lint/ban-chat-antipatterns.ts` toward 0.
+This guide covers the E8-E11 breaking batch. The replacement composition APIs
+land in the same release as the removals, so you can migrate once. See the
+[breaking-change summary](./CHANGELOG-chat-breaking.md) for the release-facing
+list of changes.
 
-Status key: **[done]** landed & validated · **[planned]** replacement exists, removal pending.
+## Run the codemod
 
----
+Run the codemod against one or more files or directories:
 
-## E9 — passthrough props → per-sub-component slots
-
-Styling and icons are set on the piece you mean, not smuggled through the parent.
-
-| Removed | Replacement | Status |
-| --- | --- | --- |
-| `<ChatSidebar icons={{ more, rename, delete, newConversation }}>` + `ChatSidebarIcons` | `<ChatSidebar.Item.Menu icon>`, `<ChatSidebar.Item.Rename icon>`, `<ChatSidebar.Item.Delete icon>`, `<ChatSidebar.NewButton icon>` | **[done]** |
-| `AgentPickerIcons` / `ChatInputIcons` / `AttachmentPillIcons` bags | per-leaf `icon` on `AgentPicker.Trigger`/`.Item`, `ChatInput.Send`/`.Stop`/`.Voice`/`.Attach`, `AttachmentPill.Retry`/`.Remove` | **[done]** |
-| `MessageActionBarIcons` / `BranchPickerIcons` / `MessageFeedbackIcons` bags | **removed** — these flat multi-button leaves render fixed default glyphs (no icon override; compose a variant if you need custom icons) | **[done]** |
-| `AttachmentPill` `showRemove` (internal context flag) | presence-driven: the `.Remove` leaf renders when `onRemove` is set and not uploading | **[done]** |
-| `<Message.Content contentClassName>` / `InlineCitation cardClassName` | needs the nested element exposed as a sub-component first (compound-ify), then a single root `className` per part | **[planned]** |
-
-```diff
-- <ChatSidebar icons={{ rename: <MyPencil/>, delete: <MyTrash/> }} … />
-+ <ChatSidebar.Root …>
-+   <ChatSidebar.List>
-+     {items.map((c) => (
-+       <ChatSidebar.Item key={c.id} conversation={c}>
-+         <ChatSidebar.Item.Menu>
-+           <ChatSidebar.Item.Rename icon={<MyPencil/>} />
-+           <ChatSidebar.Item.Delete icon={<MyTrash/>} />
-+         </ChatSidebar.Item.Menu>
-+       </ChatSidebar.Item>
-+     ))}
-+   </ChatSidebar.List>
-+ </ChatSidebar.Root>
+```bash
+deno task codemod:chat -- ./app
 ```
 
----
+Use check mode in CI to find files that still need migration:
 
-## E8 — feature-toggle booleans → presence-driven composition
+```bash
+deno task codemod:chat -- --check ./app
+```
 
-`show*/enable*/hide*` flags become "include the sub-component, or don't"
-(composition-patterns §1.1/§3.1: modes are composition or explicit variants,
-never behaviour booleans). The batteries `<Chat>` stays the default variant.
+The codemod parses TypeScript and JSX with Babel. It automatically:
 
-| Removed flag | Replacement | Status |
-| --- | --- | --- |
-| `showSources` (Message/Chat) | render `<Message.Sources />` (or omit it) | **[planned]** |
-| `showSteps` | include the steps region (`StepIndicator` / `Message.Part`) or omit | **[planned]** |
-| `showScrollButton` | include `<ConversationScrollButton />` or omit | **[planned]** |
-| `showMessageActions` | include `<Message.Actions />` or omit | **[planned]** |
-| `showExport` | include the export action (`exportAsMarkdown`) or omit | **[planned]** |
-| `showTabs` / `hideTabSwitcher` | include `<TabSwitcher />` or omit | **[planned]** |
-| `showSearch` (AgentPicker) | include `<AgentPicker.Search />` or omit | **[planned]** |
-| `enableAttachments` | include `<ChatInput.Attach />` / `<AttachmentsPanel />` or omit | **[planned]** |
-| `enableVoice` | include `<ChatInput.Voice />` or omit | **[planned]** |
-| `enableMermaid` | pass a Mermaid-capable `codeBlock` to `Message.Content` or omit | **[planned]** |
-| `showRemove` (AttachmentPill) | include `<AttachmentPill.Remove />` or omit | **[planned]** |
+- rewrites removed compatibility imports to canonical imports
+- replaces a local `useChat()` result spread into `<Chat>` and matching
+  `chat.messages` style props with `<Chat chat={chat} />`
+- rewrites removed `useChat()` aliases to `handleInputChange`, `handleSubmit`,
+  and `setModel`
+- removes feature flags when their value matches the fixed preset behavior
+- converts `Sources.renderPill` to the canonical `renderItem` callback shape
+
+When a rewrite depends on application intent, the codemod keeps the old prop so
+your typecheck still identifies it and inserts a `TODO(veryfront-migration)`
+comment beside the JSX element. Resolve every marker before merging the
+consumer migration.
+
+## E8: Replace behavior flags with composition
+
+The `<Chat>` preset now has one fixed arrangement. It includes attachments,
+message sources, multi-step rendering, message actions, and the scroll-to-bottom
+control. It does not include tabs, export, or voice controls. Compose the lower
+level parts when you need a different arrangement.
+
+| Removed flag                  | Replacement                                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `showSources`                 | Include or omit `<Message.Sources />`.                                                              |
+| `showSteps`                   | Render step groups with `<Message.Part />`, or filter them in the `Message.Content` function child. |
+| `showScrollButton`            | Pass a `renderScrollButton` to `ChatMessageList`, or compose your own scroll control.               |
+| `showMessageActions`          | Include or omit `<Message.Actions />`.                                                              |
+| `showExport`                  | Include or omit `<ChatInput.Export messages={messages} />`.                                         |
+| `showTabs`, `hideTabSwitcher` | Include or omit `<TabSwitcher />` in a composed layout.                                             |
+| `enableAttachments`           | Include or omit `<ChatInput.Attach />` and attachment handling.                                     |
+| `enableVoice`                 | Include or omit `<ChatInput.Voice />`.                                                              |
+| `showSearch`                  | Include or omit `<AgentPicker.Search />` or `<ModelSelector.Search />`.                             |
+| `enableMermaid`               | Pass a Mermaid-capable `renderCodeBlock` to `Markdown` or `codeBlock` to `Message.Content`.         |
+| `showRemove`                  | Include or omit `<AttachmentPill.Remove />`.                                                        |
+
+The tab-only preset props `activeTab`, `onTabChange`, `uploads`, and
+`onRemoveUpload`, plus the preset `onVoice` callback, are also removed. Pass
+the tab and upload values directly to composed `TabSwitcher` and
+`AttachmentsPanel` parts. Pass the voice handler to `ChatInput.Root` or
+`ChatInput`, then include `<ChatInput.Voice />` in the composed toolbar.
 
 ```diff
-- <Message message={m} showSources showMessageActions />
-+ <Message.Root message={m}>
+- <Message message={message} showSources showSteps />
++ <Message.Root message={message}>
++   <Message.Header />
 +   <Message.Content />
 +   <Message.Sources />
 +   <Message.Actions />
 + </Message.Root>
 ```
 
-> The preset `<Chat>` keeps rendering the default arrangement (sources, actions,
-> scroll button, …) with zero config — you only compose when you want to *change*
-> the arrangement. Removing the flags means there's exactly one way to turn a
-> region off: don't include it.
+## E9: Move customization to compound leaves
 
----
-
-## E10 — one controlled path (remove the deprecated flat `ChatProps`)
-
-The flat `messages`/`input`/`onChange`/`onSubmit`/`sendMessage`/`stop`/`reload`/
-`setInput`/`model`/`activeModel`/`onModelChange`/`inferenceMode`/`renderTool`/… props on
-`<Chat>` (24 `@deprecated` members in `chat/chat-props.ts`) collapse to a single
-whole-session object.
-
-| Removed | Replacement | Status |
-| --- | --- | --- |
-| `<Chat messages={…} input={…} onChange={…} onSubmit={…} … />` | `<Chat chat={useChat()} />` | **[planned]** |
-| `renderTool` prop | compose `Message.Content`'s function child (special-case `part.type === "tool"`) | **[planned]** |
+| Removed API                                    | Replacement                                                                         |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `ChatSidebar icons={{...}}` and icon bag types | Set `icon` on `ChatSidebar.Item.Menu`, `.Rename`, `.Delete`, and `.NewButton`.      |
+| `AgentPicker icons={{...}}`                    | Set `icon` on `AgentPicker.Trigger`, `.Item`, `.Create`, and `.Manage`.             |
+| `ChatInput icons={{...}}`                      | Set `icon` on `ChatInput.Attach`, `.Send`, `.Stop`, `.Voice`, and `.Export`.        |
+| `AttachmentPill icons={{...}}`                 | Set `icon` on `AttachmentPill.Retry` and `.Remove`.                                 |
+| `MessageActionBar icons={{...}}`               | Set `icon` on `MessageActionBar.Copy`, `.Copied`, `.Regenerate`, and `.Edit`.       |
+| `BranchPicker icons={{...}}`                   | Set `icon` on `BranchPicker.Previous` and `.Next`.                                  |
+| `MessageFeedback icons={{...}}`                | Set `icon` on `MessageFeedback.Positive` and `.Negative`.                           |
+| `Message.Content contentClassName`             | Set `className` on `<ChatMessageList.Content>` or the specific `Message` leaf.      |
+| `InlineCitation cardClassName`                 | Set `className` on `<InlineCitation.Card>`.                                         |
+| `useDropZone().dragProps`                      | Use the returned `onDragEnter`, `onDragLeave`, `onDragOver`, and `onDrop` handlers. |
 
 ```diff
-- <Chat messages={messages} input={input} onChange={onChange} onSubmit={onSubmit} … />
-+ const chat = useChat();
+- <InlineCitation index={0} source={source} cardClassName="wide" />
++ <InlineCitation index={0} source={source}>
++   <InlineCitation.Trigger />
++   <InlineCitation.Card className="wide" />
++ </InlineCitation>
+```
+
+## E10: Use one controlled Chat path
+
+Pass one complete `UseChatResult` to the preset:
+
+```diff
+- <Chat
+-   messages={chat.messages}
+-   input={chat.input}
+-   onChange={chat.handleInputChange}
+-   onSubmit={chat.handleSubmit}
+- />
 + <Chat chat={chat} />
 ```
 
----
+The flat session props are removed: `messages`, `input`, `onChange`, `onSubmit`,
+`sendMessage`, `stop`, `reload`, `setInput`, `isLoading`, `error`, `models`,
+`model`, `activeModel`, `onModelChange`, `inferenceMode`, `editMessage`,
+`getBranches`, `switchBranch`, `quickActions`, `onQuickAction`, and
+`renderTool`.
 
-## Codemod (E11)
+The spread-oriented `UseChatResult.onChange`, `.onSubmit`, and `.onModelChange`
+aliases are also removed. Use `handleInputChange`, `handleSubmit`, and `setModel`.
 
-A jscodeshift/ts-morph codemod ships alongside, mapping each removed prop to its
-composition form:
-- `icons={{…}}` bag → the compound's `<X.*  icon>` leaves.
-- `show*/enable*/hide*` flags → include/exclude the corresponding sub-component.
-- flat `<Chat messages input …>` → `<Chat chat={useChat()} />`.
+For a custom tool row, use a `Message.Content` function child and render
+`Message.Part` for the groups you do not replace:
 
-Where a mechanical rewrite isn't safe (custom `renderTool`), the codemod inserts
-a `// TODO(veryfront-migration):` marker with a link to this guide.
+```tsx
+<Message.Root message={message}>
+  <Message.Content>
+    {(part) =>
+      part.type === "tool" ? <CustomTool tool={part.tool} /> : <Message.Part part={part} />}
+  </Message.Content>
+</Message.Root>;
+```
 
-## Verifying your migration
+The redundant `renderTool` callbacks on `Message`, `ChatMessageList`, and
+`AgentCard` are removed. Use `renderMessage` for a whole transcript row or
+compound children for leaf-level control.
 
-Run your typecheck against the new types — the removed props are gone from the
-public `.d.ts`, so `tsc` flags every call site. The library's own
-`deno task typecheck:consumer` proves the documented composition compiles; the
-`lint:chat-ratchets` gate proves the anti-patterns reached 0.
+## Replace compatibility component names
+
+| Removed import                          | Canonical import                        |
+| --------------------------------------- | --------------------------------------- |
+| `ChatComponents`                        | `Chat`                                  |
+| `ChatComposer`, `Chat.Composer`         | `ChatInput`, `Chat.Input`               |
+| `Attachment`                            | `AttachmentPill`                        |
+| `UploadsPanel`                          | `AttachmentsPanel`                      |
+| `StandaloneMessage`, `StreamingMessage` | `Message`                               |
+| `MessageActions`                        | `MessageActionBar` or `Message.Actions` |
+| `ReasoningCard`                         | `Reasoning`                             |
+| `ToolCallCard`                          | `ToolCall`                              |
+
+The corresponding compatibility prop type aliases are removed as well. Import
+the prop type that matches the canonical component name.
+
+## Replace deferred render props
+
+| Removed prop                  | Replacement                                                                 |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| `ModelSelector.renderTrigger` | Compose `<ModelSelector.Trigger>`.                                          |
+| `ModelSelector.renderRow`     | Use `renderItem={({ item, index }) => ...}` or compose `.List` and `.Item`. |
+| `Sources.renderPill`          | Use `renderItem={({ item, index }) => ...}` or compose `.List` and `.Pill`. |
+| `Message.Tokens.renderRow`    | Use `renderItem={({ item, index }) => ...}`.                                |
+| `InlineCitation.renderCard`   | Compose `<InlineCitation.Card>` children.                                   |
+| `ToolCall.renderSkill`        | Compose a `ToolCall` variant or its compound leaves.                        |
+
+## Verify the migration
+
+Run these checks in the consumer application:
+
+```bash
+deno task codemod:chat -- --check ./app
+deno check ./app/main.tsx
+```
+
+The Veryfront repository verifies the published surface with
+`deno task typecheck:consumer`. Its chat ratchet gate requires zero feature
+flags and zero passthrough bags.

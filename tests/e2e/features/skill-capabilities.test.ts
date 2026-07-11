@@ -417,7 +417,7 @@ import { Chat, useChat } from "veryfront/chat";
 export default function Home() {
   const chat = useChat({ api: "/api/ag-ui" });
 
-  return <Chat {...chat} className="flex-1 min-h-0" placeholder="Message" />;
+  return <Chat chat={chat} className="flex-1 min-h-0" placeholder="Message" />;
 }
 `,
       "tools/get-weather.ts": `

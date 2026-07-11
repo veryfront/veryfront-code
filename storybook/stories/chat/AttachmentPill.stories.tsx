@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Attachment } from "veryfront/chat";
+import { AttachmentPill } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -12,23 +12,23 @@ import {
 import { attachments } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { Attachment } from "veryfront/chat"`;
+const importCode = `import { AttachmentPill } from "veryfront/chat"`;
 
 const compositionTree =
-  `Attachment  <- render it: <Attachment attachment={info} /> (chip anatomy)
-Attachment.Root  <- or compose it: context (attachment, derived view state)
-  +-- Attachment.Thumbnail  <- image square (shown for image attachments)
-  +-- Attachment.Icon       <- state glyph / file-extension square
-  +-- Attachment.Label      <- name + secondary state line
-  +-- Attachment.Retry      <- retry control (error state, needs onRetry)
-  +-- Attachment.Remove     <- remove (✕) control (needs onRemove)`;
+  `AttachmentPill  <- render it: <AttachmentPill attachment={info} />
+AttachmentPill.Root  <- or compose it: context and derived view state
+  +-- AttachmentPill.Thumbnail  <- image square for image attachments
+  +-- AttachmentPill.Icon       <- state glyph or file-extension square
+  +-- AttachmentPill.Label      <- name and secondary state line
+  +-- AttachmentPill.Retry      <- retry control when onRetry is present
+  +-- AttachmentPill.Remove     <- remove control when onRemove is present`;
 
 function AttachmentDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="Attachment"
-        lead="A compact chip representing one chat attachment — file glyph, name, size, and an optional remove control."
+        title="AttachmentPill"
+        lead="A compact chip representing one chat attachment, with a file glyph, name, size, and optional remove control."
       />
 
       <DocsSection
@@ -54,14 +54,14 @@ function AttachmentDocsPage() {
 
       <DocsSection
         title="Upload states"
-        description="Set `attachment.state` to drive the full upload lifecycle — `selected` (dashed, ready to upload), `uploading` (spinner + `progress` %), `processing`, `uploaded` (check), and `error` (retry via `onRetry`)."
+        description="Set `attachment.state` to drive the full upload lifecycle: `selected` (dashed, ready to upload), `uploading` (spinner and `progress` percent), `processing`, `uploaded` (check), and `error` (retry via `onRetry`)."
       >
         <DocsExampleAuto of={States} />
       </DocsSection>
 
       <DocsSection
         title="Compose"
-        description="Drop to `Attachment.Root` + parts to recompose the chip — reorder the controls, restyle a section with `className`, or swap the thumbnail for the icon box."
+        description="Use `AttachmentPill.Root` and its parts to recompose the chip, reorder controls, restyle a section, or replace the thumbnail with the icon box."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -76,7 +76,7 @@ function AttachmentDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="Attachment"
+          component="AttachmentPill"
           description="Renders a single attachment chip"
           props={[
             {
@@ -96,14 +96,10 @@ function AttachmentDocsPage() {
                 "Called to retry a failed upload (shows a retry button in the error state)",
             },
             {
-              name: "icons",
-              type: "AttachmentPillIcons",
-              description: "Override the remove / retry glyphs ({ remove, retry })",
-            },
-            {
               name: "className",
               type: "string",
-              description: "Additional class names for the chip (merged via cn)",
+              description:
+                "Additional class names for the chip (merged via cn)",
             },
           ]}
         />
@@ -132,13 +128,13 @@ function AttachmentDocsPage() {
               type:
                 "'selected' | 'uploading' | 'processing' | 'uploaded' | 'error'",
               description:
-                "Upload lifecycle state — sets the glyph, label, and treatment",
+                "Upload lifecycle state; sets the glyph, label, and treatment",
             },
             {
               name: "progress",
               type: "number",
               description:
-                "Upload progress 0–100, shown in the uploading label",
+                "Upload progress from 0 to 100, shown in the uploading label",
             },
             {
               name: "type",
@@ -163,14 +159,14 @@ function AttachmentDocsPage() {
 }
 
 const meta = {
-  title: "Chat/Components/Attachment",
-  component: Attachment,
+  title: "Chat/Components/AttachmentPill",
+  component: AttachmentPill,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
     docs: { page: AttachmentDocsPage },
   },
-} satisfies Meta<typeof Attachment>;
+} satisfies Meta<typeof AttachmentPill>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -182,7 +178,7 @@ export const Ready: Story = {
       <ReviewSurface label="Ready attachments">
         <div className="flex flex-wrap gap-2 [&>*]:w-[200px]">
           {attachments.map((attachment) => (
-            <Attachment
+            <AttachmentPill
               key={attachment.id}
               attachment={attachment}
               onRemove={() => undefined}
@@ -197,7 +193,7 @@ export const Ready: Story = {
       source: {
         code: `<div className="flex flex-wrap gap-2 [&>*]:w-[200px]">
   {attachments.map((attachment) => (
-    <Attachment
+    <AttachmentPill
       key={attachment.id}
       attachment={attachment}
       onRemove={handleRemove}
@@ -214,7 +210,7 @@ export const Uploading: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Uploading">
-        <Attachment
+        <AttachmentPill
           className="w-[200px]"
           attachment={{
             id: "uploading",
@@ -230,7 +226,7 @@ export const Uploading: Story = {
   parameters: {
     docs: {
       source: {
-        code: `<Attachment
+        code: `<AttachmentPill
   className="w-[200px]"
   attachment={{
     id: "uploading",
@@ -250,7 +246,7 @@ export const WithPreview: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Image thumbnail">
-        <Attachment
+        <AttachmentPill
           className="w-[200px]"
           attachment={{
             id: "preview",
@@ -268,14 +264,14 @@ export const WithPreview: Story = {
   parameters: {
     docs: {
       source: {
-        code: `<Attachment
+        code: `<AttachmentPill
   className="w-[200px]"
   attachment={{
     id: "preview",
     name: "cover.png",
     type: "image/png",
     size: 40218,
-    preview: coverImageUrl, // image src → rendered as an inline thumbnail
+    preview: coverImageUrl, // image src rendered as an inline thumbnail
   }}
   onRemove={handleRemove}
 />`,
@@ -289,7 +285,7 @@ export const Composed: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Recomposed chip">
-        <Attachment.Root
+        <AttachmentPill.Root
           className="w-[200px]"
           attachment={{
             id: "composed",
@@ -299,24 +295,24 @@ export const Composed: Story = {
           }}
           onRemove={() => undefined}
         >
-          <Attachment.Icon />
-          <Attachment.Label />
-          <Attachment.Remove className="ring-1 ring-[var(--edge)]" />
-        </Attachment.Root>
+          <AttachmentPill.Icon />
+          <AttachmentPill.Label />
+          <AttachmentPill.Remove className="ring-1 ring-[var(--edge)]" />
+        </AttachmentPill.Root>
       </ReviewSurface>
     </StoryFrame>
   ),
   parameters: {
     docs: {
       source: {
-        code: `import { Attachment } from "veryfront/chat";
+        code: `import { AttachmentPill } from "veryfront/chat";
 
 // Recompose the chip: icon box + label, then a restyled remove control.
-<Attachment.Root className="w-[200px]" attachment={info} onRemove={handleRemove}>
-  <Attachment.Icon />
-  <Attachment.Label />
-  <Attachment.Remove className="ring-1 ring-[var(--edge)]" />
-</Attachment.Root>`,
+<AttachmentPill.Root className="w-[200px]" attachment={info} onRemove={handleRemove}>
+  <AttachmentPill.Icon />
+  <AttachmentPill.Label />
+  <AttachmentPill.Remove className="ring-1 ring-[var(--edge)]" />
+</AttachmentPill.Root>`,
       },
     },
   },
@@ -328,7 +324,7 @@ export const States: Story = {
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Upload lifecycle">
         <div className="flex flex-col gap-2 [&>*]:w-[200px]">
-          <Attachment
+          <AttachmentPill
             attachment={{
               id: "selected",
               name: "agent-prd.md",
@@ -338,7 +334,7 @@ export const States: Story = {
             }}
             onRemove={() => undefined}
           />
-          <Attachment
+          <AttachmentPill
             attachment={{
               id: "uploading",
               name: "run-export.csv",
@@ -347,7 +343,7 @@ export const States: Story = {
               progress: 62,
             }}
           />
-          <Attachment
+          <AttachmentPill
             attachment={{
               id: "processing",
               name: "handoff-notes.md",
@@ -355,7 +351,7 @@ export const States: Story = {
               state: "processing",
             }}
           />
-          <Attachment
+          <AttachmentPill
             attachment={{
               id: "uploaded",
               name: "release-log.txt",
@@ -365,7 +361,7 @@ export const States: Story = {
             }}
             onRemove={() => undefined}
           />
-          <Attachment
+          <AttachmentPill
             attachment={{
               id: "error",
               name: "screenshot.png",
@@ -383,21 +379,21 @@ export const States: Story = {
     docs: {
       source: {
         code: `<div className="flex flex-col gap-2 [&>*]:w-[200px]">
-  <Attachment
+  <AttachmentPill
     attachment={{ id: "selected", name: "agent-prd.md", type: "md", size: 18432, state: "selected" }}
     onRemove={handleRemove}
   />
-  <Attachment
+  <AttachmentPill
     attachment={{ id: "uploading", name: "run-export.csv", type: "csv", state: "uploading", progress: 62 }}
   />
-  <Attachment
+  <AttachmentPill
     attachment={{ id: "processing", name: "handoff-notes.md", type: "md", state: "processing" }}
   />
-  <Attachment
+  <AttachmentPill
     attachment={{ id: "uploaded", name: "release-log.txt", type: "txt", size: 8102, state: "uploaded" }}
     onRemove={handleRemove}
   />
-  <Attachment
+  <AttachmentPill
     attachment={{ id: "error", name: "screenshot.png", type: "png", state: "error" }}
     onRetry={handleRetry}
     onRemove={handleRemove}

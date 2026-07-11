@@ -263,6 +263,16 @@ describe("Guide: chat-ui.md", () => {
   });
 });
 
+describe("Guide: memory-and-streaming.md", () => {
+  it("uses the canonical useChat event handlers", async () => {
+    const guide = await readGuide("memory-and-streaming.md");
+
+    assertStringIncludes(guide, "handleInputChange");
+    assertStringIncludes(guide, "handleSubmit");
+    assertEquals(guide.includes("const { messages, input, onChange, onSubmit"), false);
+  });
+});
+
 describe("Guide: chat-hooks.md", () => {
   it("uses exported headless chat hooks", () => {
     assertEquals(typeof useChat, "function");
@@ -760,7 +770,7 @@ describe("Guide: create-frontend.md", () => {
         '"use client";',
         'import { Chat, useChat } from "veryfront/chat"',
         "useChat()",
-        '<Chat {...chat} placeholder="Ask me anything..." />',
+        '<Chat chat={chat} placeholder="Ask me anything..." />',
       ]
     ) {
       assertStringIncludes(guide, snippet);

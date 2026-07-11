@@ -27,8 +27,8 @@ import { Avatar } from "../ui/avatar.tsx";
 import { Card } from "../ui/card.tsx";
 import { Status, type StatusColor } from "../ui/status.tsx";
 import { Markdown } from "./markdown.tsx";
-import { ReasoningCard } from "./chat/components/reasoning.tsx";
-import { ToolCallCard } from "./chat/components/tool-ui.tsx";
+import { Reasoning } from "./chat/components/reasoning.tsx";
+import { ToolCall as ToolCallView } from "./chat/components/tool-ui.tsx";
 
 /** Props accepted by agent card. */
 export interface AgentCardProps {
@@ -46,8 +46,6 @@ export interface AgentCardProps {
   thinking?: string;
   /** Additional class name for the card. */
   className?: string;
-  /** Custom tool renderer — overrides the default `ToolCall` card. */
-  renderTool?: (toolCall: ToolCall) => React.ReactNode;
   /** Compose your own card; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
 
@@ -112,7 +110,6 @@ export interface AgentCardContextValue {
   toolCalls: ToolCall[];
   status: AgentStatus;
   thinking?: string;
-  renderTool?: (toolCall: ToolCall) => React.ReactNode;
   presentation: { color: StatusColor; label: string; pulse: boolean };
 }
 
@@ -145,7 +142,6 @@ function AgentCardRoot(
     status,
     thinking,
     className,
-    renderTool,
     children,
     ref,
   }: AgentCardProps,
@@ -159,7 +155,6 @@ function AgentCardRoot(
     toolCalls,
     status,
     thinking,
-    renderTool,
     presentation,
   };
 
@@ -216,23 +211,19 @@ function AgentCardReasoning(
 ): React.JSX.Element | null {
   const { thinking } = useAgentCard();
   if (!thinking) return null;
-  return <ReasoningCard text={thinking} className={className} />;
+  return <Reasoning text={thinking} className={className} />;
 }
 AgentCardReasoning.displayName = "AgentCard.Reasoning";
 
-/** The tool-call list. Renders one `ToolCall` card per entry, or `renderTool`. */
+/** The tool-call list. Renders one `ToolCall` card per entry. */
 function AgentCardTools(
   { className }: { className?: string },
 ): React.JSX.Element | null {
-  const { toolCalls, renderTool } = useAgentCard();
+  const { toolCalls } = useAgentCard();
   if (toolCalls.length === 0) return null;
   return (
     <div className={cn("flex flex-col gap-2", className)}>
-      {toolCalls.map((tool) => (
-        <React.Fragment key={tool.id}>
-          {renderTool ? renderTool(tool) : <ToolCallCard tool={toToolPart(tool)} />}
-        </React.Fragment>
-      ))}
+      {toolCalls.map((tool) => <ToolCallView key={tool.id} tool={toToolPart(tool)} />)}
     </div>
   );
 }

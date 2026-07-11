@@ -202,8 +202,7 @@ function hasVisibleToolOutput(output: unknown): boolean {
 // `ToolCall.Body`, `ToolCall.Input`, `ToolCall.Output`, `ToolCall.Error` — each
 // reads `useToolCall()`. `Input`/`Output` take children to swap the rendered
 // value; every part takes `className`. Skill tools (or `variant="compact"`)
-// render the single-line row and are not composable — there's nothing to
-// compose in a one-line row.
+// render the single-line row by default and accept children to replace it.
 // ---------------------------------------------------------------------------
 
 /** Per-tool state shared with `ToolCall.*` sub-parts. */
@@ -228,7 +227,7 @@ export function useToolCall(): ToolCallContextValue {
   return ctx;
 }
 
-/** Props accepted by `ToolCall` / `ToolCall.Root` (aka `ToolCallCard`). */
+/** Props accepted by `ToolCall` / `ToolCall.Root`. */
 export interface ToolCallProps {
   tool: ChatToolPart | ChatDynamicToolPart;
   className?: string;
@@ -244,9 +243,7 @@ export interface ToolCallProps {
   defaultExpanded?: boolean;
   /** Called when the card is toggled; receives the next state + event. */
   onToggle?: (next: boolean, e: React.MouseEvent<HTMLButtonElement>) => void;
-  /** Override the compact/skill row rendering. */
-  renderSkill?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  /** Compose your own card; when omitted, the default anatomy is rendered. */
+  /** Compose your own card or replace the compact row. */
   children?: React.ReactNode;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLDivElement>;
@@ -255,11 +252,10 @@ export interface ToolCallProps {
 /**
  * `ToolCall.Root` — context provider + the card wrapper. No children renders
  * the default anatomy (`Trigger` + `Body`); pass children to recompose. Skill /
- * compact tools short-circuit to the single-line row (not composable).
+ * compact tools render a single-line row by default and accept replacement children.
  */
 function ToolCallRoot(
-  { tool, className, icon, variant, defaultExpanded, onToggle, renderSkill, children, ref }:
-    ToolCallProps,
+  { tool, className, icon, variant, defaultExpanded, onToggle, children, ref }: ToolCallProps,
 ): React.ReactElement {
   const hasOutput = hasVisibleToolOutput(tool.output);
   const hasError = Boolean(tool.errorText);
@@ -272,14 +268,6 @@ function ToolCallRoot(
   const [isExpanded, setIsExpanded] = React.useState(
     defaultExpanded ?? shouldExpandByDefault,
   );
-
-  // Compact row for skill tools (or when forced) — a presentation variant.
-  const isCompact = variant === "compact" ||
-    (variant !== "card" && isSkillToolPart(tool));
-  if (isCompact) {
-    if (renderSkill) return <>{renderSkill(tool)}</>;
-    return <SkillTool {...getSkillToolProps(tool)} />;
-  }
 
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     const next = !isExpanded;
@@ -294,6 +282,17 @@ function ToolCallRoot(
     hasOutput,
     hasError,
   };
+
+  // Compact row for skill tools (or when forced), a presentation variant.
+  const isCompact = variant === "compact" ||
+    (variant !== "card" && isSkillToolPart(tool));
+  if (isCompact) {
+    return (
+      <ToolCallContext.Provider value={context}>
+        {children ?? <SkillTool {...getSkillToolProps(tool)} />}
+      </ToolCallContext.Provider>
+    );
+  }
 
   return (
     <ToolCallContext.Provider value={context}>
@@ -455,6 +454,3 @@ export const ToolCall = Object.assign(ToolCallRoot, {
   Output: ToolCallOutput,
   Error: ToolCallError,
 });
-
-/** Back-compat alias — `message.tsx` and others import `ToolCallCard`. */
-export const ToolCallCard = ToolCallRoot;

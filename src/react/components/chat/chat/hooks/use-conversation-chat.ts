@@ -243,9 +243,6 @@ export function useConversationChat(
     },
     handleInputChange: guardedInputChange,
     handleSubmit: guardedSubmit,
-    onChange: guardedInputChange,
-    onSubmit: guardedSubmit,
-    onModelChange: guardedSetModel,
   };
 
   return { chat: sessionChat, bound, resolvedAgentId };

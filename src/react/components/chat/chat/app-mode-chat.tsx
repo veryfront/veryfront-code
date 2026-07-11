@@ -7,11 +7,8 @@ import { useUpload } from "./hooks/use-upload.ts";
 import { useConversationsContextOptional } from "./contexts/conversations-context.tsx";
 import { useConversationChat } from "./hooks/use-conversation-chat.ts";
 import type { ChatProps } from "./chat-props.ts";
-import {
-  attachmentsToFileParts,
-  ControlledChat,
-  hasPendingAttachments,
-} from "./controlled-chat.tsx";
+import { ControlledChat } from "./controlled-chat.tsx";
+import { attachmentsToFileParts, hasPendingAttachments } from "./chat-attachments.ts";
 
 // ---------------------------------------------------------------------------
 // UncontrolledChat — "app mode": self-drives useChat + useAgentMetadata so the
@@ -51,23 +48,19 @@ function UncontrolledChat(
     initialMessages,
     onError,
     onUpdate,
-    models,
+    agent: userAgent,
     suggestions: suggestionsProp,
     onSuggestionClick,
     emptyState,
-    // App mode defaults the scroll-to-bottom button on (batteries-included).
-    showScrollButton = true,
     // Attachments: default-wired through `useUpload` unless the caller
     // controls them. With no `uploadApi`, files inline as base64 `data:` URLs
     // (guest mode — zero backend). Set `uploadApi` to POST to a durable
     // upload endpoint (multipart `file` → `{ url }`) for real users + a project.
     uploadApi,
-    enableAttachments = true,
     onAttach: userOnAttach,
     onDrop: userOnDrop,
     attachments: userAttachments,
     onRemoveAttachment: userOnRemoveAttachment,
-    onSubmit: userOnSubmit,
     ref,
     ...rest
   }: ChatProps,
@@ -120,6 +113,19 @@ function UncontrolledChat(
   const derivedSuggestions = suggestionsProp ??
     (suggestionItems.length > 0 ? suggestionItems.map((s) => s.label) : undefined);
 
+  const resolvedAgent = agent || userAgent
+    ? {
+      ...(agent
+        ? {
+          name: agent.name,
+          avatarUrl: agent.avatarUrl ?? undefined,
+          description: agent.description ?? undefined,
+        }
+        : {}),
+      ...userAgent,
+    }
+    : undefined;
+
   const handleSuggestion = onSuggestionClick ??
     ((label: string) => {
       const item = suggestionItems.find((s) => s.label === label);
@@ -134,7 +140,7 @@ function UncontrolledChat(
     userOnDrop !== undefined ||
     userAttachments !== undefined ||
     userOnRemoveAttachment !== undefined;
-  const manageAttachments = enableAttachments && !attachControlled;
+  const manageAttachments = !attachControlled;
 
   const submitWithAttachments = React.useCallback((e?: React.FormEvent) => {
     e?.preventDefault();
@@ -153,36 +159,19 @@ function UncontrolledChat(
 
   return (
     <ControlledChat
+      {...rest}
       ref={ref}
-      messages={chat.messages}
-      input={chat.input}
-      onChange={chat.onChange}
-      onSubmit={manageAttachments ? submitWithAttachments : (userOnSubmit ?? chat.onSubmit)}
-      stop={chat.stop}
-      reload={() => void chat.reload()}
-      setInput={chat.setInput}
-      isLoading={chat.isLoading}
-      error={chat.error}
-      model={chat.model}
-      activeModel={chat.activeModel}
-      onModelChange={chat.onModelChange}
-      inferenceMode={chat.inferenceMode}
-      models={models}
-      editMessage={chat.editMessage}
-      getBranches={chat.getBranches}
-      switchBranch={chat.switchBranch}
+      chat={chat}
+      submit={manageAttachments ? submitWithAttachments : chat.handleSubmit}
       emptyState={derivedEmptyState}
-      agent={agent ? { name: agent.name, avatarUrl: agent.avatarUrl ?? undefined } : undefined}
+      agent={resolvedAgent}
       initializing={agentInitializing}
       suggestions={derivedSuggestions}
       onSuggestionClick={handleSuggestion}
-      showScrollButton={showScrollButton}
-      enableAttachments={enableAttachments}
       onAttach={manageAttachments ? upload.upload : userOnAttach}
       onDrop={manageAttachments ? upload.upload : userOnDrop}
       attachments={manageAttachments ? upload.attachments : userAttachments}
       onRemoveAttachment={manageAttachments ? upload.remove : userOnRemoveAttachment}
-      {...rest}
     />
   );
 }

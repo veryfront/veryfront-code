@@ -608,9 +608,5 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
     data,
     handleInputChange,
     handleSubmit,
-    // Aliases that match ChatProps so users can spread {...chat}
-    onChange: handleInputChange,
-    onSubmit: handleSubmit,
-    onModelChange: setModel,
   };
 }

@@ -27,15 +27,16 @@ const SCAN_ROOT = "src/react/components/chat";
 // anti-pattern is being added — compose instead.
 // E2 complete: chat no longer uses forwardRef (React 19 `ref` prop). Locked at 0.
 export const FORWARDREF_BASELINE = 0;
-export const FEATURE_TOGGLE_BASELINE = 28;
-export const PASSTHROUGH_BASELINE = 3;
+export const FEATURE_TOGGLE_BASELINE = 0;
+export const PASSTHROUGH_BASELINE = 0;
 // E1 memoized the last inline context value (F-3). Locked at 0.
 export const INLINE_CONTEXT_BASELINE = 0;
 
 /** `forwardRef` / `React.forwardRef` call sites. */
 const FORWARDREF_RE = /\bforwardRef\s*[(<]/g;
 /** `show* / enable* / hide*` props typed `boolean` (prop declarations). */
-const FEATURE_TOGGLE_RE = /\b(?:show|enable|hide)[A-Z][A-Za-z]*\??:\s*boolean\b/g;
+const FEATURE_TOGGLE_RE =
+  /\b(?:show|enable|hide)[A-Z][A-Za-z]*\??:\s*boolean\b/g;
 /** `*ClassName` bag props, `icons` bag props, `dragProps`. */
 const PASSTHROUGH_RE =
   /(?:^|\s)(?:[a-z][A-Za-z]*ClassName|icons|dragProps)\??:\s/gm;
@@ -99,16 +100,16 @@ async function walk(
 // fused in one file is the structural reason the acid test fails; this stops the
 // big files from growing back.
 const FILE_SIZE_CEILINGS: Record<string, number> = {
-  "src/react/components/chat/chat/index.tsx": 383,
-  "src/react/components/chat/chat/composition/message.tsx": 1041,
+  "src/react/components/chat/chat/index.tsx": 330,
+  "src/react/components/chat/chat/composition/message.tsx": 1001,
   // Bumped once for E4: the ChatSidebar.Item menu compound (Item.Menu/.Rename/
   // .Delete). Extracting Item into its own file is a tracked follow-up.
   "src/react/components/chat/chat/components/sidebar.tsx": 740,
-  "src/react/components/chat/chat/composition/chat-composer.tsx": 678,
-  "src/react/components/chat/agent-picker.tsx": 542,
+  "src/react/components/chat/chat/composition/chat-composer.tsx": 667,
+  "src/react/components/chat/agent-picker.tsx": 502,
   "src/react/components/chat/chat-actions.tsx": 515,
-  "src/react/components/chat/chat/controlled-chat.tsx": 329,
-  "src/react/components/chat/chat/app-mode-chat.tsx": 211,
+  "src/react/components/chat/chat/controlled-chat.tsx": 244,
+  "src/react/components/chat/chat/app-mode-chat.tsx": 200,
 };
 
 function checkFileSizes(): boolean {
@@ -147,25 +148,29 @@ const RATCHETS: Ratchet[] = [
     label: "forwardRef",
     key: "forwardRef",
     baseline: FORWARDREF_BASELINE,
-    hint: "React 19: take `ref` as a regular prop instead of wrapping in forwardRef",
+    hint:
+      "React 19: take `ref` as a regular prop instead of wrapping in forwardRef",
   },
   {
     label: "feature-toggle booleans",
     key: "featureToggle",
     baseline: FEATURE_TOGGLE_BASELINE,
-    hint: "replace show*/enable*/hide* flags with composition or explicit variants",
+    hint:
+      "replace show*/enable*/hide* flags with composition or explicit variants",
   },
   {
     label: "passthrough props",
     key: "passthrough",
     baseline: PASSTHROUGH_BASELINE,
-    hint: "expose styling/icons per sub-component instead of *ClassName / icons={{}} bags",
+    hint:
+      "expose styling/icons per sub-component instead of *ClassName / icons={{}} bags",
   },
   {
     label: "inline context values",
     key: "inlineContext",
     baseline: INLINE_CONTEXT_BASELINE,
-    hint: "memoize the context value (useMemo) — inline value={{…}} re-renders all consumers",
+    hint:
+      "memoize the context value (useMemo): inline value={{...}} re-renders all consumers",
   },
 ];
 

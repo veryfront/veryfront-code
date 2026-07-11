@@ -38,14 +38,15 @@ describe("Message.Content — composability contract", () => {
             seen.push(part.type);
             return part.type === "tool"
               ? <div key={i} className="vf-custom-tool">custom tool</div>
-              : <div key={i} className="vf-custom-text">custom text</div>;
+              : <Message.Part key={i} part={part} />;
           }}
         </Message.Content>
       </Message.Root>,
     );
     // The caller's nodes render; the default markdown/tool card does not.
-    assertStringIncludes(html, "vf-custom-text");
+    assertStringIncludes(html, "Answer body.");
     assertStringIncludes(html, "vf-custom-tool");
+    assert(!html.includes("search_docs"), "the custom tool replaces the default tool card");
     // The loop yielded the grouped parts in order.
     assertEquals(seen, ["text", "tool"]);
   });
@@ -113,7 +114,7 @@ describe("Message.Content — composability contract", () => {
     };
     const html = renderToString(
       <Message.Root message={withSources}>
-        <Message.Content showSources>
+        <Message.Content>
           {(part: PartGroup, i: number) => <Message.Part key={i} part={part} />}
         </Message.Content>
       </Message.Root>,
@@ -178,5 +179,37 @@ describe("useMessageParts — headless parts data", () => {
       threw = true;
     }
     assert(threw, "a misplaced useMessageParts is a loud error, not silent");
+  });
+});
+
+describe("Message.Tokens", () => {
+  it("uses the canonical renderItem collection callback", () => {
+    const rows: Array<{ label: string; index: number }> = [];
+    const html = renderToString(
+      <Message.Root
+        message={{
+          ...assistantMessage,
+          metadata: {
+            model: "provider/model",
+            usage: { inputTokens: 10, outputTokens: 5 },
+          },
+        }}
+      >
+        <Message.Tokens
+          renderItem={({ item, index }) => {
+            rows.push({ label: item.label, index });
+            return <span>{item.label}: {item.value}</span>;
+          }}
+        />
+      </Message.Root>,
+    );
+
+    assertStringIncludes(html, "Token usage");
+    assertEquals(rows, [
+      { label: "Model", index: 0 },
+      { label: "Input", index: 1 },
+      { label: "Output", index: 2 },
+      { label: "Total", index: 3 },
+    ]);
   });
 });

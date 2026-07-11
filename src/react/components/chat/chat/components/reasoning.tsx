@@ -35,7 +35,7 @@ export function useReasoning(): ReasoningContextValue {
   return ctx;
 }
 
-/** Props accepted by `Reasoning` / `Reasoning.Root` (aka `ReasoningCard`). */
+/** Props accepted by `Reasoning` / `Reasoning.Root`. */
 export interface ReasoningProps {
   text: string;
   isStreaming?: boolean;
@@ -210,6 +210,3 @@ export const Reasoning = Object.assign(ReasoningRoot, {
   Trigger: ReasoningTrigger,
   Content: ReasoningContent,
 });
-
-/** Back-compat alias — `message.tsx` and `agent-card.tsx` import `ReasoningCard`. */
-export const ReasoningCard = ReasoningRoot;

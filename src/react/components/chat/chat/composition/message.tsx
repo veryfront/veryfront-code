@@ -19,12 +19,7 @@
  */
 
 import * as React from "react";
-import type {
-  BranchInfo,
-  ChatDynamicToolPart,
-  ChatMessage,
-  ChatToolPart,
-} from "#veryfront/agent/react";
+import type { BranchInfo, ChatMessage } from "#veryfront/agent/react";
 import { cn, defaultChatTheme } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
 import type { CodeBlockProps, Components } from "../../markdown.tsx";
@@ -39,9 +34,9 @@ import { Slot } from "../../../ui/slot.tsx";
 import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
-import { ReasoningCard } from "../components/reasoning.tsx";
+import { Reasoning } from "../components/reasoning.tsx";
 import { Shimmer } from "../../../ui/shimmer.tsx";
-import { ToolCallCard } from "../components/tool-ui.tsx";
+import { ToolCall } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
@@ -372,8 +367,6 @@ function groupKey(group: PartGroup, index: number): string {
 
 /** Options shared by the default part renderer and `Message.Part`. */
 interface RenderPartOptions {
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  showSteps: boolean;
   stepCount: number;
   /** Forwarded to the answer `Markdown` — swap the code block. */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
@@ -405,10 +398,10 @@ function renderAnswerPart(
     );
   }
   if (group.type === "reasoning") {
-    return <ReasoningCard text={group.text} isStreaming={group.isStreaming} />;
+    return <Reasoning text={group.text} isStreaming={group.isStreaming} />;
   }
   if (group.type === "step") {
-    return opts.showSteps && opts.stepCount > 1
+    return opts.stepCount > 1
       ? (
         <StepIndicator
           stepIndex={group.stepIndex}
@@ -439,16 +432,10 @@ function renderAnswerPart(
   }
   // ToolCall renders the compact skill row for skill tools and the full
   // params/result card for everything else — one component either way.
-  return opts.renderTool ? opts.renderTool(group.tool) : <ToolCallCard tool={group.tool} />;
+  return <ToolCall tool={group.tool} />;
 }
 
 export interface MessageContentProps {
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  /** @deprecated Prefer composition — render `Message.Part` yourself or omit. */
-  showSteps?: boolean;
-  /** @deprecated Prefer composition — render `Message.Sources` or omit. */
-  showSources?: boolean;
-  onSourceClick?: (source: Source, index: number) => void;
   className?: string;
   /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
@@ -464,10 +451,6 @@ export interface MessageContentProps {
 }
 
 function MessageContent({
-  renderTool,
-  showSteps = false,
-  showSources = false,
-  onSourceClick,
   className,
   codeBlock,
   markdownComponents,
@@ -475,8 +458,6 @@ function MessageContent({
 }: MessageContentProps): React.ReactElement {
   const { message, role, parts, textContent } = useMessageContext();
   const chat = useChatContextOptional();
-  const shouldShowSources = showSources || chat?.showSources || false;
-  const sourceClickHandler = onSourceClick ?? chat?.onSourceClick;
 
   if (role === "user") {
     const fileParts = message.parts.filter((p) => p.type === "file");
@@ -517,7 +498,6 @@ function MessageContent({
 
   const stepCount = parts.filter((g) => g.type === "step").length;
   const compose = typeof children === "function";
-  const messageSources = shouldShowSources ? extractSourcesFromParts(message.parts) : [];
 
   return (
     <div
@@ -537,20 +517,12 @@ function MessageContent({
       {parts.map((group, index) => (
         <React.Fragment key={groupKey(group, index)}>
           {compose ? children(group, index) : renderAnswerPart(group, {
-            renderTool,
-            showSteps,
             stepCount,
             codeBlock,
             markdownComponents,
           })}
         </React.Fragment>
       ))}
-      {!compose && messageSources.length > 0 && (
-        <SourcesImpl
-          sources={messageSources}
-          onSourceClick={sourceClickHandler}
-        />
-      )}
     </div>
   );
 }
@@ -566,9 +538,6 @@ MessageContent.displayName = "Message.Content";
 /** Props for `Message.Part`. */
 export interface MessagePartProps {
   part: PartGroup;
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  /** Render multi-step indicators (default: true here — presence is intent). */
-  showSteps?: boolean;
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
   markdownComponents?: Components;
 }
@@ -576,8 +545,6 @@ export interface MessagePartProps {
 /** Render a single grouped part with the default `Message.Content` anatomy. */
 function MessagePart({
   part,
-  renderTool,
-  showSteps = true,
   codeBlock,
   markdownComponents,
 }: MessagePartProps): React.ReactElement {
@@ -586,8 +553,6 @@ function MessagePart({
   return (
     <>
       {renderAnswerPart(part, {
-        renderTool,
-        showSteps,
         stepCount,
         codeBlock,
         markdownComponents,
@@ -806,9 +771,7 @@ function MessageFeedbackWrapper(
 }
 MessageFeedbackWrapper.displayName = "Message.Feedback";
 
-// ---------------------------------------------------------------------------
 // Message.Tokens — token-usage popover (Studio `ChatTokenUsage`, tightened)
-// ---------------------------------------------------------------------------
 
 interface TokenUsage {
   inputTokens?: number;
@@ -833,10 +796,18 @@ function readUsage(metadata: ChatMessage["metadata"]): TokenUsage | undefined {
   };
 }
 
-interface TokenRowProps {
+/** One row in the token usage breakdown. */
+export interface TokenRowProps {
   label: string;
   value: string;
   bold?: boolean;
+}
+
+/** Props accepted by `Message.Tokens`. */
+export interface MessageTokensProps {
+  className?: string;
+  /** Override how each breakdown row renders (Model / Input / Output / Total). */
+  renderItem?: (options: { item: TokenRowProps; index: number }) => React.ReactNode;
 }
 
 function TokenRow({ label, value, bold }: TokenRowProps): React.ReactElement {
@@ -863,11 +834,7 @@ function TokenRow({ label, value, bold }: TokenRowProps): React.ReactElement {
  * when the message carries no usage metadata.
  */
 function MessageTokens(
-  { className, renderRow }: {
-    className?: string;
-    /** Override how each breakdown row renders (Model / Input / Output / Total). */
-    renderRow?: (row: TokenRowProps) => React.ReactNode;
-  },
+  { className, renderItem }: MessageTokensProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
   const [open, setOpen] = React.useState(false);
@@ -914,9 +881,9 @@ function MessageTokens(
           Token usage
         </p>
         <div className="flex flex-col gap-1.5">
-          {rows.map((row) =>
-            renderRow
-              ? <React.Fragment key={row.label}>{renderRow(row)}</React.Fragment>
+          {rows.map((row, index) =>
+            renderItem
+              ? <React.Fragment key={row.label}>{renderItem({ item: row, index })}</React.Fragment>
               : <TokenRow key={row.label} {...row} />
           )}
         </div>
@@ -926,9 +893,7 @@ function MessageTokens(
 }
 MessageTokens.displayName = "Message.Tokens";
 
-// ---------------------------------------------------------------------------
 // Message.BranchPicker
-// ---------------------------------------------------------------------------
 
 function MessageBranchPicker(): React.ReactElement | null {
   const { branch, onBranchPrev, onBranchNext } = useMessageContext();
@@ -981,23 +946,19 @@ export type { MessageContentProps as MessageCompoundContentProps, MessageContext
 export interface MessageProps extends Omit<MessageRootProps, "children"> {
   /** Compose your own layout; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
-  /** Render inline citation sources under the answer. @default true */
-  showSources?: boolean;
-  /** Render multi-step indicators. @default true */
-  showSteps?: boolean;
+  /** Handle a source selection in the default `Message.Sources` anatomy. */
+  onSourceClick?: (source: Source, index: number) => void;
 }
 
 /** The default anatomy rendered when `<Message>` gets no children. */
 function MessageDefault(
-  { showSources = true, showSteps = true }: {
-    showSources?: boolean;
-    showSteps?: boolean;
-  },
+  { onSourceClick }: Pick<MessageProps, "onSourceClick">,
 ): React.ReactElement {
   return (
     <>
       <MessageHeader />
-      <MessageContent showSources={showSources} showSteps={showSteps} />
+      <MessageContent />
+      <MessageSources onSourceClick={onSourceClick} />
       <MessageContinuing />
       <div className="mt-1.5 flex items-center gap-0.5">
         <MessageActionsWrapper />
@@ -1008,12 +969,11 @@ function MessageDefault(
 }
 
 function MessageComponent(
-  { children, showSources, showSteps, ref, ...root }: MessageProps,
+  { children, onSourceClick, ref, ...root }: MessageProps,
 ): React.ReactElement {
   return (
     <MessageRoot ref={ref} {...root}>
-      {children ??
-        <MessageDefault showSources={showSources} showSteps={showSteps} />}
+      {children ?? <MessageDefault onSourceClick={onSourceClick} />}
     </MessageRoot>
   );
 }

@@ -441,7 +441,7 @@ AttachmentPillRemove.displayName = "AttachmentPill.Remove";
 /**
  * AttachmentPill — render `<AttachmentPill attachment={…} />` for the default
  * chip, or compose `AttachmentPill.Root` + `.Thumbnail` / `.Icon` / `.Label` /
- * `.Retry` / `.Remove` for a custom layout. Publicly aliased as `Attachment`.
+ * `.Retry` / `.Remove` for a custom layout.
  */
 export const AttachmentPill = Object.assign(AttachmentPillRoot, {
   Root: AttachmentPillRoot,

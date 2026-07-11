@@ -6,8 +6,12 @@
 
 // Root / Layout
 export { ChatRoot, type ChatRootProps } from "./chat-root.tsx";
-export { ChatMessageList, type ChatMessageListProps } from "./chat-message-list.tsx";
-export { ChatInput, type ChatInputProps } from "./chat-composer.tsx";
+export {
+  ChatMessageList,
+  type ChatMessageListContentProps,
+  type ChatMessageListProps,
+} from "./chat-message-list.tsx";
+export { ChatInput, type ChatInputExportProps, type ChatInputProps } from "./chat-composer.tsx";
 export { ChatEmpty, type ChatEmptyProps } from "./chat-empty.tsx";
 export {
   ChatEmptyState,
@@ -24,4 +28,10 @@ export { ErrorBanner, type ErrorBannerProps } from "./error-banner.tsx";
 export { PendingMessage, type PendingMessageProps } from "./pending-message.tsx";
 
 // Message — render-or-compose (`<Message />` or `Message.Root` + parts)
-export { Message, type MessageProps, type MessageRootProps } from "./message.tsx";
+export {
+  Message,
+  type MessageProps,
+  type MessageRootProps,
+  type MessageTokensProps,
+  type TokenRowProps,
+} from "./message.tsx";

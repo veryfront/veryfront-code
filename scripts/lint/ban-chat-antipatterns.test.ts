@@ -67,14 +67,8 @@ Deno.test("countAntipatterns detects inline context Provider values", () => {
   assertEquals(countAntipatterns(src).inlineContext, 1);
 });
 
-Deno.test("baselines are non-negative ratchet targets", () => {
-  for (
-    const b of [
-      FORWARDREF_BASELINE,
-      FEATURE_TOGGLE_BASELINE,
-      PASSTHROUGH_BASELINE,
-    ]
-  ) {
-    assertEquals(b >= 0, true);
-  }
+Deno.test("completed migration baselines stay at zero", () => {
+  assertEquals(FORWARDREF_BASELINE, 0);
+  assertEquals(FEATURE_TOGGLE_BASELINE, 0);
+  assertEquals(PASSTHROUGH_BASELINE, 0);
 });

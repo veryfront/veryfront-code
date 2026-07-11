@@ -15,11 +15,11 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 const importCode = `import { AttachmentsPanel } from "veryfront/chat"`;
 
 const compositionTree =
-  `AttachmentsPanel  <- render it: <AttachmentsPanel uploads={…} />
+  `AttachmentsPanel  <- render it: <AttachmentsPanel uploads={uploads} />
 AttachmentsPanel.Root  <- or compose it: context (uploads, callbacks, file picker)
   +-- AttachmentsPanel.Header <- "Attachments" title + close button (when onClose set)
   +-- AttachmentsPanel.List   <- flex-gap column of attachment cards
-  |     +-- AttachmentsPanel.Item    <- composes <Attachment> + a ⋯ menu (Open / Delete)
+  |     +-- AttachmentsPanel.Item    <- composes <AttachmentPill> and an overflow menu
   +-- AttachmentsPanel.Empty  <- empty state (heading, hint, upload action)
   +-- AttachmentsPanel.Action <- upload/attach button (opens the native picker)`;
 
@@ -33,7 +33,7 @@ function AttachmentsPanelDocsPage() {
 
       <DocsSection
         title="Attachments"
-        description="Each row *composes* the shared `Attachment` card — a file-type badge (or image thumbnail), name, and size — swapping the default ✕ for a ⋯ overflow menu (Open / Delete)."
+        description="Each row composes the shared `AttachmentPill`, including its file badge or image thumbnail, name, and size, with an overflow menu for open and delete actions."
       >
         <DocsExampleAuto of={UploadedFiles} />
       </DocsSection>
@@ -54,7 +54,7 @@ function AttachmentsPanelDocsPage() {
 
       <DocsSection
         title="Compose"
-        description="Drop to `AttachmentsPanel.Root` + parts to recompose the panel — reorder or restyle the list, swap in your own `Item` rows, or replace the empty state. Every part takes `className`."
+        description="Use `AttachmentsPanel.Root` and its parts to recompose the panel, reorder or restyle the list, replace item rows, or replace the empty state. Every part takes `className`."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -140,7 +140,8 @@ function AttachmentsPanelDocsPage() {
             {
               name: "url",
               type: "string",
-              description: "Resolved file URL; renders an image thumbnail when the file is an image",
+              description:
+                "Resolved file URL; renders an image thumbnail when the file is an image",
             },
           ]}
         />
@@ -222,7 +223,8 @@ export const Loading: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { AttachmentsPanel, useUploadsRegistry } from "veryfront/chat";
+        code:
+          `import { AttachmentsPanel, useUploadsRegistry } from "veryfront/chat";
 
 const uploads = useUploadsRegistry({ url: "/api/uploads" });
 

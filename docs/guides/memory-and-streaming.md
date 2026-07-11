@@ -169,7 +169,13 @@ The `useChat` hook handles the streaming protocol automatically:
 import { useChat } from "veryfront/chat";
 
 export default function ChatPage() {
-  const { messages, input, onChange, onSubmit, isLoading } = useChat();
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+  } = useChat();
 
   return (
     <div>
@@ -178,8 +184,8 @@ export default function ChatPage() {
           {m.parts.map((p) => p.type === "text" ? p.text : null)}
         </div>
       ))}
-      <form onSubmit={onSubmit}>
-        <input value={input} onChange={onChange} disabled={isLoading} />
+      <form onSubmit={handleSubmit}>
+        <input value={input} onChange={handleInputChange} disabled={isLoading} />
       </form>
     </div>
   );

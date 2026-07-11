@@ -64,7 +64,6 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
 
   // Sources
-  showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
 
   // Theme
@@ -95,7 +94,6 @@ export function ChatRoot(
     getBranches,
     switchBranch,
     onFeedback,
-    showSources = false,
     onSourceClick,
     theme: userTheme,
     maxHeight = "100%",
@@ -139,7 +137,6 @@ export function ChatRoot(
       getBranches,
       switchBranch,
       onFeedback,
-      showSources,
       onSourceClick,
       isEmpty: messages.length === 0,
       isAtBottom,
@@ -166,7 +163,6 @@ export function ChatRoot(
       getBranches,
       switchBranch,
       onFeedback,
-      showSources,
       onSourceClick,
       isAtBottom,
       scrollToBottom,

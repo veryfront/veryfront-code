@@ -4,10 +4,9 @@
  *
  * Render-or-compose: `<ChatInput … />` renders the batteries-included toolbar,
  * or compose your own from the sub-parts (`ChatInput.Field`, `ChatInput.Send`,
- * `ChatInput.Stop`, `ChatInput.Voice`, `ChatInput.Model`, `ChatInput.Attach`) —
- * each reads its state/handlers from `useComposerContext`, which `ChatInput`
- * provides. Every action sub-part takes `icon`, `className`, `asChild`, and an
- * `onClick(e, next)` wrap-signature.
+ * `ChatInput.Stop`, `ChatInput.Voice`, `ChatInput.Model`, `ChatInput.Attach`,
+ * `ChatInput.Export`): each reads its state/handlers from
+ * `useComposerContext`, which `ChatInput` provides.
  *
  * @module react/components/chat/composition/chat-composer
  */
@@ -16,6 +15,7 @@ import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
 import {
+  ArrowDownIcon,
   ArrowUpIcon,
   FileTextIcon,
   PaperclipIcon,
@@ -60,24 +60,6 @@ function MicGlyph(): React.ReactElement {
       <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
       <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
       <line x1="12" x2="12" y1="19" y2="22" />
-    </svg>
-  );
-}
-
-/** Default export (download) glyph. */
-function ExportGlyph(): React.ReactElement {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
     </svg>
   );
 }
@@ -305,6 +287,44 @@ export function ChatInputAttach(
   );
 }
 
+/** Props accepted by `<ChatInput.Export>`. */
+export interface ChatInputExportProps {
+  /** Messages included in the downloaded Markdown document. */
+  messages: ChatMessage[];
+  /** Override the download glyph. */
+  icon?: React.ReactNode;
+  className?: string;
+  /** Wrap the download action; call `next()` to continue. */
+  onClick?: WrapClick;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
+}
+
+/** Download the supplied conversation as Markdown. */
+export function ChatInputExport(
+  { messages, icon, className, onClick, ref }: ChatInputExportProps,
+): React.ReactElement | null {
+  if (messages.length === 0) return null;
+  const download = () => downloadMarkdown(messages);
+  return (
+    <IconButton
+      ref={ref}
+      type="button"
+      variant="icon-ghost"
+      size="icon-lg"
+      on="card"
+      onClick={(event) => onClick ? onClick(event, download) : download()}
+      aria-label="Export conversation"
+      tooltip="Export as Markdown"
+      tooltipSide="top"
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <ArrowDownIcon />}
+    </IconButton>
+  );
+}
+ChatInputExport.displayName = "ChatInput.Export";
+
 /** Props accepted by `<ChatInput.Toolbar>`. */
 export interface ChatInputToolbarProps {
   className?: string;
@@ -313,8 +333,8 @@ export interface ChatInputToolbarProps {
 
 /**
  * `ChatInput.Toolbar` — a semantic layout slot for the composer's action row.
- * Group/reorder the action sub-parts (`ChatInput.Attach`/`.Model`/`.Voice`/
- * `.Send`) inside it without re-implementing the composer. Pure layout: the
+ * Group/reorder the action sub-parts (`ChatInput.Attach`/`.Model`/`.Export`/
+ * `.Voice`/`.Send`) inside it without re-implementing the composer. Pure layout: the
  * children read their own `ComposerContext`, so `<ChatInput.Toolbar>` just
  * mirrors the default action-row wrapper classes.
  */
@@ -375,15 +395,9 @@ export interface ChatInputProps {
   attachments?: AttachmentInfo[];
   onRemoveAttachment?: (id: string) => void;
 
-  // Export
-  showExport?: boolean;
-  messages?: ChatMessage[];
-
   // Customisation
   /** Wrap the built-in attachment `+` click; call `next()` to run it. */
   onAttachClick?: WrapClick;
-  /** Wrap the built-in export click; call `next()` to run it. */
-  onExportClick?: WrapClick;
 
   className?: string;
   children?: React.ReactNode;
@@ -513,10 +527,7 @@ function ChatInputBase(
     attachAccept,
     attachments,
     onRemoveAttachment,
-    showExport = false,
-    messages,
     onAttachClick,
-    onExportClick,
     className,
     children,
     ref,
@@ -541,7 +552,13 @@ function ChatInputBase(
     );
     const handleAttach = withFocus(onAttach);
 
-    const { isDragActive, dragProps } = useDropZone(withFocus(onDrop ?? onAttach));
+    const {
+      isDragActive,
+      onDragEnter,
+      onDragLeave,
+      onDragOver,
+      onDrop: onFileDrop,
+    } = useDropZone(withFocus(onDrop ?? onAttach));
     const ctxValue = useComposerValue({
       input,
       onChange,
@@ -560,10 +577,6 @@ function ChatInputBase(
       attachments,
       onRemoveAttachment,
     });
-
-    const exportDownload = () => {
-      if (messages) downloadMarkdown(messages);
-    };
 
     return (
       <ComposerContextProvider value={ctxValue}>
@@ -593,7 +606,10 @@ function ChatInputBase(
               }}
             >
               <div
-                {...dragProps}
+                onDragEnter={onDragEnter}
+                onDragLeave={onDragLeave}
+                onDragOver={onDragOver}
+                onDrop={onFileDrop}
                 ref={fieldContainerRef}
                 className={cn(
                   "relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 py-2 shadow-sm transition-all md:px-4 md:py-3",
@@ -615,22 +631,6 @@ function ChatInputBase(
 
                   <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
                     <ChatInputModel />
-                    {showExport && messages && messages.length > 0 && (
-                      <IconButton
-                        type="button"
-                        variant="icon-ghost"
-                        size="icon-lg"
-                        on="card"
-                        onClick={(e) =>
-                          onExportClick ? onExportClick(e, exportDownload) : exportDownload()}
-                        aria-label="Export conversation"
-                        tooltip="Export as Markdown"
-                        tooltipSide="top"
-                        className="shrink-0"
-                      >
-                        <ExportGlyph />
-                      </IconButton>
-                    )}
                     {
                       /* Streaming → Stop · empty (+voice) → Mic · value → Send
                         (Studio PromptFormActions). Each sub-part self-gates. */
@@ -652,7 +652,7 @@ ChatInputBase.displayName = "ChatInput";
 
 /**
  * ChatInput — render `<ChatInput … />` for the default composer, or compose
- * `ChatInput.Field` + `ChatInput.Send`/`Stop`/`Voice`/`Model`/`Attach`.
+ * `ChatInput.Field` + `ChatInput.Send`/`Stop`/`Voice`/`Model`/`Attach`/`Export`.
  */
 export const ChatInput = Object.assign(ChatInputBase, {
   Root: ChatInputRoot,
@@ -662,5 +662,6 @@ export const ChatInput = Object.assign(ChatInputBase, {
   Voice: ChatInputVoice,
   Model: ChatInputModel,
   Attach: ChatInputAttach,
+  Export: ChatInputExport,
   Toolbar: ChatInputToolbar,
 });

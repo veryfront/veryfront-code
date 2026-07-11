@@ -39,7 +39,7 @@ export { ChatStyleProvider, type ChatStyleProviderProps } from "./chat-style-pro
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export { Chat, ChatComponents, type ChatProps } from "./chat.tsx";
+export { Chat, type ChatAgentInfo, type ChatProps } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Composition building blocks
@@ -56,8 +56,10 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
+  type ChatInputExportProps,
   type ChatInputProps,
   ChatMessageList,
+  type ChatMessageListContentProps,
   type ChatMessageListProps,
   ChatRoot,
   type ChatRootProps,
@@ -66,8 +68,10 @@ export {
   Message,
   type MessageProps,
   type MessageRootProps,
+  type MessageTokensProps,
   ModelAvatar,
   type ModelAvatarProps,
+  type TokenRowProps,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -127,7 +131,6 @@ export {
   MessageFeedback,
   ModelSelector,
   QuickActions,
-  ReasoningCard,
   RichCodeBlock,
   Shimmer,
   SkillBadge,
@@ -136,7 +139,6 @@ export {
   Suggestion,
   Suggestions,
   TabSwitcher,
-  ToolCallCard,
   ToolStatusBadge,
   useUpload,
 } from "./chat.tsx";
@@ -144,6 +146,8 @@ export type {
   AttachmentInfo,
   AttachmentPillProps,
   AttachmentsPanelProps,
+  BranchPickerActionProps,
+  BranchPickerCountProps,
   BranchPickerProps,
   ChatSidebarComponent,
   ChatSidebarEmptyProps,
@@ -159,12 +163,17 @@ export type {
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
+  InlineCitationCardProps,
   InlineCitationProps,
+  InlineCitationTriggerProps,
+  MessageActionBarActionProps,
   MessageActionBarProps,
   MessageEditFormProps,
+  MessageFeedbackActionProps,
   MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  ModelSelectorSearchProps,
   PartGroup,
   QuickAction,
   QuickActionsProps,

@@ -323,4 +323,31 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assert(html.includes('role="toolbar"'), "Expected the toolbar role to render");
     });
   });
+
+  describe("ChatInput.Export", () => {
+    it("renders by presence when the supplied conversation is non-empty", () => {
+      const html = renderToString(
+        <ChatInput.Root input="" onChange={() => {}}>
+          <ChatInput.Toolbar>
+            <ChatInput.Export
+              messages={[{
+                id: "message-1",
+                role: "user",
+                parts: [{ type: "text", text: "Hello" }],
+              }]}
+            />
+          </ChatInput.Toolbar>
+        </ChatInput.Root>,
+      );
+      assert(
+        html.includes('aria-label="Export conversation"'),
+        "Expected the composed export action to render",
+      );
+    });
+
+    it("renders nothing for an empty conversation", () => {
+      const html = renderToString(<ChatInput.Export messages={[]} />);
+      assertEquals(html, "");
+    });
+  });
 });

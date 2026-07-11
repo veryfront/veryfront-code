@@ -8,19 +8,40 @@
 // cannot perform.
 import * as React from "react";
 import {
+  AgentPicker,
+  BranchPicker,
   Chat,
   ChatSidebar,
   Message,
+  MessageActionBar,
+  MessageFeedback,
   Suggestion,
   Suggestions,
+  useChat,
 } from "veryfront/chat";
-import type { ChatMessage } from "veryfront/chat";
+import type {
+  AgentPickerActionProps,
+  AgentPickerSearchProps,
+  BranchPickerActionProps,
+  BranchPickerCountProps,
+  ChatAgentInfo,
+  ChatMessage,
+  MessageActionBarActionProps,
+  MessageFeedbackActionProps,
+  MessageTokensProps,
+  TokenRowProps,
+} from "veryfront/chat";
 
 const messages: ChatMessage[] = [];
+const agent: ChatAgentInfo = {
+  name: "Support agent",
+  description: "Answers product questions.",
+};
 
 /** Batteries — the default explicit variant, zero-config. */
 export function BatteriesDemo(): React.ReactElement {
-  return <Chat messages={messages} />;
+  const chat = useChat();
+  return <Chat chat={chat} agent={agent} />;
 }
 
 /** Compound — arrange the blocks yourself; each leaf individually addressable. */
@@ -46,4 +67,73 @@ export function MessageDemo({ message }: { message: ChatMessage }): React.ReactE
 /** Sidebar compound. */
 export function SidebarDemo(): React.ReactElement {
   return <ChatSidebar conversations={[]} />;
+}
+
+const pickerActionProps: AgentPickerActionProps = {
+  icon: <span aria-hidden="true">+</span>,
+  className: "picker-action",
+};
+const pickerSearchProps: AgentPickerSearchProps = { className: "picker-search" };
+const branchActionProps: BranchPickerActionProps = {
+  icon: <span aria-hidden="true">&lt;</span>,
+  className: "branch-action",
+};
+const branchCountProps: BranchPickerCountProps = { className: "branch-count" };
+const messageActionProps: MessageActionBarActionProps = {
+  icon: <span aria-hidden="true">C</span>,
+  className: "message-action",
+};
+const feedbackActionProps: MessageFeedbackActionProps = {
+  icon: <span aria-hidden="true">Y</span>,
+  className: "feedback-action",
+};
+
+/** Addressable action leaves accept one icon prop each. */
+export function IconLeavesDemo(): React.ReactElement {
+  return (
+    <>
+      <AgentPicker agents={[]} onCreate={() => {}} onManage={() => {}}>
+        <AgentPicker.Trigger />
+        <AgentPicker.Content>
+          <AgentPicker.Search {...pickerSearchProps} />
+          <AgentPicker.List>
+            <AgentPicker.Create {...pickerActionProps} />
+            <AgentPicker.Manage {...pickerActionProps} />
+          </AgentPicker.List>
+        </AgentPicker.Content>
+      </AgentPicker>
+      <BranchPicker current={1} total={2} onPrev={() => {}} onNext={() => {}}>
+        <BranchPicker.Previous {...branchActionProps} />
+        <BranchPicker.Count {...branchCountProps} />
+        <BranchPicker.Next {...branchActionProps} />
+      </BranchPicker>
+      <MessageActionBar content="Answer" onRegenerate={() => {}} onEdit={() => {}}>
+        <MessageActionBar.Copy {...messageActionProps} />
+        <MessageActionBar.Copied {...messageActionProps} />
+        <MessageActionBar.Regenerate {...messageActionProps} />
+        <MessageActionBar.Edit {...messageActionProps} />
+      </MessageActionBar>
+      <MessageFeedback messageId="message-1" onFeedback={() => {}}>
+        <MessageFeedback.Positive {...feedbackActionProps} />
+        <MessageFeedback.Negative {...feedbackActionProps} />
+      </MessageFeedback>
+    </>
+  );
+}
+
+function ConsumerTokenRow({ label, value }: TokenRowProps): React.ReactElement {
+  return <span>{label}: {value}</span>;
+}
+
+const messageTokensProps: MessageTokensProps = {
+  renderItem: ({ item }) => <ConsumerTokenRow {...item} />,
+};
+
+/** Message token rows use the canonical item renderer contract. */
+export function MessageTokensDemo({ message }: { message: ChatMessage }): React.ReactElement {
+  return (
+    <Message.Root message={message}>
+      <Message.Tokens {...messageTokensProps} />
+    </Message.Root>
+  );
 }

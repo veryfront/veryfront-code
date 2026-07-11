@@ -41,9 +41,6 @@ function fakeSession(overrides: Partial<UseChatResult> = {}): UseChatResult {
     addToolOutput: noop,
     handleInputChange: noop,
     handleSubmit: () => Promise.resolve(),
-    onChange: noop,
-    onSubmit: () => Promise.resolve(),
-    onModelChange: noop,
     ...overrides,
   };
 }

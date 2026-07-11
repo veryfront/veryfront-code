@@ -181,7 +181,6 @@ export default function RagPage() {
         agentId="rag"
         api="/api/ag-ui"
         uploadApi="/api/uploads"
-        showSources
         placeholder="Ask about your documents..."
       />
 

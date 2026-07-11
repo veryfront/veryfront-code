@@ -56,7 +56,6 @@ export interface ChatContextValue {
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
 
   // Sources
-  showSources: boolean;
   onSourceClick?: (source: Source, index: number) => void;
 
   // UI State
