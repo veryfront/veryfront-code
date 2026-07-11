@@ -87,14 +87,17 @@ Build, test, deploy, and verify with rollback on failure.
 
 1. \`veryfront build --json\`, abort if success: false
 2. \`veryfront test --json\`, abort if any test fails
-3. \`veryfront deploy --env <environment> --branch <branch> --yes --json\`
-4. Use vf_get_errors to verify no runtime errors after deploy
-5. If errors: redeploy previous version
+3. \`veryfront push --branch <branch> --force\`, abort if any upload fails
+4. \`veryfront deploy --env <environment> --branch <branch> --yes --json\`
+5. Record the project, environment, release, deployment, and commit IDs
+6. Use vf_get_errors to verify no runtime errors after deploy
+7. If errors: redeploy previous version
 
 ## Error Recovery
 
 - **Build fails**: Check vf_get_errors, fix and retry
 - **Tests fail**: Read JSON output, fix failing tests
+- **Push fails**: Fix failed uploads before retrying deploy
 - **Deploy fails**: Check environment, auth, branch
 - **Post-deploy errors**: Redeploy previous release`,
     directory: "core:deploy-safely",

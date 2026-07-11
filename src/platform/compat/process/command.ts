@@ -13,6 +13,8 @@ export interface CommandOptions {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  /** Start from an empty environment before applying `env`. */
+  clearEnv?: boolean;
   /** Capture stdout/stderr to return in result */
   capture?: boolean;
   /** Inherit stdio from parent process (shows output in terminal) */
@@ -116,6 +118,7 @@ export async function runCommand(
     args = [],
     cwd: cmdCwd,
     env: cmdEnv,
+    clearEnv = false,
     capture = false,
     inherit = false,
     shell = false,
@@ -132,6 +135,7 @@ export async function runCommand(
       args,
       cwd: cmdCwd,
       env: cmdEnv,
+      clearEnv,
       stdin: inherit ? "inherit" : "null",
       stdout: stdioMode,
       stderr: stdioMode,
@@ -198,7 +202,7 @@ export async function runCommand(
     const proc = bunGlobal.Bun.spawn({
       cmd: bunCmd,
       cwd: cmdCwd,
-      env: cmdEnv,
+      env: clearEnv ? cmdEnv ?? {} : cmdEnv,
       stdout: bunStdio,
       stderr: bunStdio,
     });
@@ -244,7 +248,7 @@ export async function runCommand(
   return await new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd: cmdCwd,
-      env: cmdEnv ? { ...process.env, ...cmdEnv } : undefined,
+      env: clearEnv ? cmdEnv ?? {} : cmdEnv ? { ...process.env, ...cmdEnv } : undefined,
       stdio: nodeStdio,
       shell,
     });

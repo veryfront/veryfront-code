@@ -36,7 +36,8 @@ export const deployHelp: CommandHelp = {
   ],
   notes: [
     "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
+    "Requires a successful veryfront push for the same project and branch",
     "Creates a new release from the specified branch",
-    "Deploys the release to the target environment",
+    "Verifies the target environment points to the created deployment before succeeding",
   ],
 };

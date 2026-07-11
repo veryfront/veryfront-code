@@ -83,8 +83,8 @@ describe("deploy command integration", () => {
 
       assertExists(deployment, "Deployment should be created");
       assertExists(deployment.id, "Deployment should have an id");
-      assertExists(deployment.release, "Deployment should reference release");
-      assertExists(deployment.environment, "Deployment should reference environment");
+      assertEquals(deployment.release_id, testReleaseId);
+      assertEquals(deployment.environment_id, env.id);
     });
   });
 });

@@ -23,17 +23,23 @@ Build, test, deploy, and verify with rollback on failure.
    ```
    Abort if any test fails.
 
-3. **Deploy**
+3. **Push**
+   ```bash
+   veryfront push --branch <branch> --force
+   ```
+   Abort if any file fails to upload.
+
+4. **Deploy**
    ```bash
    veryfront deploy --env <environment> --branch <branch> --yes --json
    ```
-   Record the release version from the response.
+   Record the project, environment, release, deployment, and commit IDs from the response.
 
-4. **Verify health** (via MCP)
+5. **Verify health** (via MCP)
    Use `vf_get_errors` to check for runtime errors after deploy.
    Wait 30 seconds, then check again.
 
-5. **Confirm or rollback**
+6. **Confirm or rollback**
    - If no errors: deployment is successful
    - If errors detected: deploy the previous version
 
@@ -41,5 +47,6 @@ Build, test, deploy, and verify with rollback on failure.
 
 - **Build fails**: Check `vf_get_errors` for compilation errors, fix and retry
 - **Tests fail**: Read failure details from JSON output, fix failing tests
+- **Push fails**: Fix failed uploads before retrying deploy
 - **Deploy fails**: Check environment name, auth token, branch existence
 - **Post-deploy errors**: Redeploy previous release with `--release-name <previous>`
