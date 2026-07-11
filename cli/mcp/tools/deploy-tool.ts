@@ -9,12 +9,19 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { getEnvironmentConfig } from "veryfront/config";
+import { cwd } from "veryfront/platform";
 import { createApiClient, resolveConfig } from "#cli/shared/config";
 import {
+  assertProjectOwnership,
   createDeployment,
   createRelease,
   getEnvironmentByName,
+  getProject,
+  resolvePushedSource,
+  verifyDeployment,
+  verifyReleaseSource,
 } from "../../commands/deploy/command.ts";
+import { normalizeControlPlane } from "../../shared/deployment-provenance.ts";
 
 const getTriggerDeployInput = defineSchema((v) =>
   v.object({
@@ -35,10 +42,18 @@ export type TriggerDeployInput = InferSchema<ReturnType<typeof getTriggerDeployI
 
 export interface TriggerDeployResult {
   success: boolean;
+  project?: { id: string; slug: string };
   deploymentId?: string;
   release?: { id: string; name: string; version: string };
   environment?: { id: string; name: string };
+  commitSha?: string;
+  sourceDigest?: string;
+  controlPlane?: string;
   error?: string;
+}
+
+export interface TriggerDeployOptions {
+  projectDir?: string;
 }
 
 /**
@@ -48,6 +63,7 @@ export interface TriggerDeployResult {
  */
 export async function triggerDeploy(
   input: TriggerDeployInput,
+  options: TriggerDeployOptions = {},
 ): Promise<TriggerDeployResult> {
   try {
     const env = getEnvironmentConfig();
@@ -67,10 +83,11 @@ export async function triggerDeploy(
     });
 
     const client = createApiClient(config);
+    const project = await getProject(client, input.projectSlug);
 
     const environment = await getEnvironmentByName(
       client,
-      input.projectSlug,
+      project.id,
       input.environment,
     );
     if (!environment) {
@@ -79,23 +96,66 @@ export async function triggerDeploy(
         error: `Environment "${input.environment}" not found.`,
       };
     }
+    assertProjectOwnership("Environment", environment, project.id);
 
-    const release = await createRelease(client, input.projectSlug, {
+    const source = await resolvePushedSource({
+      projectDir: options.projectDir ?? cwd(),
+      controlPlane: config.apiUrl,
+      projectId: project.id,
+      projectSlug: project.slug,
       branch: input.branch,
+      requireClean: input.environment === "production",
+    });
+
+    const release = await createRelease(client, project.id, {
+      branch: input.branch,
+    });
+    if (!release.version) {
+      return {
+        success: false,
+        error: `Release ${release.id} has no version.`,
+      };
+    }
+
+    const verifiedRelease = await verifyReleaseSource(client, project.id, {
+      projectId: project.id,
+      releaseId: release.id,
+      releaseName: release.name,
+      commitSha: source.commitSha,
+      sourceDigest: source.sourceDigest,
     });
 
     const deployment = await createDeployment(
       client,
-      input.projectSlug,
+      project.id,
       release.id,
       environment.id,
     );
+    const verification = await verifyDeployment(client, project.id, {
+      projectId: project.id,
+      projectSlug: project.slug,
+      environmentId: environment.id,
+      environmentName: input.environment,
+      releaseId: release.id,
+      releaseName: release.name,
+      deploymentId: deployment.id,
+      commitSha: source.commitSha,
+      sourceDigest: source.sourceDigest,
+    }, { verifiedRelease });
 
     return {
       success: true,
-      deploymentId: deployment.id,
-      release: { id: release.id, name: release.name, version: release.version },
-      environment: { id: environment.id, name: environment.name },
+      project: { id: verification.projectId, slug: verification.projectSlug },
+      deploymentId: verification.deploymentId,
+      release: {
+        id: verification.releaseId,
+        name: release.name,
+        version: verification.releaseVersion,
+      },
+      environment: { id: verification.environmentId, name: verification.environmentName },
+      commitSha: verification.commitSha,
+      sourceDigest: verification.sourceDigest,
+      controlPlane: normalizeControlPlane(config.apiUrl),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -126,8 +186,9 @@ export const vfTriggerDeploy: MCPTool<TriggerDeployInput, TriggerDeployResult> =
   },
   description:
     "Use this when you need to deploy a project to an environment via the Veryfront API. " +
-    "Creates a release from the specified branch and deploys it to the target environment. " +
-    "Returns the deployment ID, release info, and environment info on success. " +
+    "Requires a successful vf push from the current project, then creates and verifies a release " +
+    "from the specified branch and deploys it to the target environment. " +
+    "Returns project, deployment, release, environment, and commit evidence on success. " +
     "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
     "Do not use for local builds — use vf_build instead. " +
     "Do not use for running tests before deploy — use vf_run_tests instead.",
