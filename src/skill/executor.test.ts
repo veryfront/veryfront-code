@@ -39,18 +39,23 @@ function mockFetch(responses: MockResponseEntry[]): void {
   globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
 }
 
-function delayedErrorNdjsonResponse(error: Error, delayMs: number): MockResponseEntry {
-  return () => {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        setTimeout(() => controller.error(error), delayMs);
-      },
-    });
+function pendingErrorNdjsonResponse(error: Error): {
+  response: Response;
+  reject: () => void;
+} {
+  let rejectBody!: (reason: Error) => void;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      rejectBody = (reason) => controller.error(reason);
+    },
+  });
 
-    return new Response(body, {
+  return {
+    response: new Response(body, {
       status: 200,
       headers: { "Content-Type": "application/x-ndjson" },
-    });
+    }),
+    reject: () => rejectBody(error),
   };
 }
 
@@ -152,6 +157,7 @@ describe("src/skill/executor", () => {
     it("handles a late sandbox command rejection after timeout", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      const pendingCommand = pendingErrorNdjsonResponse(new Error("sandbox process killed"));
       mockFetch([
         jsonResponse({
           id: "session-timeout",
@@ -160,7 +166,7 @@ describe("src/skill/executor", () => {
         }),
         textResponse(""),
         ndjsonResponse([{ type: "exit", exitCode: 0 }]),
-        delayedErrorNdjsonResponse(new Error("sandbox process killed"), 30),
+        pendingCommand.response,
         ndjsonResponse([{ type: "exit", exitCode: 0 }]),
         textResponse(""),
       ]);
@@ -172,7 +178,8 @@ describe("src/skill/executor", () => {
         timeoutMs: 1,
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      pendingCommand.reject();
+      await Promise.resolve();
 
       assertEquals(result.exitCode, 124);
       assertStringIncludes(result.stderr, "timed out");
