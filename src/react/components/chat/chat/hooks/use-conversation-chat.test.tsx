@@ -85,6 +85,124 @@ function contextValue(
 }
 
 describe("react/components/chat/hooks/useConversationChat", () => {
+  it("keeps the session usable when a provider has no active conversation", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = () => {
+      requestCount++;
+      return Promise.resolve(new Response(null));
+    };
+    const saved: Conversation[] = [];
+    const placeholder = conversation("placeholder", []);
+    const unboundValue = {
+      ...contextValue(placeholder, (conversation) => saved.push(conversation)),
+      active: null,
+      activeId: null,
+    };
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const renderValue = (value: UseConversationsResult) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={value}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+    try {
+      renderValue({ ...unboundValue, isLoading: true });
+      await settle();
+
+      flushSync(() => latest!.chat.setInput("Loading draft"));
+      await latest!.chat.sendMessage({ text: "Loading message" });
+      assertEquals(latest!.chat.input, "");
+      assertEquals(requestCount, 0, "initial provider loading must fence chat actions");
+
+      renderValue(unboundValue);
+      await settle();
+      flushSync(() => latest!.chat.setInput("Draft message"));
+      assertEquals(latest!.chat.input, "Draft message");
+
+      await latest!.chat.sendMessage({ text: "New conversation" });
+      await settle();
+
+      assertEquals(requestCount, 1, "an unbound provider session must still send");
+      assertEquals(saved.at(-1)?.messages.at(0)?.parts, [
+        { type: "text", text: "New conversation" },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("mints a new synthetic identity after leaving an unbound session", async () => {
+    const restoreDom = installDom();
+    const saved: Conversation[] = [];
+    const placeholder = conversation("placeholder", []);
+    const unboundValue = {
+      ...contextValue(placeholder, (conversation) => saved.push(conversation)),
+      active: null,
+      activeId: null,
+    };
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const renderValue = (value: UseConversationsResult) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={value}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+    try {
+      renderValue(unboundValue);
+      await settle();
+      const firstMessage = userMessage("first-message", "First conversation");
+      flushSync(() => latest!.chat.setMessages([firstMessage]));
+      await settle();
+      const firstSyntheticId = saved.at(-1)!.id;
+
+      const bound = conversation("bound", [userMessage("bound-message", "Bound")]);
+      renderValue(contextValue(bound, (conversation) => saved.push(conversation)));
+      await settle();
+      renderValue(unboundValue);
+      await settle();
+
+      const nextMessage = userMessage("next-message", "Next conversation");
+      flushSync(() => latest!.chat.setMessages([nextMessage]));
+      await settle();
+
+      assertEquals(
+        saved.at(-1)?.id === firstSyntheticId,
+        false,
+        "a new unbound session must mint a new conversation id",
+      );
+      assertEquals(saved.at(-1)?.messages, [nextMessage]);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
   it("replaces message state before persisting a newly active conversation", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;

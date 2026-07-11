@@ -33,6 +33,14 @@ describe("useConversations helpers — createEmptyConversation", () => {
   it("carries an agentId when given", () => {
     assertEquals(createEmptyConversation({ agentId: "support" }).agentId, "support");
   });
+
+  it("keeps the full UUID entropy in generated ids", () => {
+    const id = createEmptyConversation().id;
+    assertEquals(
+      /^c_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id),
+      true,
+    );
+  });
 });
 
 describe("useConversations helpers — deriveTitle", () => {

@@ -31,7 +31,7 @@ const SAVE_DEBOUNCE_MS = 300;
 // ---------------------------------------------------------------------------
 
 function randomId(): string {
-  return `c_${crypto.randomUUID().slice(0, 8)}`;
+  return `c_${crypto.randomUUID()}`;
 }
 
 /** A fresh, empty conversation. `now`/`id` are injectable for tests. */

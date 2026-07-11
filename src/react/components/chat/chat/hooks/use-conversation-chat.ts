@@ -77,10 +77,15 @@ export function useConversationChat(
   const bound = conversations?.active && conversations.active.id === conversations.activeId
     ? conversations.active
     : null;
+  const isConversationPending = conversations !== null &&
+    bound === null &&
+    (conversations.isLoading || conversations.activeId !== null);
   const resolvedAgentId = bound?.agentId ?? agentId;
   const emptyMessagesRef = React.useRef<ChatMessage[]>([]);
   const sessionMessages = bound?.messages ??
-    (conversations ? emptyMessagesRef.current : initialMessages ?? emptyMessagesRef.current);
+    (isConversationPending
+      ? emptyMessagesRef.current
+      : initialMessages ?? emptyMessagesRef.current);
 
   const resettableChat = useChatWithSessionReset({
     api,
@@ -104,8 +109,12 @@ export function useConversationChat(
   const boundId = bound?.id;
   const lastEmittedRef = React.useRef<ChatMessage[] | null>(null);
   if (lastEmittedRef.current === null) lastEmittedRef.current = chat.messages;
-  const sessionKey = conversations
-    ? bound ? `conversation:${bound.id}` : `pending:${conversations.activeId ?? ""}`
+  const sessionKey = bound
+    ? `conversation:${bound.id}`
+    : isConversationPending
+    ? `pending:${conversations.activeId}`
+    : conversations
+    ? "provider:unbound"
     : "standalone";
   const currentSessionKeyRef = React.useRef(sessionKey);
   const currentSessionEpochRef = React.useRef(0);
@@ -125,6 +134,7 @@ export function useConversationChat(
       pendingSessionRef.current === null
     ) return;
 
+    syntheticRef.current = null;
     const epoch = ++resetEpochRef.current;
     pendingSessionRef.current = { key: sessionKey, messages: sessionMessages, epoch };
     lastEmittedRef.current = sessionMessages;
@@ -147,7 +157,7 @@ export function useConversationChat(
   React.useEffect(() => {
     if (currentSessionKeyRef.current !== sessionKey) return;
     if (pendingSessionRef.current !== null) return;
-    if (conversations && !bound) return;
+    if (isConversationPending) return;
 
     const sink = persistRef.current;
     if (!sink) return;
@@ -174,7 +184,7 @@ export function useConversationChat(
 
   const renderedSessionEpoch = committedResetEpoch;
   const canUseSession = () =>
-    (!conversations || bound !== null) &&
+    !isConversationPending &&
     currentSessionKeyRef.current === sessionKey &&
     currentSessionEpochRef.current === renderedSessionEpoch &&
     pendingSessionRef.current === null;
