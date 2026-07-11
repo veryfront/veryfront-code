@@ -91,7 +91,7 @@ export {
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
-// Chat — Conversation session
+// Chat - Conversation session
 // ---------------------------------------------------------------------------
 export {
   useConversationChat,

@@ -103,7 +103,24 @@ export function resolveUseChatStreamHandler(
  */
 const DEFAULT_CHAT_API = "/api/ag-ui";
 
+interface ResettableUseChatResult extends UseChatResult {
+  reset: (messages?: ChatMessage[]) => void;
+}
+
 export function useChat(options: UseChatOptions = {}): UseChatResult {
+  const { reset, ...chat } = useChatState(options);
+  void reset;
+  return chat;
+}
+
+/** @internal Chat session with the reset capability used by conversation hosts. */
+export function useChatWithSessionReset(
+  options: UseChatOptions = {},
+): ResettableUseChatResult {
+  return useChatState(options);
+}
+
+function useChatState(options: UseChatOptions): ResettableUseChatResult {
   const api = options.api ?? DEFAULT_CHAT_API;
   const [messages, setMessages] = useState<ChatMessage[]>(options.initialMessages ?? []);
   const messagesRef = useRef(messages);
@@ -125,13 +142,16 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
 
+  const invalidateActiveRequest = useCallback(() => {
+    requestIdRef.current++;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
+
   // Abort in-flight request on unmount
   useEffect(() => {
-    return () => {
-      requestIdRef.current++;
-      abortControllerRef.current?.abort();
-    };
-  }, []);
+    return invalidateActiveRequest;
+  }, [invalidateActiveRequest]);
 
   /**
    * Add tool output to pending tool-call parts.
@@ -402,11 +422,30 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const stop = useCallback(() => {
     // Abort cannot retract a chunk that was already decoded. Advancing the
     // request id also fences callbacks and state updaters queued by that chunk.
-    requestIdRef.current++;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+    invalidateActiveRequest();
     setIsLoading(false);
-  }, []);
+  }, [invalidateActiveRequest]);
+
+  /**
+   * Reset state that belongs to one conversation while preserving the hook
+   * instance. This gives conversation hosts the same isolation as remounting
+   * `useChat`, including branch metadata that cannot be inferred from messages.
+   */
+  const reset = useCallback((nextMessages: ChatMessage[] = []) => {
+    invalidateActiveRequest();
+    messagesRef.current = nextMessages;
+    branchMapRef.current.clear();
+    branchKeyByMessageIdRef.current.clear();
+    pendingToolOutputsRef.current.clear();
+    setMessages(nextMessages);
+    setInput("");
+    setIsLoading(false);
+    setError(null);
+    setData(null);
+    setModel(options.model);
+    setInferenceMode("cloud");
+    setActiveModel(undefined);
+  }, [invalidateActiveRequest, options.model]);
 
   /**
    * Edit a previous user message and resubmit.
@@ -563,6 +602,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     switchBranch,
     reload,
     stop,
+    reset,
     setMessages,
     addToolOutput,
     data,

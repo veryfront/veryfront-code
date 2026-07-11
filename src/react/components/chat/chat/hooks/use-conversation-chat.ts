@@ -1,6 +1,6 @@
 import * as React from "react";
-import { useChat } from "#veryfront/agent/react";
 import type { ChatMessage, UseChatResult } from "#veryfront/agent/react";
+import { useChatWithSessionReset } from "#veryfront/agent/react/use-chat/use-chat.ts";
 import { useConversationsContextOptional } from "../contexts/conversations-context.tsx";
 import {
   createEmptyConversation,
@@ -8,6 +8,10 @@ import {
   deriveTitle,
 } from "./use-conversations.ts";
 import type { Conversation } from "../persistence/conversation-store.ts";
+
+const useIsomorphicLayoutEffect = typeof document !== "undefined"
+  ? React.useLayoutEffect
+  : React.useEffect;
 
 /**
  * `useConversationChat` — the library primitive that binds a `useChat` session
@@ -50,6 +54,7 @@ export interface UseConversationChatOptions {
   onUpdate?: (conversation: Conversation) => void;
 }
 
+/** Result returned by {@link useConversationChat}. */
 export interface UseConversationChatResult {
   /** The live `useChat` session (seeded + persistence-bridged). */
   chat: UseChatResult;
@@ -59,6 +64,7 @@ export interface UseConversationChatResult {
   resolvedAgentId: string | undefined;
 }
 
+/** Bind the active conversation to an isolated chat session and persistence sink. */
 export function useConversationChat(
   options: UseConversationChatOptions = {},
 ): UseConversationChatResult {
@@ -72,13 +78,17 @@ export function useConversationChat(
     ? conversations.active
     : null;
   const resolvedAgentId = bound?.agentId ?? agentId;
+  const emptyMessagesRef = React.useRef<ChatMessage[]>([]);
+  const sessionMessages = bound?.messages ??
+    (conversations ? emptyMessagesRef.current : initialMessages ?? emptyMessagesRef.current);
 
-  const chat = useChat({
+  const resettableChat = useChatWithSessionReset({
     api,
-    initialMessages: conversations ? (bound?.messages ?? []) : initialMessages,
+    initialMessages: sessionMessages,
     onError,
     body: resolvedAgentId ? { agentId: resolvedAgentId } : undefined,
   });
+  const { reset: resetChatSession, ...chat } = resettableChat;
 
   // Sink resolution: explicit prop → provider default → ephemeral.
   const persist = onUpdate ?? conversations?.save;
@@ -98,6 +108,7 @@ export function useConversationChat(
     ? bound ? `conversation:${bound.id}` : `pending:${conversations.activeId ?? ""}`
     : "standalone";
   const currentSessionKeyRef = React.useRef(sessionKey);
+  const currentSessionEpochRef = React.useRef(0);
   const resetEpochRef = React.useRef(0);
   const [committedResetEpoch, setCommittedResetEpoch] = React.useState(0);
   const pendingSessionRef = React.useRef<
@@ -108,35 +119,34 @@ export function useConversationChat(
     } | null
   >(null);
 
-  React.useEffect(() => {
-    if (currentSessionKeyRef.current === sessionKey) return;
+  useIsomorphicLayoutEffect(() => {
+    if (
+      currentSessionKeyRef.current === sessionKey &&
+      pendingSessionRef.current === null
+    ) return;
 
-    const messages = bound?.messages ?? (conversations ? [] : initialMessages ?? []);
     const epoch = ++resetEpochRef.current;
-    pendingSessionRef.current = { key: sessionKey, messages, epoch };
-    lastEmittedRef.current = messages;
-    chat.stop();
-    chat.setMessages(messages);
+    pendingSessionRef.current = { key: sessionKey, messages: sessionMessages, epoch };
+    lastEmittedRef.current = sessionMessages;
+    resetChatSession(sessionMessages);
     setCommittedResetEpoch(epoch);
   }, [sessionKey]);
 
-  React.useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const pendingSession = pendingSessionRef.current;
-    if (pendingSession) {
-      // The epoch advances on the render scheduled by the reset. Unlike array
-      // identity, it cannot remain pending if React batches another update with
-      // setMessages. A different array now can only belong to the new session,
-      // because stop() fenced callbacks from the previous request.
-      if (committedResetEpoch < pendingSession.epoch) return;
-      currentSessionKeyRef.current = pendingSession.key;
-      pendingSessionRef.current = null;
-      if (chat.messages === pendingSession.messages) {
-        lastEmittedRef.current = chat.messages;
-        return;
-      }
-      lastEmittedRef.current = pendingSession.messages;
-    }
+    if (!pendingSession || committedResetEpoch < pendingSession.epoch) return;
+
+    currentSessionKeyRef.current = pendingSession.key;
+    currentSessionEpochRef.current = pendingSession.epoch;
+    pendingSessionRef.current = null;
+    lastEmittedRef.current = chat.messages === pendingSession.messages
+      ? chat.messages
+      : pendingSession.messages;
+  }, [committedResetEpoch]);
+
+  React.useEffect(() => {
     if (currentSessionKeyRef.current !== sessionKey) return;
+    if (pendingSessionRef.current !== null) return;
     if (conversations && !bound) return;
 
     const sink = persistRef.current;
@@ -162,5 +172,70 @@ export function useConversationChat(
     sink(conversation);
   }, [chat.messages, boundId, committedResetEpoch, sessionKey]);
 
-  return { chat, bound, resolvedAgentId };
+  const renderedSessionEpoch = committedResetEpoch;
+  const canUseSession = () =>
+    (!conversations || bound !== null) &&
+    currentSessionKeyRef.current === sessionKey &&
+    currentSessionEpochRef.current === renderedSessionEpoch &&
+    pendingSessionRef.current === null;
+  const sessionReady = canUseSession();
+  const guardedSetInput = (value: string) => {
+    if (canUseSession()) chat.setInput(value);
+  };
+  const guardedSetModel = (value: string | undefined) => {
+    if (canUseSession()) chat.setModel(value);
+  };
+  const guardedInputChange = (
+    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    if (canUseSession()) chat.handleInputChange(event);
+  };
+  const guardedSubmit = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    return canUseSession() ? chat.handleSubmit() : Promise.resolve();
+  };
+
+  // Every action is bound to the session from the render that produced it.
+  // Retained callbacks from an old conversation therefore cannot mutate the
+  // newly active one, even after its reset has committed.
+  const sessionChat: UseChatResult = {
+    ...chat,
+    ...(sessionReady ? {} : {
+      messages: sessionMessages,
+      input: "",
+      isLoading: false,
+      error: null,
+      model: undefined,
+      data: null,
+      activeModel: undefined,
+      inferenceMode: "cloud" as const,
+    }),
+    setInput: guardedSetInput,
+    setModel: guardedSetModel,
+    sendMessage: (message) => canUseSession() ? chat.sendMessage(message) : Promise.resolve(),
+    editMessage: (messageId, newText) =>
+      canUseSession() ? chat.editMessage(messageId, newText) : Promise.resolve(),
+    getBranches: (messageId) =>
+      canUseSession() ? chat.getBranches(messageId) : { current: 1, total: 1 },
+    switchBranch: (messageId, branchIndex) => {
+      if (canUseSession()) chat.switchBranch(messageId, branchIndex);
+    },
+    reload: () => canUseSession() ? chat.reload() : Promise.resolve(),
+    stop: () => {
+      if (canUseSession()) chat.stop();
+    },
+    setMessages: (messages) => {
+      if (canUseSession()) chat.setMessages(messages);
+    },
+    addToolOutput: (output) => {
+      if (canUseSession()) chat.addToolOutput(output);
+    },
+    handleInputChange: guardedInputChange,
+    handleSubmit: guardedSubmit,
+    onChange: guardedInputChange,
+    onSubmit: guardedSubmit,
+    onModelChange: guardedSetModel,
+  };
+
+  return { chat: sessionChat, bound, resolvedAgentId };
 }

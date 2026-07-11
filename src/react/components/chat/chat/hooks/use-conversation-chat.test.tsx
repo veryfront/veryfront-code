@@ -87,9 +87,101 @@ function contextValue(
 describe("react/components/chat/hooks/useConversationChat", () => {
   it("replaces message state before persisting a newly active conversation", async () => {
     const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = () => {
+      requestCount++;
+      return Promise.resolve(new Response(null));
+    };
     const first = conversation("first", [userMessage("first-message", "First thread")]);
     const second = conversation("second", [userMessage("second-message", "Second thread")]);
     const saved: Conversation[] = [];
+    const renderedMessageIds: string[][] = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      renderedMessageIds.push(latest.chat.messages.map((message) => message.id));
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const renderValue = (value: UseConversationsResult) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={value}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+    const save = (value: Conversation) => saved.push(value);
+    const render = (active: Conversation) => renderValue(contextValue(active, save));
+
+    try {
+      render(first);
+      await settle();
+      assertEquals(latest!.chat.messages, first.messages);
+      assertEquals("reset" in latest!.chat, false, "internal session controls must stay private");
+      const staleSend = latest!.chat.sendMessage;
+      const staleSubmit = latest!.chat.handleSubmit;
+
+      const pendingRender = renderedMessageIds.length;
+      renderValue({ ...contextValue(first, save), activeId: second.id });
+      assertEquals(
+        renderedMessageIds[pendingRender],
+        [],
+        "a loading conversation must hide the previously active thread",
+      );
+      await settle();
+      await latest!.chat.sendMessage({ text: "Pending action" });
+      assertEquals(requestCount, 0, "a conversation must not send before it has loaded");
+
+      const firstSwitchRender = renderedMessageIds.length;
+      render(second);
+      assertEquals(
+        renderedMessageIds[firstSwitchRender],
+        ["second-message"],
+        "the first render for a conversation must not expose the previous thread",
+      );
+      await settle();
+      assertEquals(latest!.chat.messages, second.messages);
+      assertEquals(saved, [], "switching conversations must not persist stale messages");
+
+      await staleSend({ text: "Stale action" });
+      await settle();
+      assertEquals(requestCount, 0, "an action retained from the old session must be ignored");
+      assertEquals(latest!.chat.messages, second.messages);
+      let prevented = false;
+      await staleSubmit({
+        preventDefault: () => {
+          prevented = true;
+        },
+      } as React.FormEvent);
+      assertEquals(prevented, true, "a fenced form submit must still prevent native navigation");
+
+      const reply = userMessage("second-reply", "Second reply");
+      flushSync(() => latest!.chat.setMessages([...latest!.chat.messages, reply]));
+      await settle();
+
+      assertEquals(saved.length, 1);
+      assertEquals(saved[0]?.id, "second");
+      assertEquals(saved[0]?.messages, [...second.messages, reply]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("clears branch state when conversations reuse message ids", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(new Response(null, { status: 200 }));
+
+    const first = conversation("first", [userMessage("shared-message", "First thread")]);
+    const second = conversation("second", [userMessage("shared-message", "Second thread")]);
     let latest: UseConversationChatResult | null = null;
 
     function Capture(): null {
@@ -101,9 +193,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const render = (active: Conversation) => {
       flushSync(() => {
         root.render(
-          <ConversationsContextProvider
-            value={contextValue(active, (value) => saved.push(value))}
-          >
+          <ConversationsContextProvider value={contextValue(active, () => {})}>
             <Capture />
           </ConversationsContextProvider>,
         );
@@ -113,21 +203,166 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     try {
       render(first);
       await settle();
-      assertEquals(latest!.chat.messages, first.messages);
+
+      let edit: Promise<void> | undefined;
+      flushSync(() => {
+        edit = latest!.chat.editMessage("shared-message", "Edited first thread");
+      });
+      await edit;
+      await settle();
+      assertEquals(latest!.chat.getBranches("shared-message").total, 2);
 
       render(second);
       await settle();
-      assertEquals(latest!.chat.messages, second.messages);
-      assertEquals(saved, [], "switching conversations must not persist stale messages");
 
-      const reply = userMessage("second-reply", "Second reply");
-      flushSync(() => latest!.chat.setMessages([...latest!.chat.messages, reply]));
+      assertEquals(latest!.chat.messages, second.messages);
+      assertEquals(
+        latest!.chat.getBranches("shared-message"),
+        { current: 1, total: 1 },
+        "branch state from the previous conversation must not resolve by a reused message id",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("keeps retained actions invalid after returning to the same conversation", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = () => {
+      requestCount++;
+      return Promise.resolve(new Response(null));
+    };
+
+    const first = conversation("first", [userMessage("first-message", "First thread")]);
+    const second = conversation("second", [userMessage("second-message", "Second thread")]);
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const render = (active: Conversation) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={contextValue(active, () => {})}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+
+    try {
+      render(first);
+      await settle();
+      const staleSend = latest!.chat.sendMessage;
+
+      render(second);
+      await settle();
+      render(first);
       await settle();
 
-      assertEquals(saved.length, 1);
-      assertEquals(saved[0]?.id, "second");
-      assertEquals(saved[0]?.messages, [...second.messages, reply]);
+      await staleSend({ text: "Late first-session action" });
+      await settle();
+      assertEquals(requestCount, 0);
+      assertEquals(latest!.chat.messages, first.messages);
     } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("does not carry request state into a newly active conversation", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    const body = [
+      "event: Custom",
+      'data: {"name":"inference","value":{"inferenceMode":"server-local","model":"old-server-model"}}',
+      "",
+      "event: RunError",
+      'data: {"message":"Old conversation failed"}',
+      "",
+      "",
+    ].join("\n");
+    globalThis.fetch = () => Promise.resolve(new Response(body));
+
+    const first = conversation("first", [userMessage("first-message", "First thread")]);
+    const second = conversation("second", [userMessage("second-message", "Second thread")]);
+    const snapshots: Array<
+      Pick<
+        UseConversationChatResult["chat"],
+        "input" | "error" | "model" | "activeModel" | "inferenceMode" | "data"
+      >
+    > = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      snapshots.push({
+        input: latest.chat.input,
+        error: latest.chat.error,
+        model: latest.chat.model,
+        activeModel: latest.chat.activeModel,
+        inferenceMode: latest.chat.inferenceMode,
+        data: latest.chat.data,
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const render = (active: Conversation) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={contextValue(active, () => {})}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+
+    try {
+      render(first);
+      await settle();
+      flushSync(() => {
+        latest!.chat.setInput("old draft");
+        latest!.chat.setModel("old-selected-model");
+      });
+      await settle();
+      await latest!.chat.sendMessage({ text: "Fail" });
+      await settle();
+
+      assertEquals(latest!.chat.error?.message, "Old conversation failed");
+      assertEquals(latest!.chat.inferenceMode, "server-local");
+      assertEquals(latest!.chat.activeModel, "old-server-model");
+
+      const firstSwitchRender = snapshots.length;
+      render(second);
+      assertEquals(snapshots[firstSwitchRender], {
+        input: "",
+        error: null,
+        model: undefined,
+        activeModel: undefined,
+        inferenceMode: "cloud",
+        data: null,
+      });
+      await settle();
+
+      assertEquals(latest!.chat.input, "");
+      assertEquals(latest!.chat.error, null);
+      assertEquals(latest!.chat.model, undefined);
+      assertEquals(latest!.chat.activeModel, undefined);
+      assertEquals(latest!.chat.inferenceMode, "cloud");
+      assertEquals(latest!.chat.data, null);
+    } finally {
+      globalThis.fetch = originalFetch;
       flushSync(() => root.unmount());
       await settle();
       restoreDom();
