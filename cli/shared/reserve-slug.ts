@@ -21,6 +21,17 @@ export interface ReserveResult {
   created: boolean;
 }
 
+export interface ReserveProjectSlugOptions {
+  allowAlternativeSlug?: boolean;
+}
+
+export class ProjectSlugConflictError extends Error {
+  constructor(public readonly slug: string) {
+    super(`Project slug "${slug}" is already in use.`);
+    this.name = "ProjectSlugConflictError";
+  }
+}
+
 interface ApiError {
   message?: string;
 }
@@ -38,12 +49,14 @@ export async function reserveProjectSlug(
   slug: string,
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  apiUrl: string = getApiUrl(env),
+  options: ReserveProjectSlugOptions = {},
 ): Promise<ReserveResult> {
   const name = slugToName(slug);
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
-    const result = await tryCreateProject(currentSlug, name, token, env);
+    const result = await tryCreateProject(currentSlug, name, token, apiUrl);
 
     if (result.success) {
       return {
@@ -57,6 +70,10 @@ export async function reserveProjectSlug(
       throw new Error(result.error ?? "Failed to create project");
     }
 
+    if (options.allowAlternativeSlug === false) {
+      throw new ProjectSlugConflictError(slug);
+    }
+
     currentSlug = `${slug}-${randomSuffix()}`;
   }
 
@@ -67,10 +84,10 @@ async function tryCreateProject(
   slug: string,
   name: string,
   token: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
+  apiUrl: string,
 ): Promise<CreateProjectResult> {
   try {
-    const response = await fetch(`${getApiUrl(env)}/projects`, {
+    const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/projects`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

@@ -34,6 +34,7 @@ import {
   env,
   getArgs,
   getEnv,
+  getOsType,
   getRuntimeVersion,
   memoryUsage,
   pid,
@@ -41,7 +42,7 @@ import {
   unrefTimer,
 } from "./process.ts";
 
-import { createFileSystem } from "./fs.ts";
+import { createFileSystem, lstat, symlink } from "./fs.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 function getCurrentRuntime(): string {
@@ -214,6 +215,25 @@ describe("Filesystem Operations", () => {
     const thisFile = new URL(import.meta.url).pathname;
     const content = await fs.readTextFile(thisFile);
     assert(content.includes("Cross-Runtime Compatibility Tests"), "should read this file");
+  });
+
+  it("fs.readDir and lstat report symbolic links", async () => {
+    if (getOsType() === "windows") return;
+
+    const fs = createFileSystem();
+    const directory = await fs.makeTempDir({ prefix: "veryfront-fs-link-" });
+    const target = join(directory, "target.ts");
+    const link = join(directory, "linked.ts");
+    try {
+      await fs.writeTextFile(target, "export const value = 1;\n");
+      await symlink(target, link);
+
+      const entries = await Array.fromAsync(fs.readDir(directory));
+      assertEquals(entries.find((entry) => entry.name === "linked.ts")?.isSymlink, true);
+      assertEquals((await lstat(link)).isSymlink, true);
+    } finally {
+      await fs.remove(directory, { recursive: true });
+    }
   });
 });
 
