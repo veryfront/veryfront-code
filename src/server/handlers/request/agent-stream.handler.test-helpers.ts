@@ -77,6 +77,7 @@ export type SourceContextTestFsAdapter = FileSystemAdapter & {
 
 export function createNoopFsAdapter(
   runWithContextCalls: Array<{
+    token?: string;
     productionMode?: boolean;
     releaseId?: string | null;
     branch?: string | null;
@@ -105,12 +106,12 @@ export function createNoopFsAdapter(
     isMultiProjectMode: () => true,
     runWithContext: async (
       _projectSlug,
-      _token,
+      token,
       fn,
       _projectId,
       options,
     ) => {
-      runWithContextCalls.push(options ?? {});
+      runWithContextCalls.push({ token, ...options });
       return await fn();
     },
   };
