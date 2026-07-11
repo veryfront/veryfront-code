@@ -63,6 +63,115 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
   });
 
+  describe("Credential validation", () => {
+    it("validates user sessions through the profile endpoint", async () => {
+      const originalFetch = globalThis.fetch;
+      const requestedUrls: string[] = [];
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request) => {
+          requestedUrls.push(String(input));
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ id: "user-123", email: "test@example.com" }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch;
+
+        const { validateCredential } = await import("./login.ts");
+        const credential = await validateCredential("session-token");
+
+        assertEquals(credential, { id: "user-123", email: "test@example.com" });
+        assertEquals(requestedUrls.length, 1);
+        assertEquals(new URL(requestedUrls[0]!).pathname, "/me");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("validates API keys through an API-key-compatible project endpoint", async () => {
+      const originalFetch = globalThis.fetch;
+      const requestedUrls: string[] = [];
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request) => {
+          requestedUrls.push(String(input));
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }) as typeof fetch;
+
+        const { validateCredential } = await import("./login.ts");
+        const credential = await validateCredential("vf_test_secret");
+
+        assertEquals(credential, { authenticated: true, type: "apiKey" });
+        assertEquals(requestedUrls.length, 1);
+        const requestUrl = new URL(requestedUrls[0]!);
+        assertEquals(requestUrl.pathname, "/projects");
+        assertEquals(requestUrl.searchParams.get("limit"), "1");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects API keys that cannot access the project endpoint", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
+
+        const { validateCredential } = await import("./login.ts");
+        assertEquals(await validateCredential("vf_test_invalid"), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reports an API key as authenticated in whoami JSON without exposing the key", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const output: string[] = [];
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+        console.log = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { whoami } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await whoami({ apiToken: "vf_test_secret" } as never);
+        const envelope = JSON.parse(output.join("\n"));
+
+        assertEquals(result, { authenticated: true, type: "apiKey" });
+        assertEquals(envelope.success, true);
+        assertEquals(envelope.command, "whoami");
+        assertEquals(envelope.data, {
+          authenticated: true,
+          credential_type: "api_key",
+          source: "env",
+        });
+        assertEquals(output.join("\n").includes("vf_test_secret"), false);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        globalThis.fetch = originalFetch;
+        console.log = originalLog;
+      }
+    });
+  });
+
   describe("User info from token", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return null for invalid JWT", async () => {
       const { validateToken } = await import("./login.ts");
@@ -83,6 +192,27 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       } finally {
         if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
         else deleteEnv("VERYFRONT_API_TOKEN");
+      }
+    });
+
+    it("should accept a valid API key from the environment", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data: [], page_info: {} }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          )) as typeof fetch;
+
+        const { ensureAuthenticated } = await import("./login.ts");
+        const credential = await ensureAuthenticated({ apiToken: "vf_test_secret" } as never);
+
+        assertEquals(credential, { authenticated: true, type: "apiKey" });
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     });
   });
