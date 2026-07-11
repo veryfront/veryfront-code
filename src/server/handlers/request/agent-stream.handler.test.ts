@@ -1800,8 +1800,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunFinished");
   });
 
-  it("uses explicit agent source context when the control plane requests a different source", async () => {
+  it("uses the verified request credential for proxy and explicit agent source contexts", async () => {
     const runWithContextCalls: Array<{
+      token?: string;
       productionMode?: boolean;
       releaseId?: string | null;
       branch?: string | null;
@@ -1853,6 +1854,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const body = createAgentStreamRequestBody({
       agentSource: { type: "branch", branch: "main" },
+      credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
@@ -1877,22 +1879,32 @@ describe("server/handlers/request/agent-stream.handler", () => {
       fs: createNoopFsAdapter(runWithContextCalls),
     };
 
-    const result = await handler.handle(
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      ctx,
-    );
+    const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    Deno.env.set("VERYFRONT_API_TOKEN", "expired-host-token");
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalHostToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalHostToken);
+    }
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(runWithContextCalls.length, 2);
+    assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
     assertEquals(runWithContextCalls[0]?.branch, "feature-a");
+    assertEquals(runWithContextCalls[1]?.token, "request-scoped-user-token");
     assertEquals(runWithContextCalls[1]?.branch, "main");
     assertEquals(runWithContextCalls[1]?.productionMode, false);
   });
