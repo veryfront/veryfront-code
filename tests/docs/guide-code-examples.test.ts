@@ -230,10 +230,9 @@ describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof createAgUiHandler, "function");
-    assertExists(Chat);
+    assertEquals(typeof Chat, "function");
     const chatRecord = Chat as unknown as Record<string, unknown>;
     const messageRecord = Message as unknown as Record<string, unknown>;
-    assertEquals(typeof chatRecord.render, "function");
     assertExists(chatRecord.Root);
     assertExists(chatRecord.MessageList);
     assertExists(chatRecord.Input);

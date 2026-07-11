@@ -133,6 +133,7 @@ const expectedRuntimeExports = [
   "useComposerContextOptional",
   "useMessageContext",
   "useMessageContextOptional",
+  "useMessageParts",
   "useStreaming",
   "useUpload",
   "useUploadsRegistry",
@@ -183,7 +184,7 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.StreamingMessage, chatUI.Message);
     assertEquals(chatModule.ChatComposer, chatUI.ChatInput);
     assertEquals(chatModule.ChatComponents.Composer, chatUI.ChatInput);
-    assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "object");
+    assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "function");
   });
 
   it("does not widen the barrel with react-only non-chat exports", () => {
