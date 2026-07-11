@@ -31,6 +31,7 @@ import {
   clearPushReceipt,
   computeSourceDigest,
   getProjectTarget,
+  type GitSource,
   normalizeControlPlane,
   resolveGitSource,
   writePushReceipt,
@@ -93,6 +94,12 @@ export interface UploadOp {
   content: string;
 }
 
+export interface PushSourceSnapshot {
+  files: UploadOp[];
+  gitSource: GitSource;
+  sourceDigest: string;
+}
+
 /**
  * API response for branch creation
  */
@@ -148,6 +155,37 @@ async function scanLocalFiles(
 
   await walk(projectDir);
   return ops;
+}
+
+function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
+  return left.commitSha === right.commitSha && left.clean === right.clean;
+}
+
+function sourceSnapshotsMatch(
+  left: PushSourceSnapshot,
+  right: PushSourceSnapshot,
+): boolean {
+  return gitSourcesMatch(left.gitSource, right.gitSource) &&
+    left.sourceDigest === right.sourceDigest;
+}
+
+function sourceChangedError(): Error {
+  return new Error("Local source changed during push. Run veryfront push again.");
+}
+
+export async function capturePushSourceSnapshot(
+  projectDir: string,
+  ignoreChecker: IgnoreChecker,
+): Promise<PushSourceSnapshot> {
+  const gitSourceBefore = await resolveGitSource(projectDir);
+  const files = await scanLocalFiles(projectDir, ignoreChecker);
+  const [gitSource, sourceDigest] = await Promise.all([
+    resolveGitSource(projectDir),
+    computeSourceDigest(files),
+  ]);
+
+  if (!gitSourcesMatch(gitSourceBefore, gitSource)) throw sourceChangedError();
+  return { files, gitSource, sourceDigest };
 }
 
 export function generateBranchName(): string {
@@ -324,26 +362,32 @@ function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
   return buildOpParts(ops, toDelete, (count) => `upload ${count}`, (count) => `delete ${count}`);
 }
 
-async function recordPushReceipt(
+export async function recordPushReceipt(
   client: ApiClient,
   config: ResolvedConfig,
   projectDir: string,
   branch: string,
-  files: UploadOp[],
+  snapshot: PushSourceSnapshot,
+  ignoreChecker: IgnoreChecker,
 ): Promise<void> {
-  const [project, gitSource, sourceDigest] = await Promise.all([
-    getProjectTarget(client, config.projectSlug),
-    resolveGitSource(projectDir),
-    computeSourceDigest(files),
-  ]);
+  const project = await getProjectTarget(client, config.projectSlug);
+  let currentSnapshot: PushSourceSnapshot;
+  try {
+    currentSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+    if (!sourceSnapshotsMatch(snapshot, currentSnapshot)) throw sourceChangedError();
+  } catch (error) {
+    await clearPushReceipt(projectDir);
+    throw error;
+  }
+
   await writePushReceipt(projectDir, {
     controlPlane: normalizeControlPlane(config.apiUrl),
     projectId: project.id,
     projectSlug: project.slug,
     branch,
-    commitSha: gitSource.commitSha,
-    sourceDigest,
-    clean: gitSource.clean,
+    commitSha: snapshot.gitSource.commitSha,
+    sourceDigest: snapshot.sourceDigest,
+    clean: snapshot.gitSource.clean,
   });
 }
 
@@ -378,7 +422,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const ignoreChecker = createIgnoreChecker(ignorePatterns);
 
       spinner.update("Scanning local files...");
-      const ops = await scanLocalFiles(projectDir, ignoreChecker);
+      let sourceSnapshot: PushSourceSnapshot;
+      try {
+        sourceSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+      } catch (error) {
+        spinner.stop();
+        throw error;
+      }
+      const ops = sourceSnapshot.files;
       const localPaths = new Set(ops.map((op) => op.path));
 
       spinner.update("Fetching remote files...");
@@ -430,7 +481,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           if (!dryRun) {
             await clearPushReceipt(projectDir);
             spinner.update("Verifying push target...");
-            await recordPushReceipt(client, config, projectDir, branchName, ops);
+            await recordPushReceipt(
+              client,
+              config,
+              projectDir,
+              branchName,
+              sourceSnapshot,
+              ignoreChecker,
+            );
           }
         } finally {
           spinner.stop();
@@ -520,7 +578,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.update("Verifying push target...");
       try {
-        await recordPushReceipt(client, config, projectDir, branchName, ops);
+        await recordPushReceipt(
+          client,
+          config,
+          projectDir,
+          branchName,
+          sourceSnapshot,
+          ignoreChecker,
+        );
       } finally {
         spinner.stop();
       }

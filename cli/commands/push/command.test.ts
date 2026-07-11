@@ -4,17 +4,26 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cli/commands/push.test
  */
 
-import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  capturePushSourceSnapshot,
   createBranch,
   ensureBranch,
   generateBranchName,
+  recordPushReceipt,
   resolvePushRemoteFiles,
   uploadFiles,
   type UploadOp,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import { createDefaultIgnoreChecker } from "../../sync/ignore.ts";
+import { readPushReceipt } from "../../shared/deployment-provenance.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -39,6 +48,46 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
     patch: <T>(): Promise<T> => Promise.resolve({} as T),
     delete: <T>(): Promise<T> => Promise.resolve({} as T),
   };
+}
+
+interface GitProject {
+  projectDir: string;
+  runGit: (...args: string[]) => Promise<string>;
+}
+
+async function withGitProject(test: (project: GitProject) => Promise<void>): Promise<void> {
+  const projectDir = await Deno.makeTempDir();
+  const originalGithubSha = Deno.env.get("GITHUB_SHA");
+  const runGit = async (...args: string[]): Promise<string> => {
+    const result = await new Deno.Command("git", {
+      args,
+      cwd: projectDir,
+      clearEnv: true,
+      env: Object.fromEntries(
+        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+      ),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(result.stderr);
+    assertEquals(result.success, true, stderr);
+    return new TextDecoder().decode(result.stdout).trim();
+  };
+
+  try {
+    Deno.env.delete("GITHUB_SHA");
+    await runGit("init", "--quiet");
+    await runGit("config", "user.email", "test@veryfront.com");
+    await runGit("config", "user.name", "Veryfront Test");
+    await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+    await runGit("add", ".");
+    await runGit("commit", "--quiet", "-m", "initial");
+    await test({ projectDir, runGit });
+  } finally {
+    if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
+    else Deno.env.set("GITHUB_SHA", originalGithubSha);
+    await Deno.remove(projectDir, { recursive: true });
+  }
 }
 
 describe("generateBranchName", () => {
@@ -284,6 +333,97 @@ describe("resolvePushRemoteFiles", () => {
         params: { limit: "100", sort_by: "updated_at", sort_order: "desc" },
       },
     ]);
+  });
+});
+
+describe("push receipt source snapshot", () => {
+  const config = {
+    apiUrl: "https://api.veryfront.com",
+    apiToken: "<TOKEN>",
+    projectSlug: "my-project",
+  };
+  const client = createMockClient({
+    get: () => Promise.resolve({ id: "project-123", slug: "my-project" }),
+  });
+
+  it("records the Git source captured with the uploaded files", async () => {
+    await withGitProject(async ({ projectDir }) => {
+      const ignoreChecker = createDefaultIgnoreChecker();
+      const snapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+
+      await recordPushReceipt(
+        client,
+        config,
+        projectDir,
+        "main",
+        snapshot,
+        ignoreChecker,
+      );
+
+      const receipt = await readPushReceipt(projectDir);
+      assertExists(receipt);
+      assertEquals(receipt.commitSha, snapshot.gitSource.commitSha);
+      assertEquals(receipt.clean, snapshot.gitSource.clean);
+      assertEquals(receipt.sourceDigest, snapshot.sourceDigest);
+    });
+  });
+
+  it("clears the receipt when source bytes change without changing Git state", async () => {
+    await withGitProject(async ({ projectDir }) => {
+      const ignoreChecker = createDefaultIgnoreChecker();
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+      const snapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+      assertEquals(snapshot.gitSource.clean, false);
+      await recordPushReceipt(
+        client,
+        config,
+        projectDir,
+        "main",
+        snapshot,
+        ignoreChecker,
+      );
+      assertExists(await readPushReceipt(projectDir));
+
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 3;\n");
+
+      await assertRejects(
+        () =>
+          recordPushReceipt(
+            client,
+            config,
+            projectDir,
+            "main",
+            snapshot,
+            ignoreChecker,
+          ),
+        Error,
+        "Local source changed during push",
+      );
+      assertEquals(await readPushReceipt(projectDir), null);
+    });
+  });
+
+  it("rejects a later commit even when its source bytes are unchanged", async () => {
+    await withGitProject(async ({ projectDir, runGit }) => {
+      const ignoreChecker = createDefaultIgnoreChecker();
+      const snapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+      await runGit("commit", "--quiet", "--allow-empty", "-m", "advance HEAD");
+
+      await assertRejects(
+        () =>
+          recordPushReceipt(
+            client,
+            config,
+            projectDir,
+            "main",
+            snapshot,
+            ignoreChecker,
+          ),
+        Error,
+        "Local source changed during push",
+      );
+      assertEquals(await readPushReceipt(projectDir), null);
+    });
   });
 });
 
