@@ -24,7 +24,6 @@ import {
   login,
   validateCredential,
 } from "../../auth/login.ts";
-import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
 import { pushCommand } from "../push/index.ts";
@@ -50,6 +49,18 @@ function authStatus(identity: AuthIdentity): string {
   return isApiKeyIdentity(identity)
     ? "Authenticated with an API key"
     : `Logged in as ${identity.email}`;
+}
+
+export async function preloadDevAuth(
+  apiToken?: string,
+): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
+  if (!apiToken) return { identity: null, projects: [] };
+
+  const identity = await validateCredential(apiToken);
+  if (!identity) return { identity: null, projects: [] };
+
+  const result = await fetchRemoteProjects(apiToken);
+  return { identity, projects: result.projects };
 }
 
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
@@ -150,14 +161,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       // Check for existing auth
       try {
-        const token = await readToken();
-        if (token) {
-          identity = await validateCredential(token);
-          if (identity) {
-            const result = await fetchRemoteProjects();
-            projects = result.projects;
-          }
-        }
+        const initialAuth = await preloadDevAuth(runtimeAuth.apiToken);
+        identity = initialAuth.identity;
+        projects = initialAuth.projects;
       } catch {
         // Auth check failed - non-fatal
       }

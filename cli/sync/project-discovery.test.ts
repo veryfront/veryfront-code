@@ -14,7 +14,7 @@ import {
 } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
-import { deleteToken, saveToken } from "../auth/token-store.ts";
+import { deleteToken } from "../auth/token-store.ts";
 import {
   fetchRemoteProjects,
   getCurrentUser,
@@ -79,12 +79,13 @@ describe("project-discovery", () => {
 
     it("returns projects for a valid project API key without requiring a user profile", async () => {
       const originalFetch = globalThis.fetch;
-      await saveToken("vf_test_secret");
+      const authorizations: string[] = [];
 
       try {
-        globalThis.fetch = ((input: string | URL | Request) => {
+        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
           const url = new URL(String(input));
           assertEquals(url.pathname, "/projects");
+          authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -96,8 +97,9 @@ describe("project-discovery", () => {
           );
         }) as typeof fetch;
 
-        const result = await fetchRemoteProjects();
+        const result = await fetchRemoteProjects("vf_test_secret");
 
+        assertEquals(authorizations, ["Bearer vf_test_secret"]);
         assertEquals(result.user, null);
         assertEquals(result.credentialType, "apiKey");
         assertEquals(result.error, undefined);

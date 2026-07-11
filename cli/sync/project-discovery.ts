@@ -17,8 +17,8 @@ export interface ProjectDiscoveryResult {
   error?: string;
 }
 
-export async function fetchRemoteProjects(): Promise<ProjectDiscoveryResult> {
-  const token = await readToken();
+export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDiscoveryResult> {
+  const token = apiToken?.trim() || await readToken();
 
   if (!token) {
     return {
