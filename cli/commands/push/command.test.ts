@@ -23,7 +23,7 @@ import {
   uploadFiles,
   type UploadOp,
 } from "./command.ts";
-import type { ApiClient } from "#cli/shared/config";
+import { type ApiClient, resolveConfig } from "#cli/shared/config";
 import { createDefaultIgnoreChecker } from "../../sync/ignore.ts";
 import { readPushReceipt } from "../../shared/deployment-provenance.ts";
 
@@ -459,25 +459,70 @@ describe("push receipt source snapshot", () => {
     }
   });
 
-  it("uploads the persisted slug when first-project reservation renames it", async () => {
+  it("marks an uploaded Git-ignored source as unclean", async () => {
+    await withGitProject(async ({ projectDir, runGit }) => {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, "ignored.ts\n");
+      await runGit("add", ".gitignore");
+      await runGit("commit", "--quiet", "-m", "ignore generated source");
+      await Deno.writeTextFile(`${projectDir}/ignored.ts`, "export const ignored = true;\n");
+      assertEquals(await runGit("status", "--porcelain=v1", "--untracked-files=all"), "");
+
+      const snapshot = await capturePushSourceSnapshot(
+        projectDir,
+        createDefaultIgnoreChecker(),
+      );
+
+      assertEquals(snapshot.files.some((file) => file.path === "ignored.ts"), true);
+      assertEquals(snapshot.gitSource.clean, false);
+    });
+  });
+
+  it("recognizes tracked source paths containing newlines", async () => {
+    if (Deno.build.os === "windows") return;
+
+    await withGitProject(async ({ projectDir, runGit }) => {
+      const path = "line\nbreak.ts";
+      await Deno.writeTextFile(`${projectDir}/${path}`, "export const tracked = true;\n");
+      await runGit("add", path);
+      await runGit("commit", "--quiet", "-m", "add unusual source path");
+
+      const snapshot = await capturePushSourceSnapshot(
+        projectDir,
+        createDefaultIgnoreChecker(),
+      );
+
+      assertEquals(snapshot.files.some((file) => file.path === path), true);
+      assertEquals(snapshot.gitSource.clean, true);
+    });
+  });
+
+  it("persists a renamed inferred slug for later push and deploy commands", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [
       "VERYFRONT_API_TOKEN",
       "VERYFRONT_API_URL",
       "VERYFRONT_API_BASE_URL",
       "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
     ];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
     await withGitProject(async ({ projectDir }) => {
       let reservedSlug = "";
+      let projectCreateRequests = 0;
       const uploaded = new Map<string, string>();
 
       try {
         Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
         Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
         Deno.env.delete("VERYFRONT_API_BASE_URL");
-        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          `${JSON.stringify({ name: "my-project" }, null, 2)}\n`,
+        );
         _resetEnvironmentConfig();
 
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -488,6 +533,7 @@ describe("push receipt source snapshot", () => {
             return Response.json({ error: "not found" }, { status: 404 });
           }
           if (request.method === "POST" && url.pathname === "/projects") {
+            projectCreateRequests++;
             const body = await request.json() as { slug: string };
             if (body.slug === "my-project") {
               return Response.json({ error: "slug taken" }, { status: 409 });
@@ -529,7 +575,17 @@ describe("push receipt source snapshot", () => {
 
         const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
         assertEquals(config.projectSlug, reservedSlug);
-        assertEquals([...uploaded.keys()].sort(), ["app.ts", "veryfront.json"]);
+        assertEquals((await resolveConfig(projectDir)).projectSlug, reservedSlug);
+
+        await pushCommand({
+          projectDir,
+          branch: "main",
+          force: true,
+          quiet: true,
+        });
+
+        assertEquals(projectCreateRequests, 2);
+        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json", "veryfront.json"]);
         assertEquals(JSON.parse(uploaded.get("veryfront.json") ?? "{}").projectSlug, reservedSlug);
         assertEquals((await readPushReceipt(projectDir))?.projectSlug, reservedSlug);
       } finally {
@@ -538,6 +594,87 @@ describe("push receipt source snapshot", () => {
         _resetEnvironmentConfig();
       }
     });
+  });
+
+  it("does not reserve alternative projects for explicit slug sources", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const requestedSlugs: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+          return Response.json({ error: "not found" }, { status: 404 });
+        }
+        if (request.method === "POST" && url.pathname === "/projects") {
+          requestedSlugs.push((await request.json() as { slug: string }).slug);
+          return Response.json({ error: "taken" }, { status: 409 });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+      }) as typeof fetch;
+
+      const scenarios: Array<{
+        prepare: (projectDir: string) => Promise<void>;
+        options?: { projectSlug: string };
+        message: string;
+      }> = [
+        {
+          prepare: () => {
+            Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+            return Promise.resolve();
+          },
+          message: "Update or remove VERYFRONT_PROJECT_SLUG",
+        },
+        {
+          prepare: async (projectDir) => {
+            Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+            await Deno.writeTextFile(
+              `${projectDir}/veryfront.config.ts`,
+              'export default { projectSlug: "my-project" };\n',
+            );
+          },
+          message: "Update projectSlug in veryfront.config.ts",
+        },
+        {
+          prepare: () => {
+            Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+            return Promise.resolve();
+          },
+          options: { projectSlug: "my-project" },
+          message: "Use a different --project-slug value",
+        },
+      ];
+
+      for (const scenario of scenarios) {
+        await withGitProject(async ({ projectDir }) => {
+          await scenario.prepare(projectDir);
+          _resetEnvironmentConfig();
+          await assertRejects(
+            () =>
+              pushCommand({
+                projectDir,
+                branch: "main",
+                force: true,
+                quiet: true,
+                ...scenario.options,
+              }),
+            Error,
+            scenario.message,
+          );
+        });
+      }
+
+      assertEquals(requestedSlugs, ["my-project", "my-project", "my-project"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
   });
 });
 

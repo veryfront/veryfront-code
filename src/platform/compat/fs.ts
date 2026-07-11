@@ -323,6 +323,30 @@ export function stat(path: string): Promise<FileInfo> {
   return getFs().stat(path);
 }
 
+/** Read file metadata without following a terminal symbolic link. */
+export async function lstat(path: string): Promise<FileInfo> {
+  if (isDeno) {
+    const info = await denoGlobal().lstat(path);
+    return {
+      isFile: info.isFile,
+      isDirectory: info.isDirectory,
+      isSymlink: info.isSymlink,
+      size: info.size,
+      mtime: info.mtime,
+    };
+  }
+
+  const fs = await import("node:fs/promises");
+  const info = await fs.lstat(path);
+  return {
+    isFile: info.isFile(),
+    isDirectory: info.isDirectory(),
+    isSymlink: info.isSymbolicLink(),
+    size: info.size,
+    mtime: info.mtime,
+  };
+}
+
 /** Create a directory. */
 export function mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().mkdir(path, options);

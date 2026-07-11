@@ -197,6 +197,74 @@ describe("push receipt persistence", () => {
       await Deno.remove(projectDir, { recursive: true });
     }
   });
+
+  it("rejects a tracked Veryfront directory symlink without touching its target", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const projectDir = await Deno.makeTempDir();
+    const externalDir = await Deno.makeTempDir();
+    const externalReceipt = `${externalDir}/push-receipt.json`;
+    const runGit = async (...args: string[]) => {
+      const result = await new Deno.Command("git", {
+        args,
+        cwd: projectDir,
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+    };
+
+    try {
+      await Deno.writeTextFile(externalReceipt, "sentinel\n");
+      await Deno.symlink(externalDir, `${projectDir}/.veryfront`);
+      await runGit("init", "--quiet");
+      await runGit("config", "user.email", "test@veryfront.com");
+      await runGit("config", "user.name", "Veryfront Test");
+      await runGit("add", ".veryfront");
+      await runGit("commit", "--quiet", "-m", "track receipt directory link");
+
+      for (
+        const operation of [
+          () => readPushReceipt(projectDir),
+          () => clearPushReceipt(projectDir),
+          () => writePushReceipt(projectDir, RECEIPT),
+        ]
+      ) {
+        await assertRejects(operation, Error, "through a symbolic link");
+      }
+      assertEquals(await Deno.readTextFile(externalReceipt), "sentinel\n");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(externalDir, { recursive: true });
+    }
+  });
+
+  it("rejects a receipt file symlink without touching its target", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const projectDir = await Deno.makeTempDir();
+    const externalDir = await Deno.makeTempDir();
+    const externalReceipt = `${externalDir}/receipt.json`;
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(externalReceipt, "sentinel\n");
+      await Deno.symlink(externalReceipt, `${projectDir}/.veryfront/push-receipt.json`);
+
+      for (
+        const operation of [
+          () => readPushReceipt(projectDir),
+          () => clearPushReceipt(projectDir),
+          () => writePushReceipt(projectDir, RECEIPT),
+        ]
+      ) {
+        await assertRejects(operation, Error, "Remove the link");
+      }
+      assertEquals(await Deno.readTextFile(externalReceipt), "sentinel\n");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(externalDir, { recursive: true });
+    }
+  });
 });
 
 describe("resolveGitSource", () => {

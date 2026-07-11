@@ -1,5 +1,6 @@
 import { createFileSystem, env, getEnv, runCommand } from "veryfront/platform";
-import { join } from "veryfront/platform/path";
+import { isNotFoundError, lstat, realPath } from "#veryfront/platform/compat/fs.ts";
+import { join, relative } from "veryfront/platform/path";
 import type { ApiClient } from "./config.ts";
 
 const RECEIPT_VERSION = 2 as const;
@@ -47,6 +48,49 @@ interface PushReceiptExpectation {
 
 function receiptPath(projectDir: string): string {
   return join(projectDir, RECEIPT_DIRECTORY, RECEIPT_FILENAME);
+}
+
+function receiptPathError(): Error {
+  return new Error(
+    `Veryfront cannot use ${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME} through a symbolic link. Remove the link and run the command again.`,
+  );
+}
+
+async function lstatIfPresent(path: string) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
+async function inspectReceiptPath(
+  projectDir: string,
+): Promise<{ directoryExists: boolean; receiptExists: boolean }> {
+  const directory = join(projectDir, RECEIPT_DIRECTORY);
+  const directoryInfo = await lstatIfPresent(directory);
+  if (!directoryInfo) return { directoryExists: false, receiptExists: false };
+  if (directoryInfo.isSymlink) throw receiptPathError();
+  if (!directoryInfo.isDirectory) {
+    throw new Error(`${RECEIPT_DIRECTORY} must be a directory inside the project.`);
+  }
+
+  const [canonicalProject, canonicalDirectory] = await Promise.all([
+    realPath(projectDir),
+    realPath(directory),
+  ]);
+  if (relative(canonicalProject, canonicalDirectory) !== RECEIPT_DIRECTORY) {
+    throw receiptPathError();
+  }
+
+  const receiptInfo = await lstatIfPresent(receiptPath(projectDir));
+  if (!receiptInfo) return { directoryExists: true, receiptExists: false };
+  if (receiptInfo.isSymlink) throw receiptPathError();
+  if (!receiptInfo.isFile) {
+    throw new Error(`${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME} must be a file.`);
+  }
+  return { directoryExists: true, receiptExists: true };
 }
 
 function isPushReceipt(value: unknown): value is PushReceipt {
@@ -141,6 +185,37 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   };
 }
 
+export async function areSourceFilesTracked(
+  projectDir: string,
+  files: readonly SourceFile[],
+): Promise<boolean> {
+  if (files.length === 0) return true;
+
+  const gitEnv = env();
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith("GIT_")) delete gitEnv[key];
+  }
+
+  try {
+    const result = await runCommand("git", {
+      args: ["ls-files", "--cached", "-z"],
+      cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
+      capture: true,
+      timeoutMs: 5_000,
+    });
+    if (!result.success) return false;
+
+    const trackedPaths = new Set(
+      (result.stdout ?? "").split("\0").filter((path) => path.length > 0),
+    );
+    return files.every((file) => trackedPaths.has(file.path));
+  } catch {
+    return false;
+  }
+}
+
 export async function writePushReceipt(
   projectDir: string,
   receipt: Omit<PushReceipt, "version" | "pushedAt"> & { pushedAt?: string },
@@ -155,13 +230,16 @@ export async function writePushReceipt(
     pushedAt: receipt.pushedAt ?? new Date().toISOString(),
   };
 
-  await fs.mkdir(directory, { recursive: true });
+  const before = await inspectReceiptPath(projectDir);
+  if (!before.directoryExists) await fs.mkdir(directory, { recursive: true });
+  await inspectReceiptPath(projectDir);
   await fs.writeTextFile(receiptPath(projectDir), `${JSON.stringify(value, null, 2)}\n`);
   return value;
 }
 
 export async function readPushReceipt(projectDir: string): Promise<PushReceipt | null> {
   const fs = createFileSystem();
+  await inspectReceiptPath(projectDir);
   try {
     const value: unknown = JSON.parse(await fs.readTextFile(receiptPath(projectDir)));
     return isPushReceipt(value) ? value : null;
@@ -173,7 +251,8 @@ export async function readPushReceipt(projectDir: string): Promise<PushReceipt |
 export async function clearPushReceipt(projectDir: string): Promise<void> {
   const fs = createFileSystem();
   const path = receiptPath(projectDir);
-  if (await fs.exists(path)) await fs.remove(path);
+  const inspected = await inspectReceiptPath(projectDir);
+  if (inspected.receiptExists) await fs.remove(path);
 }
 
 export function validatePushReceipt(

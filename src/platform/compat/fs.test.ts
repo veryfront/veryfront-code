@@ -13,6 +13,7 @@ import {
   exists,
   isAlreadyExistsError,
   isNotFoundError,
+  lstat,
   makeTempDir,
   mkdir,
   readDir,
@@ -228,6 +229,7 @@ describe("Filesystem Compat", () => {
 
       const content = await readTextFile(linkPath);
       assertEquals(content, "symlink test");
+      assertEquals((await lstat(linkPath)).isSymlink, true);
     });
   });
 

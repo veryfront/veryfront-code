@@ -16,11 +16,12 @@ import { createFileSystem } from "veryfront/platform";
 import {
   type ApiClient,
   createApiClient,
-  resolveConfigWithAuth,
+  type ProjectReferenceSource,
+  resolveConfigWithAuthDetails,
   type ResolvedConfig,
   writeProjectSlug,
 } from "#cli/shared/config";
-import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -28,6 +29,7 @@ import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import {
+  areSourceFilesTracked,
   clearPushReceipt,
   computeSourceDigest,
   getProjectTarget,
@@ -182,19 +184,54 @@ function sourceChangedError(): Error {
   return new Error("Local source changed during push. Run veryfront push again.");
 }
 
+function canPersistAlternativeSlug(source: ProjectReferenceSource): boolean {
+  return source.kind === "json-config" || source.kind === "inferred";
+}
+
+function projectSlugConflictError(
+  error: ProjectSlugConflictError,
+  source: ProjectReferenceSource,
+): Error {
+  let action: string;
+  switch (source.kind) {
+    case "argument":
+      action = "Use a different --project-slug value";
+      break;
+    case "environment":
+      action = "Update or remove VERYFRONT_PROJECT_SLUG";
+      break;
+    case "module-config":
+      action = `Update projectSlug in ${source.name}`;
+      break;
+    case "tenant-environment":
+      action = `Update or remove ${source.name}`;
+      break;
+    case "json-config":
+    case "inferred":
+      action = "Choose a different project slug";
+      break;
+  }
+  return new Error(`${error.message} ${action}, then run veryfront push again.`);
+}
+
 export async function capturePushSourceSnapshot(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
   const files = await scanLocalFiles(projectDir, ignoreChecker);
-  const [gitSource, sourceDigest] = await Promise.all([
-    resolveGitSource(projectDir),
+  const [sourceDigest, filesTracked] = await Promise.all([
     computeSourceDigest(files),
+    areSourceFilesTracked(projectDir, files),
   ]);
+  const gitSource = await resolveGitSource(projectDir);
 
   if (!gitSourcesMatch(gitSourceBefore, gitSource)) throw sourceChangedError();
-  return { files, gitSource, sourceDigest };
+  return {
+    files,
+    gitSource: { ...gitSource, clean: gitSource.clean && filesTracked },
+    sourceDigest,
+  };
 }
 
 export function generateBranchName(): string {
@@ -416,15 +453,21 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
       let config: ResolvedConfig;
+      let projectReferenceSource: ProjectReferenceSource;
       try {
         // Use interactive auth - prompts for login if not authenticated
-        config = await resolveConfigWithAuth(projectDir);
+        const resolved = await resolveConfigWithAuthDetails(projectDir);
+        config = resolved.config;
+        projectReferenceSource = resolved.projectReferenceSource;
       } catch (error) {
         spinner.stop();
         throw error;
       }
 
-      if (slugOverride) config = { ...config, projectSlug: slugOverride };
+      if (slugOverride) {
+        config = { ...config, projectSlug: slugOverride };
+        projectReferenceSource = { kind: "argument", name: "--project-slug" };
+      }
 
       spinner.update("Loading ignore patterns...");
       const ignorePatterns = await loadIgnorePatterns(projectDir);
@@ -443,12 +486,22 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         // Project doesn't exist yet - create it on first push
         if (getErrorStatus(error) === 404) {
           spinner.update("Creating project...");
-          const reserveResult = await reserveProjectSlug(
-            config.projectSlug,
-            config.apiToken,
-            undefined,
-            config.apiUrl,
-          );
+          let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
+          try {
+            reserveResult = await reserveProjectSlug(
+              config.projectSlug,
+              config.apiToken,
+              undefined,
+              config.apiUrl,
+              { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
+            );
+          } catch (reserveError) {
+            spinner.stop();
+            if (reserveError instanceof ProjectSlugConflictError) {
+              throw projectSlugConflictError(reserveError, projectReferenceSource);
+            }
+            throw reserveError;
+          }
           if (reserveResult.slug !== config.projectSlug) {
             await writeProjectSlug(projectDir, reserveResult.slug);
             logInfo(`Project slug: ${reserveResult.slug}`);

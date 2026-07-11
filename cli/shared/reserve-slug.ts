@@ -21,6 +21,17 @@ export interface ReserveResult {
   created: boolean;
 }
 
+export interface ReserveProjectSlugOptions {
+  allowAlternativeSlug?: boolean;
+}
+
+export class ProjectSlugConflictError extends Error {
+  constructor(public readonly slug: string) {
+    super(`Project slug "${slug}" is already in use.`);
+    this.name = "ProjectSlugConflictError";
+  }
+}
+
 interface ApiError {
   message?: string;
 }
@@ -39,6 +50,7 @@ export async function reserveProjectSlug(
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
   apiUrl: string = getApiUrl(env),
+  options: ReserveProjectSlugOptions = {},
 ): Promise<ReserveResult> {
   const name = slugToName(slug);
   let currentSlug = slug;
@@ -56,6 +68,10 @@ export async function reserveProjectSlug(
 
     if (!result.isSlugTaken) {
       throw new Error(result.error ?? "Failed to create project");
+    }
+
+    if (options.allowAlternativeSlug === false) {
+      throw new ProjectSlugConflictError(slug);
     }
 
     currentSlug = `${slug}-${randomSuffix()}`;
