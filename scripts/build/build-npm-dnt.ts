@@ -62,7 +62,11 @@ const esmShMappings = buildEsmShMappings(denoJson.imports as Record<string, stri
 
 // npm range for the bare react/react-dom peer the emitted package imports (see
 // the `./react/*.ts` mappings below). Derived from the pinned esm.sh version.
-const reactRange = "^19.2.4";
+const reactRange = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/react-upstream",
+	"^",
+);
 
 await build({
 	entryPoints,

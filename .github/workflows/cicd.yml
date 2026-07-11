@@ -264,8 +264,10 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Build npm packages
-        run: deno task build:npm
+      - name: Install TypeScript toolchain
+        run: npm --prefix storybook ci --ignore-scripts
+      - name: Check published package types
+        run: deno task typecheck:consumer
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 

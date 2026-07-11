@@ -13,7 +13,7 @@
  * Preflight:
  *   - Needs the TypeScript compiler from `storybook/node_modules` (the repo's
  *     only `tsc`). Absent → hard error (install storybook deps).
- *   - Needs the built package at `npm/`. Absent → runs `deno task build:npm`.
+ *   - Rebuilds the npm package so declarations always match the current source.
  *
  * @module scripts/typecheck/run-consumer-typecheck
  */
@@ -21,8 +21,6 @@
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
 const TSC = `${REPO_ROOT}storybook/node_modules/.bin/tsc`;
 const TSCONFIG = "scripts/typecheck/tsconfig.consumer.json";
-const NPM_DIR = `${REPO_ROOT}npm`;
-
 function exists(path: string): boolean {
   try {
     Deno.statSync(path);
@@ -52,13 +50,11 @@ if (!exists(TSC)) {
   Deno.exit(1);
 }
 
-if (!exists(NPM_DIR)) {
-  console.log("• npm/ not found — building the package (deno task build:npm)…");
-  const buildCode = await run("deno", ["task", "build:npm"]);
-  if (buildCode !== 0) {
-    console.error("✖ consumer typecheck: build:npm failed");
-    Deno.exit(buildCode);
-  }
+console.log("Rebuilding npm/ from the current source with deno task build:npm.");
+const buildCode = await run("deno", ["task", "build:npm"]);
+if (buildCode !== 0) {
+  console.error("✖ consumer typecheck: build:npm failed");
+  Deno.exit(buildCode);
 }
 
 console.log(

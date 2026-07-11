@@ -48,14 +48,13 @@ declarations.
 ## Running
 
 ```
-deno task typecheck:consumer     # builds npm/ if missing, then tsc
+deno task typecheck:consumer     # rebuilds npm/, then runs tsc
 ```
 
 Requires the Storybook toolchain (the repo's only `tsc`): `npm --prefix storybook ci`.
 
 ## CI
 
-Runs in `verify`. The natural CI home is a job that already has both the built
-package and the Storybook toolchain; the npm-smoke job builds the package, so
-wiring this alongside it (after `npm --prefix storybook ci`) is the intended
-follow-up.
+The npm install smoke job installs the Storybook TypeScript toolchain, rebuilds
+the npm package through this gate, and then runs the clean-room package smoke
+test against the same output.

@@ -75,7 +75,7 @@ export function useConversationChat(
 
   const chat = useChat({
     api,
-    initialMessages: bound ? bound.messages : initialMessages,
+    initialMessages: conversations ? (bound?.messages ?? []) : initialMessages,
     onError,
     body: resolvedAgentId ? { agentId: resolvedAgentId } : undefined,
   });
@@ -94,7 +94,39 @@ export function useConversationChat(
   const boundId = bound?.id;
   const lastEmittedRef = React.useRef<ChatMessage[] | null>(null);
   if (lastEmittedRef.current === null) lastEmittedRef.current = chat.messages;
+  const sessionKey = conversations
+    ? bound ? `conversation:${bound.id}` : `pending:${conversations.activeId ?? ""}`
+    : "standalone";
+  const currentSessionKeyRef = React.useRef(sessionKey);
+  const pendingSessionRef = React.useRef<
+    {
+      key: string;
+      messages: ChatMessage[];
+    } | null
+  >(null);
+
   React.useEffect(() => {
+    if (currentSessionKeyRef.current === sessionKey) return;
+
+    const messages = bound?.messages ?? (conversations ? [] : initialMessages ?? []);
+    pendingSessionRef.current = { key: sessionKey, messages };
+    lastEmittedRef.current = messages;
+    chat.stop();
+    chat.setMessages(messages);
+  }, [sessionKey]);
+
+  React.useEffect(() => {
+    const pendingSession = pendingSessionRef.current;
+    if (pendingSession) {
+      if (chat.messages !== pendingSession.messages) return;
+      currentSessionKeyRef.current = pendingSession.key;
+      pendingSessionRef.current = null;
+      lastEmittedRef.current = chat.messages;
+      return;
+    }
+    if (currentSessionKeyRef.current !== sessionKey) return;
+    if (conversations && !bound) return;
+
     const sink = persistRef.current;
     if (!sink) return;
     if (chat.messages === lastEmittedRef.current) return;
