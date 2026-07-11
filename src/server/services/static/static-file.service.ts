@@ -13,6 +13,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import type { CacheStrategy } from "#veryfront/security";
 import { createSecureFs } from "#veryfront/security";
+import { serverLogger } from "#veryfront/utils";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
@@ -24,6 +26,8 @@ import {
 import { normalizeChunkPath } from "../../utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
 import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
+
+const logger = serverLogger.component("static-file-service");
 
 /**
  * Result of resolving a static file
@@ -191,9 +195,16 @@ export class StaticFileService {
         cacheStrategy: this.determineCacheStrategy(candidate, requestPath, options),
         source: candidate.source,
       };
-    } catch (_) {
-      /* expected: file may not exist */
-      return null;
+    } catch (error) {
+      // A genuinely missing file is the expected 404 path.
+      if (isNotFoundError(error)) return null;
+      // A real I/O error (EACCES, disk failure) must not be collapsed to a 404
+      // and CDN-cached as such. Surface it so it becomes a 500.
+      logger.warn("Static file I/O error while resolving candidate", {
+        path: candidate.path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 

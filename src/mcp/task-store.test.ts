@@ -89,19 +89,31 @@ describe("mcp/task-store", () => {
     assertEquals(store.getResult(task.taskId), undefined);
   });
 
-  it("evicts expired tasks on get", () => {
+  it("evicts expired terminal tasks on get", () => {
     const store = new TaskStore();
-    // Create with 1ms TTL so it expires immediately
+    // Terminal tasks expire; TTL is measured from completion.
     const task = store.create(1);
+    store.complete(task.taskId, { ok: true });
     // Small delay to ensure expiry
     const start = Date.now();
     while (Date.now() - start < 5) { /* spin */ }
     assertEquals(store.get(task.taskId), undefined);
   });
 
-  it("returns undefined for expired task via get", () => {
+  it("does not expire a still-running task past its TTL", () => {
+    const store = new TaskStore();
+    // A 'working' task must not be deleted mid-flight even after its TTL,
+    // otherwise its in-progress tool execution is dropped.
+    const running = store.create(1);
+    const start = Date.now();
+    while (Date.now() - start < 5) { /* spin */ }
+    assertExists(store.get(running.taskId));
+  });
+
+  it("returns undefined for expired terminal task via get", () => {
     const store = new TaskStore();
     const expired = store.create(1);
+    store.complete(expired.taskId, { ok: true });
     const alive = store.create(60000);
     const start = Date.now();
     while (Date.now() - start < 5) { /* spin */ }

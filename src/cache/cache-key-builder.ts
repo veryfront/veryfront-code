@@ -48,19 +48,23 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
 }
 
 function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext;
+  // Memoize only once the adapter is actually resolved. A miss must NOT be cached
+  // permanently: the multi-project adapter can be installed on globalThis after
+  // the first call, and caching null here would disable distributed caching for
+  // the whole process lifetime even after the adapter is later wired.
+  if (_getCurrentRequestContext) return _getCurrentRequestContext;
 
   try {
     const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
       | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
       | undefined;
-    _getCurrentRequestContext = mod?.getCurrentRequestContext ?? null;
+    const fn = mod?.getCurrentRequestContext ?? null;
+    if (fn) _getCurrentRequestContext = fn;
+    return fn;
   } catch (_) {
-    // expected: multi-project adapter may not be available
-    _getCurrentRequestContext = null;
+    // expected: multi-project adapter may not be available yet — re-check next call
+    return null;
   }
-
-  return _getCurrentRequestContext ?? null;
 }
 
 function extractCacheKeyContextFromMultiProjectContext(

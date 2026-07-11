@@ -14,6 +14,12 @@ import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
 
+/**
+ * Default timeout for outbound integration API calls. Without it, a hung remote
+ * server would block the whole agent loop indefinitely.
+ */
+const INTEGRATION_REQUEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -106,6 +112,7 @@ async function fetchToolList(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -142,6 +149,7 @@ async function callRemoteTool(
       run_id: context?.runId,
       agent_id: context?.agentId,
     }),
+    signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -261,6 +269,7 @@ export async function syncIntegrationConfig(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ integrations }),
+      signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {

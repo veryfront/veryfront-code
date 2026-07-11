@@ -13,17 +13,27 @@ export class DependencyGraph {
   private dependents = new Map<string, Set<string>>();
 
   addModule(filePath: string, dependencies: string[]): void {
-    const deps = this.dependencies.get(filePath) ?? new Set<string>();
+    // REPLACE the dependency set rather than unioning: when a module is edited
+    // and re-added, imports it no longer has must be dropped, otherwise removed
+    // edges linger and invalidation is computed against stale dependencies.
+    const nextDeps = new Set(dependencies);
 
-    for (const dep of dependencies) {
-      deps.add(dep);
+    const prevDeps = this.dependencies.get(filePath);
+    if (prevDeps) {
+      for (const oldDep of prevDeps) {
+        if (!nextDeps.has(oldDep)) {
+          this.dependents.get(oldDep)?.delete(filePath);
+        }
+      }
+    }
 
+    for (const dep of nextDeps) {
       const depsOfDep = this.dependents.get(dep) ?? new Set<string>();
       depsOfDep.add(filePath);
       this.dependents.set(dep, depsOfDep);
     }
 
-    this.dependencies.set(filePath, deps);
+    this.dependencies.set(filePath, nextDeps);
   }
 
   getDirectDependencies(filePath: string): string[] {
@@ -236,6 +246,14 @@ async function buildDependencyGraph(
 ): Promise<void> {
   if (cache.completedModules.has(filePath)) return;
   if (visited.has(filePath)) return;
+  // NOTE: a completed module whose file is edited in place while the SAME cache
+  // is reused keeps its stale content hash here. That staleness must be resolved
+  // by evicting the edited file (and its dependents) from the cache at the
+  // watch/transform layer on the edit event — NOT by re-reading every completed
+  // module on each traversal, which would defeat cross-root read de-duplication.
+  // The stale-EDGE half of that hazard is handled in addModule() above, which
+  // replaces (rather than unions) a module's dependency set when it is re-added.
+
   visited.add(filePath);
 
   const inProgress = cache.inProgressModules.get(filePath);

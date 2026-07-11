@@ -49,6 +49,7 @@ import { RendererRouter } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
@@ -103,7 +104,14 @@ function resolveProxyBinding(): { hostname: string; port: number } {
   return { hostname, port };
 }
 
-const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
+const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
+// Fail closed in production: never silently forward to localhost.
+if (!serverUrlFromEnv && isProduction()) {
+  throw new Error(
+    "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
+  );
+}
+const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
 const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
 const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");

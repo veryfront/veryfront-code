@@ -1,3 +1,5 @@
+import { logger } from "#veryfront/utils";
+
 /** Parses sse chunk. */
 export function parseSseChunk(chunk: string): {
   events: Array<unknown | "[DONE]">;
@@ -21,7 +23,11 @@ export function parseSseChunk(chunk: string): {
 
     try {
       return [JSON.parse(payload) as unknown];
-    } catch {
+    } catch (error) {
+      logger.debug("Dropped malformed SSE event", {
+        error: error instanceof Error ? error.message : String(error),
+        payload: payload.slice(0, 200),
+      });
       return [];
     }
   });

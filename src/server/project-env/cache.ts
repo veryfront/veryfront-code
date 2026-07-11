@@ -4,6 +4,10 @@
  * @module server/project-env/cache
  */
 
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("project-env-cache");
+
 interface CacheEntry {
   vars: Record<string, string>;
   fetchedAt: number;
@@ -79,9 +83,18 @@ export class EnvironmentVariableCache {
       this.cache.set(environmentId, { vars, fetchedAt: Date.now() });
       this.evictIfNeeded();
       return vars;
-    } catch (_) {
+    } catch (error) {
       /* expected: stale-on-error fallback when fetch fails */
       if (stale) return stale.vars;
+      // No stale entry to fall back on. Returning {} here is indistinguishable
+      // from "project has no env vars", so surface the failure loudly before
+      // failing open. Callers currently rely on {} (see runtime-handler and
+      // agent-stream handler), so we log rather than throw to avoid turning a
+      // transient fetch error into a hard request failure.
+      logger.error("Failed to fetch project env vars and no stale entry exists", {
+        environmentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {};
     }
   }

@@ -72,7 +72,8 @@ describe("security/path-validation/index", () => {
     it("should reject symlinks in strict mode", async () => {
       const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
         fs: {
-          stat: (_path: string) =>
+          // lstat detects the link itself; stat() would follow it and hide it.
+          lstat: (_path: string) =>
             Promise.resolve({
               isSymlink: true,
               isDirectory: false,

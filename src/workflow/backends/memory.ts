@@ -327,20 +327,29 @@ export class MemoryBackend implements WorkflowBackend {
   // Distributed Locking
   // =========================================================================
 
-  acquireLock(runId: string, duration: number): Promise<boolean> {
+  acquireLock(runId: string, duration: number): Promise<string | null> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
-    if (existing && existing.expiresAt > now) return Promise.resolve(false);
+    if (existing && existing.expiresAt > now) return Promise.resolve(null);
 
     logger.debug(`Acquiring lock for: ${runId}`);
 
-    this.locks.set(runId, { lockId: crypto.randomUUID(), expiresAt: now + duration });
-    return Promise.resolve(true);
+    const lockId = crypto.randomUUID();
+    this.locks.set(runId, { lockId, expiresAt: now + duration });
+    return Promise.resolve(lockId);
   }
 
-  releaseLock(runId: string): Promise<void> {
+  releaseLock(runId: string, lockId?: string): Promise<void> {
     logger.debug(`Releasing lock for: ${runId}`);
+
+    // Compare-and-delete: a stalled worker whose lock already expired and was
+    // re-acquired by another owner must not delete the new owner's lock.
+    const existing = this.locks.get(runId);
+    if (lockId !== undefined && existing && existing.lockId !== lockId) {
+      return Promise.resolve();
+    }
+
     this.locks.delete(runId);
     return Promise.resolve();
   }

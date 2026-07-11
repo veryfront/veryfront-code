@@ -677,7 +677,7 @@ export class RedisBackend implements WorkflowBackend {
     await requeueRun(this, runId);
   }
 
-  async acquireLock(runId: string, duration: number): Promise<boolean> {
+  async acquireLock(runId: string, duration: number): Promise<string | null> {
     const client = await this.ensureClient();
     const lockValue = crypto.randomUUID();
 
@@ -685,12 +685,14 @@ export class RedisBackend implements WorkflowBackend {
     if (result === "OK") {
       // Remember our token so release/extend can verify ownership (Redlock).
       this.lockValues.set(runId, lockValue);
-      return true;
+      return lockValue;
     }
-    return false;
+    return null;
   }
 
-  async releaseLock(runId: string): Promise<void> {
+  // Ownership is verified against the internally tracked token (this.lockValues);
+  // the optional lockId argument is accepted for interface parity.
+  async releaseLock(runId: string, _lockId?: string): Promise<void> {
     const client = await this.ensureClient();
     const key = this.lockKey(runId);
     const ourValue = this.lockValues.get(runId);

@@ -465,7 +465,16 @@ export function createVeryfrontHandler(
 
           const publicKeyPem = adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
             getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-          const hasTrustSensitiveProxyHeaders = !!req.headers.get("x-project-path");
+          // Every identity header lets an upstream assert who the request is
+          // for, so the presence of ANY of them requires a trusted proxy —
+          // not just x-project-path.
+          const hasTrustSensitiveProxyHeaders = [
+            "x-token",
+            "x-project-slug",
+            "x-project-id",
+            "x-environment-id",
+            "x-project-path",
+          ].some((header) => req.headers.get(header) !== null);
           const untrustedProxyContext = !missingHeader && hasTrustSensitiveProxyHeaders &&
             !(await isProxyTrusted(req, { publicKeyPem }));
           const proxyContextError = untrustedProxyContext

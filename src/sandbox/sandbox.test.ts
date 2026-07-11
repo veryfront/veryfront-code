@@ -55,7 +55,10 @@ describe("Sandbox", () => {
         }),
       ]);
 
-      const sandbox = await Sandbox.create({ authToken: "test-token" });
+      const sandbox = await Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
       assertEquals(sandbox.id, "session-1");
       assertEquals(sandbox.url, "https://sandbox.example.com");
 
@@ -77,6 +80,7 @@ describe("Sandbox", () => {
 
       await Sandbox.create({
         authToken: "test-token",
+        apiUrl: "https://api.test.com",
         projectId: "project-123",
       });
 

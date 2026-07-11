@@ -152,6 +152,22 @@ export interface FileSystemAdapter {
   exists(path: string): Promise<boolean>;
   readDir(path: string): AsyncIterable<DirEntry>;
   stat(path: string): Promise<FileInfo>;
+  /**
+   * Stat a path WITHOUT following a terminal symlink (lstat semantics).
+   * Unlike stat(), which follows symlinks and therefore always reports
+   * isSymlink:false for a link, this reports isSymlink:true for the link
+   * itself. Used by path validation to detect symlink escapes. Optional:
+   * virtual/remote filesystems that have no OS-level symlinks may omit it.
+   */
+  lstat?(path: string): Promise<FileInfo>;
+  /**
+   * Resolve a path to its canonical physical form, following all symlinks.
+   * Used by path validation to check containment against the real target so a
+   * symlink whose target escapes the base directory can be rejected. Throws if
+   * the path does not exist. Optional: virtual/remote filesystems that have no
+   * OS-level symlinks may omit it.
+   */
+  realPath?(path: string): Promise<string>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(prefix: string): Promise<string>;

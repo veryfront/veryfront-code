@@ -343,6 +343,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     resolveResponsePromise = resolve;
     rejectResponsePromise = reject;
   });
+  // Callers may never await responsePromise (e.g. Stop during a fork). Mark its
+  // rejection as observed so an abort does not surface as an unhandled rejection.
+  responsePromise.catch(() => {});
   const abortHandler = () => {
     rejectResponsePromise(createAgentRuntimeForkAbortError(input.abortSignal));
   };
@@ -373,27 +376,35 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
   };
   const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 
-  const stream = await runWithVeryfrontCloudContextAsync(
-    {
-      apiBaseUrl: input.apiUrl,
-      apiToken: input.authToken,
-      serviceLayer: "cloud",
-    },
-    () =>
-      runtime.stream(
-        input.messages,
-        input.projectId ? { projectId: input.projectId } : undefined,
-        {
-          onFinish: (response) => {
-            input.abortSignal?.removeEventListener("abort", abortHandler);
-            resolveResponsePromise(response);
+  let stream: ReadableStream<Uint8Array>;
+  try {
+    stream = await runWithVeryfrontCloudContextAsync(
+      {
+        apiBaseUrl: input.apiUrl,
+        apiToken: input.authToken,
+        serviceLayer: "cloud",
+      },
+      () =>
+        runtime.stream(
+          input.messages,
+          input.projectId ? { projectId: input.projectId } : undefined,
+          {
+            onFinish: (response) => {
+              input.abortSignal?.removeEventListener("abort", abortHandler);
+              resolveResponsePromise(response);
+            },
           },
-        },
-        input.model,
-        undefined,
-        input.abortSignal,
-      ),
-  );
+          input.model,
+          undefined,
+          input.abortSignal,
+        ),
+    );
+  } catch (error) {
+    // stream() failed before onFinish ran; drop the abort listener so it does
+    // not leak on the signal for the lifetime of the request.
+    input.abortSignal?.removeEventListener("abort", abortHandler);
+    throw error;
+  }
 
   return {
     stream,

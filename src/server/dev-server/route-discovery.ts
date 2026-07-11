@@ -5,7 +5,7 @@ import type { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("server");
 
@@ -146,7 +146,18 @@ export class RouteDiscovery {
       logger.debug("Directory stat result", { path, isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
-      logger.debug("Directory check failed", { path, error: String(error) });
+      // A missing directory is the expected "no routes here" case.
+      if (isNotFoundError(error)) {
+        logger.debug("Directory check failed", { path, error: String(error) });
+        return false;
+      }
+      // A transient/adapter error (permission, I/O) must not be silently misread
+      // as "directory absent" and vanish routes. Log loudly; return false so a
+      // single failing candidate doesn't abort discovery of the others.
+      logger.warn("Directory existence check failed with a non-not-found error", {
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

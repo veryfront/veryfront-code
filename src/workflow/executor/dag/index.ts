@@ -160,7 +160,18 @@ export class DAGExecutor {
         };
       }
 
-      ready = [...ready, ...getReadyNodes(inDegree, nodeStates)];
+      // Merge freshly-unblocked nodes with any overflow nodes still queued in
+      // `ready` (the slice beyond maxConcurrency that has not run yet). Those
+      // overflow nodes have inDegree 0 and no recorded state, so
+      // getReadyNodes() would return them again — de-duplicate to avoid
+      // scheduling (and double-decrementing dependents for) a node that is
+      // already queued.
+      const queued = new Set(ready);
+      for (const nodeId of getReadyNodes(inDegree, nodeStates)) {
+        if (queued.has(nodeId)) continue;
+        queued.add(nodeId);
+        ready.push(nodeId);
+      }
     }
 
     return {

@@ -31,7 +31,9 @@ function createMockAdapter(files: Record<string, string>): RuntimeAdapter {
   const fs = {
     stat(path: string) {
       const node = nodes.get(path);
-      if (!node) return Promise.reject(new Error(`ENOENT: ${path}`));
+      if (!node) {
+        return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
+      }
       return Promise.resolve({
         size: node.content?.length ?? 0,
         isFile: node.type === "file",
@@ -43,7 +45,9 @@ function createMockAdapter(files: Record<string, string>): RuntimeAdapter {
 
     readFile(path: string) {
       const node = nodes.get(path);
-      if (!node || node.type !== "file") return Promise.reject(new Error(`ENOENT: ${path}`));
+      if (!node || node.type !== "file") {
+        return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
+      }
       return Promise.resolve(node.content ?? "");
     },
 

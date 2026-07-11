@@ -279,9 +279,12 @@ export class LazySandbox {
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
     const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${endpoint}/exec/commands/${encodeURIComponent(commandId)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -297,9 +300,12 @@ export class LazySandbox {
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
     const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/output`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${endpoint}/exec/commands/${encodeURIComponent(commandId)}/output`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -340,10 +346,13 @@ export class LazySandbox {
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
     const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/cancel`, {
-      method: "POST",
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${endpoint}/exec/commands/${encodeURIComponent(commandId)}/cancel`,
+      {
+        method: "POST",
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -375,7 +384,7 @@ export class LazySandbox {
     const pending = {
       promise: (async () => {
         const res = await this.fetchControl(
-          `${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`,
+          `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(currentSessionId)}/heartbeat`,
           {
             method: "POST",
             headers: this.authHeaders(),
@@ -545,9 +554,12 @@ export class LazySandbox {
   }
 
   private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
-    const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -564,9 +576,12 @@ export class LazySandbox {
     while (Date.now() - start < this.startupTimeoutMs) {
       await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
 
-      const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-        headers: this.authHeaders(),
-      });
+      const res = await this.fetchControl(
+        `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+        {
+          headers: this.authHeaders(),
+        },
+      );
 
       if (!res.ok) {
         continue;
@@ -664,10 +679,13 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-      method: "DELETE",
-      headers: this.authHeaders(),
-    });
+    await this.fetchControl(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+        headers: this.authHeaders(),
+      },
+    );
   }
 
   private requireEndpoint(): string {

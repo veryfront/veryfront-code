@@ -9,6 +9,13 @@ import { readRecord } from "./provider-records.ts";
 export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moonshotai";
 
 /**
+ * Upper bound on the number of characters of a provider error body we surface
+ * in `ProviderError.message`. Prevents multi-MB error payloads from flowing
+ * into logs and model context.
+ */
+const MAX_ERROR_BODY_LENGTH = 2_000;
+
+/**
  * Base class for typed provider errors. The `retryable` flag is the
  * primary signal for callers (or a retry wrapper) to decide whether to
  * re-issue the request. `retryAfterMs` is set when the provider gave an
@@ -77,7 +84,8 @@ export async function buildProviderError(
   response: Response,
 ): Promise<ProviderError> {
   const rawBody = await response.text();
-  const message = rawBody.trim() || `${response.status} ${response.statusText}`.trim();
+  const message = (rawBody.trim() || `${response.status} ${response.statusText}`.trim())
+    .slice(0, MAX_ERROR_BODY_LENGTH);
   const status = response.status;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
 
@@ -174,6 +182,20 @@ export async function buildProviderError(
       });
     }
     return new ProviderRateLimitError({
+      provider,
+      status,
+      message,
+      retryable: true,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    });
+  }
+
+  // Transient server/gateway errors (500, 502, 503, 504 and other 5xx) are
+  // treated as retryable: a hung, restarting, or overloaded upstream may
+  // recover on a subsequent attempt. The provider-specific 529/503/429 cases
+  // above return earlier; this is the catch-all for the remaining 5xx codes.
+  if (status >= 500 && status <= 599) {
+    return new ProviderOverloadedError({
       provider,
       status,
       message,
