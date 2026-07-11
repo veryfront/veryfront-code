@@ -128,6 +128,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   // Abort in-flight request on unmount
   useEffect(() => {
     return () => {
+      requestIdRef.current++;
       abortControllerRef.current?.abort();
     };
   }, []);
@@ -230,6 +231,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           );
         }
 
+        if (!isLatestRequest(requestIdRef.current, requestId)) return;
         options.onResponse?.(response);
 
         if (!response.body) return;
@@ -239,17 +241,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         const currentMessageIdRef = { current: streamingMessageId };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
         let serverModel: string | undefined = model;
-        setActiveModel(undefined);
+        setActiveModel((current) =>
+          isLatestRequest(requestIdRef.current, requestId) ? undefined : current
+        );
 
         const handleResponse = resolveUseChatStreamHandler(options.transport);
 
         await handleResponse(response.body, {
           onMessage: (assistantMessage) => {
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const withMeta = {
               ...assistantMessage,
               metadata: { ...assistantMessage.metadata, model: serverModel },
             };
             setMessages((prev) => {
+              if (!isLatestRequest(requestIdRef.current, requestId)) return prev;
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
               return prev.map((
                 m,
@@ -266,7 +272,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             options.onFinish?.(withMeta);
           },
           onData: (eventData) => {
-            setData(eventData);
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
+            setData((current: unknown) =>
+              isLatestRequest(requestIdRef.current, requestId) ? eventData : current
+            );
             // Detect inference mode and resolved model from server metadata
             if (
               eventData &&
@@ -275,15 +284,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             ) {
               const d = eventData as { inferenceMode: string; model?: string };
               if (d.inferenceMode === "server-local" || d.inferenceMode === "cloud") {
-                setInferenceMode(d.inferenceMode);
+                const nextInferenceMode: InferenceMode = d.inferenceMode;
+                setInferenceMode((current) =>
+                  isLatestRequest(requestIdRef.current, requestId) ? nextInferenceMode : current
+                );
               }
               if (d.model) {
                 serverModel = d.model;
-                setActiveModel(d.model);
+                setActiveModel((current) =>
+                  isLatestRequest(requestIdRef.current, requestId) ? d.model : current
+                );
               }
             }
           },
           onUpdate: (parts, messageId, messageMetadata) => {
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const id = messageId ?? streamingMessageId;
             const metadata = { ...messageMetadata, model: serverModel };
 
@@ -293,11 +308,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
               if (hasAddedStreamingMessage) {
                 setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === oldId
-                      ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
-                      : m
-                  )
+                  isLatestRequest(requestIdRef.current, requestId)
+                    ? prev.map((m) =>
+                      m.id === oldId
+                        ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
+                        : m
+                    )
+                    : prev
                 );
                 return;
               }
@@ -307,32 +324,44 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [
-                ...prev,
-                {
-                  id,
-                  role: "assistant",
-                  parts,
-                  metadata,
-                  // Stamp when the turn first appears; `onMessage` preserves it.
-                  createdAt: new Date().toISOString(),
-                },
-              ]);
+              ) =>
+                isLatestRequest(requestIdRef.current, requestId)
+                  ? [
+                    ...prev,
+                    {
+                      id,
+                      role: "assistant",
+                      parts,
+                      metadata,
+                      // Stamp when the turn first appears; `onMessage` preserves it.
+                      createdAt: new Date().toISOString(),
+                    },
+                  ]
+                  : prev
+              );
               return;
             }
 
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentMessageIdRef.current
-                  ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
-                  : m
-              )
+              isLatestRequest(requestIdRef.current, requestId)
+                ? prev.map((m) =>
+                  m.id === currentMessageIdRef.current
+                    ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
+                    : m
+                )
+                : prev
             );
           },
-          onToolCall: options.onToolCall,
+          onToolCall: options.onToolCall
+            ? (arg) =>
+              isLatestRequest(requestIdRef.current, requestId)
+                ? options.onToolCall?.(arg)
+                : undefined
+            : undefined,
         });
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
+        if (!isLatestRequest(requestIdRef.current, requestId)) return;
 
         const nextError = ensureError(error);
         setError(nextError);
@@ -371,6 +400,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
    * Stop generation
    */
   const stop = useCallback(() => {
+    // Abort cannot retract a chunk that was already decoded. Advancing the
+    // request id also fences callbacks and state updaters queued by that chunk.
+    requestIdRef.current++;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsLoading(false);

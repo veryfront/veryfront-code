@@ -3,6 +3,16 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as chatModule from "./index.ts";
 import * as chatUI from "#veryfront/react/components/chat/chat.tsx";
+import * as componentsChatModule from "veryfront/components/chat";
+import * as reactComponentsChatModule from "veryfront/react/components/chat";
+import type {
+  UseConversationChatOptions as ComponentsChatOptions,
+  UseConversationChatResult as ComponentsChatResult,
+} from "veryfront/components/chat";
+import type {
+  UseConversationChatOptions as ReactComponentsChatOptions,
+  UseConversationChatResult as ReactComponentsChatResult,
+} from "veryfront/react/components/chat";
 import * as agentCardModule from "#veryfront/react/components/chat/agent-card.tsx";
 import * as errorBoundaryModule from "#veryfront/react/components/chat/error-boundary.tsx";
 import * as useChatModule from "#veryfront/agent/react/use-chat/index.ts";
@@ -11,6 +21,13 @@ import * as useAgentMetadataModule from "#veryfront/agent/react/use-agent-metada
 import * as useCompletionModule from "#veryfront/agent/react/use-completion.ts";
 import * as useStreamingModule from "#veryfront/agent/react/use-streaming.ts";
 import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts";
+
+const _componentsChatOptions: ComponentsChatOptions = {};
+const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatOptions;
+const _componentsChatResult = null as unknown as ComponentsChatResult;
+const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
+void _reactComponentsChatOptions;
+void _reactComponentsChatResult;
 
 const expectedRuntimeExports = [
   // Target component names (renamed public API; v1 aliases retained below).
@@ -174,6 +191,11 @@ describe("chat/index.ts exports", () => {
       chatModule.ChatErrorBoundary,
       errorBoundaryModule.ChatErrorBoundary,
     );
+  });
+
+  it("exports conversation chat through both component chat aliases", () => {
+    assertEquals(componentsChatModule.useConversationChat, chatUI.useConversationChat);
+    assertEquals(reactComponentsChatModule.useConversationChat, chatUI.useConversationChat);
   });
 
   it("exposes deprecated message aliases as the single render-or-compose Message", () => {

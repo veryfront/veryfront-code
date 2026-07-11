@@ -98,10 +98,13 @@ export function useConversationChat(
     ? bound ? `conversation:${bound.id}` : `pending:${conversations.activeId ?? ""}`
     : "standalone";
   const currentSessionKeyRef = React.useRef(sessionKey);
+  const resetEpochRef = React.useRef(0);
+  const [committedResetEpoch, setCommittedResetEpoch] = React.useState(0);
   const pendingSessionRef = React.useRef<
     {
       key: string;
       messages: ChatMessage[];
+      epoch: number;
     } | null
   >(null);
 
@@ -109,20 +112,29 @@ export function useConversationChat(
     if (currentSessionKeyRef.current === sessionKey) return;
 
     const messages = bound?.messages ?? (conversations ? [] : initialMessages ?? []);
-    pendingSessionRef.current = { key: sessionKey, messages };
+    const epoch = ++resetEpochRef.current;
+    pendingSessionRef.current = { key: sessionKey, messages, epoch };
     lastEmittedRef.current = messages;
     chat.stop();
     chat.setMessages(messages);
+    setCommittedResetEpoch(epoch);
   }, [sessionKey]);
 
   React.useEffect(() => {
     const pendingSession = pendingSessionRef.current;
     if (pendingSession) {
-      if (chat.messages !== pendingSession.messages) return;
+      // The epoch advances on the render scheduled by the reset. Unlike array
+      // identity, it cannot remain pending if React batches another update with
+      // setMessages. A different array now can only belong to the new session,
+      // because stop() fenced callbacks from the previous request.
+      if (committedResetEpoch < pendingSession.epoch) return;
       currentSessionKeyRef.current = pendingSession.key;
       pendingSessionRef.current = null;
-      lastEmittedRef.current = chat.messages;
-      return;
+      if (chat.messages === pendingSession.messages) {
+        lastEmittedRef.current = chat.messages;
+        return;
+      }
+      lastEmittedRef.current = pendingSession.messages;
     }
     if (currentSessionKeyRef.current !== sessionKey) return;
     if (conversations && !bound) return;
@@ -148,7 +160,7 @@ export function useConversationChat(
     // don't re-derive it every keystroke of a streamed reply.
     if (base === syntheticRef.current) syntheticRef.current = conversation;
     sink(conversation);
-  }, [chat.messages, boundId]);
+  }, [chat.messages, boundId, committedResetEpoch, sessionKey]);
 
   return { chat, bound, resolvedAgentId };
 }

@@ -133,4 +133,84 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       restoreDom();
     }
   });
+
+  it("ignores a queued stream update from the conversation being closed", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    globalThis.fetch = () => Promise.resolve(new Response(stream));
+
+    const first = conversation("first", [userMessage("first-message", "First thread")]);
+    const second = conversation("second", [userMessage("second-message", "Second thread")]);
+    const saved: Conversation[] = [];
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const render = (active: Conversation) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider
+            value={contextValue(active, (value) => saved.push(value))}
+          >
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+
+    try {
+      render(first);
+      await settle();
+
+      let oldRequest: Promise<void> | undefined;
+      flushSync(() => {
+        oldRequest = latest!.chat.sendMessage({ text: "Old request" });
+      });
+      await settle();
+      saved.length = 0;
+
+      // Queue a chunk while the old reader is waiting, then switch in the same
+      // turn. The reader continuation runs after the switch invalidates it.
+      streamController!.enqueue(encoder.encode([
+        "event: TextMessageStart",
+        'data: {"messageId":"old-assistant","contentId":"text:0","role":"assistant"}',
+        "",
+        "event: TextMessageContent",
+        'data: {"messageId":"old-assistant","contentId":"text:0","delta":"Late reply"}',
+        "",
+        "",
+      ].join("\n")));
+      render(second);
+      await settle();
+
+      streamController!.close();
+      await oldRequest;
+      await settle();
+
+      assertEquals(latest!.chat.messages, second.messages);
+      assertEquals(saved, [], "a late old-session chunk must not be saved into the new thread");
+
+      const reply = userMessage("second-reply", "Second reply");
+      flushSync(() => latest!.chat.setMessages([...latest!.chat.messages, reply]));
+      await settle();
+      assertEquals(saved.at(-1)?.id, "second");
+      assertEquals(saved.at(-1)?.messages, [...second.messages, reply]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
 });

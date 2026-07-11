@@ -91,6 +91,15 @@ export {
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
+// Chat — Conversation session
+// ---------------------------------------------------------------------------
+export {
+  useConversationChat,
+  type UseConversationChatOptions,
+  type UseConversationChatResult,
+} from "./chat.tsx";
+
+// ---------------------------------------------------------------------------
 // Chat — Sub-components
 // ---------------------------------------------------------------------------
 export {
