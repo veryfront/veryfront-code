@@ -208,6 +208,10 @@ describe("push receipt persistence", () => {
       const result = await new Deno.Command("git", {
         args,
         cwd: projectDir,
+        clearEnv: true,
+        env: Object.fromEntries(
+          Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+        ),
         stdout: "null",
         stderr: "piped",
       }).output();
