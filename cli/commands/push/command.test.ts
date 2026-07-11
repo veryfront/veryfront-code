@@ -11,11 +11,13 @@ import {
   assertRejects,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   capturePushSourceSnapshot,
   createBranch,
   ensureBranch,
   generateBranchName,
+  pushCommand,
   recordPushReceipt,
   resolvePushRemoteFiles,
   uploadFiles,
@@ -88,6 +90,11 @@ async function withGitProject(test: (project: GitProject) => Promise<void>): Pro
     else Deno.env.set("GITHUB_SHA", originalGithubSha);
     await Deno.remove(projectDir, { recursive: true });
   }
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) Deno.env.delete(key);
+  else Deno.env.set(key, value);
 }
 
 describe("generateBranchName", () => {
@@ -423,6 +430,113 @@ describe("push receipt source snapshot", () => {
         "Local source changed during push",
       );
       assertEquals(await readPushReceipt(projectDir), null);
+    });
+  });
+
+  it("rejects a clean tracked symlink whose target bytes are outside the commit", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const externalDir = await Deno.makeTempDir();
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        const targetPath = `${externalDir}/outside.ts`;
+        await Deno.writeTextFile(targetPath, "export const value = 1;\n");
+        await Deno.symlink(targetPath, `${projectDir}/linked.ts`);
+        await runGit("add", "linked.ts");
+        await runGit("commit", "--quiet", "-m", "add linked source");
+
+        await Deno.writeTextFile(targetPath, "export const value = 2;\n");
+        assertEquals(await runGit("status", "--porcelain=v1"), "");
+
+        await assertRejects(
+          () => capturePushSourceSnapshot(projectDir, createDefaultIgnoreChecker()),
+          Error,
+          "Veryfront push does not support symbolic links",
+        );
+      });
+    } finally {
+      await Deno.remove(externalDir, { recursive: true });
+    }
+  });
+
+  it("uploads the persisted slug when first-project reservation renames it", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
+      let reservedSlug = "";
+      const uploaded = new Map<string, string>();
+
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          if (request.method === "POST" && url.pathname === "/projects") {
+            const body = await request.json() as { slug: string };
+            if (body.slug === "my-project") {
+              return Response.json({ error: "slug taken" }, { status: 409 });
+            }
+            reservedSlug = body.slug;
+            return Response.json({ id: "project-123" }, { status: 201 });
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === `/projects/${reservedSlug}/files`
+          ) {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (
+            request.method === "PUT" &&
+            url.pathname.startsWith(`/projects/${reservedSlug}/files/`)
+          ) {
+            const path = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+            const body = await request.json() as { content: string };
+            uploaded.set(path, body.content);
+            return Response.json({});
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === `/projects/${reservedSlug}`
+          ) {
+            return Response.json({ id: "project-123", slug: reservedSlug });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({
+          projectDir,
+          branch: "main",
+          force: true,
+          quiet: true,
+        });
+
+        const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
+        assertEquals(config.projectSlug, reservedSlug);
+        assertEquals([...uploaded.keys()].sort(), ["app.ts", "veryfront.json"]);
+        assertEquals(JSON.parse(uploaded.get("veryfront.json") ?? "{}").projectSlug, reservedSlug);
+        assertEquals((await readPushReceipt(projectDir))?.projectSlug, reservedSlug);
+      } finally {
+        globalThis.fetch = originalFetch;
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
     });
   });
 });

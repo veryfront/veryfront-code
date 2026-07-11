@@ -141,6 +141,15 @@ async function scanLocalFiles(
 
       if (ignoreChecker.isIgnored(relativePath)) continue;
 
+      if (entry.isSymlink) {
+        if (ignoreChecker.isSupportedExtension(entry.name)) {
+          throw new Error(
+            `Veryfront push does not support symbolic links: "${relativePath}". Replace the link with a file and run veryfront push again.`,
+          );
+        }
+        continue;
+      }
+
       if (entry.isDirectory) {
         await walk(entryPath);
         continue;
@@ -421,17 +430,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const ignorePatterns = await loadIgnorePatterns(projectDir);
       const ignoreChecker = createIgnoreChecker(ignorePatterns);
 
-      spinner.update("Scanning local files...");
-      let sourceSnapshot: PushSourceSnapshot;
-      try {
-        sourceSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
-      } catch (error) {
-        spinner.stop();
-        throw error;
-      }
-      const ops = sourceSnapshot.files;
-      const localPaths = new Set(ops.map((op) => op.path));
-
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
       const branchName = branch || generateBranchName();
@@ -467,6 +465,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           throw error;
         }
       }
+
+      spinner.update("Scanning local files...");
+      let sourceSnapshot: PushSourceSnapshot;
+      try {
+        sourceSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+      } catch (error) {
+        spinner.stop();
+        throw error;
+      }
+      const ops = sourceSnapshot.files;
+      const localPaths = new Set(ops.map((op) => op.path));
 
       const target = await resolvePushRemoteFiles(
         client,

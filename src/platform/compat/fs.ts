@@ -23,7 +23,9 @@ export interface FileSystem {
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-  readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
+  readDir(
+    path: string,
+  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(options?: { prefix?: string }): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
@@ -156,11 +158,21 @@ class NodeFileSystem implements FileSystem {
 
   async *readDir(
     path: string,
-  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }> {
     await this.ensureInitialized();
     const entries = await this.getFs().readdir(path, { withFileTypes: true });
     for (const entry of entries) {
-      yield { name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() };
+      yield {
+        name: entry.name,
+        isFile: entry.isFile(),
+        isDirectory: entry.isDirectory(),
+        isSymlink: entry.isSymbolicLink(),
+      };
     }
   }
 
@@ -236,9 +248,19 @@ class DenoFileSystem implements FileSystem {
 
   async *readDir(
     path: string,
-  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }> {
     for await (const entry of denoGlobal().readDir(path)) {
-      yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+      yield {
+        name: entry.name,
+        isFile: entry.isFile,
+        isDirectory: entry.isDirectory,
+        isSymlink: entry.isSymlink,
+      };
     }
   }
 
@@ -314,7 +336,12 @@ export function remove(path: string, options?: { recursive?: boolean }): Promise
 /** Read directory entries. */
 export function readDir(
   path: string,
-): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+): AsyncIterable<{
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink?: boolean;
+}> {
   return getFs().readDir(path);
 }
 
