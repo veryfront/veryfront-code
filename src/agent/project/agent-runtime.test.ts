@@ -129,8 +129,77 @@ Deno.test("discoverProjectAgentRuntime clears stale runtime registries before re
   });
 });
 
+async function assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint(): Promise<void> {
+  await withTempDir(async (rootDir) => {
+    const agentsDir = resolve(rootDir, "agents");
+    const toolsDir = resolve(rootDir, "tools");
+    Deno.mkdirSync(agentsDir, { recursive: true });
+    Deno.mkdirSync(toolsDir, { recursive: true });
+
+    for (
+      const [fileName, id, name] of [
+        ["reviewer.ts", "reviewer", "Reviewer"],
+        ["support.ts", "support", "Support"],
+      ] as const
+    ) {
+      Deno.writeTextFileSync(
+        resolve(agentsDir, fileName),
+        [
+          'import { agent } from "veryfront/agent";',
+          "",
+          "export default agent({",
+          `  id: "${id}",`,
+          `  name: "${name}",`,
+          '  model: "openai/gpt-5.4",',
+          `  system: "You are the ${name.toLowerCase()} agent.",`,
+          "});",
+          "",
+        ].join("\n"),
+      );
+    }
+
+    for (
+      const [fileName, id] of [
+        ["echo.ts", "echo"],
+        ["lookup.ts", "lookup"],
+      ] as const
+    ) {
+      Deno.writeTextFileSync(
+        resolve(toolsDir, fileName),
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          `  id: "${id}",`,
+          `  description: "${id} a value",`,
+          "  inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),",
+          "  execute: ({ value }) => ({ value }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+    }
+
+    assertEquals(await nodeAdapter.fs.exists(resolve(rootDir, "service.ts")), false);
+
+    const result = await discoverProjectAgentRuntime({
+      projectDir: rootDir,
+      adapter: nodeAdapter,
+    });
+
+    assertEquals([...result.agents.keys()].sort(), ["reviewer", "support"]);
+    assertEquals([...result.tools.keys()].sort(), ["echo", "lookup"]);
+    assertEquals(getProjectAgentRuntimeAgentIdCandidates(result), {
+      codeAgentIds: ["reviewer", "support"],
+      markdownAgentIds: [],
+    });
+  });
+}
+
 Deno.test({
-  name: "discoverProjectAgentRuntime discovers configured project agent paths",
+  name:
+    "discoverProjectAgentRuntime supports configured paths and multi-agent projects without service.ts",
   // Code primitive discovery invokes the esbuild-backed transpiler, which starts
   // an esbuild child process. This matches the sanitizer policy in the other
   // discovery tests that import TypeScript project primitives.
@@ -192,5 +261,7 @@ Help from configured markdown.
         markdownAgentIds: ["support"],
       });
     });
+
+    await assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint();
   },
 });
