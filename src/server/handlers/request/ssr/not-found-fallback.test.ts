@@ -1,16 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../../transforms/plugins/__tests__/code-parser-setup.ts";
+import * as React from "react";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { cleanupBundler } from "../../../../rendering/cleanup.ts";
 import { withTestContext } from "../../../../../tests/_helpers/context.ts";
+import {
+  __injectReactDOMServerForTests,
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 function createMockAdapter(
   overrides: {
@@ -67,6 +73,11 @@ describe(
   () => {
     afterAll(async () => {
       await cleanupBundler();
+    });
+
+    afterEach(() => {
+      resetReactCache();
+      __setServerModuleLoaderForTests(null);
     });
 
     describe("tryNotFoundFallback", () => {
@@ -135,6 +146,53 @@ describe(
           assertStringIncludes(html, "Missing B");
           assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
           assertEquals(html.includes("Root Missing"), false);
+        });
+      });
+
+      it("renders with the React version configured for the project", async () => {
+        const adapter = await getAdapter();
+        const loadedVersions: string[] = [];
+        const server = (marker: string) => ({
+          renderToString: () => `<p>${marker}</p>`,
+          renderToStaticMarkup: () => `<p>${marker}</p>`,
+        });
+
+        await withTestContext("not-found-fallback-react-version", async (context) => {
+          __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+            if (label === "React") {
+              loadedVersions.push(reactVersion);
+              return Promise.resolve({ default: React });
+            }
+            throw new Error(`Unexpected module load: ${label}`);
+          });
+          __injectReactDOMServerForTests(server("default-react"));
+          __injectReactDOMServerForTests(server("project-react-18"), "18.3.1");
+
+          const appDir = join(context.projectDir, "src", "site");
+          await mkdir(appDir, { recursive: true });
+          await writeTextFile(
+            join(appDir, "not-found.tsx"),
+            "export default function NotFound() { return null; }",
+          );
+
+          const ctx = makeCtx({
+            projectDir: context.projectDir,
+            adapter,
+            config: {
+              react: { version: "18.3.1" },
+              directories: { app: "src/site" },
+            } as HandlerContext["config"],
+          });
+          const result = await tryNotFoundFallback(
+            new Request("http://localhost/missing"),
+            "missing",
+            ctx,
+            new ResponseBuilder(),
+          );
+
+          assertExists(result);
+          assertStringIncludes(await result.text(), "project-react-18");
+          assertEquals(loadedVersions, ["18.3.1"]);
         });
       });
     });

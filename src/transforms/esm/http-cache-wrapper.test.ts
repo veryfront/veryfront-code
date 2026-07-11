@@ -1,15 +1,37 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ApiCacheBackend } from "#veryfront/cache/backend.ts";
 import {
   __setDistributedCacheAccessorForTests,
   detokenize,
+  httpBundleCache,
   initializeHttpModuleDistributedCache,
   tokenize,
 } from "./http-cache-wrapper.ts";
 import { CACHE_DIR_TOKEN } from "./http-cache-invariants.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { fingerprintImportMap } from "./http-cache-helpers.ts";
+
+class RecordingCacheBackend implements CacheBackend {
+  readonly type = "memory" as const;
+  readonly entries = new Map<string, string>();
+
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.entries.get(key) ?? null);
+  }
+
+  set(key: string, value: string): Promise<void> {
+    this.entries.set(key, value);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    this.entries.delete(key);
+    return Promise.resolve();
+  }
+}
 
 describe("transforms/esm/http-cache-wrapper", () => {
   describe("initializeHttpModuleDistributedCache", () => {
@@ -100,6 +122,95 @@ describe("transforms/esm/http-cache-wrapper", () => {
       const code = `const x = 1;`;
       const detokenized = detokenize(code);
       assertEquals(detokenized as unknown as string, code);
+    });
+  });
+
+  describe("identity metadata", () => {
+    it("stores one shared import map and references it from each bundle identity", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      const importMap = {
+        imports: { pkg: "https://modules.example.com/pkg.js" },
+        scopes: { "/app/": { scoped: "https://modules.example.com/scoped.js" } },
+      };
+      const importMapFingerprint = await fingerprintImportMap(importMap);
+
+      try {
+        for (
+          const [hash, url] of [
+            ["bundle-a", "https://modules.example.com/a.js"],
+            ["bundle-b", "https://modules.example.com/b.js"],
+          ] as const
+        ) {
+          await httpBundleCache.setCode(hash, "export {};" as never, url, 60, {
+            url,
+            importMap,
+            importMapFingerprint,
+          });
+        }
+
+        const identityValues = [...backend.entries]
+          .filter(([key]) => key.includes(":identity:"))
+          .map(([, value]) => JSON.parse(value) as Record<string, unknown>);
+        assertEquals(identityValues.length, 2);
+        assertEquals(identityValues.every((value) => value.importMap === undefined), true);
+        assertEquals(
+          identityValues.every((value) => value.importMapFingerprint === importMapFingerprint),
+          true,
+        );
+
+        const importMapEntries = [...backend.entries]
+          .filter(([key]) => key.includes(":import-map:"));
+        assertEquals(importMapEntries.length, 1);
+        assertEquals(JSON.parse(importMapEntries[0]![1]), importMap);
+        assertEquals(await httpBundleCache.getIdentityMetadata("bundle-a"), {
+          url: "https://modules.example.com/a.js",
+          reactVersion: undefined,
+          importMap,
+          importMapFingerprint,
+        });
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("continues to read legacy inline import-map identity metadata", async () => {
+      const backend = new RecordingCacheBackend();
+      __setDistributedCacheAccessorForTests(async () => backend);
+      const importMap = { imports: { legacy: "https://modules.example.com/legacy.js" } };
+
+      try {
+        await httpBundleCache.setCode(
+          "legacy-bundle",
+          "export {};" as never,
+          "https://modules.example.com/legacy.js",
+          60,
+          {
+            url: "https://modules.example.com/legacy.js",
+            importMap,
+          },
+        );
+        const identityKey = [...backend.entries.keys()].find((key) =>
+          key.endsWith(":identity:legacy-bundle")
+        );
+        assertExists(identityKey);
+        backend.entries.set(
+          identityKey,
+          JSON.stringify({
+            url: "https://modules.example.com/legacy.js",
+            reactVersion: "19.0.0",
+            importMap,
+          }),
+        );
+
+        assertEquals(await httpBundleCache.getIdentityMetadata("legacy-bundle"), {
+          url: "https://modules.example.com/legacy.js",
+          reactVersion: "19.0.0",
+          importMap: { imports: importMap.imports, scopes: undefined },
+        });
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
     });
   });
 });

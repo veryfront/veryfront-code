@@ -9,6 +9,7 @@ import {
   launchChromium,
 } from "../_helpers/playwright.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
+import { computeSourceHash } from "../e2e/setup/binary.ts";
 
 export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
@@ -35,45 +36,6 @@ async function getAvailablePort(): Promise<number> {
   const { port } = listener.addr as Deno.NetAddr;
   listener.close();
   return port;
-}
-
-async function computeSourceHash(): Promise<string> {
-  const decoder = new TextDecoder();
-
-  // Hash src/, cli/, scripts/build/, and extensions/ since they are all
-  // build inputs reachable from the binary entrypoint.
-  try {
-    const trees = ["HEAD:src", "HEAD:cli", "HEAD:scripts/build", "HEAD:extensions"];
-    const results = await Promise.all(
-      trees.map((ref) =>
-        new Deno.Command("git", {
-          args: ["rev-parse", ref],
-          stdout: "piped",
-          stderr: "null",
-        }).output()
-      ),
-    );
-
-    if (results.every((r) => r.success)) {
-      return results.map((r) => decoder.decode(r.stdout).trim()).join("-");
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const result = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-
-    if (result.success) return decoder.decode(result.stdout).trim();
-  } catch {
-    // fall through
-  }
-
-  return Date.now().toString();
 }
 
 export interface TestServer {

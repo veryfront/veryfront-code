@@ -7,6 +7,8 @@ interface MockElement {
 
 interface MockLocation {
   pathname: string;
+  search: string;
+  hash: string;
 }
 
 export function setupNavigationHandlerMocks(): {
@@ -21,7 +23,7 @@ export function setupNavigationHandlerMocks(): {
   const originalHTMLAnchorElement = g.HTMLAnchorElement;
   const originalHTMLElement = g.HTMLElement;
 
-  const mockLocation: MockLocation = { pathname: "/current-page" };
+  const mockLocation: MockLocation = { pathname: "/current-page", search: "", hash: "" };
 
   class MockHTMLElement {
     tagName = "";

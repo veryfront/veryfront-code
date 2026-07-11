@@ -51,7 +51,14 @@ export async function transformModuleWithDeps(
   useLocalAdapter = false,
 ): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
-  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
+  const cacheKey = getModuleCacheKey(
+    filePath,
+    projectId,
+    projectDir,
+    contentSourceId,
+    config.reactVersion,
+    mode,
+  );
 
   const cachedPath = await resolveCachedModulePath({
     cacheKey,
@@ -242,7 +249,14 @@ export async function loadModule(
       });
 
       config.moduleCache.delete(
-        getModuleCacheKey(filePath, config.projectId, config.projectDir, config.contentSourceId),
+        getModuleCacheKey(
+          filePath,
+          config.projectId,
+          config.projectDir,
+          config.contentSourceId,
+          config.reactVersion,
+          config.mode,
+        ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
       // invalidation stays scoped to this tenant (the path-cache key is not

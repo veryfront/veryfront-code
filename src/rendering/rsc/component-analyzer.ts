@@ -8,6 +8,10 @@ import type { ClientComponentMeta, ComponentAnalysis, ComponentType } from "./ty
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { extractExportNames } from "./export-extractor.ts";
+import { shortHash } from "#veryfront/utils/hash-utils.ts";
+import { hasClientFileName, hasUseClientDirective, hasUseServerDirective } from "./page-island.ts";
+
+class DuplicateClientComponentIdError extends Error {}
 
 export async function analyzeComponent(
   filePath: string,
@@ -15,11 +19,11 @@ export async function analyzeComponent(
 ): Promise<ComponentAnalysis> {
   const content = await fs.readFile(filePath);
 
-  const hasUseClient = detectDirective(content, "use client");
-  const hasUseServer = detectDirective(content, "use server");
+  const hasUseClient = hasUseClientDirective(content);
+  const hasUseServer = hasUseServerDirective(content);
 
   // Determine component type: directive takes precedence over file naming convention
-  const type: ComponentType = hasUseClient || filePath.includes(".client.") ? "client" : "server";
+  const type: ComponentType = hasUseClient || hasClientFileName(filePath) ? "client" : "server";
   const exports = await extractExportNames(content, filePath);
 
   return {
@@ -27,14 +31,10 @@ export async function analyzeComponent(
     filePath,
     exports,
     id: generateComponentId(filePath),
+    contentHash: await shortHash(content),
     hasUseClient,
     hasUseServer,
   };
-}
-
-function detectDirective(content: string, directive: string): boolean {
-  const directivePattern = new RegExp(`^\\s*['"]${directive}['"];?\\s*$`, "m");
-  return directivePattern.test(content);
 }
 
 function generateComponentId(filePath: string): string {
@@ -74,10 +74,20 @@ export async function buildClientManifest(
         if (analysis.type !== "client") return;
 
         const relativePath = relative(projectDir, filePath);
+        const normalizedRelativePath = relativePath.replaceAll("\\", "/");
+        const existing = manifest.get(analysis.id);
+        if (existing && existing.rel !== normalizedRelativePath) {
+          throw new DuplicateClientComponentIdError(
+            `Duplicate client component ID "${analysis.id}" for "${existing.rel}" and "${normalizedRelativePath}"`,
+          );
+        }
 
         manifest.set(analysis.id, {
           id: analysis.id,
           path: `/_veryfront/fs/${toBase64Url(filePath)}`,
+          sourcePath: filePath,
+          rel: normalizedRelativePath,
+          contentHash: analysis.contentHash,
           exports: analysis.exports,
         });
 
@@ -86,6 +96,7 @@ export async function buildClientManifest(
       fsAdapter,
     );
   } catch (error) {
+    if (error instanceof DuplicateClientComponentIdError) throw error;
     serverLogger.warn(`Failed to build client manifest:`, error);
   }
 

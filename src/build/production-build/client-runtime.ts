@@ -378,12 +378,10 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
       ],
     });
   } finally {
-    if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
-      try {
-        await Promise.resolve(stop());
-      } catch (error) {
-        logger.warn("Failed to stop esbuild service cleanly", error);
-      }
+    try {
+      await stop();
+    } catch (error) {
+      logger.warn("Failed to stop esbuild service cleanly", error);
     }
   }
 

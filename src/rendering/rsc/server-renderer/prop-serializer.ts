@@ -1,12 +1,31 @@
 import { serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("rsc");
+const UNSAFE_PROP_NAME_CHARACTERS = "\"'`=<>/";
+const EVENT_HANDLER_PROP = /^on[a-z]/i;
+
+export function isSafeSerializedPropName(name: string): boolean {
+  if (name.length === 0 || EVENT_HANDLER_PROP.test(name)) return false;
+
+  for (const character of name) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint <= 0x20 || UNSAFE_PROP_NAME_CHARACTERS.includes(character)) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 export function serializeProps(props: Record<string, unknown>): Record<string, unknown> {
   const serializable: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(props)) {
     if (key === "children") continue;
+    if (!isSafeSerializedPropName(key)) {
+      logger.warn("Skipping prop with an unsafe name");
+      continue;
+    }
 
     if (!isSerializable(value)) {
       logger.warn(`Skipping non-serializable prop: ${key}`);

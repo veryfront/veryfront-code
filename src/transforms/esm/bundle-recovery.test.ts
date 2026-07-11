@@ -10,6 +10,7 @@ import {
 } from "./bundle-recovery.ts";
 import { __injectCachesForTests } from "./http-cache-state.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+import { buildHttpCacheIdentity, hashHttpCacheIdentity } from "./http-cache-helpers.ts";
 
 function createSuffixCacheBackend(entries: Record<string, string>): CacheBackend {
   const values = new Map(Object.entries(entries));
@@ -50,27 +51,70 @@ describe("transforms/esm/bundle-recovery", () => {
     it("writes code recovered by hash from distributed cache and refreshes local path state", async () => {
       const cacheDir = await Deno.makeTempDir();
       const cachedPaths = new Map<string, string>();
+      const url = "https://esm.sh/recovered@1";
+      const hash = await hashHttpCacheIdentity(
+        await buildHttpCacheIdentity(url, { importMap: { imports: {}, scopes: {} } }),
+      );
       __injectCachesForTests({ cachedPaths });
       __setDistributedCacheAccessorForTests(() =>
         Promise.resolve(createSuffixCacheBackend({
-          "code:123": "export const recovered = true;\n",
-          "hash:123": "https://esm.sh/recovered@1",
+          [`code:${hash}`]: "export const recovered = true;\n",
+          [`hash:${hash}`]: url,
         }))
       );
 
       try {
         const recovered = await recoverHttpBundleByHash(
-          "123",
+          hash,
           cacheDir,
           () => Promise.resolve(null),
         );
 
         assertEquals(recovered, true);
         assertEquals(
-          await Deno.readTextFile(join(cacheDir, "http-123.mjs")),
+          await Deno.readTextFile(join(cacheDir, `http-${hash}.mjs`)),
           "export const recovered = true;\n",
         );
-        assertEquals([...cachedPaths.values()], [join(cacheDir, "http-123.mjs")]);
+        assertEquals([...cachedPaths.values()], [join(cacheDir, `http-${hash}.mjs`)]);
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("restores the canonical React and import-map identity during recovery", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const cachedPaths = new Map<string, string>();
+      const url = "https://esm.sh/recovered@1";
+      const identity = {
+        url,
+        reactVersion: "18.3.1",
+        importMap: {
+          imports: { dependency: "https://cdn.example.com/dependency@2.js" },
+          scopes: { "/app/": { scoped: "https://cdn.example.com/scoped@3.js" } },
+        },
+      };
+      const cacheIdentity = await buildHttpCacheIdentity(url, identity);
+      const hash = await hashHttpCacheIdentity(cacheIdentity);
+      __injectCachesForTests({ cachedPaths });
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`code:${hash}`]: "export const recovered = true;\n",
+          [`hash:${hash}`]: url,
+          [`identity:${hash}`]: JSON.stringify(identity),
+        }))
+      );
+
+      try {
+        const recovered = await recoverHttpBundleByHash(
+          hash,
+          cacheDir,
+          () => Promise.resolve(null),
+        );
+
+        assertEquals(recovered, true);
+        const cacheKey = [...cachedPaths.keys()][0];
+        assert(cacheKey);
+        assertEquals(cacheKey, `${cacheDir}:${cacheIdentity}`);
       } finally {
         await Deno.remove(cacheDir, { recursive: true });
       }
@@ -78,10 +122,24 @@ describe("transforms/esm/bundle-recovery", () => {
 
     it("falls back to original URL re-fetch when distributed cache has URL metadata but no code", async () => {
       const cacheDir = await Deno.makeTempDir();
-      const calls: Array<{ url: string; cacheDir: string }> = [];
+      const importMap = {
+        imports: { dependency: "https://cdn.example.com/dependency@2.js" },
+        scopes: { "/app/": { scoped: "https://cdn.example.com/scoped@3.js" } },
+      };
+      const calls: Array<{
+        url: string;
+        cacheDir: string;
+        reactVersion?: string;
+        importMap: typeof importMap;
+      }> = [];
       __setDistributedCacheAccessorForTests(() =>
         Promise.resolve(createSuffixCacheBackend({
           "hash:404": "https://esm.sh/fallback@1",
+          "identity:404": JSON.stringify({
+            url: "https://esm.sh/fallback@1",
+            reactVersion: "18.3.1",
+            importMap,
+          }),
         }))
       );
 
@@ -90,13 +148,54 @@ describe("transforms/esm/bundle-recovery", () => {
           "404",
           cacheDir,
           (url, options) => {
-            calls.push({ url, cacheDir: options.cacheDir });
+            calls.push({
+              url,
+              cacheDir: options.cacheDir,
+              reactVersion: options.reactVersion,
+              importMap: options.importMap as typeof importMap,
+            });
             return Promise.resolve(join(cacheDir, "http-404.mjs"));
           },
         );
 
         assertEquals(recovered, true);
-        assertEquals(calls, [{ url: "https://esm.sh/fallback@1", cacheDir }]);
+        assertEquals(calls, [{
+          url: "https://esm.sh/fallback@1",
+          cacheDir,
+          reactVersion: "18.3.1",
+          importMap,
+        }]);
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("materializes URL re-fetches under a legacy numeric bundle path", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const legacyHash = "390496888";
+      const url = "https://esm.sh/legacy@1";
+      const regeneratedPath = join(cacheDir, `http-${"a".repeat(64)}.mjs`);
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`hash:${legacyHash}`]: url,
+        }))
+      );
+
+      try {
+        const recovered = await recoverHttpBundleByHash(
+          legacyHash,
+          cacheDir,
+          async () => {
+            await Deno.writeTextFile(regeneratedPath, "export const recovered = true;\n");
+            return regeneratedPath;
+          },
+        );
+
+        assertEquals(recovered, true);
+        assertEquals(
+          await Deno.readTextFile(join(cacheDir, `http-${legacyHash}.mjs`)),
+          "export const recovered = true;\n",
+        );
       } finally {
         await Deno.remove(cacheDir, { recursive: true });
       }

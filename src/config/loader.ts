@@ -10,14 +10,14 @@ import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
+import { CONFIG_PARSE_ERROR, CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
+import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
 
 const logger = serverLogger.component("config");
 
@@ -298,7 +298,10 @@ function isConfigError(error: unknown): boolean {
   // Prefer the structured slug check. The message-prefix check is only a fallback
   // for errors thrown before they were migrated to the VeryfrontError registry;
   // it is intentionally narrow to avoid misclassifying third-party errors.
-  if (error instanceof VeryfrontError && error.slug === "config-validation-failed") return true;
+  if (
+    error instanceof VeryfrontError &&
+    (error.slug === "config-validation-failed" || error.slug === "config-parse-error")
+  ) return true;
   return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
 }
 
@@ -490,12 +493,10 @@ export function getConfig(
         isVirtualFS,
       });
 
-      const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
-
       // For virtual filesystem, config is at project root ("/"), not the local projectDir
       const configBaseDir = isVirtualFS ? "/" : projectDir;
 
-      for (const configFile of configFiles) {
+      for (const configFile of VERYFRONT_CONFIG_FILES) {
         const configPath = join(configBaseDir, configFile);
         const exists = await adapter.fs.exists(configPath);
         logger.debug("Checking config file", { configPath, exists, isVirtualFS });
@@ -511,10 +512,13 @@ export function getConfig(
           });
           return merged;
         } catch (error) {
-          logger.warn(`Failed to load ${configFile}, trying next:`, {
-            error: getErrorMessage(error),
-          });
           if (isConfigError(error)) throw error;
+          logger.warn("Failed to load config file", { configFile });
+          throw CONFIG_PARSE_ERROR.create({
+            detail: `Failed to load ${configFile}`,
+            cause: error,
+            context: { configFile },
+          });
         }
       }
 
@@ -550,7 +554,7 @@ export function clearConfigCache(): void {
  * @returns Cached config if valid, null if not cached or stale
  */
 export function getCachedConfigSync(projectDir: string): VeryfrontConfig | null {
-  const cached = configCacheByProject.get(projectDir);
+  const cached = configCacheByProject.get(buildConfigCacheKey(projectDir, false));
   if (!cached || cached.revision !== cacheRevision) return null;
   return cached.config;
 }

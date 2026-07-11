@@ -1,5 +1,6 @@
 import type { DiagnosticResult } from "./types.ts";
 import { cliLogger } from "#cli/utils";
+import { DEFAULT_DEV_PORT } from "#cli/shared/constants";
 import { formatError } from "../../utils/string.ts";
 
 const FETCH_TIMEOUT_MS = 2000;
@@ -53,9 +54,11 @@ export async function checkRSCFlag(): Promise<DiagnosticResult> {
   }
 }
 
-export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
+export async function checkRSCEndpoints(
+  port: number = DEFAULT_DEV_PORT,
+): Promise<DiagnosticResult[]> {
   const results: DiagnosticResult[] = [];
-  const base = new URL("http://127.0.0.1:3000/");
+  const base = new URL(`http://127.0.0.1:${port}/`);
 
   try {
     const t0m = Date.now();
@@ -112,8 +115,10 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
   return results;
 }
 
-export async function checkRSCCounters(): Promise<DiagnosticResult> {
-  const base = new URL("http://127.0.0.1:3000/");
+export async function checkRSCCounters(
+  port: number = DEFAULT_DEV_PORT,
+): Promise<DiagnosticResult> {
+  const base = new URL(`http://127.0.0.1:${port}/`);
   const response = await fetchWithTimeout(new URL("/_metrics", base));
 
   try {

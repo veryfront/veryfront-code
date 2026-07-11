@@ -1,21 +1,20 @@
 import "../../_helpers/contract-init.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { getAdapter } from "#veryfront/platform";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
+import { stop as stopBundler } from "veryfront/extensions/bundler";
 
-describe(
-  "VirtualModuleSystem Smoke Tests",
-  {
-    sanitizeOps: false,
-    sanitizeResources: false,
-  },
-  () => {
-    it("should register and serve modules", async () => {
-      const adapter = await getAdapter();
-      const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+describe("VirtualModuleSystem Smoke Tests", () => {
+  afterAll(async () => {
+    await stopBundler();
+  });
 
-      const componentSource = `
+  it("should register and serve modules", async () => {
+    const adapter = await getAdapter();
+    const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+
+    const componentSource = `
 import React from 'react';
 
 export default function TestComponent() {
@@ -23,54 +22,54 @@ export default function TestComponent() {
 }
 `;
 
-      const moduleUrl = await vms.registerModule(
-        "test-component",
-        componentSource,
-        "/test/project",
-      );
+    const moduleUrl = await vms.registerModule(
+      "test-component",
+      componentSource,
+      "/test/project",
+    );
 
-      assertEquals(
-        moduleUrl,
-        "/_veryfront/modules/test-component",
-        "Module URL should be correct",
-      );
+    assertEquals(
+      moduleUrl,
+      "/_veryfront/modules/test-component",
+      "Module URL should be correct",
+    );
 
-      const request = new Request(
-        "http://localhost:3002/_veryfront/modules/test-component",
-      );
+    const request = new Request(
+      "http://localhost:3002/_veryfront/modules/test-component",
+    );
 
-      const response = await vms.handleRequest(request);
+    const response = await vms.handleRequest(request);
 
-      assertEquals(response?.status, 200, "Response should be successful");
+    assertEquals(response?.status, 200, "Response should be successful");
 
-      const content = await response?.text();
+    const content = await response?.text();
 
-      assertStringIncludes(
-        content ?? "",
-        "https://esm.sh/react@",
-        "Module should have transformed React import to esm.sh URL",
-      );
-    });
+    assertStringIncludes(
+      content ?? "",
+      "https://esm.sh/react@",
+      "Module should have transformed React import to esm.sh URL",
+    );
+  });
 
-    it("should handle non-virtual requests", async () => {
-      const adapter = await getAdapter();
-      const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+  it("should handle non-virtual requests", async () => {
+    const adapter = await getAdapter();
+    const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
 
-      const request = new Request("http://localhost:3002/some/other/path");
-      const response = await vms.handleRequest(request);
+    const request = new Request("http://localhost:3002/some/other/path");
+    const response = await vms.handleRequest(request);
 
-      assertEquals(
-        response,
-        null,
-        "Should return null for non-virtual module requests",
-      );
-    });
+    assertEquals(
+      response,
+      null,
+      "Should return null for non-virtual module requests",
+    );
+  });
 
-    it("should transform JSX runtime imports", async () => {
-      const adapter = await getAdapter();
-      const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
+  it("should transform JSX runtime imports", async () => {
+    const adapter = await getAdapter();
+    const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
 
-      const jsxSource = `
+    const jsxSource = `
 import { jsx, jsxs } from "react/jsx-runtime";
 import * as React from "react";
 
@@ -79,22 +78,21 @@ export default function Component() {
 }
 `;
 
-      const moduleUrl = await vms.registerModule(
-        "jsx-component",
-        jsxSource,
-        "/test/project",
-      );
+    const moduleUrl = await vms.registerModule(
+      "jsx-component",
+      jsxSource,
+      "/test/project",
+    );
 
-      const request = new Request(`http://localhost:3002${moduleUrl}`);
-      const response = await vms.handleRequest(request);
-      const content = await response?.text();
+    const request = new Request(`http://localhost:3002${moduleUrl}`);
+    const response = await vms.handleRequest(request);
+    const content = await response?.text();
 
-      assertStringIncludes(
-        content ?? "",
-        "https://esm.sh/react@",
-        "React import should use esm.sh URL",
-      );
-      assertStringIncludes(content ?? "", "jsx-runtime", "Should include jsx-runtime path");
-    });
-  },
-);
+    assertStringIncludes(
+      content ?? "",
+      "https://esm.sh/react@",
+      "React import should use esm.sh URL",
+    );
+    assertStringIncludes(content ?? "", "jsx-runtime", "Should include jsx-runtime path");
+  });
+});

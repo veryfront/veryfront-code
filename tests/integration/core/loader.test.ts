@@ -80,17 +80,16 @@ describe("config/loader", () => {
     });
   });
 
-  it("failure to execute config falls back to defaults", async () => {
+  it("rejects a config that fails during execution", async () => {
     await withTestContext("config-error-fallback", async (context) => {
+      await removeDefaultConfig(context.projectDir);
       await writeTextFile(
         projectFile(context.projectDir, "veryfront.config.ts"),
         `export default (()=>{ throw new Error('boom') })()`,
       );
 
       clearConfigCache();
-      const cfg = await getConfigWithAdapter(context.projectDir);
-
-      assertEquals(cfg.experimental?.esmLayouts, true);
+      await expectConfigError(context.projectDir, ["Failed to load veryfront.config.ts"]);
     });
   });
 

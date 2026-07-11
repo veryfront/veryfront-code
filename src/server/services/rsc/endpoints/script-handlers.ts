@@ -4,10 +4,6 @@ import { CLIENT_BOOT_BUNDLE, CLIENT_DOM_BUNDLE } from "./rsc-bundles.generated.t
 
 const logger = serverLogger.component("script-handlers");
 
-function shouldStopEsbuild(): boolean {
-  return !(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
-}
-
 function jsResponse(body: string): Response {
   return new Response(body, {
     headers: {
@@ -63,12 +59,10 @@ async function buildOrServeScript(
       });
     }
   } finally {
-    if (shouldStopEsbuild()) {
-      try {
-        esbuild?.stop?.();
-      } catch (stopError) {
-        logger.debug("esbuild stop failed", stopError);
-      }
+    try {
+      await esbuild?.stop?.();
+    } catch (stopError) {
+      logger.debug("esbuild stop failed", stopError);
     }
   }
 }

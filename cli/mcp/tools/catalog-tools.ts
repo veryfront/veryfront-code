@@ -359,13 +359,21 @@ const getCreateProjectInput = defineSchema((v) =>
 );
 const createProjectInput = lazySchema(getCreateProjectInput);
 
-type CreateProjectInput = InferSchema<ReturnType<typeof getCreateProjectInput>>;
+export type CreateProjectInput = InferSchema<ReturnType<typeof getCreateProjectInput>>;
 
 interface CreateProjectResult {
   success: boolean;
   projectDir?: string;
   message: string;
   nextSteps?: string[];
+}
+
+export function resolveCreateProjectPaths(
+  input: Pick<CreateProjectInput, "name" | "directory">,
+): { name: string; parentDir: string; projectDir: string } {
+  const name = toSlug(input.name);
+  const parentDir = input.directory ?? cwd();
+  return { name, parentDir, projectDir: join(parentDir, name) };
 }
 
 export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> = {
@@ -382,16 +390,15 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
         try {
           const { initCommand } = await import("../../commands/init/index.ts");
 
-          const slug = toSlug(input.name);
-          const parentDir = input.directory ?? cwd();
-          const projectDir = join(parentDir, slug);
+          const { name, parentDir, projectDir } = resolveCreateProjectPaths(input);
 
           if (await directoryExists(projectDir)) {
             return { success: false, message: `Directory already exists: ${projectDir}` };
           }
 
           await initCommand({
-            name: input.name,
+            name,
+            parentDir,
             template: input.template as InitTemplate,
             integrations: input.integrations as
               | import("../../templates/types.ts").IntegrationName[]
@@ -400,7 +407,7 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
             skipEnvPrompt: true,
           });
 
-          const nextSteps = [`cd ${slug}`, "deno task dev"];
+          const nextSteps = [`cd ${projectDir}`, "deno task dev"];
           if (input.integrations?.length) {
             nextSteps.push("Configure integration credentials in .env");
           }

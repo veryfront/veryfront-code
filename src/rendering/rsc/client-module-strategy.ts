@@ -20,7 +20,10 @@ export interface ClientModuleStrategyOptions {
 export interface ClientRuntimeHydrationData {
   pagePath?: string;
   clientModuleStrategy?: ClientModuleStrategy;
+  isolatedClientPage?: boolean;
   dev?: boolean;
+  /** React version used for both server rendering and browser hydration. */
+  reactVersion?: string;
   /** Route slug for the current page (from the route match). */
   slug?: string;
   /** Route params from the initial match — used to seed the reactive router. */
@@ -73,8 +76,17 @@ export function resolveClientModuleStrategy(
   return hydrationData?.dev ? "fs" : "rsc-module";
 }
 
-export function buildFsClientModuleUrl(path: string): string {
-  return `${FS_PATH_PREFIX}${base64urlEncode(path)}.js`;
+export function appendClientModuleVersion(url: string, version?: string): string {
+  if (!version) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}v=${encodeURIComponent(version)}`;
+}
+
+export function buildFsClientModuleUrl(path: string, version?: string): string {
+  return appendClientModuleVersion(
+    `${FS_PATH_PREFIX}${base64urlEncode(path)}.js`,
+    version,
+  );
 }
 
 export function buildRSCModuleUrl(rel: string, version?: string): string {
@@ -85,7 +97,7 @@ export function buildRSCModuleUrl(rel: string, version?: string): string {
 export function buildClientModuleUrl(options: ClientModuleUrlOptions): string | null {
   if (options.strategy === "fs") {
     const fsPath = options.absPath ?? options.rel;
-    return fsPath ? buildFsClientModuleUrl(fsPath) : null;
+    return fsPath ? buildFsClientModuleUrl(fsPath, options.version) : null;
   }
 
   return buildRSCModuleUrl(options.rel, options.version);

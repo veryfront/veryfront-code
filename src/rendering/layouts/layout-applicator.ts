@@ -25,6 +25,8 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -44,6 +46,7 @@ export interface LayoutApplicationOptions {
   params?: Record<string, string | string[]>;
   frontmatter?: Record<string, unknown>;
   headings?: Array<{ id: string; text: string; level: number }>;
+  reactVersion?: string;
 }
 
 export class LayoutApplicator {
@@ -61,6 +64,8 @@ export class LayoutApplicator {
   private projectSlug: string;
   private contentSourceId: string;
   private preloadedImportMap?: ImportMapConfig | null;
+  private readonly configuredReactVersion?: string;
+  private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
     RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
@@ -81,6 +86,14 @@ export class LayoutApplicator {
     this.params = options.params;
     this.frontmatter = options.frontmatter;
     this.headings = options.headings;
+    this.configuredReactVersion = options.reactVersion;
+  }
+
+  private getReactVersion(): Promise<string> {
+    this.reactVersionPromise ??= this.configuredReactVersion
+      ? Promise.resolve(this.configuredReactVersion)
+      : resolveProjectReactVersion({ projectDir: this.projectDir, config: this.config });
+    return this.reactVersionPromise;
   }
 
   async applyLayouts(
@@ -89,16 +102,50 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
+    clientPageIsland?: { clientLayoutPaths: readonly string[] },
   ): Promise<BundledReact.ReactElement> {
     return await withSpan(
       SpanNames.LAYOUT_APPLY,
       async () => {
-        let wrappedElement = await this.applyLayoutsOnly(
-          pageElement,
-          layoutBundle,
-          nestedLayouts,
-          layoutDataMap,
-        );
+        const reactVersion = await this.getReactVersion();
+        let wrappedElement: BundledReact.ReactElement;
+        if (clientPageIsland) {
+          const clientPaths = new Set(clientPageIsland.clientLayoutPaths);
+          const clientLayouts = nestedLayouts.filter((layout) =>
+            clientPaths.has(layout.componentPath ?? layout.path ?? "")
+          );
+          const serverLayouts = nestedLayouts.filter((layout) =>
+            !clientPaths.has(layout.componentPath ?? layout.path ?? "")
+          );
+          const clientTree = await this.applyLayoutsOnly(
+            pageElement,
+            undefined,
+            clientLayouts,
+            layoutDataMap,
+            reactVersion,
+          );
+          const React = await getProjectReact(reactVersion);
+          const island = React.createElement(
+            "div",
+            { id: CLIENT_PAGE_ISLAND_ID },
+            clientTree,
+          ) as BundledReact.ReactElement;
+          wrappedElement = await this.applyLayoutsOnly(
+            island,
+            layoutBundle,
+            serverLayouts,
+            layoutDataMap,
+            reactVersion,
+          );
+        } else {
+          wrappedElement = await this.applyLayoutsOnly(
+            pageElement,
+            layoutBundle,
+            nestedLayouts,
+            layoutDataMap,
+            reactVersion,
+          );
+        }
 
         const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
           projectId: this.projectId,
@@ -117,7 +164,7 @@ export class LayoutApplicator {
           wrappedElement = await this.wrapWithAppComponent(wrappedElement);
         }
 
-        const React = await getProjectReact();
+        const React = await getProjectReact(reactVersion);
 
         const headingsArray = this.headings ?? [];
         const flatParams = flattenRouteParams(this.params);
@@ -183,6 +230,7 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
+    reactVersion?: string,
   ): Promise<BundledReact.ReactElement> {
     return await withSpan(
       SpanNames.LAYOUT_APPLY_ONLY,
@@ -208,6 +256,7 @@ export class LayoutApplicator {
             this.projectSlug,
             this.contentSourceId,
             this.preloadedImportMap ?? undefined,
+            reactVersion,
           );
         }
 
@@ -223,6 +272,7 @@ export class LayoutApplicator {
           this.projectId,
           this.projectSlug,
           this.contentSourceId,
+          reactVersion,
         );
       },
       {
@@ -270,6 +320,7 @@ export class LayoutApplicator {
       contentSourceId: this.contentSourceId,
       dev: this.mode === "development",
       mode: this.mode,
+      reactVersion: await this.getReactVersion(),
     } as const;
 
     const [contextModule, routerModule] = await Promise.all([
@@ -337,13 +388,14 @@ export class LayoutApplicator {
                 dev: this.mode === "development",
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
                 contentSourceId: this.contentSourceId,
+                reactVersion: await this.getReactVersion(),
               },
             );
           }
 
           if (!App) return pageElement;
 
-          const React = await getProjectReact();
+          const React = await getProjectReact(await this.getReactVersion());
           logger.debug("Wrapped page with App component");
           return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
@@ -388,6 +440,7 @@ export class LayoutApplicator {
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
           contentSourceId: this.contentSourceId,
+          reactVersion: await this.getReactVersion(),
         },
       );
     } catch (error) {
@@ -403,11 +456,15 @@ export class LayoutApplicator {
     return await withSpan(
       SpanNames.LAYOUT_WRAP_RESERVED,
       async () => {
-        const React = await getProjectReact();
+        const reactVersion = await this.getReactVersion();
+        const React = await getProjectReact(reactVersion);
 
         try {
           const segmentDir = dirname(pageFilePath);
-          const appRootDir = join(this.projectDir, "app");
+          const appRootDir = join(
+            this.projectDir,
+            this.config?.directories?.app ?? "app",
+          );
           const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
 
           const [loadingComp, errorComp] = await Promise.all([
@@ -419,6 +476,7 @@ export class LayoutApplicator {
               this.adapter,
               this.projectId,
               this.contentSourceId,
+              reactVersion,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -428,6 +486,7 @@ export class LayoutApplicator {
               this.adapter,
               this.projectId,
               this.contentSourceId,
+              reactVersion,
             ),
           ]);
 

@@ -12,7 +12,6 @@ import {
 } from "./http-bundle-helpers.ts";
 
 describe("extractHttpBundlePaths", () => {
-  // Note: simpleHash() produces decimal numbers (djb2 algorithm), not hex
   it("extracts single HTTP bundle path", () => {
     const code = `import foo from "file:///tmp/.cache/veryfront-http-bundle/http-12345678.mjs";`;
     const [first] = extractHttpBundlePaths(code);
@@ -100,6 +99,19 @@ describe("extractHttpBundlePaths", () => {
     ].join("\n");
 
     assertEquals(extractHttpBundlePaths(code).length, 1);
+  });
+
+  it("extracts full SHA-256 bundle hashes", () => {
+    const hash = "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412";
+    const code = [
+      `import value from "file:///cache/veryfront-http-bundle/http-${hash}.mjs";`,
+      `export * from "./http-${hash}.mjs";`,
+    ].join("\n");
+
+    assertEquals(extractHttpBundlePaths(code), [{
+      path: `/cache/veryfront-http-bundle/http-${hash}.mjs`,
+      hash,
+    }]);
   });
 });
 

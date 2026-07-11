@@ -157,9 +157,10 @@ export async function readProjectDependencyVersions(
 
 /**
  * Resolve React version for a project with consistent priority:
- * 1. Config override: config.client.cdn.versions.react
- * 2. package.json detection (via cross-runtime filesystem)
- * 3. DEFAULT_REACT_VERSION fallback
+ * 1. Public config override: config.react.version
+ * 2. Legacy CDN config override: config.client.cdn.versions.react
+ * 3. package.json detection (via cross-runtime filesystem)
+ * 4. DEFAULT_REACT_VERSION fallback
  *
  * This is the single source of truth for React version resolution.
  * Both HTML import map generation and module server transforms should use this.
@@ -170,7 +171,13 @@ export async function resolveProjectReactVersion(options: {
 }): Promise<string> {
   const { projectDir, config } = options;
 
-  // 1. Config override takes highest priority
+  // 1. The documented public config override takes highest priority.
+  const publicConfigVersion = config?.react?.version;
+  if (publicConfigVersion) {
+    return normalizeReactVersion(stripSemverRange(publicConfigVersion));
+  }
+
+  // 2. Preserve the older CDN-specific override for compatibility.
   const versionsConfig = config?.client?.cdn?.versions;
   if (versionsConfig && versionsConfig !== "auto") {
     const configVersion = versionsConfig.react;
@@ -180,12 +187,12 @@ export async function resolveProjectReactVersion(options: {
     }
   }
 
-  // 2. Detect from package.json
+  // 3. Detect from package.json
   if (projectDir) {
     const detected = await readProjectDependencyVersions(projectDir);
     if (detected.react) return detected.react;
   }
 
-  // 3. Fallback to default
+  // 4. Fallback to default
   return DEFAULT_REACT_VERSION;
 }

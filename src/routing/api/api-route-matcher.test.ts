@@ -55,6 +55,31 @@ describe("ApiRouteMatcher", () => {
       assertEquals(router.match("/not-found"), null);
     });
 
+    it("treats regular expression metacharacters as literal path characters", () => {
+      const router = createRouter();
+      router.addRoute("/api/v1.0/users+admins", "pages/api/versioned.ts");
+
+      assertExists(router.match("/api/v1.0/users+admins"));
+      assertEquals(router.match("/api/v1x0/usersadmins"), null);
+      assertEquals(router.match("/api/v110/usersssssadmins"), null);
+    });
+
+    it("does not turn placeholder-looking static paths into dynamic routes", () => {
+      for (
+        const marker of [
+          "___PARAM___",
+          "___CATCHALL___",
+          "___OPTIONAL_CATCHALL___",
+        ]
+      ) {
+        const router = createRouter();
+        router.addRoute(`/api/${marker}`, `pages/api/${marker}.ts`);
+
+        assertEquals(router.match(`/api/${marker}`)?.route.page, `pages/api/${marker}.ts`);
+        assertEquals(router.match("/api/unrelated"), null);
+      }
+    });
+
     it("handles root route", () => {
       const router = createRouter();
       router.addRoute("/", "pages/index.tsx");

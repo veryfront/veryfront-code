@@ -62,4 +62,22 @@ describe("local project resolver", () => {
 
     assertEquals(workspaceBPath, undefined);
   });
+
+  it("discovers a project whose source roots are declared in config", async () => {
+    const workspace = "/workspace-custom-roots";
+    const existingPaths = new Set([
+      `${workspace}/projects/shop`,
+      `${workspace}/projects/shop/veryfront.config.js`,
+    ]);
+    const resolver = createLocalProjectResolver({
+      basePath: () => workspace,
+      fs: {
+        exists(path: string): Promise<boolean> {
+          return Promise.resolve(existingPaths.has(path));
+        },
+      },
+    });
+
+    assertEquals(await resolver.find("shop"), `${workspace}/projects/shop`);
+  });
 });

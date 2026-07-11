@@ -15,41 +15,38 @@ import {
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
+import {
+  createTestEnvironmentConfig,
+  type EnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import type { UserInfo } from "./login.ts";
 
 describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () => {
   let tempDir = "";
-  let originalXdgConfig: string | undefined;
+  let testEnv: EnvironmentConfig;
 
   async function safeDeleteToken(): Promise<void> {
     try {
-      await deleteToken();
+      await deleteToken(testEnv);
     } catch {
       // Ignore
     }
   }
 
-  function restoreXdgConfigHome(): void {
-    if (originalXdgConfig != null) {
-      setEnv("XDG_CONFIG_HOME", originalXdgConfig);
-      return;
-    }
-    deleteEnv("XDG_CONFIG_HOME");
-  }
-
   beforeAll(async () => {
     tempDir = await makeTempDir({ prefix: "login-test-" });
-    originalXdgConfig = getEnv("XDG_CONFIG_HOME");
+    testEnv = createTestEnvironmentConfig({
+      homeDir: tempDir,
+      xdgConfigHome: tempDir,
+    });
   });
 
   beforeEach(async () => {
-    setEnv("XDG_CONFIG_HOME", tempDir);
     await safeDeleteToken();
   });
 
   afterEach(async () => {
     await safeDeleteToken();
-    restoreXdgConfigHome();
   });
 
   afterAll(async () => {
@@ -60,6 +57,31 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     it("should detect invalid token format", async () => {
       const { validateToken } = await import("./login.ts");
       assertEquals(await validateToken(""), null);
+    });
+
+    it("should use the provided API URL", async () => {
+      const originalFetch = globalThis.fetch;
+      let requestedUrl = "";
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request) => {
+          requestedUrl = String(input);
+          return Promise.resolve(
+            Response.json({ id: "user-123", email: "test@example.com" }),
+          );
+        }) as typeof fetch;
+
+        const { validateToken } = await import("./login.ts");
+        const env = createTestEnvironmentConfig({
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+        });
+
+        assertExists(await validateToken("test-token", env));
+        assertEquals(requestedUrl, "https://auth.example.test/me");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 
@@ -80,11 +102,16 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         }) as typeof fetch;
 
         const { validateCredential } = await import("./login.ts");
-        const credential = await validateCredential("session-token");
+        const env = {
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+        };
+        const credential = await validateCredential("session-token", env);
 
         assertEquals(credential, { id: "user-123", email: "test@example.com" });
         assertEquals(requestedUrls.length, 1);
-        assertEquals(new URL(requestedUrls[0]!).pathname, "/me");
+        assertEquals(requestedUrls[0], "https://auth.example.test/me");
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -106,11 +133,17 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         }) as typeof fetch;
 
         const { validateCredential } = await import("./login.ts");
-        const credential = await validateCredential("vf_test_secret");
+        const env = {
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+        };
+        const credential = await validateCredential("vf_test_secret", env);
 
         assertEquals(credential, { authenticated: true, type: "apiKey" });
         assertEquals(requestedUrls.length, 1);
         const requestUrl = new URL(requestedUrls[0]!);
+        assertEquals(requestUrl.origin, "https://auth.example.test");
         assertEquals(requestUrl.pathname, "/projects");
         assertEquals(requestUrl.searchParams.get("limit"), "1");
       } finally {
@@ -126,7 +159,12 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
 
         const { validateCredential } = await import("./login.ts");
-        assertEquals(await validateCredential("vf_test_invalid"), null);
+        const env = {
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+        };
+        assertEquals(await validateCredential("vf_test_invalid", env), null);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -151,7 +189,13 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const { whoami } = await import("./login.ts");
         setJsonMode(true);
 
-        const result = await whoami({ apiToken: "vf_test_secret" } as never);
+        const env = {
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+          apiToken: "vf_test_secret",
+        };
+        const result = await whoami(env);
         const envelope = JSON.parse(output.join("\n"));
 
         assertEquals(result, { authenticated: true, type: "apiKey" });
@@ -208,7 +252,13 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           )) as typeof fetch;
 
         const { ensureAuthenticated } = await import("./login.ts");
-        const credential = await ensureAuthenticated({ apiToken: "vf_test_secret" } as never);
+        const env = {
+          ...testEnv,
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+          apiToken: "vf_test_secret",
+        };
+        const credential = await ensureAuthenticated(env);
 
         assertEquals(credential, { authenticated: true, type: "apiKey" });
       } finally {
@@ -239,6 +289,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           provider: "google" | "github" | "microsoft",
           callbackUrl: string,
           state: string,
+          env?: EnvironmentConfig,
         ) => string;
       };
 
@@ -248,10 +299,15 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         "github",
         "http://localhost:3456/callback",
         "expected-state",
+        createTestEnvironmentConfig({
+          apiBaseUrl: "https://auth.example.test",
+          apiUrl: undefined,
+        }),
       );
       const parsed = new URL(authUrl);
       const redirectUri = parsed.searchParams.get("redirect_uri");
 
+      assertEquals(parsed.origin, "https://auth.example.test");
       assertEquals(parsed.pathname, "/auth/github");
       assertEquals(redirectUri, "http://localhost:3456/callback?state=expected-state");
       assertEquals(parsed.searchParams.get("state"), "expected-state");
@@ -261,13 +317,39 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
   describe("logout", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should clear stored token", async () => {
-      await saveToken("test-token");
-      assertEquals(await readToken(), "test-token");
+      await saveToken("test-token", testEnv);
+      assertEquals(await readToken(testEnv), "test-token");
 
       const { logout } = await import("./login.ts");
-      await logout();
+      await logout(testEnv);
 
-      assertEquals(await readToken(), null);
+      assertEquals(await readToken(testEnv), null);
+    });
+  });
+
+  describe("whoami", () => {
+    it("should use the provided token store and API URL", async () => {
+      const originalFetch = globalThis.fetch;
+      let requestedUrl = "";
+      await saveToken("test-token", testEnv);
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request) => {
+          requestedUrl = String(input);
+          return Promise.resolve(
+            Response.json({ id: "user-123", email: "test@example.com" }),
+          );
+        }) as typeof fetch;
+
+        const { whoami } = await import("./login.ts");
+        const env = { ...testEnv, apiBaseUrl: "https://auth.example.test", apiUrl: undefined };
+        const user = await whoami(env);
+
+        assertEquals(user, { id: "user-123", email: "test@example.com" });
+        assertEquals(requestedUrl, "https://auth.example.test/me");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

@@ -87,6 +87,25 @@ describe("resolveAppRouteFile", () => {
     assertEquals(result, { file: "/project/app/api/hello/route.tsx", params: {} });
   });
 
+  it("resolves routes from the configured app directory", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/src/routes": { isFile: false, isDirectory: true },
+        "/project/src/routes/api/hello/route.ts": { isFile: true, isDirectory: false },
+      },
+      dirMap: {
+        "/project/src/routes": [dir("api")],
+        "/project/src/routes/api": [dir("hello")],
+        "/project/src/routes/api/hello": [file("route.ts")],
+      },
+    });
+    ctx.config = { directories: { app: "src/routes" } };
+
+    const result = await resolveAppRouteFile("/api/hello", ctx);
+
+    assertEquals(result, { file: "/project/src/routes/api/hello/route.ts", params: {} });
+  });
+
   it("tries route.tsx, route.ts, route.jsx, route.js in order", async () => {
     // Only route.js exists
     const ctx = createMockCtx({

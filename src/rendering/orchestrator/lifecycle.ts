@@ -171,7 +171,7 @@ export class RendererLifecycle {
       debugMode,
     });
 
-    const ssrRenderer = new SSRRenderer(mode, this.adapter, projectDir, this.projectId);
+    const ssrRenderer = new SSRRenderer(mode, this.adapter, projectDir, this.projectId, config);
 
     const pageRenderer = new PageRenderer({
       projectDir,

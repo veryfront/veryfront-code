@@ -12,6 +12,7 @@
  */
 
 import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-bundler-esbuild";
+import "../../src/schemas/_test-setup.ts";
 import { register, tryResolve } from "../../src/extensions/contracts.ts";
 
 if (!tryResolve("Bundler")) register("Bundler", new EsbuildBundler());

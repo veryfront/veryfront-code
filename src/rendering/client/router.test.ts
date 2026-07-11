@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontRouter } from "./router.ts";
 import { getNavigationStore } from "./navigation-store.ts";
+import type { RouteData } from "#veryfront/routing";
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
 
@@ -48,6 +49,18 @@ function spyOnLoaders(router: VeryfrontRouter): string[] {
 }
 
 describe("rendering/client/VeryfrontRouter — soft same-route navigation", () => {
+  it("initializes route state from the full browser URL", () => {
+    const restore = installDom("https://example.com/dashboard?tab=a#top");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+
+      // deno-lint-ignore no-explicit-any
+      assertEquals((router as any).currentPath, "/dashboard?tab=a#top");
+    } finally {
+      restore();
+    }
+  });
+
   it("soft path (shouldRevalidate=false) updates the URL and notifies, no page load", async () => {
     const restore = installDom("https://example.com/dashboard");
     try {
@@ -178,6 +191,148 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       await router.navigate("/dashboard?a=2");
 
       assertEquals(notifications, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("ignores a stale navigation that resolves after a newer one", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const completed: string[] = [];
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        onComplete: (url) => completed.push(url),
+      });
+      const first = Promise.withResolvers<RouteData>();
+      const second = Promise.withResolvers<RouteData>();
+      // deno-lint-ignore no-explicit-any
+      const pageLoader = (router as any).pageLoader;
+      pageLoader.loadPage = (path: string) => path === "/first" ? first.promise : second.promise;
+
+      const firstNavigation = router.navigate("/first");
+      const secondNavigation = router.navigate("/second");
+
+      second.resolve({ html: "second" });
+      await secondNavigation;
+      first.resolve({ html: "first" });
+      await firstNavigation;
+
+      // deno-lint-ignore no-explicit-any
+      assertEquals((router as any).currentPath, "/second");
+      assertEquals(globalThis.location.pathname, "/second");
+      assertEquals(completed, ["/second"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("clears a stale loading state when the newer navigation is cached", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const first = Promise.withResolvers<RouteData>();
+      const loadingStates: boolean[] = [];
+      // deno-lint-ignore no-explicit-any
+      const pageLoader = (router as any).pageLoader;
+      pageLoader.loadPage = () => first.promise;
+      pageLoader.setCache("/cached", { html: "cached" });
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageTransition.setLoadingState = (loading: boolean) => {
+        loadingStates.push(loading);
+      };
+
+      const staleNavigation = router.navigate("/slow");
+      await router.navigate("/cached");
+
+      assertEquals(loadingStates.at(-1), false);
+
+      first.resolve({ html: "slow" });
+      await staleNavigation;
+    } finally {
+      restore();
+    }
+  });
+
+  it("clears a stale loading state when the newer navigation is soft", async () => {
+    const restore = installDom("https://example.com/dashboard");
+    try {
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        shouldRevalidate: () => false,
+      });
+      const first = Promise.withResolvers<RouteData>();
+      const loadingStates: boolean[] = [];
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.loadPage = () => first.promise;
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageTransition.setLoadingState = (loading: boolean) => {
+        loadingStates.push(loading);
+      };
+
+      const staleNavigation = router.navigate("/slow");
+      await router.navigate("/dashboard?tab=activity");
+
+      assertEquals(loadingStates.at(-1), false);
+
+      first.resolve({ html: "slow" });
+      await staleNavigation;
+    } finally {
+      restore();
+    }
+  });
+
+  it("clears an in-flight loading state when destroyed", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const first = Promise.withResolvers<RouteData>();
+      const loadingStates: boolean[] = [];
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.loadPage = () => first.promise;
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageTransition.setLoadingState = (loading: boolean) => {
+        loadingStates.push(loading);
+      };
+
+      const staleNavigation = router.navigate("/slow");
+      router.destroy();
+
+      assertEquals(loadingStates.at(-1), false);
+
+      first.resolve({ html: "slow" });
+      await staleNavigation;
+    } finally {
+      restore();
+    }
+  });
+
+  it("restores popstate scroll for the target route", async () => {
+    const restore = installDom("https://example.com/from");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      let restoredScrollY: number | undefined;
+      // The test observes the transition call without mounting a real React root.
+      // deno-lint-ignore no-explicit-any
+      (router as any).root = {};
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.loadPage = () => Promise.resolve({ html: "target" });
+      // deno-lint-ignore no-explicit-any
+      (router as any).navigationHandlers.isPopStateNav = true;
+      // deno-lint-ignore no-explicit-any
+      (router as any).navigationHandlers.scrollPositions.set("/target", 321);
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageTransition.updatePage = (
+        _data: RouteData,
+        _isPopState: boolean,
+        scrollY: number,
+      ) => {
+        restoredScrollY = scrollY;
+      };
+
+      await router.navigate("/target", { history: "none" });
+
+      assertEquals(restoredScrollY, 321);
     } finally {
       restore();
     }

@@ -22,7 +22,8 @@ export function loadComponent(path: string): Promise<ComponentType<unknown> | nu
       componentCache.set(path, Component);
       return Component;
     } catch (error) {
-      console.error("[Veryfront] Failed to load component:", path, error);
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      console.error(`[Veryfront] Failed to load component: ${path} (${errorName})`);
       return null;
     } finally {
       loadingPromises.delete(path);

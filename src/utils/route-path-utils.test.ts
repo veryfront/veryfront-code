@@ -169,6 +169,16 @@ describe("route-path-utils", () => {
       assertEquals(result.relativePath, "users/[id]/page.tsx");
     });
 
+    it("detects configured router roots", () => {
+      const result = extractRouterBasePath(
+        "/project/src/routes/users/[id]/page.tsx",
+        { app: "src/routes", pages: "src/legacy-pages" },
+      );
+
+      assertEquals(result.type, "app");
+      assertEquals(result.relativePath, "users/[id]/page.tsx");
+    });
+
     it("should return null for paths without router prefix", () => {
       const result = extractRouterBasePath("/project/components/Button.tsx");
       assertEquals(result.type, null);
@@ -200,6 +210,17 @@ describe("route-path-utils", () => {
       );
       assertEquals(result.matched, true);
       assertEquals(result.params["slug"], ["getting-started", "intro"]);
+    });
+
+    it("extracts params from configured router roots", () => {
+      const result = extractRouteParams(
+        "/project/src/legacy-pages/users/[id].tsx",
+        "users/123",
+        { app: "src/routes", pages: "src/legacy-pages" },
+      );
+
+      assertEquals(result.matched, true);
+      assertEquals(result.params["id"], "123");
     });
 
     it("should return empty params for paths without router prefix", () => {

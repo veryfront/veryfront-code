@@ -39,17 +39,19 @@ function mockFetch(responses: MockResponseEntry[]): void {
   globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
 }
 
-function delayedErrorNdjsonResponse(error: Error, delayMs: number): Response {
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      setTimeout(() => controller.error(error), delayMs);
-    },
-  });
+function delayedErrorNdjsonResponse(error: Error, delayMs: number): MockResponseEntry {
+  return () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        setTimeout(() => controller.error(error), delayMs);
+      },
+    });
 
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "application/x-ndjson" },
-  });
+    return new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    });
+  };
 }
 
 describe("src/skill/executor", () => {

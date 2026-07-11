@@ -113,6 +113,16 @@ describe("html-generation/utils", () => {
       assertStringIncludes(result, "https://cdn.example.com/lib.js");
     });
 
+    it("should escape script-closing sequences without changing import values", async () => {
+      const hostileImport =
+        "</script><script>globalThis.__veryfrontImportMapBreakout = true</script>";
+      const result = await buildImportMapJson({ hostile: hostileImport });
+
+      assertEquals(result.toLowerCase().includes("</script"), false);
+      assertStringIncludes(result, "\\u003c/script");
+      assertEquals(JSON.parse(result).imports.hostile, hostileImport);
+    });
+
     it("should use default imports when none provided", async () => {
       const result = await buildImportMapJson();
 
@@ -393,6 +403,46 @@ describe("html-generation/utils", () => {
       } finally {
         await Deno.remove(dir, { recursive: true });
       }
+    });
+
+    it("prefers the public React version config over package detection", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-import-map-react-config-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${dir}/package.json`,
+          JSON.stringify({ dependencies: { react: "^19.1.0" } }),
+        );
+
+        const result = await buildImportMapJson({
+          projectDir: dir,
+          pretty: false,
+          config: {
+            react: { version: "18.3.1" },
+            client: { cdn: { provider: "unpkg" } },
+          },
+        });
+        const imports = JSON.parse(result).imports as Record<string, string>;
+
+        assertStringIncludes(imports.react!, "react@18.3.1");
+        assertStringIncludes(imports["react-dom"]!, "react-dom@18.3.1");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("honors the public React version config without a project directory", async () => {
+      const result = await buildImportMapJson({
+        pretty: false,
+        config: {
+          react: { version: "18.3.1" },
+          client: { cdn: { provider: "unpkg" } },
+        },
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertStringIncludes(imports.react!, "react@18.3.1");
+      assertStringIncludes(imports["react-dom"]!, "react-dom@18.3.1");
     });
   });
 

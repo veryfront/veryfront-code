@@ -22,6 +22,7 @@ import {
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
+import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 
@@ -179,11 +180,9 @@ await build({
 		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
 
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
-		patchFile(
+		await patchDntArgvPolyfill(
 			"./npm/esm/_dnt.polyfills.js",
-			'process.argv[1].replace',
-			'(process.argv[1] ?? "").replace',
-			"dnt polyfill process.argv[1] fix",
+			{ required: true },
 		);
 
 		const patchedReactShimCount = normalizeEsmShReactNpmShims("./npm/esm/deps/esm.sh");
@@ -292,27 +291,6 @@ function addTypesExportEntries(
 
 		exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
 	}
-}
-
-/** Patch a generated file with string or regex replacement. Throws if pattern not found. */
-function patchFile(
-	path: string,
-	search: string | RegExp,
-	replacement: string,
-	description: string,
-): void {
-	const content = Deno.readTextFileSync(path);
-	const patched = typeof search === "string"
-		? content.replace(search, replacement)
-		: content.replace(search, replacement);
-	if (patched === content) {
-		throw new Error(
-			`Patch failed: "${description}" did not match anything in ${path}. ` +
-				`dnt output may have changed — update the patch or remove it if the bug is fixed.`,
-		);
-	}
-	Deno.writeTextFileSync(path, patched);
-	console.log(`📝 Patched ${description} in ${path}`);
 }
 
 function stripPolyfillImportIfPresent(

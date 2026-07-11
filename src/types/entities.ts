@@ -85,7 +85,7 @@ export function detectEntityType(
 
   const isDynamicRoute = fileName[0] === "[";
 
-  const isComponent = !isLayout && !isDynamicRoute && fileName[0] === fileName[0]?.toUpperCase();
+  const isComponent = !isLayout && !isDynamicRoute && /^[A-Z]/.test(baseName);
 
   const isPage = !isLayout && !isComponent;
 

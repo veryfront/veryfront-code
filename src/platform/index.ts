@@ -16,6 +16,7 @@ export {
   chdir,
   type CommandResult,
   cwd,
+  deleteEnv,
   env,
   exit,
   getArgs,

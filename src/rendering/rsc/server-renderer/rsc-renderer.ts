@@ -2,6 +2,7 @@ import type * as React from "react";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../types.ts";
+import { appendClientModuleVersion, buildClientModuleUrl } from "../client-module-strategy.ts";
 import type { RSCComponentProps } from "./component-detector.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
@@ -11,11 +12,15 @@ const logger = serverLogger.component("rsc");
 export class RSCRenderer {
   private clientManifest: Map<string, ClientComponentMeta>;
   private mode: "development" | "production";
-  private clientRefs = new Map<string, string>();
+  private clientModuleStrategy: "fs" | "rsc-module";
+  private reactVersion?: string;
 
   constructor(options: RSCRendererOptions) {
-    this.clientManifest = options.clientManifest;
     this.mode = options.mode ?? "development";
+    this.clientModuleStrategy = options.clientModuleStrategy ??
+      (this.mode === "development" ? "fs" : "rsc-module");
+    this.reactVersion = options.reactVersion;
+    this.clientManifest = this.resolveClientManifest(options.clientManifest);
   }
 
   renderToPayload<Props extends RSCComponentProps = RSCComponentProps>(
@@ -25,15 +30,21 @@ export class RSCRenderer {
     return withSpan(
       "rsc.renderToPayload",
       async () => {
-        this.clientRefs.clear();
+        const clientRefs = new Map<string, string>();
 
         try {
-          const tree = await renderTree(Component, props, this.clientManifest, this.clientRefs);
-          const html = await treeToHTML(tree);
+          const tree = await renderTree(
+            Component,
+            props,
+            this.clientManifest,
+            clientRefs,
+            this.reactVersion,
+          );
+          const html = await treeToHTML(tree, clientRefs, this.clientManifest);
 
           return {
             html,
-            clientRefs: Object.fromEntries(this.clientRefs),
+            clientRefs: Object.fromEntries(clientRefs),
             tree: this.mode === "development" ? tree : undefined,
           };
         } catch (error) {
@@ -43,5 +54,42 @@ export class RSCRenderer {
       },
       { "rsc.mode": this.mode },
     );
+  }
+
+  private resolveClientManifest(
+    manifest: Map<string, ClientComponentMeta>,
+  ): Map<string, ClientComponentMeta> {
+    const resolved = new Map<string, ClientComponentMeta>();
+    for (const [id, meta] of manifest) {
+      if (this.clientModuleStrategy === "fs") {
+        resolved.set(id, {
+          ...meta,
+          path: appendClientModuleVersion(meta.path, meta.contentHash),
+        });
+        continue;
+      }
+
+      const rel = meta.rel;
+      if (!rel) {
+        resolved.set(id, {
+          ...meta,
+          path: appendClientModuleVersion(meta.path, meta.contentHash),
+        });
+        continue;
+      }
+
+      const moduleUrl = buildClientModuleUrl({
+        strategy: "rsc-module",
+        rel,
+        version: meta.contentHash,
+      });
+      if (!moduleUrl) {
+        throw new Error(`Client component ${id} has an invalid project-relative module path`);
+      }
+
+      resolved.set(id, { ...meta, path: moduleUrl });
+    }
+
+    return resolved;
   }
 }

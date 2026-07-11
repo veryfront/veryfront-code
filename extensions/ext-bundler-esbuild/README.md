@@ -43,3 +43,14 @@ No factory options. The extension reads no environment variables and takes no co
 ## Lifecycle
 
 The factory's `teardown()` calls `EsbuildBundler.stop()` to release the esbuild service on shutdown.
+
+All `EsbuildBundler` instances in a process share one module-level esbuild service and shutdown
+barrier. Await `stop()` after bundler work, and dispose build contexts before stopping the service.
+
+Use the Veryfront `Bundler` contract exclusively for asynchronous esbuild work. Starting the same
+raw `esbuild` module outside this adapter makes its child process impossible to track retroactively.
+The adapter rejects that mixed-ownership state and requires a process restart instead of reporting
+an unverified shutdown as successful.
+
+The service-child tracking matches the esbuild `0.28.1` process contract. Revalidate spawn capture,
+plugin disposal ordering, and child-close tests before changing that version.

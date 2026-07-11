@@ -3,6 +3,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 
 interface LocalProjectFileSystem {
   exists(path: string): Promise<boolean> | boolean;
@@ -70,13 +71,14 @@ export function createLocalProjectResolver(
       if (!projectPath) continue;
 
       try {
-        const [hasApp, hasPages, hasComponents] = await Promise.all([
+        const [hasApp, hasPages, hasComponents, ...configMarkers] = await Promise.all([
           fs.exists(join(projectPath, "app")),
           fs.exists(join(projectPath, "pages")),
           fs.exists(join(projectPath, "components")),
+          ...VERYFRONT_CONFIG_FILES.map((file) => fs.exists(join(projectPath, file))),
         ]);
 
-        if (!hasApp && !hasPages && !hasComponents) continue;
+        if (!hasApp && !hasPages && !hasComponents && !configMarkers.some(Boolean)) continue;
 
         discoveredLocalProjects.set(cacheKey, projectPath);
         logger?.debug("Dynamically discovered local project", { slug, projectPath });

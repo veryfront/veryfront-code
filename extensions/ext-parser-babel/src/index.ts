@@ -21,6 +21,7 @@ import type { ExtensionFactory } from "veryfront/extensions";
 import type {
   ASTNode,
   CodeParser,
+  FunctionDirectiveOptions,
   GenerateOptions,
   GenerateResult,
   InjectJsxNodePositionsOptions,
@@ -52,17 +53,55 @@ function resolveDefaultExport<T>(mod: unknown): T {
 const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(traverseModule);
 const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(generateModule);
 
+const FUNCTION_NODE_TYPES = [
+  "ArrowFunctionExpression",
+  "ClassMethod",
+  "ClassPrivateMethod",
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ObjectMethod",
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function functionHasDirective(node: ASTNode, directive: string): boolean {
+  const body = node.body;
+  if (!isRecord(body) || body.type !== "BlockStatement" || !Array.isArray(body.directives)) {
+    return false;
+  }
+
+  return body.directives.some((entry) =>
+    isRecord(entry) && isRecord(entry.value) && entry.value.value === directive
+  );
+}
+
 function pickPlugins(filePath?: string): parser.ParserPlugin[] {
-  const isTypeScript = filePath?.endsWith(".ts") || filePath?.endsWith(".tsx");
-  const plugins: parser.ParserPlugin[] = ["jsx"];
+  const normalizedPath = filePath?.toLowerCase() ?? "";
+  const isTypeScript = /\.(?:tsx?|[cm]ts)$/.test(normalizedPath);
+  const supportsJsx = !filePath || /\.(?:tsx|jsx|js|mjs|cjs)$/.test(normalizedPath);
+  const plugins: parser.ParserPlugin[] = [
+    "classProperties",
+    "classPrivateProperties",
+    "classPrivateMethods",
+    "decorators-legacy",
+    "decoratorAutoAccessors",
+    "deprecatedImportAssert",
+    "dynamicImport",
+    "importAttributes",
+    "topLevelAwait",
+  ];
   if (isTypeScript || !filePath) plugins.push("typescript");
+  if (supportsJsx) plugins.push("jsx");
   return plugins;
 }
 
 class BabelCodeParser implements CodeParser {
   parse(options: ParseOptions): Promise<ASTNode> {
     const ast = parser.parse(options.code, {
-      sourceType: "module",
+      sourceType: "unambiguous",
+      allowReturnOutsideFunction: options.filePath?.toLowerCase().endsWith(".cjs") === true,
       plugins: pickPlugins(options.filePath),
     });
     return Promise.resolve(ast as unknown as ASTNode);
@@ -81,6 +120,18 @@ class BabelCodeParser implements CodeParser {
       code: result.code,
       map: typeof result.map === "string" ? result.map : undefined,
     });
+  }
+
+  async hasFunctionDirective(options: FunctionDirectiveOptions): Promise<boolean> {
+    const ast = await this.parse(options);
+    let found = false;
+    const visit = (path: { node: ASTNode }) => {
+      if (!found && functionHasDirective(path.node, options.directive)) found = true;
+    };
+    const visitor: TraverseVisitor = {};
+    for (const nodeType of FUNCTION_NODE_TYPES) visitor[nodeType] = visit;
+    this.traverse(ast, visitor);
+    return found;
   }
 
   injectJsxNodePositions(source: string, options: InjectJsxNodePositionsOptions): string {

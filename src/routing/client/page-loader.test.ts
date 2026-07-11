@@ -128,7 +128,41 @@ describe("routing/client/page-loader", () => {
     });
   });
 
+  describe("page data URL", () => {
+    it("places the JSON suffix before query parameters and maps root to index", async () => {
+      const originalFetch = globalThis.fetch;
+      let requestedUrl = "";
+      globalThis.fetch = (input: URL | RequestInfo) => {
+        requestedUrl = String(input);
+        return Promise.resolve(Response.json({ html: "root" }));
+      };
+
+      try {
+        await new PageLoader().fetchPageData("/?page=2#section");
+        assertEquals(requestedUrl, "/_veryfront/data/index.json?page=2");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
   describe("loadSpaPageData()", () => {
+    it("builds a valid root page-data URL with query parameters", async () => {
+      const originalFetch = globalThis.fetch;
+      let requestedUrl = "";
+      globalThis.fetch = (input: URL | RequestInfo) => {
+        requestedUrl = String(input);
+        return Promise.resolve(Response.json(makeSpaPageData()));
+      };
+
+      try {
+        await new PageLoader().fetchSpaPageData("/?page=2#section");
+        assertEquals(requestedUrl, "/_veryfront/page-data/index.json?page=2");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("should return cached SPA data immediately", async () => {
       const loader = new PageLoader();
       const data = makeSpaPageData({ slug: "cached-spa" });

@@ -3,6 +3,8 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { collectAllRoutes } from "./route-collector.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createMockAdapter as createMemoryAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -43,6 +45,32 @@ describe("build/production-build/build/route-collector", () => {
       );
       assertEquals(result.pages, []);
       assertEquals(result.app, []);
+    });
+
+    it("collects routes from configured pages and app directories", async () => {
+      const adapter = createMemoryAdapter();
+      adapter.fs.files.set("/tmp/project/site-pages/about.mdx", "# About");
+      adapter.fs.files.set(
+        "/tmp/project/site-app/dashboard/page.tsx",
+        "export default function Dashboard() {}",
+      );
+
+      const result = await collectAllRoutes(
+        adapter,
+        "/tmp/project",
+        true,
+        undefined,
+        undefined,
+        {
+          directories: {
+            pages: "site-pages",
+            app: "site-app",
+          },
+        } as VeryfrontConfig,
+      );
+
+      assertEquals(result.pages.map((route) => route.path), ["/about"]);
+      assertEquals(result.app.map((route) => route.path), ["/dashboard"]);
     });
   });
 });

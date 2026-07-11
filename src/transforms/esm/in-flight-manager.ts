@@ -15,7 +15,7 @@ import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";
 import { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 import type { BundleEntry } from "./bundle-manifest-types.ts";
-import type { HttpCacheLike } from "./http-cache-helpers.ts";
+import type { HttpCacheIdentityMetadata, HttpCacheLike } from "./http-cache-helpers.ts";
 
 const logger = rendererLogger.component("http-cache");
 
@@ -76,10 +76,11 @@ export async function waitForInFlightFetch(
  * This is fire-and-forget to avoid blocking the hot path.
  */
 export function refreshDistributedCacheAsync(
-  hash: number,
+  hash: string,
   code: string,
   _cacheDir: string,
   normalizedUrl: string,
+  identityMetadata: HttpCacheIdentityMetadata,
   getLastDistributedRefresh: () => HttpCacheLike<string, number>,
 ): void {
   (async () => {
@@ -95,6 +96,7 @@ export function refreshDistributedCacheAsync(
           asLocalModuleCode(code),
           normalizedUrl,
           HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          identityMetadata,
         );
         getLastDistributedRefresh().set(hashStr, now);
         logger.debug("Refreshed distributed cache TTL", { hash });
@@ -121,7 +123,7 @@ export function refreshDistributedCacheAsync(
  * Track bundle for manifest accumulation if in accumulation context.
  */
 export function trackBundleAccumulator(
-  hash: number,
+  hash: string,
   normalizedUrl: string,
   cachePath: string,
 ): void {

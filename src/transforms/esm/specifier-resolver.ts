@@ -12,6 +12,7 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import {
   type CacheOptions,
+  isCanonicalReactEsmUrl,
   isExternalScheme,
   isHttpUrl,
   isInternalBare,
@@ -62,7 +63,12 @@ async function resolveSpecifier(
   }
 
   if (isHttpUrl(specifier)) {
-    const mapped = resolveImport(specifier, options.importMap);
+    // A generated React URL already carries the project's exact version.
+    // Import-map URL matching must not replace it with a framework default,
+    // or React and react-dom/server can load different singleton instances.
+    const mapped = isCanonicalReactEsmUrl(specifier)
+      ? specifier
+      : resolveImport(specifier, options.importMap);
     if (mapped !== specifier) {
       if (isLocalMappedSpecifier(mapped)) return mapped;
       return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);

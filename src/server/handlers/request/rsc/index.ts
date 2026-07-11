@@ -20,6 +20,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -54,14 +55,27 @@ export class RSCHandler extends BaseHandler {
         }
 
         const nonce = generateNonce();
+        const isLocalProject = ctx.isLocalProject === true;
+        const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
+        const contentSourceId = ctx.enriched?.contentSourceId ?? computeContentSourceId(
+          isLocalProject,
+          environment,
+          ctx.requestContext?.branch ?? null,
+          ctx.releaseId,
+        );
         const execute = () =>
           handleRSCEndpoint({
             req,
             pathname,
             projectDir: ctx.projectDir,
             projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            contentSourceId,
+            releaseId: ctx.releaseId,
             adapter: ctx.adapter,
             config: ctx.config,
+            isLocalProject,
+            mode: isRSCProductionMode(ctx) ? "production" : "development",
             nonce,
           });
         const fsAdapter = ctx.adapter.fs;

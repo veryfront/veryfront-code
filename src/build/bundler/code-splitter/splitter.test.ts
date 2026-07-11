@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { CodeSplitter } from "./splitter.ts";
+import type { BuildContext } from "veryfront/extensions/bundler";
+import { CodeSplitter, rebuildAndDispose } from "./splitter.ts";
 
 describe("build/bundler/code-splitter/splitter", () => {
   describe("CodeSplitter constructor", () => {
@@ -61,6 +62,49 @@ describe("build/bundler/code-splitter/splitter", () => {
         routes: [],
       });
       assertEquals(typeof splitter.split, "function");
+    });
+
+    it("disposes the build context when rebuild fails", async () => {
+      const rebuildError = new Error("intentional rebuild failure");
+      let disposed = false;
+      const buildContext: BuildContext = {
+        rebuild() {
+          return Promise.reject(rebuildError);
+        },
+        dispose() {
+          disposed = true;
+          return Promise.resolve();
+        },
+      };
+
+      const error = await assertRejects(
+        () => rebuildAndDispose(buildContext),
+        Error,
+        "intentional rebuild failure",
+      );
+
+      assertEquals(error, rebuildError);
+      assertEquals(disposed, true);
+    });
+
+    it("preserves the rebuild error when disposal also fails", async () => {
+      const rebuildError = new Error("primary rebuild failure");
+      const buildContext: BuildContext = {
+        rebuild() {
+          return Promise.reject(rebuildError);
+        },
+        dispose() {
+          return Promise.reject(new Error("secondary disposal failure"));
+        },
+      };
+
+      const error = await assertRejects(
+        () => rebuildAndDispose(buildContext),
+        Error,
+        "primary rebuild failure",
+      );
+
+      assertEquals(error, rebuildError);
     });
   });
 });

@@ -36,7 +36,7 @@ import {
 } from "./ssr-import-rewriter.ts";
 import { buildModuleTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
+import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { sha256Short } from "#veryfront/cache/hash.ts";
@@ -68,11 +68,6 @@ const transformCache = new LRUCache<string, string>({
 
 // Register cache for monitoring
 registerLRUCache("module-batch-transform-cache", transformCache);
-
-const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
-
-// Embedded source directory for compiled binaries (created by prepare-framework-sources.ts)
-const EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
@@ -360,11 +355,7 @@ async function loadAndTransformModule(
     return null;
   }
 
-  // Framework lookup directories in priority order
-  const frameworkLookupDirs = [
-    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
-    join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
-  ];
+  const frameworkLookupDirs = getFrameworkSourceLookupDirs();
 
   const platformFs = createFileSystem();
   for (const lookupDir of frameworkLookupDirs) {
@@ -452,7 +443,7 @@ async function readBatchTargetSource(
 
   if (!basePath.startsWith("lib/")) return null;
 
-  const frameworkLookupDirs = [EMBEDDED_SRC_DIR, join(FRAMEWORK_ROOT, "src")];
+  const frameworkLookupDirs = getFrameworkSourceLookupDirs();
   const platformFs = createFileSystem();
   for (const lookupDir of frameworkLookupDirs) {
     for (const ext of FRAMEWORK_EXTENSIONS) {

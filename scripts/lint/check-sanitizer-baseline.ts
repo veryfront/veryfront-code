@@ -22,11 +22,9 @@ const SCAN_ROOTS = [
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-// 422 = 420 (historical) + 2 for the colocated tool-loading discovery test
-// (src/discovery/agent-scoped-capabilities.test.ts): importModule transpiles
-// via esbuild, whose warm child process trips the op/resource sanitizers —
-// same rationale as src/discovery/transpiler.test.ts.
-export const SANITIZER_OPT_OUT_BASELINE = 422;
+// 408 after restoring resource and operation sanitizers for the VirtualModuleSystem
+// smoke suite.
+export const SANITIZER_OPT_OUT_BASELINE = 408;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 

@@ -7,6 +7,7 @@
  */
 
 import type { Schema } from "veryfront/extensions/schema";
+import { COMMANDS } from "../help/command-definitions.ts";
 import type { ParsedArgs } from "./types.ts";
 
 /** Compat type for safeParse result (SafeParseReturnType removed in zod v4). */
@@ -171,6 +172,33 @@ export const CommonArgs = {
 // Used once in cli/main.ts before routing to individual command handlers.
 
 const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
+const GLOBAL_BOOLEAN_FLAGS = new Set([
+  "help",
+  "version",
+  "json",
+  "yes",
+  "quiet",
+  "verbose",
+  "no-color",
+  "color",
+  "no-animation",
+]);
+
+function isDocumentedBooleanFlag(
+  key: string,
+  positionalArgs: string[],
+): boolean {
+  if (GLOBAL_BOOLEAN_FLAGS.has(key)) return true;
+
+  const command = positionalArgs[0];
+  if (!command) return false;
+
+  return (COMMANDS[command]?.options ?? []).some((option) => {
+    if (option.flag.includes("<")) return false;
+    const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
+    return names.some((name) => name.replace(/^-+/, "") === key);
+  });
+}
 
 function maybeNumber(val: unknown): unknown {
   if (typeof val === "string" && /^\d+$/.test(val)) return parseInt(val, 10);
@@ -217,7 +245,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (isValue(next)) {
+      if (!isDocumentedBooleanFlag(key, result._ as string[]) && isValue(next)) {
         setValue(key, next);
         i++;
         continue;
@@ -232,7 +260,9 @@ function parse(
       const key = aliasMap.get(short) ?? short;
       const next = args[i + 1];
 
-      if (isValue(next)) {
+      const isBoolean = isDocumentedBooleanFlag(key, result._ as string[]) ||
+        isDocumentedBooleanFlag(short, result._ as string[]);
+      if (!isBoolean && isValue(next)) {
         setValue(key, next);
         if (key !== short) setValue(short, next);
         i++;

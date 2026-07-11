@@ -25,9 +25,11 @@ import {
   resolveReactSpecifier,
 } from "./specifier-resolver.ts";
 import {
+  buildFrameworkTransformCacheKey,
   EMBEDDED_SRC_DIR,
   FRAMEWORK_ROOT,
   frameworkFileCache,
+  frameworkFileTransformFlight,
   frameworkWriteFlight,
   LOG_PREFIX,
   MAX_RELATIVE_IMPORT_DEPTH,
@@ -129,7 +131,7 @@ export { reactReExportToEsmUrl } from "./specifier-resolver.ts";
  * suffix used in compiled binaries (`foo.ts.src` → `ts`). Recognizes
  * `.mjs`/`.cjs` as plain JS and `.mts`/`.cts` as TypeScript.
  */
-function pickFallbackLoader(sourcePath: string): "tsx" | "ts" | "jsx" | "js" {
+function pickFrameworkLoader(sourcePath: string): "tsx" | "ts" | "jsx" | "js" {
   const ext = sourcePath
     .match(/\.(tsx?|jsx?|m[jt]s|c[jt]s)(?:\.src)?$/i)?.[1]
     ?.toLowerCase();
@@ -150,7 +152,7 @@ async function compileFallbackSource(
 ): Promise<string> {
   const { transform } = await import("veryfront/extensions/bundler");
   const result = await transform(content, {
-    loader: pickFallbackLoader(sourcePath),
+    loader: pickFrameworkLoader(sourcePath),
     jsx: "automatic",
     jsxImportSource: "react",
     format: "esm",
@@ -173,23 +175,6 @@ async function transformAndCacheFallbackDep(
   ctx: TransformContext,
   visited: Set<string>,
 ): Promise<string | null> {
-  // Prefer the main path's fully-resolved cache entry when present —
-  // that output is strictly higher quality than what the fallback
-  // produces (no `#veryfront/` / React / HTTP rewriting here). But
-  // never propagate a cycle placeholder: the main path stores those
-  // mid-transform and treats them as invalid (see `isCyclePlaceholder`
-  // / the cache-invalidation branch upstream). If the fallback wrote
-  // a placeholder into a cache file, an importer would silently see
-  // `export {}` and any named import would be `undefined` at runtime.
-  const mainCached = frameworkFileCache.get(resolvedPath);
-  if (mainCached && !isCyclePlaceholder(mainCached)) {
-    return await cacheTransformedCode(mainCached, resolvedPath, ctx.fs);
-  }
-  const fallbackCached = fallbackTransformCache.get(resolvedPath);
-  if (fallbackCached) {
-    return await cacheTransformedCode(fallbackCached, resolvedPath, ctx.fs);
-  }
-
   if (visited.has(resolvedPath)) {
     // Cycle: bail and leave the parent's import bare. Logged so a stuck
     // dev server isn't silently producing un-loadable cache files.
@@ -199,8 +184,6 @@ async function transformAndCacheFallbackDep(
     );
     return null;
   }
-  visited.add(resolvedPath);
-
   let depContent: string;
   try {
     depContent = await ctx.fs.readTextFile(resolvedPath);
@@ -211,6 +194,30 @@ async function transformAndCacheFallbackDep(
     );
     return null;
   }
+
+  const transformKey = buildFrameworkTransformCacheKey(
+    resolvedPath,
+    ctx.reactVersion,
+    ctx.projectDir,
+    depContent,
+  );
+  // Prefer the main path's fully-resolved cache entry when present —
+  // that output is strictly higher quality than what the fallback
+  // produces (no `#veryfront/` / React / HTTP rewriting here). But
+  // never propagate a cycle placeholder: the main path stores those
+  // mid-transform and treats them as invalid (see `isCyclePlaceholder`
+  // / the cache-invalidation branch upstream). If the fallback wrote
+  // a placeholder into a cache file, an importer would silently see
+  // `export {}` and any named import would be `undefined` at runtime.
+  const mainCached = frameworkFileCache.get(transformKey);
+  if (mainCached && !isCyclePlaceholder(mainCached)) {
+    return await cacheTransformedCode(mainCached, resolvedPath, ctx.fs);
+  }
+  const fallbackCached = fallbackTransformCache.get(transformKey);
+  if (fallbackCached) {
+    return await cacheTransformedCode(fallbackCached, resolvedPath, ctx.fs);
+  }
+  visited.add(resolvedPath);
 
   // Catch esbuild failures (bad syntax, encoding issues) so one bad
   // `.src` dep does not abort the entire top-level fallback. The bare
@@ -228,7 +235,7 @@ async function transformAndCacheFallbackDep(
     return null;
   }
   const rewritten = await rewriteFallbackRelativeImports(compiled, resolvedPath, ctx, visited);
-  fallbackTransformCache.set(resolvedPath, rewritten);
+  fallbackTransformCache.set(transformKey, rewritten);
   return await cacheTransformedCode(rewritten, resolvedPath, ctx.fs);
 }
 
@@ -335,6 +342,52 @@ export async function transformFrameworkCode(
   throwOnMissingImport = false,
   depth = 0,
 ): Promise<string> {
+  const transformKey = buildFrameworkTransformCacheKey(
+    sourcePath,
+    ctx.reactVersion,
+    ctx.projectDir,
+    content,
+  );
+  const ancestry = ctx.transformAncestry ?? new Set<string>();
+
+  if (ancestry.has(transformKey)) {
+    logger.debug(`${LOG_PREFIX} Detected cycle, skipping`, {
+      sourcePath: sourcePath.slice(-60),
+    });
+    return `/* Cycle detected: ${sourcePath} ${CYCLE_PLACEHOLDER_MARKER} */\nexport {};`;
+  }
+
+  const nextAncestry = new Set(ancestry);
+  nextAncestry.add(transformKey);
+  const transformContext: TransformContext = {
+    ...ctx,
+    transformAncestry: nextAncestry,
+  };
+  const operation = () =>
+    transformFrameworkCodeUncoalesced(
+      content,
+      sourcePath,
+      transformContext,
+      throwOnMissingImport,
+      depth,
+    );
+
+  // Root calls with the same transform key share one promise. Recursive calls
+  // deliberately stay within their own traversal: joining another root's
+  // dependency flight can deadlock when two roots import each other.
+  if (ancestry.size === 0) {
+    return await frameworkFileTransformFlight.do(transformKey, operation);
+  }
+  return await operation();
+}
+
+async function transformFrameworkCodeUncoalesced(
+  content: string,
+  sourcePath: string,
+  ctx: TransformContext,
+  throwOnMissingImport: boolean,
+  depth: number,
+): Promise<string> {
   // Check depth limit
   if (depth > MAX_RELATIVE_IMPORT_DEPTH) {
     logger.warn(`${LOG_PREFIX} Max relative import depth exceeded`, {
@@ -350,45 +403,37 @@ export async function transformFrameworkCode(
     return await rewriteFallbackRelativeImports(compiled, sourcePath, ctx);
   }
 
-  // Check if already transformed (before cycle check to handle concurrent requests)
-  // This prevents false cycle detection when another request has already completed
-  // transforming this file and cached the result.
-  const cached = frameworkFileCache.get(sourcePath);
+  // Reuse a completed transform before doing any more work.
+  const transformKey = buildFrameworkTransformCacheKey(
+    sourcePath,
+    ctx.reactVersion,
+    ctx.projectDir,
+    content,
+  );
+  const cached = frameworkFileCache.get(transformKey);
   if (cached) {
     // Validate cached code - reject cycle placeholders and unresolved imports
     if (isCyclePlaceholder(cached)) {
       logger.debug(`${LOG_PREFIX} Cache contains cycle placeholder, invalidating`, {
         sourcePath: sourcePath.slice(-60),
       });
-      frameworkFileCache.delete(sourcePath);
+      frameworkFileCache.delete(transformKey);
     } else {
       logger.debug(`${LOG_PREFIX} Framework file cache hit`, { sourcePath: sourcePath.slice(-60) });
       return cached;
     }
   }
 
-  // Check if we're in a cycle (another request is currently transforming this file)
-  if (transformingFiles.has(sourcePath)) {
-    logger.debug(`${LOG_PREFIX} Detected cycle, skipping`, { sourcePath: sourcePath.slice(-60) });
-    // Return a placeholder that will fail at runtime but won't cause infinite loop.
-    // The CYCLE_PLACEHOLDER_MARKER makes isCyclePlaceholder() unambiguous.
-    return `/* Cycle detected: ${sourcePath} ${CYCLE_PLACEHOLDER_MARKER} */\nexport {};`;
-  }
-
-  // Mark as being transformed
-  transformingFiles.add(sourcePath);
+  // Track active work for diagnostics and cleanup assertions. Cycle detection
+  // uses traversal-local ancestry so independent requests are not mistaken
+  // for recursive imports.
+  transformingFiles.add(transformKey);
 
   try {
     const { transform } = await import("veryfront/extensions/bundler");
 
-    const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
-    let loader: "tsx" | "ts" | "jsx" | "js" = "js";
-    if (ext === "tsx") loader = "tsx";
-    else if (ext === "ts") loader = "ts";
-    else if (ext === "jsx") loader = "jsx";
-
     const result = await transform(content, {
-      loader,
+      loader: pickFrameworkLoader(sourcePath),
       jsx: "automatic",
       jsxImportSource: "react",
       format: "esm",
@@ -425,7 +470,7 @@ export async function transformFrameworkCode(
     // pointing to cached modules, otherwise they fail at runtime (e.g., markdown.tsx
     // imports ./theme.ts which must also be cached).
     //
-    // Safety: MAX_RELATIVE_IMPORT_DEPTH limits recursion, transformingFiles detects
+    // Safety: MAX_RELATIVE_IMPORT_DEPTH limits recursion, traversal ancestry detects
     // cycles, and frameworkFileCache deduplicates already-transformed files.
     const relativeReplacements = new Map<string, string>();
 
@@ -481,17 +526,20 @@ export async function transformFrameworkCode(
           continue;
         }
 
-        // Check if this dependency was already transformed (by absolute path)
-        const existingFileUrl = frameworkFileCache.get(resolvedPath);
-        if (existingFileUrl) {
-          // Use existing cached file URL
-          const cachePath = await cacheTransformedCode(existingFileUrl, resolvedPath, ctx.fs);
-          relativeReplacements.set(specifier, `file://${cachePath}`);
-          continue;
-        }
-
         try {
           const depContent = await ctx.fs.readTextFile(resolvedPath);
+          const dependencyTransformKey = buildFrameworkTransformCacheKey(
+            resolvedPath,
+            ctx.reactVersion,
+            ctx.projectDir,
+            depContent,
+          );
+          const existingFileUrl = frameworkFileCache.get(dependencyTransformKey);
+          if (existingFileUrl) {
+            const cachePath = await cacheTransformedCode(existingFileUrl, resolvedPath, ctx.fs);
+            relativeReplacements.set(specifier, `file://${cachePath}`);
+            continue;
+          }
 
           // Transform the dependency with depth+1 (so its relative imports won't be processed)
           const transformedDep = await transformFrameworkCode(
@@ -517,7 +565,7 @@ export async function transformFrameworkCode(
 
           relativeReplacements.set(specifier, fileUrl);
           // Cache by resolved path for reuse
-          frameworkFileCache.set(resolvedPath, transformedDep);
+          frameworkFileCache.set(dependencyTransformKey, transformedDep);
 
           logger.debug(`${LOG_PREFIX} Transformed relative import`, {
             from: sourcePath.slice(-40),
@@ -568,12 +616,12 @@ export async function transformFrameworkCode(
     });
 
     // Cache the final transformed code
-    frameworkFileCache.set(sourcePath, cacheResult.code);
+    frameworkFileCache.set(transformKey, cacheResult.code);
 
     return cacheResult.code;
   } finally {
-    // Always clean up the transformingFiles set to prevent false cycle detection
-    transformingFiles.delete(sourcePath);
+    // Always clean up active-transform diagnostics.
+    transformingFiles.delete(transformKey);
   }
 }
 
@@ -585,22 +633,26 @@ export async function resolveAndTransformVeryfrontImport(
   specifier: string,
   ctx: TransformContext,
 ): Promise<string | null> {
-  // Check in-memory cache first (handles cycles and avoids redundant work)
-  const cached = veryfrontTransformCache.get(specifier);
-  if (cached) return cached;
-
   const sourcePath = await resolveVeryfrontSourcePath(specifier);
   if (!sourcePath) return null;
 
   try {
     const content = await ctx.fs.readTextFile(sourcePath);
+    const transformKey = buildFrameworkTransformCacheKey(
+      `${specifier}:${sourcePath}`,
+      ctx.reactVersion,
+      ctx.projectDir,
+      content,
+    );
+    const cached = veryfrontTransformCache.get(transformKey);
+    if (cached) return cached;
 
     // Transform the dependency (recursively handles its own #veryfront/ imports)
     const transformed = await transformFrameworkCode(content, sourcePath, ctx, false);
 
     // Don't cache cycle placeholders - they should never be persisted to disk.
-    // A cycle placeholder indicates the module is currently being transformed
-    // by another call in the same stack, so we should not cache it.
+    // A cycle placeholder indicates the current traversal already visited the
+    // module, so it must not be cached.
     if (isCyclePlaceholder(transformed)) {
       logger.debug(`${LOG_PREFIX} Skipping cache for cycle placeholder`, { specifier });
       return null;
@@ -611,7 +663,7 @@ export async function resolveAndTransformVeryfrontImport(
     const fileUrl = `file://${cachePath}`;
 
     // Store in memory cache for this session
-    veryfrontTransformCache.set(specifier, fileUrl);
+    veryfrontTransformCache.set(transformKey, fileUrl);
 
     logger.debug(`${LOG_PREFIX} Transformed #veryfront/ dependency`, {
       specifier,

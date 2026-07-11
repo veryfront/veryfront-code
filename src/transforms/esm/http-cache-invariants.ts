@@ -105,11 +105,12 @@ export function assertLocal(code: LocalModuleCode): void {
  * @throws VeryfrontError (cache-invariant-violation) if hash format is invalid
  */
 export function asBundleHash(hash: string): BundleHash {
-  // Bundle hashes should be numeric (from simpleHash)
-  if (!/^\d+$/.test(hash)) {
+  const isLegacyDecimal = /^\d+$/.test(hash);
+  const isSha256 = /^[a-f0-9]{64}$/.test(hash);
+  if (!isLegacyDecimal && !isSha256) {
     throw CACHE_INVARIANT_VIOLATION.create({
       detail:
-        `[CACHE INVARIANT VIOLATION] Invalid bundle hash format: "${hash}" (expected numeric)`,
+        `[CACHE INVARIANT VIOLATION] Invalid bundle hash format: "${hash}" (expected legacy decimal or lowercase SHA-256)`,
     });
   }
   return brand<BundleHash>(hash);

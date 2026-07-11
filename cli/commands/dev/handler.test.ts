@@ -5,7 +5,8 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleDevCommand } from "./handler.ts";
+import { parseCliArgs } from "#cli/shared/args";
+import { handleDevCommand, parseDevArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/dev/handler", () => {
@@ -21,6 +22,17 @@ describe("commands/dev/handler", () => {
   });
 
   describe("ParsedArgs for dev command", () => {
+    it("parses the documented no-hmr and open flags from raw argv", () => {
+      const args = parseCliArgs(["dev", "--no-hmr", "--open"]);
+      const result = parseDevArgs(args);
+
+      assertEquals(result.success, true);
+      if (!result.success) return;
+
+      assertEquals(result.data.noHmr, true);
+      assertEquals(result.data.open, true);
+    });
+
     it("supports port configuration", () => {
       const args: ParsedArgs = {
         _: ["dev"],

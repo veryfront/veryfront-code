@@ -24,7 +24,11 @@ import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 async function importReact(): Promise<
   { React: typeof import("react"); ReactDOM: typeof import("react-dom/client") }
 > {
-  const specifiers = getHydrationReactImportSpecifiers(document);
+  const hydrationData = readHydrationData(document);
+  const specifiers = getHydrationReactImportSpecifiers(
+    document,
+    hydrationData?.reactVersion,
+  );
   const [React, ReactDOM] = await Promise.all([
     import(specifiers.react),
     import(specifiers.reactDomClient),
