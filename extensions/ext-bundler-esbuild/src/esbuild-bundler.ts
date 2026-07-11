@@ -481,7 +481,7 @@ export class EsbuildBundler implements Bundler {
     try {
       await stopping;
     } finally {
-      if (esbuildStopPromise === stopping) esbuildStopPromise = null;
+      if (Object.is(esbuildStopPromise, stopping)) esbuildStopPromise = null;
     }
   }
 }
