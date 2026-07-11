@@ -1,6 +1,6 @@
 import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
-import { type UserInfo, validateToken } from "../auth/login.ts";
+import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
 
 export interface RemoteProject {
   id: string;
@@ -13,6 +13,7 @@ export interface RemoteProject {
 export interface ProjectDiscoveryResult {
   user: UserInfo | null;
   projects: RemoteProject[];
+  credentialType?: "user" | "apiKey";
   error?: string;
 }
 
@@ -27,9 +28,10 @@ export async function fetchRemoteProjects(): Promise<ProjectDiscoveryResult> {
     };
   }
 
-  const user = await validateToken(token);
+  const apiKeyCredential = isApiKeyToken(token);
+  const user = apiKeyCredential ? null : await validateToken(token);
 
-  if (!user) {
+  if (!apiKeyCredential && !user) {
     return {
       user: null,
       projects: [],
@@ -50,17 +52,23 @@ export async function fetchRemoteProjects(): Promise<ProjectDiscoveryResult> {
       return {
         user,
         projects: [],
+        credentialType: apiKeyCredential ? "apiKey" : "user",
         error: `Failed to fetch projects: ${errorText}`,
       };
     }
 
     const data = (await response.json()) as { data?: RemoteProject[] };
-    return { user, projects: data.data ?? [] };
+    return {
+      user,
+      projects: data.data ?? [],
+      credentialType: apiKeyCredential ? "apiKey" : "user",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       user,
       projects: [],
+      credentialType: apiKeyCredential ? "apiKey" : "user",
       error: `Network error: ${message}`,
     };
   }
@@ -70,12 +78,13 @@ export async function isAuthenticated(): Promise<boolean> {
   const token = await readToken();
   if (!token) return false;
 
-  return (await validateToken(token)) !== null;
+  return (await validateCredential(token)) !== null;
 }
 
 export async function getCurrentUser(): Promise<UserInfo | null> {
   const token = await readToken();
   if (!token) return null;
+  if (isApiKeyToken(token)) return null;
 
   return validateToken(token);
 }

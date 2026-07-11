@@ -18,7 +18,12 @@ import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.t
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { login, type UserInfo, validateToken } from "../../auth/login.ts";
+import {
+  type AuthIdentity,
+  isApiKeyIdentity,
+  login,
+  validateCredential,
+} from "../../auth/login.ts";
 import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
@@ -39,6 +44,12 @@ export interface DevCommandResult {
   done: Promise<void>;
   /** Stop the dev server programmatically (for demo mode) */
   stop: () => Promise<void>;
+}
+
+function authStatus(identity: AuthIdentity): string {
+  return isApiKeyIdentity(identity)
+    ? "Authenticated with an API key"
+    : `Logged in as ${identity.email}`;
 }
 
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
@@ -104,7 +115,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let mcpServer: MCPDevServer | null = null;
 
       // Sync state
-      let user: UserInfo | null = null;
+      let identity: AuthIdentity | null = null;
       let projects: RemoteProject[] = [];
       let selectedProject: RemoteProject | null = null;
 
@@ -141,8 +152,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       try {
         const token = await readToken();
         if (token) {
-          user = await validateToken(token);
-          if (user) {
+          identity = await validateCredential(token);
+          if (identity) {
             const result = await fetchRemoteProjects();
             projects = result.projects;
           }
@@ -225,10 +236,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       console.log();
 
       // Context-aware next step hint
-      if (!user) {
+      if (!identity) {
         console.log(`  ${dim("To sync with Veryfront: press")} ${brand("a")} ${dim("to login")}`);
       } else if (projects.length > 0) {
-        console.log(`  ${success("✓")} Logged in as ${user.email}`);
+        console.log(`  ${success("✓")} ${authStatus(identity)}`);
         console.log(
           `  ${dim("Press")} ${brand("s")} ${dim("to select a project, then")} ${brand("p")} ${
             dim(
@@ -237,7 +248,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           }`,
         );
       } else {
-        console.log(`  ${success("✓")} Logged in as ${user.email}`);
+        console.log(`  ${success("✓")} ${authStatus(identity)}`);
         console.log(`  ${dim("Press")} ${brand("s")} ${dim("to see your projects")}`);
       }
       console.log();
@@ -248,9 +259,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           onClear: () => console.clear(),
           onQuit: () => void shutdown(),
           onAuth: async () => {
-            if (user) {
+            if (identity) {
               console.log(
-                `  ${dim("Logged in as")} ${user.email} ${dim("— press s to select project")}`,
+                `  ${dim(authStatus(identity))}${dim(", press s to select a project")}`,
               );
               return;
             }
@@ -259,13 +270,15 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             const result = await login();
             if (!result) return;
 
-            user = result;
+            identity = result;
             const projectResult = await fetchRemoteProjects();
             projects = projectResult.projects;
-            console.log(`  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`);
+            console.log(
+              `  ${success("✓")} ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,
+            );
           },
           onSync: () => {
-            if (!user) {
+            if (!identity) {
               console.log(`  ${dim("Press")} ${brand("a")} ${dim("to login")}`);
               return;
             }
