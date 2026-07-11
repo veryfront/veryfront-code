@@ -99,6 +99,31 @@ describe("repository hardening", () => {
     assert(publishScript.includes("npm publish --provenance --access public 2>&1"));
   });
 
+  it("only publishes a stable version after a version change or manual dispatch", async () => {
+    const workflow = await readText(".github/workflows/cicd.yml");
+    const versionCheck = jobBlock(workflow, "version-check");
+    const prerelease = jobBlock(workflow, "prerelease");
+    const release = jobBlock(workflow, "release");
+
+    assert(versionCheck.includes("stable_release_requested:"));
+    assert(versionCheck.includes("fetch-depth: 0"));
+    assert(
+      versionCheck.includes(
+        "bash scripts/ci/stable-release-requested.sh",
+      ),
+    );
+    assert(versionCheck.includes("github.event.before"));
+    assert(
+      release.includes(
+        "needs.version-check.outputs.stable_release_requested == 'true'",
+      ),
+    );
+    assert(
+      release.includes("needs.version-check.outputs.is_stable == 'true'"),
+    );
+    assertEquals(prerelease.includes("stable_release_requested"), false);
+  });
+
   it("uses scoped GitHub App tokens instead of release PATs", async () => {
     const releaseWorkflow = await readText(".github/workflows/cicd.yml");
     const docsWorkflow = await readText(".github/workflows/sync-docs.yml");
