@@ -31,11 +31,7 @@ const SAVE_DEBOUNCE_MS = 300;
 // ---------------------------------------------------------------------------
 
 function randomId(): string {
-  const c = (globalThis as { crypto?: Crypto }).crypto;
-  const rand = c && "randomUUID" in c
-    ? c.randomUUID().slice(0, 8)
-    : Math.random().toString(36).slice(2, 10);
-  return `c_${rand}`;
+  return `c_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 /** A fresh, empty conversation. `now`/`id` are injectable for tests. */
