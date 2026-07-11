@@ -637,50 +637,59 @@ export class AgentStreamHandler extends BaseHandler {
       return this.respond(buildRuntimeShuttingDownResponse(this.createResponseBuilder(ctx)));
     }
 
-    return this.withProxyContext(ctx, async () => {
-      const builder = this.createResponseBuilder(ctx)
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined, req);
+    const builder = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      try {
-        const pathRunId = getPathRunId(new URL(req.url).pathname);
-        const rawBody = await readInternalAgentRequestBody(
-          req,
-          INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
-        );
-        const payload = parseAgentStreamPayload(JSON.parse(rawBody));
-        if (!pathRunId || pathRunId !== payload.runId) {
-          return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
-        }
-        await verifyControlPlaneRequest(req, ctx, rawBody, {
-          expectedSubject: payload.runId,
-          expectedSurface: "studio",
-        });
-        logger.info("Accepted internal agent stream request", {
-          runId: payload.runId,
-          threadId: payload.threadId,
-          agentId: payload.agentId,
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-          messageCount: payload.messages.length,
-          toolCount: payload.tools.length,
-          hasAgentSource: Boolean(payload.agentSource),
-          hasAgentConfig: Boolean(payload.agentConfig),
-        });
+    try {
+      const pathRunId = getPathRunId(new URL(req.url).pathname);
+      const rawBody = await readInternalAgentRequestBody(
+        req,
+        INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
+      );
+      const payload = parseAgentStreamPayload(JSON.parse(rawBody));
+      if (!pathRunId || pathRunId !== payload.runId) {
+        return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
+      }
+      await verifyControlPlaneRequest(req, ctx, rawBody, {
+        expectedSubject: payload.runId,
+        expectedSurface: "studio",
+      });
+      const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
+        getHostEnv("VERYFRONT_API_TOKEN") || "";
+      const requestScopedContext: HandlerContext = {
+        ...ctx,
+        proxyToken: apiAuthToken || undefined,
+        requestContext: ctx.requestContext
+          ? { ...ctx.requestContext, token: apiAuthToken }
+          : ctx.requestContext,
+      };
+      logger.info("Accepted internal agent stream request", {
+        runId: payload.runId,
+        threadId: payload.threadId,
+        agentId: payload.agentId,
+        projectId: requestScopedContext.projectId,
+        projectSlug: requestScopedContext.projectSlug,
+        messageCount: payload.messages.length,
+        toolCount: payload.tools.length,
+        hasAgentSource: Boolean(payload.agentSource),
+        hasAgentConfig: Boolean(payload.agentConfig),
+      });
 
-        return await this.withAgentSourceContext(
-          ctx,
+      return await this.withProxyContext(requestScopedContext, () =>
+        this.withAgentSourceContext(
+          requestScopedContext,
           payload.agentSource,
           async () => {
-            await this.deps.ensureProjectDiscovery(ctx);
+            await this.deps.ensureProjectDiscovery(requestScopedContext);
 
             const agent = this.deps.getAgent(payload.agentId);
             if (!agent) {
               logger.warn("Internal agent stream request referenced unknown agent", {
                 runId: payload.runId,
                 agentId: payload.agentId,
-                projectId: ctx.projectId,
-                projectSlug: ctx.projectSlug,
+                projectId: requestScopedContext.projectId,
+                projectSlug: requestScopedContext.projectSlug,
               });
               return this.respond(builder.json({ error: "Agent not found" }, 404));
             }
@@ -692,18 +701,16 @@ export class AgentStreamHandler extends BaseHandler {
               : agent;
             const runtimeInput = sanitizeRuntimeRunAgentInput(toRuntimeRunAgentInput(payload));
             const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
-            const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
-              getHostEnv("VERYFRONT_API_TOKEN") || "";
             const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
               agent: runtimeBaseAgent as Agent,
               token: apiAuthToken || null,
-              projectId: ctx.projectId ?? null,
+              projectId: requestScopedContext.projectId ?? null,
               availableToolNames: runtimeInput.tools.map((tool) => tool.name),
             });
             const runtimeAgent = withVeryfrontStudioRemoteTools({
               agent: platformRuntimeAgent,
               token: apiAuthToken || null,
-              projectId: ctx.projectId ?? null,
+              projectId: requestScopedContext.projectId ?? null,
               forwardedProps: runtimeInput.forwardedProps,
               availableToolNames: runtimeInput.tools.map((tool) => tool.name),
               conversationId: runtimeInput.threadId,
@@ -714,18 +721,21 @@ export class AgentStreamHandler extends BaseHandler {
             // therefore don't carry x-environment-id, so we discover the production env ID
             // from the API (one fetch per project per server lifetime, then cached).
             let envVarsForAgent: Record<string, string> = {};
-            if (ctx.projectSlug && apiAuthToken) {
-              const environmentId = ctx.environmentId ??
-                await _resolveProductionEnvironmentId(ctx.projectSlug, apiAuthToken);
+            if (requestScopedContext.projectSlug && apiAuthToken) {
+              const environmentId = requestScopedContext.environmentId ??
+                await _resolveProductionEnvironmentId(
+                  requestScopedContext.projectSlug,
+                  apiAuthToken,
+                );
               if (environmentId) {
                 envVarsForAgent = await _agentEnvVarCache.get(
                   environmentId,
                   apiAuthToken,
-                  ctx.projectSlug,
+                  requestScopedContext.projectSlug,
                 );
                 logger.debug("Agent stream env vars loaded", {
                   runId: payload.runId,
-                  projectSlug: ctx.projectSlug,
+                  projectSlug: requestScopedContext.projectSlug,
                   environmentId,
                   count: Object.keys(envVarsForAgent).length,
                 });
@@ -739,7 +749,7 @@ export class AgentStreamHandler extends BaseHandler {
                 projectAgentSandbox: {
                   apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
                   authToken: apiAuthToken || undefined,
-                  projectId: ctx.projectId ?? null,
+                  projectId: requestScopedContext.projectId ?? null,
                 },
               });
             const shouldIsolateEnv = apiAuthToken.length > 0;
@@ -748,7 +758,7 @@ export class AgentStreamHandler extends BaseHandler {
                 buildAgentStreamEnv({
                   envVars: envVarsForAgent,
                   proxyToken: apiAuthToken,
-                  projectSlug: ctx.projectSlug,
+                  projectSlug: requestScopedContext.projectSlug,
                 }),
                 runAgentStream,
               )
@@ -757,8 +767,8 @@ export class AgentStreamHandler extends BaseHandler {
               runId: payload.runId,
               threadId: payload.threadId,
               agentId: payload.agentId,
-              projectId: ctx.projectId,
-              projectSlug: ctx.projectSlug,
+              projectId: requestScopedContext.projectId,
+              projectSlug: requestScopedContext.projectSlug,
             });
             const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
               null;
@@ -771,44 +781,43 @@ export class AgentStreamHandler extends BaseHandler {
               : response;
             return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
           },
-        );
-      } catch (error) {
-        if (error instanceof InternalAgentRequestBodyTooLargeError) {
-          return this.respond(builder.json({ error: error.message }, error.status));
-        }
-
-        if (error instanceof ControlPlaneRequestError) {
-          return this.respond(builder.json({ error: error.message }, error.status));
-        }
-
-        if (error instanceof SyntaxError) {
-          return this.respond(
-            builder.json({ error: "Invalid internal agent stream request" }, 400),
-          );
-        }
-
-        if (error instanceof AgentRunAlreadyExistsError) {
-          return this.respond(builder.json({ error: error.message }, 409));
-        }
-
-        if (error instanceof Error && error.name === "ZodError") {
-          return this.respond(
-            builder.json({ error: "Invalid internal agent stream request" }, 400),
-          );
-        }
-
-        this.logWarn("Internal agent stream request failed", {
-          error: error instanceof Error ? error.message : String(error),
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-        });
-        logger.error("Internal agent stream handler failed", {
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
+        ));
+    } catch (error) {
+      if (error instanceof InternalAgentRequestBodyTooLargeError) {
+        return this.respond(builder.json({ error: error.message }, error.status));
       }
-    });
+
+      if (error instanceof ControlPlaneRequestError) {
+        return this.respond(builder.json({ error: error.message }, error.status));
+      }
+
+      if (error instanceof SyntaxError) {
+        return this.respond(
+          builder.json({ error: "Invalid internal agent stream request" }, 400),
+        );
+      }
+
+      if (error instanceof AgentRunAlreadyExistsError) {
+        return this.respond(builder.json({ error: error.message }, 409));
+      }
+
+      if (error instanceof Error && error.name === "ZodError") {
+        return this.respond(
+          builder.json({ error: "Invalid internal agent stream request" }, 400),
+        );
+      }
+
+      this.logWarn("Internal agent stream request failed", {
+        error: error instanceof Error ? error.message : String(error),
+        projectId: ctx.projectId,
+        projectSlug: ctx.projectSlug,
+      });
+      logger.error("Internal agent stream handler failed", {
+        projectId: ctx.projectId,
+        projectSlug: ctx.projectSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return this.respond(builder.json({ error: "Internal agent stream failed" }, 500));
+    }
   }
 }

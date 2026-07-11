@@ -24,6 +24,14 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(html.includes("/_veryfront/rsc/render/about"), true);
     });
 
+    it("does not replace a failed route render with the generic payload endpoint", async () => {
+      const handler = new PageHandler();
+      const response = handler.handle("/about", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(html.includes("fetchPayload('/_veryfront/rsc/payload')"), false);
+    });
+
     it("should include query string in render URL", async () => {
       const handler = new PageHandler();
       const params = new URLSearchParams({ name: "World", id: "42" });
@@ -49,10 +57,30 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
     });
 
     it("should include dev mode flag", async () => {
-      const handler = new PageHandler();
+      const handler = new PageHandler(true);
       const response = handler.handle("/", new URLSearchParams());
       const html = await response.text();
-      assertEquals(html.includes("__VERYFRONT_DEV__"), true);
+      assertEquals(html.includes("window.__VERYFRONT_DEV__ = true"), true);
+    });
+
+    it("disables dev mode for non-local responses", async () => {
+      const handler = new PageHandler(false);
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(html.includes("window.__VERYFRONT_DEV__ = false"), true);
+      assertEquals(html.includes("window.__VERYFRONT_DEV__ = true"), false);
+    });
+
+    it("publishes the configured React version and module strategy for hydration", async () => {
+      const handler = new PageHandler(false, "18.3.1", "rsc-module");
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(html.includes('id="veryfront-hydration-data"'), true);
+      assertEquals(html.includes('"reactVersion":"18.3.1"'), true);
+      assertEquals(html.includes('"clientModuleStrategy":"rsc-module"'), true);
+      assertEquals(html.includes('"dev":false'), true);
     });
 
     it("should not include legacy hydrate.js import", async () => {
@@ -70,7 +98,7 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
     });
 
     it("should add nonce attributes to inline scripts when provided", async () => {
-      const handler = new PageHandler();
+      const handler = new PageHandler(true);
       const response = handler.handle("/", new URLSearchParams(), "nonce-123");
       const html = await response.text();
 

@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { discoverComponentsLayoutPath, type FileExistenceChecker } from "./layout-collector.ts";
+import {
+  discoverComponentsLayoutPath,
+  type FileExistenceChecker,
+  resolveLayoutRouterRootDir,
+} from "./layout-collector.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
@@ -31,6 +36,21 @@ function createLayoutItem(layoutPath: string, bundle?: unknown): LayoutItem {
 }
 
 describe("LayoutCollector", () => {
+  it("resolves configured App Router and Pages Router roots", () => {
+    const config = {
+      directories: { app: "src/site", pages: "src/content" },
+    } as VeryfrontConfig;
+
+    assertEquals(
+      resolveLayoutRouterRootDir("/project", true, config),
+      "/project/src/site",
+    );
+    assertEquals(
+      resolveLayoutRouterRootDir("/project", false, config),
+      "/project/src/content",
+    );
+  });
+
   describe("getLayoutKind", () => {
     it("should return 'mdx' for .mdx files", () => {
       assertEquals(getLayoutKind("/project/layouts/main.mdx"), "mdx");

@@ -1,4 +1,5 @@
 import { dynamicTool, tool } from "./factory.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 
@@ -116,7 +117,8 @@ export function createToolsFromHostDefinitions(
           execute,
           mcp: definition.mcp,
         });
-    } catch {
+    } catch (error) {
+      agentLogger.warn("Skipping host tool: schema conversion failed", { toolName, error });
       continue;
     }
   }

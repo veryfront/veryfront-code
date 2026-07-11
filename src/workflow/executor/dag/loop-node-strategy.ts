@@ -28,11 +28,16 @@ export async function executeLoopNodeStrategy(
   input: ExecuteLoopNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
   const { node, config, context, nodeStates, runtime } = input;
+  runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
   const previousResults: unknown[] = [];
   let iteration = 0;
   let exitReason: "condition" | "maxIterations" | "error" = "condition";
   let lastError: string | undefined;
+  // Tracks whether the loop terminated because `while` returned false. A loop
+  // that exhausts its iteration budget never trips this, so it is relabeled as
+  // "maxIterations" below.
+  let exitedViaCondition = false;
 
   const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
 
@@ -49,6 +54,7 @@ export async function executeLoopNodeStrategy(
   }
 
   while (iteration < config.maxIterations) {
+    runtime.abortSignal?.throwIfAborted();
     const loopContext: LoopExecutionContext = {
       iteration,
       totalIterations: iteration,
@@ -57,14 +63,18 @@ export async function executeLoopNodeStrategy(
       isLastAllowedIteration: iteration === config.maxIterations - 1,
     };
 
-    if (!(await config.while(context, loopContext))) {
+    const shouldContinue = await config.while(context, loopContext);
+    runtime.abortSignal?.throwIfAborted();
+    if (!shouldContinue) {
       exitReason = "condition";
+      exitedViaCondition = true;
       break;
     }
 
     const steps = typeof config.steps === "function"
       ? config.steps(context, loopContext)
       : config.steps;
+    runtime.abortSignal?.throwIfAborted();
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9).
@@ -86,6 +96,7 @@ export async function executeLoopNodeStrategy(
       pendingApprovals: [],
       createdAt: new Date(),
     });
+    runtime.abortSignal?.throwIfAborted();
 
     if (result.waiting) {
       Object.assign(nodeStates, result.nodeStates);
@@ -126,13 +137,13 @@ export async function executeLoopNodeStrategy(
 
     if (config.delay && iteration < config.maxIterations - 1) {
       const delayMs = typeof config.delay === "number" ? config.delay : parseDuration(config.delay);
-      await sleep(delayMs);
+      await sleep(delayMs, runtime.abortSignal);
     }
 
     iteration++;
   }
 
-  if (iteration >= config.maxIterations && exitReason !== "condition") {
+  if (exitReason !== "error" && !exitedViaCondition) {
     exitReason = "maxIterations";
   }
 
@@ -147,8 +158,10 @@ export async function executeLoopNodeStrategy(
   let completionUpdates: Record<string, unknown> = {};
   if (exitReason === "maxIterations" && config.onMaxIterations) {
     completionUpdates = await config.onMaxIterations(context, finalLoopContext);
+    runtime.abortSignal?.throwIfAborted();
   } else if (exitReason === "condition" && config.onComplete) {
     completionUpdates = await config.onComplete(context, finalLoopContext);
+    runtime.abortSignal?.throwIfAborted();
   }
 
   const output = {

@@ -76,6 +76,13 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
   const validatedManifest = chunkManifest && isValidChunkManifest(chunkManifest)
     ? chunkManifest
     : null;
+  const generatedPaths = stats.ssgPaths ? new Set(stats.ssgPaths) : null;
+  const generatedRoutes = generatedPaths
+    ? routes.filter((route) => generatedPaths.has(route.path))
+    : routes;
+  const generatedAppRoutes = generatedPaths
+    ? appRoutes.filter((route) => generatedPaths.has(route.path))
+    : appRoutes;
 
   if (chunkManifest && !validatedManifest) {
     bundlerLogger.warn("Invalid chunk manifest structure, chunks will be disabled");
@@ -97,12 +104,12 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
       compression: enableCompression,
     },
     routes: [
-      ...routes.map((r) => ({
+      ...generatedRoutes.map((r) => ({
         path: r.path,
         slug: r.slug,
         chunks: getChunksForRoute(r.path),
       })),
-      ...appRoutes.map((r) => ({
+      ...generatedAppRoutes.map((r) => ({
         path: r.path,
         slug: r.path === "/" ? "index" : r.path.slice(1),
         chunks: [],

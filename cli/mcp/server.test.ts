@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+} from "../../src/config/environment-config.ts";
 import { MCPDevServer } from "./server.ts";
 import type { MCPServerConfig } from "./server.ts";
 
@@ -224,6 +228,62 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(resourceUris.includes("veryfront://errors"), true);
       assertEquals(resourceUris.includes("veryfront://logs"), true);
       assertEquals(resourceUris.includes("issues://"), true);
+    });
+
+    it("should omit secrets and local paths from the config resource", async () => {
+      const portNum = 19901;
+      _setEnvironmentConfigForTesting({
+        nodeEnv: "test",
+        veryfrontEnv: "development",
+        veryfrontMode: "local",
+        port: 4321,
+        apiToken: "<TOKEN>",
+        openaiApiKey: "<API_KEY>",
+        anthropicApiKey: "<API_KEY>",
+        googleApiKey: "<API_KEY>",
+        githubToken: "<TOKEN>",
+        redisUrl: "redis://<REDACTED>",
+        otelHeaders: "authorization=<REDACTED>",
+        homeDir: "/private/home",
+        xdgConfigHome: "/private/config",
+      });
+
+      try {
+        server = new MCPDevServer({ httpPort: portNum });
+        server.start();
+        await waitForServerBind();
+
+        const response = await postMcp(portNum, {
+          jsonrpc: "2.0",
+          id: 41,
+          method: "resources/read",
+          params: { uri: "veryfront://config" },
+        });
+        const data = await response.json();
+        const config = JSON.parse(data.result.contents[0].text);
+
+        assertEquals(config.nodeEnv, "test");
+        assertEquals(config.veryfrontEnv, "development");
+        assertEquals(config.veryfrontMode, "local");
+        assertEquals(config.port, 4321);
+        for (
+          const key of [
+            "apiToken",
+            "openaiApiKey",
+            "anthropicApiKey",
+            "googleApiKey",
+            "githubToken",
+            "redisUrl",
+            "otelHeaders",
+            "homeDir",
+            "xdgConfigHome",
+          ]
+        ) {
+          assertEquals(config[key], undefined, `Config resource exposed ${key}`);
+        }
+      } finally {
+        _resetEnvironmentConfig();
+      }
     });
 
     it("should return prompts list", async () => {
@@ -597,6 +657,26 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(response.status, 403);
       const data = await response.json();
       assertEquals(data.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("should reject origins whose hostname only starts with localhost", async () => {
+      const portNum = 19900;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(
+        portNum,
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        {
+          "Content-Type": "application/json",
+          Origin: "http://localhost.evil.example:3000",
+        },
+      );
+
+      assertEquals(response.status, 403);
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
     });
 
     it("should allow request with no Origin header", async () => {

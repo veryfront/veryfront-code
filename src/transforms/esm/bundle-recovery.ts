@@ -11,16 +11,18 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils/logger/logger.ts";
-import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { unbrand } from "./http-cache-types.ts";
 import { VeryfrontError } from "./http-cache-invariants.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import {
+  buildHttpCacheIdentity,
   type CacheOptions,
   ensureAbsoluteDir,
+  hashHttpCacheIdentity,
   hasIncompatibleFilePaths,
-  normalizeHttpUrl,
+  type HttpCacheIdentityMetadata,
+  type HttpCacheIdentityOptions,
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, findParentBundleWithEmbeddedUrl } from "./bundle-deps-validator.ts";
 import { getCachedPaths } from "./http-cache-state.ts";
@@ -29,6 +31,59 @@ const logger = rendererLogger.component("http-cache");
 
 /** Function signature for caching an HTTP module and returning its local path. */
 type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
+
+const EMPTY_IMPORT_MAP = { imports: {}, scopes: {} };
+
+function createRecoveryCacheOptions(
+  cacheDir: string,
+  identity?: HttpCacheIdentityOptions,
+): CacheOptions {
+  return {
+    cacheDir,
+    importMap: identity?.importMap ?? EMPTY_IMPORT_MAP,
+    reactVersion: identity?.reactVersion,
+  };
+}
+
+function cacheIdentityForRecovery(
+  url: string,
+  identity?: HttpCacheIdentityOptions,
+): Promise<string> {
+  return buildHttpCacheIdentity(
+    url,
+    identity ?? { importMap: EMPTY_IMPORT_MAP },
+  );
+}
+
+async function rememberRecoveredPath(
+  hash: string,
+  cacheDir: string,
+  url: string,
+  cachePath: string,
+  identity?: HttpCacheIdentityOptions,
+): Promise<void> {
+  const cacheIdentity = await cacheIdentityForRecovery(url, identity);
+  if (await hashHttpCacheIdentity(cacheIdentity) !== hash) return;
+  getCachedPaths().set(`${cacheDir}:${cacheIdentity}`, cachePath);
+}
+
+interface ResolvedRecoveryIdentity {
+  originalUrl: string | null;
+  options?: HttpCacheIdentityOptions;
+  metadata: HttpCacheIdentityMetadata | null;
+}
+
+async function resolveRecoveryIdentity(
+  hash: string,
+  fallback?: HttpCacheIdentityOptions,
+): Promise<ResolvedRecoveryIdentity> {
+  const metadata = await httpBundleCache.getIdentityMetadata(hash);
+  return {
+    originalUrl: metadata?.url ?? await httpBundleCache.getOriginalUrl(hash),
+    options: metadata ?? fallback,
+    metadata,
+  };
+}
 
 /**
  * Recover a missing HTTP bundle by looking up the code directly from the hash.
@@ -40,12 +95,14 @@ export async function recoverHttpBundleByHash(
   cacheDir: string,
   cacheHttpModule: CacheHttpModuleFn,
   parentCode?: string,
+  fallbackIdentity?: HttpCacheIdentityOptions,
 ): Promise<boolean> {
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
   const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
   try {
+    const recoveryIdentity = await resolveRecoveryIdentity(hash, fallbackIdentity);
     const result = await httpBundleCache.getCodeByHash(hash);
 
     if (result.code) {
@@ -67,16 +124,23 @@ export async function recoverHttpBundleByHash(
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
 
-        const originalUrl = await httpBundleCache.getOriginalUrl(hash);
-        if (originalUrl) {
-          const cacheKey = `${absoluteCacheDir}:${normalizeHttpUrl(originalUrl)}`;
-          getCachedPaths().set(cacheKey, cachePath);
-          logger.debug("Updated LRU cache after recovery", { hash, cacheKey });
+        if (recoveryIdentity.originalUrl) {
+          await rememberRecoveredPath(
+            hash,
+            absoluteCacheDir,
+            recoveryIdentity.originalUrl,
+            cachePath,
+            recoveryIdentity.options,
+          );
+          logger.debug("Updated LRU cache after recovery", {
+            hash,
+            identitySource: recoveryIdentity.metadata ? "stored" : "legacy",
+          });
         }
 
         logger.info("Bundle recovery successful (direct)", { hash, path: cachePath });
 
-        const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
+        const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
         const transitiveDeps: Array<{ path: string; hash: string }> = [];
         let m: RegExpExecArray | null;
         while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
@@ -92,7 +156,12 @@ export async function recoverHttpBundleByHash(
           logger.info("Recovering transitive deps from last-resort recovery", {
             count: transitiveDeps.length,
           });
-          await ensureHttpBundlesExist(transitiveDeps, cacheDir, cacheHttpModule);
+          await ensureHttpBundlesExist(
+            transitiveDeps,
+            cacheDir,
+            cacheHttpModule,
+            recoveryIdentity.options,
+          );
         }
 
         return true;
@@ -102,14 +171,33 @@ export async function recoverHttpBundleByHash(
     }
 
     // Fallback: try to recover via URL re-fetch
-    const originalUrl = await httpBundleCache.getOriginalUrl(hash);
+    const originalUrl = recoveryIdentity.originalUrl;
     if (originalUrl) {
       logger.info("Recovering bundle via URL re-fetch", { hash, originalUrl });
-      const importMap = { imports: {}, scopes: {} };
-      const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
-      if (result) {
+      const result = await cacheHttpModule(
+        originalUrl,
+        createRecoveryCacheOptions(cacheDir, recoveryIdentity.options),
+      );
+      if (result === cachePath || result && await exists(cachePath)) {
         logger.info("Bundle recovery successful (re-fetch)", { hash, path: result });
         return true;
+      }
+      if (result && /^\d+$/.test(hash) && await exists(result)) {
+        await fs.mkdir(absoluteCacheDir, { recursive: true });
+        await fs.writeTextFile(cachePath, await fs.readTextFile(result));
+        logger.info("Materialized re-fetched bundle at legacy cache path", {
+          hash,
+          sourcePath: result,
+          legacyPath: cachePath,
+        });
+        return true;
+      }
+      if (result) {
+        logger.warn("URL re-fetch produced a different cache identity", {
+          hash,
+          expectedPath: cachePath,
+          actualPath: result,
+        });
       }
     }
 
@@ -122,8 +210,10 @@ export async function recoverHttpBundleByHash(
           parentUrl: parentSourceUrl,
         });
 
-        const parentHash = simpleHash(normalizeHttpUrl(parentSourceUrl));
-        await httpBundleCache.deleteCode(String(parentHash));
+        const parentHash = await hashHttpCacheIdentity(
+          await cacheIdentityForRecovery(parentSourceUrl, recoveryIdentity.options),
+        );
+        await httpBundleCache.deleteCode(parentHash);
 
         const parentPath = join(absoluteCacheDir, `http-${parentHash}.mjs`);
         try {
@@ -132,8 +222,10 @@ export async function recoverHttpBundleByHash(
           /* expected: file may not exist */
         }
 
-        const importMap = { imports: {}, scopes: {} };
-        const result = await cacheHttpModule(parentSourceUrl, { cacheDir, importMap });
+        const result = await cacheHttpModule(
+          parentSourceUrl,
+          createRecoveryCacheOptions(cacheDir, recoveryIdentity.options),
+        );
         if (result) {
           if (await exists(cachePath)) {
             logger.info("Bundle recovery successful (parent re-fetch)", {
@@ -160,8 +252,10 @@ export async function recoverHttpBundleByHash(
           parentUrl: foundParent.sourceUrl,
         });
 
-        const parentHashNum = simpleHash(normalizeHttpUrl(foundParent.sourceUrl));
-        await httpBundleCache.deleteCode(String(parentHashNum));
+        const parentHash = await hashHttpCacheIdentity(
+          await cacheIdentityForRecovery(foundParent.sourceUrl, recoveryIdentity.options),
+        );
+        await httpBundleCache.deleteCode(parentHash);
 
         try {
           await fs.remove(foundParent.path);
@@ -169,8 +263,10 @@ export async function recoverHttpBundleByHash(
           /* expected: file may not exist */
         }
 
-        const importMap = { imports: {}, scopes: {} };
-        const result = await cacheHttpModule(foundParent.sourceUrl, { cacheDir, importMap });
+        const result = await cacheHttpModule(
+          foundParent.sourceUrl,
+          createRecoveryCacheOptions(cacheDir, recoveryIdentity.options),
+        );
         if (result && await exists(cachePath)) {
           logger.info("Bundle recovery successful (local parent scan)", {
             hash,
@@ -201,6 +297,7 @@ export async function ensureHttpBundlesExist(
   bundlePaths: Array<{ path: string; hash: string }>,
   cacheDir: string,
   cacheHttpModule: CacheHttpModuleFn,
+  fallbackIdentity?: HttpCacheIdentityOptions,
 ): Promise<string[]> {
   if (bundlePaths.length === 0) return [];
 
@@ -266,7 +363,13 @@ export async function ensureHttpBundlesExist(
       missing.map(async ({ hash, canonicalPath }) => {
         const localCode = codes.get(hash);
         if (!localCode) {
-          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir, cacheHttpModule);
+          const recovered = await recoverHttpBundleByHash(
+            hash,
+            absoluteCacheDir,
+            cacheHttpModule,
+            undefined,
+            fallbackIdentity,
+          );
           if (!recovered) {
             failed.add(hash);
             return;
@@ -290,7 +393,13 @@ export async function ensureHttpBundlesExist(
             "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
             { hash, localCacheDir: absoluteCacheDir },
           );
-          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir, cacheHttpModule);
+          const recovered = await recoverHttpBundleByHash(
+            hash,
+            absoluteCacheDir,
+            cacheHttpModule,
+            undefined,
+            fallbackIdentity,
+          );
           if (!recovered) failed.add(hash);
           return;
         }
@@ -300,10 +409,15 @@ export async function ensureHttpBundlesExist(
           await fs.writeTextFile(canonicalPath, code);
           logger.debug("Wrote bundle to disk", { hash, path: canonicalPath });
 
-          const originalUrl = await httpBundleCache.getOriginalUrl(hash);
-          if (originalUrl) {
-            const cacheKey = `${absoluteCacheDir}:${normalizeHttpUrl(originalUrl)}`;
-            getCachedPaths().set(cacheKey, canonicalPath);
+          const identity = await resolveRecoveryIdentity(hash, fallbackIdentity);
+          if (identity.originalUrl) {
+            await rememberRecoveredPath(
+              hash,
+              absoluteCacheDir,
+              identity.originalUrl,
+              canonicalPath,
+              identity.options,
+            );
           }
 
           for (const dep of extractBundleDeps(code)) {

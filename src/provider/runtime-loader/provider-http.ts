@@ -1,6 +1,19 @@
 import { readRecord } from "./provider-records.ts";
 
-export type ProviderKind = "anthropic" | "openai" | "google";
+/**
+ * Which provider runtime a request is being sent to.
+ * `mistral` and `moonshotai` use the OpenAI-compatible wire format and are
+ * therefore treated as "openai" for error classification purposes; they are
+ * listed here so call sites can pass accurate labels without a cast.
+ */
+export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moonshotai";
+
+/**
+ * Upper bound on the number of characters of a provider error body we surface
+ * in `ProviderError.message`. Prevents multi-MB error payloads from flowing
+ * into logs and model context.
+ */
+const MAX_ERROR_BODY_LENGTH = 2_000;
 
 /**
  * Base class for typed provider errors. The `retryable` flag is the
@@ -71,7 +84,8 @@ export async function buildProviderError(
   response: Response,
 ): Promise<ProviderError> {
   const rawBody = await response.text();
-  const message = rawBody.trim() || `${response.status} ${response.statusText}`.trim();
+  const message = (rawBody.trim() || `${response.status} ${response.statusText}`.trim())
+    .slice(0, MAX_ERROR_BODY_LENGTH);
   const status = response.status;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
 
@@ -103,8 +117,25 @@ export async function buildProviderError(
     });
   }
 
-  // OpenAI / Google 503 = overloaded.
-  if ((provider === "openai" || provider === "google") && status === 503) {
+  // Anthropic 429 = rate limiting. Retryable; honor Retry-After if present.
+  if (provider === "anthropic" && status === 429) {
+    return new ProviderRateLimitError({
+      provider,
+      status,
+      message,
+      retryable: true,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    });
+  }
+
+  // OpenAI / Mistral / Moonshotai / Google 503 = overloaded.
+  // Mistral and Moonshotai use the OpenAI-compatible wire format so their
+  // error shapes are structurally identical to OpenAI's.
+  if (
+    (provider === "openai" || provider === "mistral" || provider === "moonshotai" ||
+      provider === "google") &&
+    status === 503
+  ) {
     return new ProviderOverloadedError({
       provider,
       status,
@@ -114,10 +145,13 @@ export async function buildProviderError(
     });
   }
 
-  // OpenAI 429 splits based on the error code in the body:
+  // OpenAI / Mistral / Moonshotai 429 splits based on the error code in the body:
   //  - insufficient_quota → hard quota, non-retryable
   //  - rate_limit_exceeded / tokens_per_min_exceeded → retry with Retry-After
-  if (provider === "openai" && status === 429) {
+  // Mistral and Moonshotai use the same OpenAI-compatible error envelope.
+  if (
+    (provider === "openai" || provider === "mistral" || provider === "moonshotai") && status === 429
+  ) {
     if (errorCode === "insufficient_quota") {
       return new ProviderQuotaError({
         provider,
@@ -148,6 +182,20 @@ export async function buildProviderError(
       });
     }
     return new ProviderRateLimitError({
+      provider,
+      status,
+      message,
+      retryable: true,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    });
+  }
+
+  // Transient server/gateway errors (500, 502, 503, 504 and other 5xx) are
+  // treated as retryable: a hung, restarting, or overloaded upstream may
+  // recover on a subsequent attempt. The provider-specific 529/503/429 cases
+  // above return earlier; this is the catch-all for the remaining 5xx codes.
+  if (status >= 500 && status <= 599) {
+    return new ProviderOverloadedError({
       provider,
       status,
       message,

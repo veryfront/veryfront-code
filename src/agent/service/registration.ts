@@ -389,12 +389,27 @@ export async function createAgentServiceRegistrationLifecycle(
     }, fetchImpl);
   };
 
+  let consecutiveHeartbeatFailures = 0;
+
   const interval = setInterval(() => {
-    void heartbeat().catch((error: unknown) => {
-      options.logger?.warn?.("Agent service heartbeat failed", {
-        serviceId: service.id,
-        error: getErrorMessage(error),
-      });
+    void heartbeat().then(() => {
+      consecutiveHeartbeatFailures = 0;
+    }).catch((error: unknown) => {
+      consecutiveHeartbeatFailures++;
+      // Escalate from warn to error after repeated failures — persistent heartbeat
+      // loss means the control plane considers this service dead while it keeps running.
+      if (consecutiveHeartbeatFailures >= 3) {
+        options.logger?.error?.("Agent service heartbeat failing persistently", {
+          serviceId: service.id,
+          consecutiveFailures: consecutiveHeartbeatFailures,
+          error: getErrorMessage(error),
+        });
+      } else {
+        options.logger?.warn?.("Agent service heartbeat failed", {
+          serviceId: service.id,
+          error: getErrorMessage(error),
+        });
+      }
     });
   }, input.heartbeatIntervalMs);
 

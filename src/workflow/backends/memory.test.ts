@@ -204,20 +204,20 @@ describe("MemoryBackend", () => {
 
   describe("Locking", () => {
     it("should acquire and release locks", async () => {
-      assertEquals(await backend.acquireLock("resource-1", 5000), true);
+      assertExists(await backend.acquireLock("resource-1", 5000));
       await backend.releaseLock("resource-1");
     });
 
     it("should prevent concurrent locks on same resource", async () => {
-      assertEquals(await backend.acquireLock("resource-2", 5000), true);
-      assertEquals(await backend.acquireLock("resource-2", 100), false);
+      assertExists(await backend.acquireLock("resource-2", 5000));
+      assertEquals(await backend.acquireLock("resource-2", 100), null);
       await backend.releaseLock("resource-2");
     });
 
     it("should allow lock after release", async () => {
-      assertEquals(await backend.acquireLock("resource-3", 5000), true);
+      assertExists(await backend.acquireLock("resource-3", 5000));
       await backend.releaseLock("resource-3");
-      assertEquals(await backend.acquireLock("resource-3", 5000), true);
+      assertExists(await backend.acquireLock("resource-3", 5000));
     });
   });
 

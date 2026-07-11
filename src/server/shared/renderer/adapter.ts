@@ -212,6 +212,9 @@ function resolveEnvironment(ctx: HandlerContext): "preview" | "production" {
 }
 
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
+  // "unknown" is used only for debug logging below — actual cache keys and enriched context
+  // use ctx.projectSlug ?? ctx.projectId ?? derivedProjectId (never "unknown"), so there
+  // is no cross-project cache pollution from this sentinel.
   const projectSlug = ctx.projectSlug ?? "unknown";
 
   if (ctx.enriched) {
@@ -351,6 +354,10 @@ class RendererAdapterImpl implements RendererAdapter {
   }
 
   clearCache(slug?: string): void {
+    // The interface requires void return, so cache-clear failures are fire-and-forget.
+    // The warn log below surfaces failures in monitoring. Callers (e.g., HMR invalidation)
+    // cannot observe the failure — if stale content is served after a deploy, check logs
+    // for "Failed to clear cache" entries.
     this.renderer.clearCache(this.ctx, slug).catch((error) => {
       logger.warn("Failed to clear cache", { error: String(error), slug });
     });

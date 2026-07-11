@@ -24,19 +24,23 @@ export class SecurityConfigLoader {
     if (this.isLoaded) return;
     if (this.loadPromise) return this.loadPromise;
 
-    this.loadPromise = this.load();
-    return this.loadPromise;
+    const loadPromise = this.load();
+    this.loadPromise = loadPromise;
+
+    try {
+      await loadPromise;
+    } catch (error) {
+      // Fail this request closed, but allow a later request to retry after a
+      // transient filesystem, import, or parse failure.
+      if (Object.is(this.loadPromise, loadPromise)) this.loadPromise = null;
+      logger.error("Failed to load security config; will retry on next request", { error });
+      throw error;
+    }
   }
 
   private async load(): Promise<void> {
-    try {
-      const cfg = this.configOverride ?? (await getConfig(this.projectDir, this.adapter));
-      this.applyConfig(cfg);
-    } catch (error) {
-      // Config is optional, so we don't throw
-      logger.debug("Failed to load config", { error });
-      this.isLoaded = true; // Mark as loaded even on error to prevent retry
-    }
+    const cfg = this.configOverride ?? (await getConfig(this.projectDir, this.adapter));
+    this.applyConfig(cfg);
   }
 
   private applyConfig(cfg?: VeryfrontConfig): void {

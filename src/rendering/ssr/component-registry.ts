@@ -273,13 +273,22 @@ export class ComponentRegistry {
 
       if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) continue;
 
+      const extMatch = /\.(tsx|jsx|ts|js)$/.exec(entry.name);
+      const fileType = extMatch?.[1] as "tsx" | "jsx" | "ts" | "js" | undefined;
       const componentName = entry.name.replace(/\.(tsx|jsx|ts|js)$/, "");
       if (componentName === "index") continue;
 
       try {
         const fileContent = await adapter.fs.readFile(entryPath);
 
-        await this.virtualModules.registerModule(`component:${componentName}`, fileContent, dir);
+        // Pass fileType explicitly so the virtual module system does not have
+        // to guess the loader from source content heuristics.
+        await this.virtualModules.registerModule(
+          `component:${componentName}`,
+          fileContent,
+          dir,
+          fileType,
+        );
 
         if (deferLoading) {
           this.componentSources.set(componentName, {

@@ -1,6 +1,9 @@
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
-import { validateContentType } from "#veryfront/security/input-validation/limits.ts";
+import {
+  readBodyWithLimit,
+  validateContentType,
+} from "#veryfront/security/input-validation/limits.ts";
 import { SessionManager } from "./session.ts";
 
 const MAX_REQUEST_BODY_SIZE = 1_048_576; // 1 MB
@@ -101,6 +104,9 @@ export function createMCPHTTPHandler(
       return new Response("Method Not Allowed", { status: 405 });
     }
 
+    // Fast-path rejection when the client advertises an oversized body. This is
+    // advisory only (chunked/omitted content-length bypasses it), so the
+    // streaming read below enforces the true cap.
     const contentLength = request.headers.get("content-length");
     if (contentLength && Number(contentLength) > MAX_REQUEST_BODY_SIZE) {
       return createJSONRPCErrorResponse(413, -32600, "Request body too large");
@@ -115,12 +121,18 @@ export function createMCPHTTPHandler(
 
     let rpcRequest: JSONRPCRequest;
     try {
-      const bodyText = await request.text();
-      if (bodyText.length > MAX_REQUEST_BODY_SIZE) {
+      // readBodyWithLimit streams the body and aborts once the byte cap is
+      // exceeded, so an oversized (or chunked) body is rejected without being
+      // fully buffered first.
+      const bodyText = await readBodyWithLimit(request, MAX_REQUEST_BODY_SIZE);
+      rpcRequest = JSON.parse(bodyText) as JSONRPCRequest;
+    } catch (error) {
+      if (
+        error instanceof VeryfrontError &&
+        error.detail === "Request body exceeds size limit"
+      ) {
         return createJSONRPCErrorResponse(413, -32600, "Request body too large");
       }
-      rpcRequest = JSON.parse(bodyText) as JSONRPCRequest;
-    } catch (_) {
       return createJSONRPCErrorResponse(400, -32700, "Parse error");
     }
 

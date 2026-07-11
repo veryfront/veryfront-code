@@ -3,6 +3,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger } from "#veryfront/utils";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = agentLogger.component("local-blob-storage");
@@ -101,18 +102,28 @@ export class LocalBlobStorage implements BlobStorage {
   async getText(id: string): Promise<string | null> {
     try {
       return await this.fs.readTextFile(this.getPath(id));
-    } catch (_) {
-      /* expected: file not found returns null */
-      return null;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      // Genuine I/O failure (EACCES, disk error): don't mask it as "not found".
+      logger.warn("Failed to read blob text", {
+        id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
     try {
       return await this.fs.readFile(this.getPath(id));
-    } catch (_) {
-      /* expected: file not found returns null */
-      return null;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      // Genuine I/O failure (EACCES, disk error): don't mask it as "not found".
+      logger.warn("Failed to read blob bytes", {
+        id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 

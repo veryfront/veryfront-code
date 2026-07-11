@@ -6,6 +6,9 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { isCompiledBinary } from "#veryfront/utils/platform.ts";
+import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 export const LOG_PREFIX = "[SSR-VF-MODULES]";
 
@@ -26,15 +29,25 @@ export const FRAMEWORK_ROOT = RUNTIME_FRAMEWORK_ROOT;
 // In compiled binaries, files are extracted to the runtime directory.
 export const EMBEDDED_SRC_DIR = join(RUNTIME_FRAMEWORK_ROOT, "dist", "framework-src");
 
-// Map of _vf_modules prefixes to framework directories.
-// Prefer regular src/ when present so source checkouts never serve stale
-// dist/framework-src copies; compiled binaries fall back to embedded .src files.
-export const FRAMEWORK_LOOKUPS: Array<[prefix: string, frameworkDir: string]> = [
-  // Regular sources for dev mode
-  ["_veryfront/", join(FRAMEWORK_ROOT, "src")],
-  // Embedded sources for compiled binaries (these are .src files)
-  ["_veryfront/", EMBEDDED_SRC_DIR],
-];
+/**
+ * Build the framework source lookup order for the active runtime.
+ *
+ * Deno compile exposes imported `src/` files through its virtual filesystem,
+ * but those copies may already contain compile-time import-map rewrites. Using
+ * them as transform input can pin framework components to the build's React
+ * version instead of the project's version. Compiled binaries therefore use
+ * the pristine `.src` assets first. Source checkouts keep live `src/` files
+ * first so local edits cannot be shadowed by stale generated assets.
+ */
+export function getFrameworkLookups(
+  compiled = isCompiledBinary(),
+): Array<[prefix: string, frameworkDir: string]> {
+  const source: [string, string] = ["_veryfront/", join(FRAMEWORK_ROOT, "src")];
+  const embedded: [string, string] = ["_veryfront/", EMBEDDED_SRC_DIR];
+  return compiled ? [embedded, source] : [source, embedded];
+}
+
+export const FRAMEWORK_LOOKUPS = getFrameworkLookups();
 
 // Singleflight for framework module file writes to prevent race conditions
 export const frameworkWriteFlight = new Singleflight<string>();
@@ -43,26 +56,63 @@ export const frameworkWriteFlight = new Singleflight<string>();
 // modules importing the same veryfront/* module do not receive cycle placeholders.
 export const frameworkTransformFlight = new Singleflight<string>();
 
-// Cache for already-transformed #veryfront/ dependencies to avoid cycles and redundant work
-export const veryfrontTransformCache = new Map<string, string>();
+// Singleflight for root framework-file transforms. Recursive transforms use
+// per-call ancestry instead so a real dependency cycle returns immediately
+// rather than awaiting its own in-flight promise.
+export const frameworkFileTransformFlight = new Singleflight<string>();
 
-// Cache for transformed framework files by absolute path to prevent cycles and redundant work
-export const frameworkFileCache = new Map<string, string>();
+/**
+ * Scope every in-memory framework transform entry to the project and React
+ * runtime that produced it. Framework output contains concrete React bundle
+ * URLs and is rewritten through the project's import map. Sharing an entry
+ * across either boundary can link a renderer to the wrong dependency graph.
+ */
+export function buildFrameworkTransformCacheKey(
+  identifier: string,
+  reactVersion: string,
+  projectDir: string,
+  sourceContent: string,
+): string {
+  const contentFingerprint = `${sourceContent.length}:${hashCodeHex(sourceContent)}:${
+    fnv1aHash(sourceContent)
+  }`;
+  return JSON.stringify([projectDir, reactVersion, identifier, contentFingerprint]);
+}
 
-// Track files currently being transformed to detect cycles
+// Maximum entries for the per-process framework transform caches.
+// The framework source tree is large but finite; 500 entries comfortably covers
+// a full build while bounding memory in long-running servers.  Evicted entries
+// are simply recomputed on the next request.
+const FRAMEWORK_CACHE_MAX_ENTRIES = 500;
+
+// Cache for already-transformed #veryfront/ dependencies to avoid cycles and redundant work.
+// Bounded with LRUCache to prevent unbounded memory growth in long-running servers.
+export const veryfrontTransformCache = new LRUCache<string, string>({
+  maxEntries: FRAMEWORK_CACHE_MAX_ENTRIES,
+});
+
+// Cache for transformed framework files by absolute path to prevent cycles and redundant work.
+// Bounded with LRUCache to prevent unbounded memory growth in long-running servers.
+export const frameworkFileCache = new LRUCache<string, string>({
+  maxEntries: FRAMEWORK_CACHE_MAX_ENTRIES,
+});
+
+// Track active transforms for diagnostics and cleanup assertions.
 export const transformingFiles = new Set<string>();
 
 // Maximum recursion depth for chained relative imports within framework
 // source. veryfront's own framework tree has relative-import chains deeper
 // than 10 (e.g. errors/utils/schemas internals reach ~11), and crossing a
 // `#veryfront/` boundary resets the counter, so this only bounds consecutive
-// `./`/`../` nesting. Cycles are caught separately by `transformingFiles`;
-// this is purely a stack-safety bound, so it is set generously above the
-// framework's real depth. Exceeding it falls back to a degraded transform.
+// `./`/`../` nesting. Cycles are detected by traversal-local ancestry. This is
+// purely a stack-safety bound, so it is set generously above the framework's
+// real depth. Exceeding this limit falls back to a degraded transform.
 export const MAX_RELATIVE_IMPORT_DEPTH = 64;
 
 export interface TransformContext {
   reactVersion: string;
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
+  /** Transform keys already visited by the current recursive traversal. */
+  transformAncestry?: ReadonlySet<string>;
 }

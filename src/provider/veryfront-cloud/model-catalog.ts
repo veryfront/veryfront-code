@@ -18,7 +18,11 @@ export type VeryfrontCloudChatModel = {
   thinkingBudgetTokens?: number;
 };
 
-/** Default value for Veryfront Cloud model ID. */
+/**
+ * Default Veryfront Cloud model ID used when no model is configured.
+ * Update this when the current default is deprecated — otherwise the default
+ * path silently breaks for users who have not set an explicit model.
+ */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
 /** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
@@ -31,13 +35,21 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "mistral/",
   "moonshotai/",
 ];
+/**
+ * Anthropic models that use the adaptive thinking API (type: "adaptive").
+ * New Opus/Sonnet versions supporting adaptive thinking must be added here,
+ * otherwise they fall back to the standard budget-token thinking path.
+ */
 const ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS = new Set([
   "anthropic/claude-opus-4-7",
   "anthropic/claude-opus-4-8",
 ]);
 
+/** Returns true if the given model ID is a Mistral model in the catalog. */
 export function isSupportedMistralModelId(modelId: string): boolean {
-  return VERYFRONT_CLOUD_CHAT_MODELS.some((model) => model.modelId === modelId);
+  return VERYFRONT_CLOUD_CHAT_MODELS.some(
+    (model) => model.provider === "mistral" && model.modelId === modelId,
+  );
 }
 
 /** Shared Veryfront Cloud chat models value. */
@@ -231,6 +243,8 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   }
 
   if (requestedModel.includes("/")) {
+    // Mistral models are gated by the catalog whitelist; reject ids we don't
+    // list so callers get a clear error rather than a gateway-side failure.
     if (requestedModel.startsWith("mistral/") && !isSupportedMistralModelId(requestedModel)) {
       throw new Error(`Unsupported Mistral model "${requestedModel}"`);
     }
@@ -253,13 +267,12 @@ export function resolveVeryfrontCloudGatewayModelId(
   }
 
   if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
-    const unprefixedModelId = modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length);
-    if (unprefixedModelId.startsWith("mistral/") && !isSupportedMistralModelId(unprefixedModelId)) {
-      return modelId;
-    }
+    // Already prefixed for the gateway — pass through as-is.
     return modelId;
   }
 
+  // Unsupported Mistral ids are passed through unprefixed (not routed through
+  // the Veryfront Cloud gateway prefix).
   if (modelId.startsWith("mistral/") && !isSupportedMistralModelId(modelId)) {
     return modelId;
   }

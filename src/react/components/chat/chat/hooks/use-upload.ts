@@ -61,6 +61,11 @@ function isImage(file: File): boolean {
 let uploadCounter = 0;
 function nextId(): string {
   uploadCounter += 1;
+  // `crypto.randomUUID()` is preferred for global uniqueness across tabs/sessions.
+  // The counter fallback guarantees uniqueness within the current session when
+  // the Crypto API is unavailable (e.g. insecure contexts or old environments).
+  // The counter increment runs unconditionally so the fallback branch is always
+  // deterministic and never produces duplicate IDs within a session.
   const rand = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : String(uploadCounter);

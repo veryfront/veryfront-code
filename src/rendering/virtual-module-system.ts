@@ -10,6 +10,22 @@ interface VirtualModule {
   contentType: string;
 }
 
+/**
+ * Heuristic fallback: infer a JSX/TSX loader from source content when the
+ * caller has not supplied an explicit file type. Callers that know the file
+ * extension (e.g. by reading `entry.name`) should pass it as `fileType` to
+ * `registerModule` instead of relying on this function.
+ */
+function inferLoaderFromSource(source: string): "tsx" | "jsx" {
+  const hasTypeAnnotations = source.includes(": React.FC") ||
+    source.includes("Props>") ||
+    source.includes("useState<") ||
+    source.includes("useRef<") ||
+    // interface/type keywords are TS-specific; guard against bare words in strings
+    /(?:^|\s)(?:interface|type)\s+\w/.test(source);
+  return hasTypeAnnotations ? "tsx" : "jsx";
+}
+
 export class VirtualModuleSystem {
   private modules = new Map<string, VirtualModule>();
   private baseUrl: string;
@@ -30,41 +46,50 @@ export class VirtualModuleSystem {
     this.adapter = adapter;
   }
 
-  register(id: string, source: string, projectDir: string): Promise<string> {
-    return this.registerModule(id, source, projectDir);
+  register(
+    id: string,
+    source: string,
+    projectDir: string,
+    fileType?: "tsx" | "jsx" | "ts" | "js",
+  ): Promise<string> {
+    return this.registerModule(id, source, projectDir, fileType);
   }
 
-  async registerModule(id: string, source: string, projectDir: string): Promise<string> {
+  async registerModule(
+    id: string,
+    source: string,
+    projectDir: string,
+    fileType?: "tsx" | "jsx" | "ts" | "js",
+  ): Promise<string> {
     const importMap = await loadImportMap(projectDir, this.adapter);
 
-    const hasTypeScript = source.includes("interface ") ||
-      source.includes("type ") ||
-      source.includes(": React.FC") ||
-      (source.includes("<") && source.includes(">")) ||
-      source.includes("Props>") ||
-      source.includes("useState<") ||
-      source.includes("useRef<");
+    // Prefer the explicit file type supplied by the caller (it knows the extension).
+    // Fall back to heuristic detection only when no type is provided.
+    const loader: "tsx" | "jsx" | "ts" | "js" = fileType ?? inferLoaderFromSource(source);
 
-    const result = await transformJsx(source, {
-      loader: hasTypeScript ? "tsx" : "jsx",
-    });
+    const result = await transformJsx(source, { loader });
 
     let transformedCode = transformImportsWithMap(result.code, importMap, undefined, {
       resolveBare: true,
     });
 
     transformedCode = transformedCode
-      .replace(/from\s+"https?:\/\/[^"']+react@[^"']+\/jsx-runtime"/g, 'from "react/jsx-runtime"')
+      // Handle both single- and double-quoted react runtime imports
       .replace(
-        /from\s+"https?:\/\/[^"']+react@[^"']+\/jsx-dev-runtime"/g,
-        'from "react/jsx-dev-runtime"',
+        /from\s+["']https?:\/\/[^"']+react@[^"']+\/jsx-runtime["']/g,
+        'from "react/jsx-runtime"',
       )
       .replace(
-        /from\s+["']\.\/(\w+)(?:\.(?:t|j)sx)?["']/g,
+        /from\s+["']https?:\/\/[^"']+react@[^"']+\/jsx-dev-runtime["']/g,
+        'from "react/jsx-dev-runtime"',
+      )
+      // Rewrite single-segment relative imports (including kebab-case names like ./my-button)
+      .replace(
+        /from\s+["']\.\/([\w-]+)(?:\.(?:t|j)sx?)?["']/g,
         'from "/_veryfront/modules/component:$1"',
       )
       .replace(
-        /import\(["']\.\/(\w+)(?:\.(?:t|j)sx)?["']\)/g,
+        /import\(["']\.\/([\w-]+)(?:\.(?:t|j)sx?)?["']\)/g,
         'import("/_veryfront/modules/component:$1")',
       );
 

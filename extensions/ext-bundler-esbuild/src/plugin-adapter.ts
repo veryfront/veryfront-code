@@ -19,7 +19,14 @@ import type {
 // deno-lint-ignore no-explicit-any
 type EsbuildPlugin = any;
 
-export function toEsbuildPlugin(plugin: BundlerPlugin): EsbuildPlugin {
+type PluginContextRunner = <T>(callback: () => T) => T;
+type PluginDisposeWrapper = (callback: () => unknown) => () => void;
+
+export function toEsbuildPlugin(
+  plugin: BundlerPlugin,
+  runInContext: PluginContextRunner,
+  wrapDispose: PluginDisposeWrapper,
+): EsbuildPlugin {
   return {
     name: plugin.name,
     // deno-lint-ignore no-explicit-any
@@ -27,40 +34,42 @@ export function toEsbuildPlugin(plugin: BundlerPlugin): EsbuildPlugin {
       const bridged: BundlerPluginBuild = {
         onResolve(options, callback) {
           // deno-lint-ignore no-explicit-any
-          build.onResolve(options, async (args: any) => {
-            const resolveArgs: OnResolveArgs = {
-              path: args.path,
-              importer: args.importer,
-              namespace: args.namespace,
-              resolveDir: args.resolveDir,
-              kind: args.kind,
-              pluginData: args.pluginData,
-            };
-            const result = await callback(resolveArgs);
-            if (result == null) return result ?? null;
-            return result as OnResolveResult;
-          });
+          build.onResolve(options, (args: any) =>
+            runInContext(async () => {
+              const resolveArgs: OnResolveArgs = {
+                path: args.path,
+                importer: args.importer,
+                namespace: args.namespace,
+                resolveDir: args.resolveDir,
+                kind: args.kind,
+                pluginData: args.pluginData,
+              };
+              const result = await callback(resolveArgs);
+              if (result == null) return result ?? null;
+              return result as OnResolveResult;
+            }));
         },
         onLoad(options, callback) {
           // deno-lint-ignore no-explicit-any
-          build.onLoad(options, async (args: any) => {
-            const loadArgs: OnLoadArgs = {
-              path: args.path,
-              namespace: args.namespace,
-              suffix: args.suffix,
-              pluginData: args.pluginData,
-            };
-            const result = await callback(loadArgs);
-            if (result == null) return result ?? null;
-            return result as OnLoadResult;
-          });
+          build.onLoad(options, (args: any) =>
+            runInContext(async () => {
+              const loadArgs: OnLoadArgs = {
+                path: args.path,
+                namespace: args.namespace,
+                suffix: args.suffix,
+                pluginData: args.pluginData,
+              };
+              const result = await callback(loadArgs);
+              if (result == null) return result ?? null;
+              return result as OnLoadResult;
+            }));
         },
         onDispose(callback) {
-          build.onDispose(callback);
+          build.onDispose(wrapDispose(() => runInContext(callback)));
         },
       };
 
-      plugin.setup(bridged);
+      return runInContext(() => plugin.setup(bridged));
     },
   };
 }

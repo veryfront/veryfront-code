@@ -1,7 +1,15 @@
+import { logger } from "#veryfront/utils";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
+
+/** Default timeout for a single outbound remote MCP request. */
+const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
+/** Upper bound on characters of a remote error body surfaced in thrown errors. */
+const MAX_ERROR_BODY_LENGTH = 2_000;
+/** Defensive cap on tools/list pagination to avoid unbounded cursor loops. */
+const MAX_TOOL_LIST_PAGES = 50;
 
 type ResolvableValue<T> = T | ((context?: ToolExecutionContext) => T | Promise<T>);
 
@@ -113,10 +121,26 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
-function isOauthInvalidGrantMessage(value: unknown): boolean {
+function isOauthExpiredMessage(value: unknown): boolean {
+  // Check structured OAuth error field first (RFC 6749 / RFC 6750 error codes).
+  if (typeof value === "object" && value !== null) {
+    const errorCode = (value as Record<string, unknown>).error;
+    if (
+      errorCode === "invalid_grant" ||
+      errorCode === "expired_token" ||
+      errorCode === "token_revoked"
+    ) {
+      return true;
+    }
+  }
+  // Fall back to substring scan for providers that embed the code in message text.
   const text = typeof value === "string" ? value : JSON.stringify(value);
   const normalized = text.toLowerCase();
-  return normalized.includes("invalid_grant");
+  return (
+    normalized.includes("invalid_grant") ||
+    normalized.includes("expired_token") ||
+    normalized.includes("token_revoked")
+  );
 }
 
 function getIntegrationIdFromToolName(toolName: string): string {
@@ -162,7 +186,7 @@ function normalizeKnownToolError(
   endpoint: string,
   context?: ToolExecutionContext,
 ): unknown {
-  if (!isOauthInvalidGrantMessage(value)) {
+  if (!isOauthExpiredMessage(value)) {
     return value;
   }
 
@@ -311,20 +335,45 @@ function mergeAcceptHeader(existingAccept: string | null): string {
   return existingTypes.join(", ");
 }
 
+/**
+ * Build the AbortSignal for a single outbound request: a fresh timeout, combined
+ * with the caller's abort signal when one is available (and the runtime supports
+ * `AbortSignal.any`). A hung remote server otherwise blocks the whole agent loop.
+ */
+function buildRequestSignal(abortSignal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REMOTE_MCP_REQUEST_TIMEOUT_MS);
+  if (abortSignal && typeof AbortSignal.any === "function") {
+    return AbortSignal.any([abortSignal, timeout]);
+  }
+  return timeout;
+}
+
 async function postJsonRpc(
   endpoint: string,
   headers: Headers,
   body: Record<string, unknown>,
   fetchImpl: typeof fetch,
+  signal: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetchImpl(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error(
+        `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
+      );
+    }
+    throw error;
+  }
 
   if (!response.ok) {
-    const detail = await response.text();
+    const detail = (await response.text()).slice(0, MAX_ERROR_BODY_LENGTH);
     throw new Error(
       `Remote MCP request failed (${response.status})${detail ? `: ${detail}` : ""}`,
     );
@@ -358,43 +407,42 @@ function normalizeCallToolResult(input: {
   const result = input.result;
   if (!isRecord(result)) return result;
 
+  // OAuth-expired detection must run only on ERROR channels. A successful
+  // payload whose text merely mentions e.g. "invalid_grant" must pass through
+  // untouched — otherwise a valid result is wholesale replaced with a
+  // reconnect_required error.
+  const isError = hasToolExecutionErrorMarker(result);
   const rawContent = result.content;
+
   if (Array.isArray(rawContent)) {
     const text = joinCallToolText(
       rawContent.filter((item): item is JsonRpcCallToolContentItem => isRecord(item)),
     );
 
-    if ("structuredContent" in result) {
-      return normalizeKnownToolError(
-        result.structuredContent,
-        input.toolName,
-        input.endpoint,
-        input.context,
-      );
+    if (isError) {
+      const errorBody = "structuredContent" in result
+        ? result.structuredContent
+        : parseJsonText(text) ?? { error: "tool_error", message: text };
+      return normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context);
     }
 
-    if (hasToolExecutionErrorMarker(result)) {
-      return normalizeKnownToolError(
-        parseJsonText(text) ?? { error: "tool_error", message: text },
-        input.toolName,
-        input.endpoint,
-        input.context,
-      );
+    if ("structuredContent" in result) {
+      return result.structuredContent;
     }
 
     return parseJsonText(text) ?? text;
   }
 
-  if ("structuredContent" in result) {
-    return normalizeKnownToolError(
-      result.structuredContent,
-      input.toolName,
-      input.endpoint,
-      input.context,
-    );
+  if (isError) {
+    const errorBody = "structuredContent" in result ? result.structuredContent : result;
+    return normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context);
   }
 
-  return normalizeKnownToolError(result, input.toolName, input.endpoint, input.context);
+  if ("structuredContent" in result) {
+    return result.structuredContent;
+  }
+
+  return result;
 }
 
 function buildRunContextMeta(
@@ -423,18 +471,45 @@ export function createRemoteMCPToolSource(
     async listTools(context) {
       const endpoint = await resolveValue(config.endpoint, context);
       const headers = await resolveHeaders(config.headers, context);
-      const payload = await postJsonRpc(
-        endpoint,
-        headers,
-        {
-          jsonrpc: "2.0",
-          id: `${id}:tools:list`,
-          method: listMethod,
-        },
-        config.fetch ?? globalThis.fetch,
-      );
+      const fetchImpl = config.fetch ?? globalThis.fetch;
 
-      return normalizeToolDefinitions(getJsonRpcResult(payload));
+      const definitions: ToolDefinition[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < MAX_TOOL_LIST_PAGES; page += 1) {
+        const payload = await postJsonRpc(
+          endpoint,
+          headers,
+          {
+            jsonrpc: "2.0",
+            id: `${id}:tools:list`,
+            method: listMethod,
+            ...(cursor !== undefined ? { params: { cursor } } : {}),
+          },
+          fetchImpl,
+          buildRequestSignal(context?.abortSignal),
+        );
+
+        const result = getJsonRpcResult(payload);
+        definitions.push(...normalizeToolDefinitions(result));
+
+        const nextCursor = isRecord(result) && typeof result.nextCursor === "string" &&
+            result.nextCursor.length > 0
+          ? result.nextCursor
+          : undefined;
+        if (nextCursor === undefined) {
+          return definitions;
+        }
+        cursor = nextCursor;
+
+        if (page === MAX_TOOL_LIST_PAGES - 1) {
+          logger.warn("Remote MCP tools/list pagination capped", {
+            id,
+            pages: MAX_TOOL_LIST_PAGES,
+          });
+        }
+      }
+
+      return definitions;
     },
 
     async executeTool(toolName, args, context) {
@@ -457,6 +532,7 @@ export function createRemoteMCPToolSource(
             },
           },
           config.fetch ?? globalThis.fetch,
+          buildRequestSignal(context?.abortSignal),
         );
 
         return normalizeCallToolResult({

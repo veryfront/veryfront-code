@@ -23,6 +23,23 @@ export interface DomainLookupResult {
   release_id: string | null;
 }
 
+/**
+ * Thrown when the domain lookup API returns a transient non-404 error (e.g., 500, 503).
+ * Callers should distinguish this from a null return (domain genuinely not mapped):
+ * a null return means 404/not-found, this error means the lookup service itself failed
+ * and the request should be treated as a 502 rather than a 404.
+ */
+export class DomainLookupApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly statusText: string,
+    domain: string,
+  ) {
+    super(`Domain lookup API error for "${domain}": ${status} ${statusText}`);
+    this.name = "DomainLookupApiError";
+  }
+}
+
 interface DomainLookupConfig {
   apiBaseUrl: string;
   apiToken: string;
@@ -171,12 +188,15 @@ function fetchDomainLookup(
         }
 
         if (!response.ok) {
-          logger.error("API error", {
+          logger.error("API error — throwing DomainLookupApiError so callers can return 502", {
             domain,
             status: response.status,
             statusText: response.statusText,
           });
-          return null;
+          // Throw instead of returning null: null means "domain not found" (404 to client).
+          // A 5xx from the lookup API is a transient outage, not a missing mapping.
+          // Callers should catch DomainLookupApiError and respond with 502 instead of 404.
+          throw new DomainLookupApiError(response.status, response.statusText, domain);
         }
 
         const project = (await response.json()) as ProjectResponse;
@@ -259,5 +279,8 @@ export function getEnvironmentType(
     return "preview";
   }
 
-  return "production";
+  // Unknown environment names default to "preview" (safe: does not expose released/production
+  // content to the public). Defaulting to "production" for an unknown env name would risk
+  // serving production content to users on environments that are not intentionally public.
+  return "preview";
 }

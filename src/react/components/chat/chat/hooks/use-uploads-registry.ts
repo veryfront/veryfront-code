@@ -49,6 +49,10 @@ export interface UseUploadsRegistryResult {
   isLoading: boolean;
   /** `true` while at least one upload is in flight. */
   isUploading: boolean;
+  /** Error from the most recent failed upload, or `null`. Cleared when `upload` is called again. */
+  uploadError: Error | null;
+  /** Clear the upload error (e.g. after showing a toast). */
+  clearUploadError: () => void;
   /** Upload files (from an input or a drop) and add them to the registry. */
   upload: (files: FileList | File[]) => void;
   /** Add an already-uploaded file to the registry (e.g. one sent via chat). */
@@ -122,6 +126,7 @@ export function useUploadsRegistry(
   // source of truth — stay "loading" until the first GET lands so surfaces can
   // show a placeholder instead of flashing the empty state.
   const [isLoading, setIsLoading] = React.useState(true);
+  const [uploadError, setUploadError] = React.useState<Error | null>(null);
 
   // Persist whenever the list changes.
   React.useEffect(() => {
@@ -142,8 +147,12 @@ export function useUploadsRegistry(
     });
   }, []);
 
+  const clearUploadError = React.useCallback(() => setUploadError(null), []);
+
   const upload = React.useCallback(
     (files: FileList | File[]) => {
+      // Clear any previous error so the UI can reset before the new attempt.
+      setUploadError(null);
       for (const file of Array.from(files)) {
         setInFlight((n) => n + 1);
         const form = new FormData();
@@ -161,7 +170,11 @@ export function useUploadsRegistry(
               ...(body.url ? { url: body.url } : {}),
             });
           })
-          .catch(() => {/* surfaced via isUploading dropping; caller may retry */})
+          .catch((error) => {
+            // Surface the failure so the UI can show an error message or retry
+            // affordance. Without this, a network blip silently drops the file.
+            setUploadError(error instanceof Error ? error : new Error("Upload failed"));
+          })
           .finally(() => setInFlight((n) => Math.max(0, n - 1)));
       }
     },
@@ -224,6 +237,8 @@ export function useUploadsRegistry(
     items,
     isLoading,
     isUploading: inFlight > 0,
+    uploadError,
+    clearUploadError,
     upload,
     add,
     remove,

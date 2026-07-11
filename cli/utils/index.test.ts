@@ -9,6 +9,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { resetInteractiveMode } from "../shared/interactive.ts";
+import { setJsonMode } from "../shared/json-output.ts";
 import {
   confirmPrompt,
   ensureConfirmPromptAvailable,
@@ -74,6 +75,15 @@ describe("showLogo", () => {
   it("outputs Veryfront in cyan", () => {
     const { stdout } = captureOutput(showLogo);
     assertStringIncludes(stdout, "Veryfront");
+  });
+
+  it("does not write human output in JSON mode", () => {
+    setJsonMode(true);
+    try {
+      assertEquals(captureOutput(showLogo).stdout, "");
+    } finally {
+      setJsonMode(false);
+    }
   });
 });
 

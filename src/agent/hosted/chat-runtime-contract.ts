@@ -109,10 +109,15 @@ export type HostedSubmittedFormInputResult = {
   inputRequestId: string;
 };
 
+/** Runtime target kind carried by hosted project-agent runs. */
+export type HostedChatRuntimeTargetKind = "main_branch" | "environment" | "preview_branch";
+
 /** Options accepted by hosted chat runtime creation. */
 export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingConfig> = {
   projectId: string | null;
   branchId?: string | null;
+  runtimeTargetKind?: HostedChatRuntimeTargetKind | null;
+  runtimeTargetEnvironmentId?: string | null;
   authToken: string;
   instructions: string | ChatSystemMessage[];
   runId?: string;

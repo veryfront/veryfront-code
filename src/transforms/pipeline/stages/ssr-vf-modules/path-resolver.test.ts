@@ -7,7 +7,7 @@ import {
   resolveRelativeFrameworkImport,
   tryReadWithExtensions,
 } from "./path-resolver.ts";
-import { FRAMEWORK_ROOT } from "./constants.ts";
+import { EMBEDDED_SRC_DIR, FRAMEWORK_ROOT, getFrameworkLookups } from "./constants.ts";
 
 function createMockFs(files: Record<string, string>) {
   return {
@@ -58,6 +58,13 @@ describe("tryReadWithExtensions", () => {
 });
 
 describe("resolveFrameworkFile", () => {
+  it("prefers pristine embedded sources in compiled binaries", () => {
+    const lookups = getFrameworkLookups(true);
+
+    assertEquals(lookups[0]?.[1], EMBEDDED_SRC_DIR);
+    assertEquals(lookups[1]?.[1], join(FRAMEWORK_ROOT, "src"));
+  });
+
   it("returns null for unresolvable paths", async () => {
     const fs = createMockFs({});
     const result = await resolveFrameworkFile(
@@ -82,6 +89,27 @@ describe("resolveFrameworkFile", () => {
     assertEquals(result?.sourcePath, sourcePath);
     assertEquals(result?.content, "export function usePageContext() {}");
   });
+
+  for (
+    const maliciousPath of [
+      "/_vf_modules/_veryfront/../../secret.js",
+      "/_vf_modules/_veryfront/%252e%252e/secret.js",
+      "/_vf_modules/_veryfront/..\\..\\secret.js",
+    ]
+  ) {
+    it(`rejects framework traversal path ${maliciousPath}`, async () => {
+      const fs = createMockFs(
+        new Proxy({}, {
+          has: () => true,
+          get: () => "secret",
+        }) as Record<string, string>,
+      );
+
+      const result = await resolveFrameworkFile(maliciousPath, fs, async () => true);
+
+      assertEquals(result, null);
+    });
+  }
 });
 
 describe("resolveRelativeFrameworkImport", () => {

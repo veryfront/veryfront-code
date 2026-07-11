@@ -8,6 +8,29 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { step } from "../dsl/step.ts";
 import type { RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { StepExecutor } from "./step-executor.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
+
+/** A step whose tool throws `error`, counting how many times it is invoked. */
+function makeThrowingStepNode(
+  retry: RetryConfig,
+  error: unknown,
+): { node: WorkflowNode; getCalls: () => number } {
+  let calls = 0;
+  const node = step("throwing-step", {
+    tool: {
+      id: "throwing",
+      description: "always throws",
+      // deno-lint-ignore require-await
+      execute: async () => {
+        calls++;
+        throw error;
+      },
+      // deno-lint-ignore no-explicit-any
+    } as any,
+    retry,
+  });
+  return { node, getCalls: () => calls };
+}
 
 function makeContext(): WorkflowContext {
   return { input: {} };
@@ -81,5 +104,145 @@ describe("StepExecutor retry validation", () => {
 
     const result = await executor.execute(node, makeContext());
     assertEquals(result.success, true);
+  });
+});
+
+describe("StepExecutor retry classification", () => {
+  const retry: RetryConfig = {
+    maxAttempts: 3,
+    backoff: "fixed",
+    initialDelay: 1,
+    maxDelay: 1,
+  };
+
+  it("retries a VeryfrontError with a retryable status", async () => {
+    const executor = new StepExecutor({});
+    const { node, getCalls } = makeThrowingStepNode(
+      retry,
+      TIMEOUT_ERROR.create({ detail: "step timed out" }), // status 408 -> retryable
+    );
+
+    const result = await executor.execute(node, makeContext());
+    assertEquals(result.success, false);
+    assertEquals(getCalls(), 3); // exhausted all attempts
+  });
+
+  it("does NOT retry a plain error whose message merely contains '429'", async () => {
+    const executor = new StepExecutor({});
+    const { node, getCalls } = makeThrowingStepNode(
+      retry,
+      new Error("Found 429 items exceeding limit"),
+    );
+
+    const result = await executor.execute(node, makeContext());
+    assertEquals(result.success, false);
+    assertEquals(getCalls(), 1); // no retry — not a transient error
+  });
+
+  it("retries a system error with a transient network code", async () => {
+    const executor = new StepExecutor({});
+    const err = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+    const { node, getCalls } = makeThrowingStepNode(retry, err);
+
+    const result = await executor.execute(node, makeContext());
+    assertEquals(result.success, false);
+    assertEquals(getCalls(), 3);
+  });
+});
+
+describe("StepExecutor timeout isolation", () => {
+  it("stops waiting after the cancellation grace when a timed-out tool never settles", async () => {
+    const operation = Promise.withResolvers<unknown>();
+    let receivedSignal: AbortSignal | undefined;
+    let completions = 0;
+    let attempts = 0;
+    const executor = new StepExecutor({
+      cancellationGracePeriod: 5,
+      onStepComplete: () => completions++,
+    });
+    const node = step("never-settling-step", {
+      tool: {
+        id: "never-settling-tool",
+        description: "Never settles and ignores cancellation",
+        execute: (_input: unknown, context?: { abortSignal?: AbortSignal }) => {
+          attempts++;
+          receivedSignal = context?.abortSignal;
+          return operation.promise;
+        },
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      timeout: 5,
+      retry: {
+        maxAttempts: 2,
+        backoff: "fixed",
+        initialDelay: 1,
+        maxDelay: 1,
+      },
+    });
+
+    let result;
+    let watchdogId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      result = await Promise.race([
+        executor.execute(node, makeContext()),
+        new Promise<never>((_, reject) =>
+          watchdogId = setTimeout(
+            () => reject(new Error("Step execution did not stop after timeout")),
+            100,
+          )
+        ),
+      ]);
+    } finally {
+      if (watchdogId !== undefined) clearTimeout(watchdogId);
+      // A late rejection must remain observed after the public execution settles.
+      operation.reject(new Error("late tool rejection"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    assertEquals(result.success, false);
+    assertEquals(result.error?.includes("timed out after 5ms"), true);
+    assertEquals(receivedSignal instanceof AbortSignal, true);
+    assertEquals(receivedSignal?.aborted, true);
+    assertEquals(completions, 0);
+    assertEquals(attempts, 1);
+  });
+
+  it("does not overlap retries when a timed-out tool ignores cancellation", async () => {
+    let attempts = 0;
+    let active = 0;
+    let maxActive = 0;
+    const signals: Array<AbortSignal | undefined> = [];
+    const node = step("slow-step", {
+      tool: {
+        id: "slow-tool",
+        description: "Ignores cancellation and settles later",
+        execute: async (_input: unknown, context?: { abortSignal?: AbortSignal }) => {
+          attempts++;
+          active++;
+          maxActive = Math.max(maxActive, active);
+          signals.push(context?.abortSignal);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          active--;
+          return { ok: true };
+        },
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      timeout: 5,
+      retry: {
+        maxAttempts: 2,
+        backoff: "fixed",
+        initialDelay: 1,
+        maxDelay: 1,
+      },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assertEquals(result.success, false);
+    assertEquals(attempts, 2);
+    assertEquals(maxActive, 1);
+    assertEquals(signals.every((signal) => signal instanceof AbortSignal), true);
+    assertEquals(signals.every((signal) => signal?.aborted), true);
   });
 });

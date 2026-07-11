@@ -48,6 +48,13 @@ interface WebSocketDeps {
   cache: FileCache;
   client: VeryfrontApiClient;
   invalidationCallbacks: InvalidationCallbacks;
+  /**
+   * The project's default branch name. Used to decide whether an unscoped
+   * production poke applies to the current branch preview. Defaults to "main"
+   * when not provided; set this to the project's actual default branch to
+   * avoid skipping valid production pokes on non-"main" default branches.
+   */
+  defaultBranchName?: string;
 
   getContentContext: () => ResolvedContentContext | null;
   getContentSource: () => ContentSource;
@@ -134,12 +141,18 @@ export class WebSocketManager {
     this.cleanupTimers();
 
     if (this.wsConsecutiveFailures >= WS_RECONNECT_MAX_FAILURES) {
-      logger.warn("WebSocket reconnect failure cap reached, resetting failure counter", {
-        consecutiveFailures: this.wsConsecutiveFailures,
-        maxFailures: WS_RECONNECT_MAX_FAILURES,
-        cappedDelayMs: WS_RECONNECT_MAX_DELAY_MS,
-        projectId,
-      });
+      // Intentional infinite-retry: once the failure cap is hit the counter
+      // resets so reconnection continues at the maximum back-off delay rather
+      // than stopping permanently. This is the desired long-running-server behavior.
+      logger.warn(
+        "WebSocket reconnect failure cap reached — resetting counter for continued retry at max delay",
+        {
+          consecutiveFailures: this.wsConsecutiveFailures,
+          maxFailures: WS_RECONNECT_MAX_FAILURES,
+          cappedDelayMs: WS_RECONNECT_MAX_DELAY_MS,
+          projectId,
+        },
+      );
       this.wsConsecutiveFailures = 0;
     }
 
@@ -300,11 +313,36 @@ export class WebSocketManager {
       const message = parsePokeWebSocketMessage(event.data as string);
       if (!message) return;
       const payload = message.payload;
-      const changedPaths = payload.changedPaths as string[] | undefined;
+
+      // Validate payload fields rather than blindly casting Record<string,unknown>.
+      // Unexpected shapes are coerced to safe defaults and logged so malformed
+      // server messages produce a visible warning instead of silent bad values.
+      const rawChangedPaths = payload.changedPaths;
+      const changedPaths: string[] | undefined = Array.isArray(rawChangedPaths) &&
+          rawChangedPaths.every((p) => typeof p === "string")
+        ? (rawChangedPaths as string[])
+        : rawChangedPaths !== undefined
+        ? (logger.warn("[WebSocketManager] POKE payload.changedPaths has unexpected shape", {
+          type: typeof rawChangedPaths,
+        }),
+          undefined)
+        : undefined;
+
       const contentContext = this.deps.getContentContext();
 
-      const pokeBranchId = payload.branchId as string | null | undefined;
-      const pokeBranchName = payload.branchName as string | null | undefined;
+      const rawBranchId = payload.branchId;
+      const pokeBranchId: string | null | undefined = typeof rawBranchId === "string" ||
+          rawBranchId === null ||
+          rawBranchId === undefined
+        ? (rawBranchId as string | null | undefined)
+        : null;
+
+      const rawBranchName = payload.branchName;
+      const pokeBranchName: string | null | undefined = typeof rawBranchName === "string" ||
+          rawBranchName === null ||
+          rawBranchName === undefined
+        ? (rawBranchName as string | null | undefined)
+        : null;
 
       const normalizedBranchId = typeof pokeBranchId === "string" && pokeBranchId.length > 0
         ? pokeBranchId
@@ -383,19 +421,26 @@ export class WebSocketManager {
 
         if (
           !normalizedBranchName && !normalizedBranchId && currentBranch !== null &&
-          currentBranch !== "main"
+          currentBranch !== (this.deps.defaultBranchName ?? "main")
         ) {
-          // Unscoped pokes (no branchId/branchName) are for main branch edits.
-          // Skip only if we're on a named branch (not main).
+          // Unscoped pokes (no branchId/branchName) target the project's default branch.
+          // Skip only if we're previewing a different named branch.
+          // `defaultBranchName` defaults to "main"; set it in deps for projects
+          // using a different default branch (e.g., "master", "develop").
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - unscoped poke for named branch preview",
-            { currentBranch },
+            { currentBranch, defaultBranchName: this.deps.defaultBranchName ?? "main" },
           );
           return;
         }
       }
 
-      const pokeReleaseId = payload.releaseId as string | null | undefined;
+      const rawReleaseId = payload.releaseId;
+      const pokeReleaseId: string | null | undefined = typeof rawReleaseId === "string" ||
+          rawReleaseId === null ||
+          rawReleaseId === undefined
+        ? (rawReleaseId as string | null | undefined)
+        : null;
       const normalizedPokeReleaseId = typeof pokeReleaseId === "string" && pokeReleaseId.length > 0
         ? pokeReleaseId
         : null;
@@ -403,7 +448,13 @@ export class WebSocketManager {
       const isDeploymentPoke = payload.entityType === "deployment";
       const isPublishPoke = isDeploymentPoke || (isProductionMode && !changedPaths?.length);
 
-      const pokeEnvironmentName = payload.environmentName as string | null | undefined;
+      const rawEnvironmentName = payload.environmentName;
+      const pokeEnvironmentName: string | null | undefined =
+        typeof rawEnvironmentName === "string" ||
+          rawEnvironmentName === null ||
+          rawEnvironmentName === undefined
+          ? (rawEnvironmentName as string | null | undefined)
+          : null;
       const normalizedPokeEnvironment =
         typeof pokeEnvironmentName === "string" && pokeEnvironmentName.length > 0
           ? pokeEnvironmentName

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 import {
   makeTempDir,
   mkdir,
@@ -89,6 +90,34 @@ describe("src/skill/path-safety", () => {
     it("should return empty array for non-existent directory", async () => {
       const result = await listSkillSubdir("/nonexistent/path", "references");
       assertEquals(result, []);
+    });
+
+    it("should return empty array when fsAdapter reports optional directory as file-not-found", async () => {
+      const adapter = createSkillTestAdapter({});
+      const result = await listSkillSubdir("/project/skills/test", "assets", {
+        ...adapter,
+        async exists(path: string) {
+          throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}` });
+        },
+      });
+
+      assertEquals(result, []);
+    });
+
+    it("should propagate non-not-found fsAdapter errors", async () => {
+      const adapter = createSkillTestAdapter({});
+
+      await assertRejects(
+        () =>
+          listSkillSubdir("/project/skills/test", "assets", {
+            ...adapter,
+            async exists() {
+              throw new Error("adapter unavailable");
+            },
+          }),
+        Error,
+        "adapter unavailable",
+      );
     });
 
     it("should list files via fsAdapter", async () => {

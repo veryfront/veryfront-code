@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 
 describe("generate-api-reference", () => {
@@ -31,7 +31,11 @@ describe("generate-api-reference", () => {
       // The generator reports "(N missing)." — assert the line is present and
       // parses, without pinning the count (current main has 9 known gaps).
       const missingMatch = stdout.match(/\((\d+) missing\)\./);
-      assertEquals(missingMatch !== null, true, "missing-count line should be present");
+      assertEquals(
+        missingMatch !== null,
+        true,
+        "missing-count line should be present",
+      );
 
       const routerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/router.md`,
@@ -50,13 +54,24 @@ describe("generate-api-reference", () => {
         routerReference,
         "| Name | Description | Source |",
       );
-      assertStringIncludes(
+      // Alias re-exports must resolve to their target's JSDoc description and a
+      // source link. Assert the stable leading phrase + link rather than pinning
+      // the full prose, which evolves with the JSDoc.
+      assertMatch(
         routerReference,
-        "| `RouterProvider` | Provides the router context value used by `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L",
+        /\| `RouterProvider` \| Provides the router context[^|]*\| \[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/,
       );
       assertStringIncludes(
         routerReference,
-        "| `useRouter` | Reads the current router context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L",
+        "| `RouterProvider` | Provides the router context. `pathname`/`query` track the live URL through the shared navigation store's `useSyncExternalStore` surface;",
+      );
+      assertMatch(
+        routerReference,
+        /\| `useRouter` \| Reads the router context[^|]*\| \[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/,
+      );
+      assertStringIncludes(
+        routerReference,
+        "| `useRouter` | Reads the router context: `pathname`, `query`, `params`, and the navigation actions.",
       );
 
       const localHomePrefix = "/" + "Users/";
@@ -110,7 +125,8 @@ describe("generate-api-reference", () => {
           `${outputDir}/veryfront/${entry.name}`,
         );
         for (const line of markdown.split("\n")) {
-          const description = line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
+          const description =
+            line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
           if (!description) continue;
           for (
             const badPhrase of [

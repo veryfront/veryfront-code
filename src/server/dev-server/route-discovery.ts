@@ -81,12 +81,14 @@ export class RouteDiscovery {
 
   private async resolveRouteDirectories(): Promise<RouteDirectory[]> {
     const preferredRouter = this.config?.router;
+    const appDir = this.config?.directories?.app ?? "app";
+    const pagesDir = this.config?.directories?.pages ?? "pages";
     const results: RouteDirectory[] = [];
 
     const candidates: Array<{ type: "app" | "pages"; dir: string }> = [];
-    if (preferredRouter === "app") candidates.push({ type: "app", dir: "app" });
-    else if (preferredRouter === "pages") candidates.push({ type: "pages", dir: "pages" });
-    else candidates.push({ type: "app", dir: "app" }, { type: "pages", dir: "pages" });
+    if (preferredRouter === "app") candidates.push({ type: "app", dir: appDir });
+    else if (preferredRouter === "pages") candidates.push({ type: "pages", dir: pagesDir });
+    else candidates.push({ type: "app", dir: appDir }, { type: "pages", dir: pagesDir });
 
     const veryfrontDir = this.useRelativePaths ? ".veryfront" : join(this.projectDir, ".veryfront");
     if (await this.directoryExists(veryfrontDir)) {
@@ -104,21 +106,28 @@ export class RouteDiscovery {
 
     if (results.length === 0) {
       if (preferredRouter === "app") {
-        const pagesFallback = this.useRelativePaths ? "pages" : join(this.projectDir, "pages");
+        const pagesFallback = this.useRelativePaths ? pagesDir : join(this.projectDir, pagesDir);
         if (await this.directoryExists(pagesFallback)) {
-          logger.warn('router="app" but app/ directory missing; falling back to pages/');
+          logger.warn(
+            `router="app" but ${appDir}/ directory missing; falling back to ${pagesDir}/`,
+          );
           results.push({ type: "pages", path: pagesFallback });
         }
       } else if (preferredRouter === "pages") {
-        const appFallback = this.useRelativePaths ? "app" : join(this.projectDir, "app");
+        const appFallback = this.useRelativePaths ? appDir : join(this.projectDir, appDir);
         if (await this.directoryExists(appFallback)) {
-          logger.warn('router="pages" but pages/ directory missing; using app/');
+          logger.warn(
+            `router="pages" but ${pagesDir}/ directory missing; using ${appDir}/`,
+          );
           results.push({ type: "app", path: appFallback });
         }
       } else {
         const fallbackDirs: RouteDirectory[] = [
-          { type: "app", path: this.useRelativePaths ? "app" : join(this.projectDir, "app") },
-          { type: "pages", path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages") },
+          { type: "app", path: this.useRelativePaths ? appDir : join(this.projectDir, appDir) },
+          {
+            type: "pages",
+            path: this.useRelativePaths ? pagesDir : join(this.projectDir, pagesDir),
+          },
         ];
 
         for (const fallback of fallbackDirs) {
@@ -146,6 +155,14 @@ export class RouteDiscovery {
       logger.debug("Directory stat result", { path, isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
+      // A missing directory is the expected "no routes here" case and by far the
+      // common one (e.g. a project with no `.veryfront` dir yet). Returning false
+      // is correct for both a genuine absence and a transient adapter error, so
+      // this stays at debug: escalating to warn here fires on the ordinary
+      // missing-dir path (the not-found is wrapped by the fallback-wrapper, so it
+      // is not recognizable as ENOENT) and floods normal dev startup. Surfacing a
+      // genuine adapter failure distinctly needs not-found detection that sees
+      // through the fallback wrapper — tracked as a follow-up.
       logger.debug("Directory check failed", { path, error: String(error) });
       return false;
     }
@@ -159,7 +176,7 @@ export class RouteDiscovery {
         if (shouldSkipEntry(entry.name, dir)) continue;
 
         const fullPath = join(dir, entry.name);
-        const routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx)$/, "")}`.replace(
+        const routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx?)$/, "")}`.replace(
           /\/+/g,
           "/",
         );
@@ -174,7 +191,7 @@ export class RouteDiscovery {
           continue;
         }
 
-        if (!entry.isFile || !/\.(tsx?|jsx?|mdx|ts)$/.test(entry.name)) continue;
+        if (!entry.isFile || !/\.(tsx?|jsx?|mdx?)$/.test(entry.name)) continue;
         if (routePath.startsWith("/api")) continue;
 
         let pattern = routePath.replace(/\/index$/, "") || "/";

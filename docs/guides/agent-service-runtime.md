@@ -8,6 +8,12 @@ An agent service runs your agent as its own process, independent of the app serv
 
 Veryfront Cloud can invoke a push runtime directly against an agent service, which is the main reason to deploy one even when the app and the agent share a host.
 
+Shared and managed dedicated servers use the framework-owned `veryfront serve`
+runtime instead. That runtime discovers all project agents and tools, then routes
+each signed control-plane request by `agentId`. Projects on a managed dedicated
+server do not require a `service.ts` entrypoint. Add one only when you
+intentionally run the standalone Agent Service process described in this guide.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

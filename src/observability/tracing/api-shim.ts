@@ -26,7 +26,8 @@
 // OTel SDK types `AttributeValue | undefined` on setAttribute/setAttributes so
 // indexed lookups into partial attribute records don't require null-filtering
 // at every call site. Mirror that loose typing here so callers match the SDK.
-export type AttributeValue = string | number | boolean | undefined;
+export type AttributePrimitive = string | number | boolean;
+export type AttributeValue = AttributePrimitive | readonly AttributePrimitive[] | undefined;
 
 export interface Span {
   setAttribute(key: string, value: AttributeValue): Span;

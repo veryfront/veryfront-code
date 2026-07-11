@@ -1,14 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   clearConfigCache,
   getCachedConfigSync,
   getConfig,
+  mergeConfigs,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function setup() {
   clearConfigCache();
@@ -73,6 +75,13 @@ export default config as const;
       assertEquals(getCachedConfigSync("/nonexistent-project"), null);
     });
 
+    it("returns the config cached for a project directory", async () => {
+      const adapter = setup();
+      const config = await getConfig("/cached-project", adapter);
+
+      assertEquals(getCachedConfigSync("/cached-project"), config);
+    });
+
     it("should return null after cache is cleared", async () => {
       const adapter = setup();
 
@@ -122,29 +131,50 @@ export default config as const;
 
     it("should load and validate a JS config file", async () => {
       const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-js-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { title: "JS Project" };';
 
-      adapter.fs.files.set(
-        "/js-project/veryfront.config.js",
-        'export default { title: "JS Project" };',
-      );
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
 
-      const config = await getConfig("/js-project", adapter);
-      // The mock adapter doesn't support dynamic import, so this falls through
-      // to defaults when the file can't be loaded. The test verifies the
-      // function handles the error gracefully.
-      assert(config !== null);
+        const config = await getConfig(projectDir, adapter);
+        assertEquals(config.title, "JS Project");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("should try multiple config file names", async () => {
       const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-mjs-" });
+      const configPath = `${projectDir}/veryfront.config.mjs`;
+      const source = 'export default { title: "MJS Project" };';
 
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const config = await getConfig(projectDir, adapter);
+        assertEquals(config.title, "MJS Project");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects a detected config file that cannot be imported", async () => {
+      const adapter = setup();
       adapter.fs.files.set(
-        "/mjs-project/veryfront.config.mjs",
-        'export default { title: "MJS Project" };',
+        "/broken-project/veryfront.config.js",
+        "export default {",
       );
 
-      const config = await getConfig("/mjs-project", adapter);
-      assert(config !== null);
+      const error = await assertRejects(() => getConfig("/broken-project", adapter));
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "config-parse-error");
+      assertEquals(getCachedConfigSync("/broken-project"), null);
     });
 
     it("should produce fresh defaults per call after cache clear", async () => {
@@ -197,6 +227,30 @@ export default config as const;
 
       const config = await getConfig("/theme-test", adapter);
       assertEquals(config.theme?.colors?.primary, "#3B82F6");
+    });
+  });
+
+  describe("mergeConfigs deep merge", () => {
+    it("keeps default cache.render when user overrides only cache.dir", () => {
+      const merged = mergeConfigs({ cache: { dir: "/custom" } });
+      assertEquals(merged.cache?.dir, "/custom");
+      // render sub-object must survive the partial override (regression: shallow
+      // spread dropped it and crashed callers reading cache.render.type).
+      assertEquals(merged.cache?.render?.type, "memory");
+      assertEquals(merged.cache?.render?.maxEntries, 500);
+    });
+
+    it("keeps default build.esbuild fields when user overrides only build.outDir", () => {
+      const merged = mergeConfigs({ build: { outDir: "out" } });
+      assertEquals(merged.build?.outDir, "out");
+      assertEquals(merged.build?.esbuild?.worker, false);
+      assert(typeof merged.build?.esbuild?.wasmURL === "string");
+    });
+
+    it("keeps default theme colors when user sets an unrelated color", () => {
+      const merged = mergeConfigs({ theme: { colors: { secondary: "#000000" } } });
+      assertEquals(merged.theme?.colors?.primary, "#3B82F6");
+      assertEquals(merged.theme?.colors?.secondary, "#000000");
     });
   });
 });

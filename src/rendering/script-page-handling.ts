@@ -12,6 +12,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { flattenRouteParams } from "#veryfront/routing";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type {
   ComponentProps,
   EntityInfo,
@@ -88,7 +89,11 @@ async function collectModuleMetadata(
     const error = e instanceof Error ? e : new Error(String(e));
     logger.warn("generateMetadata threw for TS/JS page", error);
 
-    if (error.message.includes("ReferenceError") || error.message.includes("SyntaxError")) {
+    if (error instanceof ReferenceError || error instanceof SyntaxError) {
+      throw error;
+    }
+    // Fallback for cross-realm errors where instanceof checks fail
+    if (error.name === "ReferenceError" || error.name === "SyntaxError") {
       throw error;
     }
     return {};
@@ -109,8 +114,10 @@ function extractHtmlAndMetadata(output: ScriptModuleOutput): {
   }
 
   if (output && typeof output === "object") {
+    // HTML-escape the serialized output: object values may contain user-controlled
+    // strings with markup (e.g. "<script>"), which would otherwise be injected unescaped.
     return {
-      htmlBody: `<pre>${JSON.stringify(output, null, 2)}</pre>`,
+      htmlBody: `<pre>${escapeHtml(JSON.stringify(output, null, 2))}</pre>`,
       outputMetadata: {},
     };
   }

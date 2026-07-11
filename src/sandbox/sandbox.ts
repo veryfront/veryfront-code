@@ -95,7 +95,7 @@ export class Sandbox {
     const apiUrl = Sandbox.resolveApiUrl(options);
     const authToken = Sandbox.resolveAuthToken(options);
 
-    const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {
+    const res = await fetch(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
@@ -227,13 +227,22 @@ export class Sandbox {
 
       for (const line of lines) {
         if (line.trim()) {
-          yield JSON.parse(line) as ExecStreamEvent;
+          try {
+            yield JSON.parse(line) as ExecStreamEvent;
+          } catch {
+            // Malformed NDJSON line (e.g. truncated network chunk); skip and
+            // continue streaming so already-buffered output is not lost.
+          }
         }
       }
     }
 
     if (buffer.trim()) {
-      yield JSON.parse(buffer) as ExecStreamEvent;
+      try {
+        yield JSON.parse(buffer) as ExecStreamEvent;
+      } catch {
+        // Malformed final chunk; discard rather than surfacing a SyntaxError.
+      }
     }
   }
 
@@ -295,7 +304,7 @@ export class Sandbox {
 
   /** Get the status of an async background command. */
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const res = await fetch(`${this.endpoint}/exec/commands/${commandId}`, {
+    const res = await fetch(`${this.endpoint}/exec/commands/${encodeURIComponent(commandId)}`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
 
@@ -310,9 +319,12 @@ export class Sandbox {
 
   /** Get the output of an async background command. */
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
-    const res = await fetch(`${this.endpoint}/exec/commands/${commandId}/output`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    const res = await fetch(
+      `${this.endpoint}/exec/commands/${encodeURIComponent(commandId)}/output`,
+      {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -351,10 +363,13 @@ export class Sandbox {
 
   /** Cancel an async background command. */
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const res = await fetch(`${this.endpoint}/exec/commands/${commandId}/cancel`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    const res = await fetch(
+      `${this.endpoint}/exec/commands/${encodeURIComponent(commandId)}/cancel`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -382,10 +397,13 @@ export class Sandbox {
 
   /** Send a heartbeat to prevent idle timeout. */
   async heartbeat(): Promise<void> {
-    const res = await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}/heartbeat`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    const res = await fetch(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}/heartbeat`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -396,10 +414,13 @@ export class Sandbox {
 
   /** Close the sandbox session and mark for deletion. */
   async close(): Promise<void> {
-    const res = await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    const res = await fetch(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -433,9 +454,12 @@ export async function waitForSandboxReady(input: {
   while (Date.now() - start < maxWaitMs) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
-    const res = await fetch(`${input.apiUrl}/sandbox-sessions/${input.id}`, {
-      headers: { Authorization: `Bearer ${input.authToken}` },
-    });
+    const res = await fetch(
+      `${input.apiUrl}/sandbox-sessions/${encodeURIComponent(input.id)}`,
+      {
+        headers: { Authorization: `Bearer ${input.authToken}` },
+      },
+    );
 
     if (!res.ok) {
       continue;

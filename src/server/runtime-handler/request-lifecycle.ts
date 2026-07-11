@@ -21,6 +21,7 @@ import {
 } from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
+import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
 
 interface RequestLifecycleContext {
   /** Request ID for tracking */
@@ -106,8 +107,9 @@ export function completeRequestTracking(
   requestId: string,
   status: number,
   isTimeout: boolean,
+  profile?: RequestProfileRecord | null,
 ): void {
-  requestTracker.complete(requestId, status, isTimeout);
+  requestTracker.complete(requestId, status, isTimeout, profile);
 }
 
 /**

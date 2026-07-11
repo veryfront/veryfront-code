@@ -14,8 +14,14 @@ export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | un
   const raw = extractBalancedBlock(moduleCode, braceStart, "{", "}");
   if (!raw) return undefined;
 
+  // Convert JS object literal syntax to JSON.
+  // Key-quoting is restricted to structural positions (after `{` or `,`) so
+  // that colons inside already-quoted values — e.g. URLs like `"https://…"` —
+  // are never mistaken for key-value separators.
+  // Single-quote replacement is limited to values without apostrophes; values
+  // containing apostrophes must already use double-quotes in the source.
   const jsonish = raw
-    .replace(/([^\s"{[:,]+)\s*:/g, '"$1":')
+    .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
     .replace(/'([^']*)'/g, '"$1"');
 
   try {
@@ -31,16 +37,46 @@ interface MetadataPattern {
   key: keyof MDXModule;
 }
 
+// Scalar patterns — simple string, boolean, or inline-string values whose
+// capture group cannot span multiple lines.
 const METADATA_PATTERNS: MetadataPattern[] = [
   { regex: /(?:export\s+)?const\s+title\s*=\s*["']([^"']+)["']/, key: "title" },
   { regex: /(?:export\s+)?const\s+description\s*=\s*["']([^"']+)["']/, key: "description" },
   { regex: /(?:export\s+)?const\s+layout\s*=\s*(true|false|["'][^"']+["'])/, key: "layout" },
-  { regex: /(?:export\s+)?const\s+headings\s*=\s*(\[[\s\S]*?\])/, key: "headings" },
-  { regex: /(?:export\s+)?const\s+nested\s*=\s*({[\s\S]*?})/, key: "nested" },
-  { regex: /(?:export\s+)?const\s+tags\s*=\s*(\[[\s\S]*?\])/, key: "tags" },
   { regex: /(?:export\s+)?const\s+date\s*=\s*["']([^"']+)["']/, key: "date" },
   { regex: /(?:export\s+)?const\s+draft\s*=\s*(true|false)/, key: "draft" },
 ];
+
+// Complex patterns — array or object literals that may contain nested
+// structures.  Non-greedy regex stops at the first closing delimiter it sees,
+// so `[{…},{…}]` would be truncated at the inner `]` when elements are nested
+// arrays.  We use `extractBalancedBlock` instead to handle arbitrary nesting.
+interface ComplexMetadataPattern {
+  varName: string;
+  key: keyof MDXModule;
+  open: "[" | "{";
+}
+
+const COMPLEX_METADATA_PATTERNS: ComplexMetadataPattern[] = [
+  { varName: "headings", key: "headings", open: "[" },
+  { varName: "tags", key: "tags", open: "[" },
+  { varName: "nested", key: "nested", open: "{" },
+];
+
+function extractComplexValue(
+  moduleCode: string,
+  varName: string,
+  open: "[" | "{",
+): string | undefined {
+  const pattern = new RegExp(`(?:export\\s+)?const\\s+${varName}\\s*=\\s*`);
+  const matchResult = pattern.exec(moduleCode);
+  if (!matchResult) return undefined;
+
+  const valueStart = moduleCode.indexOf(open, matchResult.index + matchResult[0].length);
+  if (valueStart < 0) return undefined;
+
+  return extractBalancedBlock(moduleCode, valueStart, open) || undefined;
+}
 
 function parseLayoutValue(value: string): boolean | string {
   if (value === "true") return true;
@@ -74,6 +110,19 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
 
     try {
       if (value !== undefined) exports[key] = parseJsonish(value) as never;
+    } catch (e) {
+      logger.warn(`Failed to parse ${String(key)}`, e);
+    }
+  }
+
+  // Extract array/object values using balanced-block parsing to correctly
+  // handle nested arrays or objects (e.g. headings with children arrays).
+  for (const { varName, key, open } of COMPLEX_METADATA_PATTERNS) {
+    const value = extractComplexValue(moduleCode, varName, open);
+    if (value === undefined) continue;
+
+    try {
+      exports[key] = parseJsonish(value) as never;
     } catch (e) {
       logger.warn(`Failed to parse ${String(key)}`, e);
     }

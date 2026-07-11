@@ -1,5 +1,10 @@
 import { verifyDispatchJws } from "#veryfront/channels/invoke.ts";
 import { getControlPlaneVerificationPublicKey } from "#veryfront/internal-agents/control-plane-auth.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "#veryfront/internal-agents/request-body.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
@@ -71,7 +76,24 @@ export async function readSignedChannelDispatchRequest<T>(
     };
   }
 
-  const rawBody = await req.text();
+  // Read through the capped reader BEFORE signature verification so an
+  // unauthenticated caller cannot stream an unbounded body into memory.
+  let rawBody: string;
+  try {
+    rawBody = await readInternalAgentRequestBody(
+      req,
+      INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof InternalAgentRequestBodyTooLargeError) {
+      return {
+        ok: false,
+        response: options.builder.json({ error: "Request body too large" }, 413),
+      };
+    }
+    throw error;
+  }
+
   let claims: Awaited<ReturnType<typeof verifyDispatchJws>>;
   try {
     claims = await verifyDispatchJws(dispatchJws, rawBody, {

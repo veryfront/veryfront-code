@@ -12,6 +12,8 @@ import factory, {
   logAttributes,
   resolveOtlpExtensionConfig,
   resolveOtlpSignalUrl,
+  rewriteLlmObservabilitySpanResource,
+  unifiedServiceResourceAttributes,
 } from "./index.ts";
 
 const noopLogger = {
@@ -33,6 +35,8 @@ async function withOtelSignalsDisabled<T>(fn: () => Promise<T>): Promise<T> {
     "OTEL_TRACES_EXPORTER",
     "OTEL_METRICS_EXPORTER",
     "OTEL_LOGS_EXPORTER",
+    "DD_LLMOBS_ENABLED",
+    "OTEL_LLMOBS_ENABLED",
   ];
 
   let previous: Map<string, string | undefined>;
@@ -109,9 +113,11 @@ describe("ext-observability-opentelemetry config helpers", () => {
     }));
 
     assertEquals(config.tracesEnabled, false);
+    assertEquals(config.llmObservabilityEnabled, false);
     assertEquals(config.metricsEnabled, true);
     assertEquals(config.logsEnabled, true);
     assertEquals(config.tracesUrl, "https://collector.example/otlp/v1/traces");
+    assertEquals(config.llmObservabilityUrl, "https://collector.example/otlp/v1/traces");
     assertEquals(config.metricsUrl, "https://collector.example/otlp/v1/metrics");
     assertEquals(config.logsUrl, "https://collector.example/otlp/v1/logs");
     assertEquals(config.headers, { Authorization: "Basic platform-token" });
@@ -122,6 +128,57 @@ describe("ext-observability-opentelemetry config helpers", () => {
     assertEquals(config.serviceName, "veryfront-server");
     assertEquals(config.serviceVersion, VERSION);
     assertEquals(config.deploymentEnvironment, "development");
+  });
+
+  it("resolves Datadog LLM Observability OTLP routing", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+      DD_LLMOBS_ENABLED: "true",
+      DD_LLMOBS_ML_APP: "veryfront-ops-agent",
+    }));
+
+    assertEquals(config.llmObservabilityEnabled, true);
+    assertEquals(config.llmObservabilityUrl, "https://otlp.datadoghq.eu/v1/traces");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "veryfront-ops-agent",
+    });
+  });
+
+  it("defaults the Datadog LLM app to the resolved service name", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=investment-ops-agent",
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+      DD_LLMOBS_ENABLED: "true",
+    }));
+
+    assertEquals(config.serviceName, "investment-ops-agent");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "investment-ops-agent",
+    });
+  });
+
+  it("preserves a Datadog LLM app supplied through OTLP headers", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=investment-ops-agent",
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted,dd-ml-app=header-app",
+      DD_LLMOBS_ENABLED: "true",
+    }));
+
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "header-app",
+    });
   });
 
   it("resolves Datadog unified service tags from OTel resource attributes", () => {
@@ -136,6 +193,25 @@ describe("ext-observability-opentelemetry config helpers", () => {
     assertEquals(config.deploymentEnvironment, "production");
   });
 
+  it("emits Datadog reserved tag aliases with OTel resource attributes", () => {
+    assertEquals(
+      unifiedServiceResourceAttributes({
+        serviceName: "veryfront-ops-agent",
+        serviceVersion: "20260709144949-fe7bf026a69d",
+        deploymentEnvironment: "production",
+      }),
+      {
+        "service.name": "veryfront-ops-agent",
+        "service.version": "20260709144949-fe7bf026a69d",
+        "deployment.environment": "production",
+        "deployment.environment.name": "production",
+        service: "veryfront-ops-agent",
+        version: "20260709144949-fe7bf026a69d",
+        env: "production",
+      },
+    );
+  });
+
   it("does not expose a ctx.config.otel exporter-routing override", () => {
     const config = resolveOtlpExtensionConfig(env({
       OTEL_TRACES_ENABLED: "true",
@@ -145,6 +221,89 @@ describe("ext-observability-opentelemetry config helpers", () => {
 
     assertEquals(config.serviceName, "veryfront-server");
     assertEquals(config.tracesUrl, "https://platform-collector.example/otlp/v1/traces");
+  });
+});
+
+describe("ext-observability-opentelemetry LLMObs resource rewriting", () => {
+  it("rewrites GenAI span resource tags from span service attributes", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "service.name": "veryfront-ops-agent",
+        "service.version": "0.0.34",
+        "deployment.environment.name": "production",
+      },
+      resource: {
+        attributes: {
+          "service.name": "investment-ops-agent",
+          "service.version": "0.0.13",
+          "deployment.environment.name": "production",
+          service: "investment-ops-agent",
+          version: "0.0.13",
+          env: "production",
+        },
+      },
+      instrumentationScope: {
+        name: "investment-ops-agent",
+        version: "0.1.1042",
+      },
+    };
+
+    const rewritten = rewriteLlmObservabilitySpanResource(span) as typeof span;
+
+    assertEquals(Object.is(rewritten, span), false);
+    assertEquals(rewritten.resource.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes.service, "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes["service.version"], "0.0.34");
+    assertEquals(rewritten.resource.attributes.version, "0.0.34");
+    assertEquals(rewritten.resource.attributes["deployment.environment.name"], "production");
+    assertEquals(rewritten.resource.attributes.env, "production");
+    assertEquals(rewritten.instrumentationScope.name, "veryfront-ops-agent");
+    assertEquals(span.resource.attributes["service.name"], "investment-ops-agent");
+    assertEquals(span.instrumentationScope.name, "investment-ops-agent");
+  });
+
+  it("uses a trace fallback identity for GenAI child spans without service attributes", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "execute_tool",
+      },
+      resource: {
+        attributes: {
+          "service.name": "investment-ops-agent",
+          "service.version": "0.0.13",
+          "deployment.environment.name": "production",
+        },
+      },
+      instrumentationScope: {
+        name: "investment-ops-agent",
+      },
+    };
+
+    const rewritten = rewriteLlmObservabilitySpanResource(span, {
+      serviceName: "veryfront-ops-agent",
+      serviceVersion: "0.0.34",
+      deploymentEnvironment: "production",
+    }) as typeof span;
+
+    assertEquals(rewritten.resource.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes["service.version"], "0.0.34");
+    assertEquals(rewritten.instrumentationScope.name, "veryfront-ops-agent");
+  });
+
+  it("keeps spans unchanged when no project service identity is available", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "chat",
+      },
+      resource: {
+        attributes: {
+          "service.name": "veryfront-server",
+        },
+      },
+    };
+
+    assertEquals(Object.is(rewriteLlmObservabilitySpanResource(span), span), true);
   });
 });
 

@@ -279,9 +279,12 @@ export class LazySandbox {
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
     const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${endpoint}/exec/commands/${encodeURIComponent(commandId)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -297,9 +300,12 @@ export class LazySandbox {
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
     const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/output`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${endpoint}/exec/commands/${encodeURIComponent(commandId)}/output`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -340,10 +346,13 @@ export class LazySandbox {
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
     const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/cancel`, {
-      method: "POST",
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${endpoint}/exec/commands/${encodeURIComponent(commandId)}/cancel`,
+      {
+        method: "POST",
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -375,7 +384,7 @@ export class LazySandbox {
     const pending = {
       promise: (async () => {
         const res = await this.fetchControl(
-          `${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`,
+          `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(currentSessionId)}/heartbeat`,
           {
             method: "POST",
             headers: this.authHeaders(),
@@ -545,9 +554,12 @@ export class LazySandbox {
   }
 
   private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
-    const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -564,9 +576,12 @@ export class LazySandbox {
     while (Date.now() - start < this.startupTimeoutMs) {
       await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
 
-      const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-        headers: this.authHeaders(),
-      });
+      const res = await this.fetchControl(
+        `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+        {
+          headers: this.authHeaders(),
+        },
+      );
 
       if (!res.ok) {
         continue;
@@ -633,14 +648,26 @@ export class LazySandbox {
     await this.heartbeat();
   }
 
+  private heartbeatFailureCount = 0;
+  private static readonly HEARTBEAT_WARN_AFTER_FAILURES = 3;
+
   private startHeartbeatLoop(): void {
     if (!this.sessionId || this.heartbeatTimer || this.activeBackgroundCommandEndpoints.size > 0) {
       return;
     }
 
     this.heartbeatTimer = setInterval(() => {
-      void this.heartbeat().catch(() => {
-        // next operation will reprovision
+      void this.heartbeat().then(() => {
+        this.heartbeatFailureCount = 0;
+      }).catch((error) => {
+        this.heartbeatFailureCount++;
+        if (this.heartbeatFailureCount >= LazySandbox.HEARTBEAT_WARN_AFTER_FAILURES) {
+          logger.warn(
+            `[sandbox] Heartbeat has failed ${this.heartbeatFailureCount} consecutive time(s); ` +
+              "sandbox may have been reclaimed. Next operation will attempt to reprovision.",
+            error,
+          );
+        }
       });
     }, this.heartbeatIntervalMs);
   }
@@ -652,10 +679,13 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-      method: "DELETE",
-      headers: this.authHeaders(),
-    });
+    await this.fetchControl(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+        headers: this.authHeaders(),
+      },
+    );
   }
 
   private requireEndpoint(): string {
@@ -806,10 +836,22 @@ function isRetryableExecStartStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
+/**
+ * Heuristic: Deno's fetch throws an `Error` with message "fetch failed" (case-
+ * insensitive) when the TCP connection is refused or the host is unreachable.
+ * If Deno changes this wording the check stops matching, causing exec failures
+ * to be treated as non-retryable — fail-safe (agent surfaces an error) but
+ * requires a code update to restore automatic retry.
+ */
 function isRetryableExecStartError(error: unknown): boolean {
   return error instanceof Error && /fetch failed/i.test(error.message);
 }
 
+/**
+ * Heuristic: data-plane readiness failures are identified by a known message
+ * prefix ({@link DATA_PLANE_READINESS_FAILURE_PREFIX}) set by this codebase.
+ * The prefix is stable as long as the caller site is not changed.
+ */
 function isDataPlaneReadinessFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -820,6 +862,12 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
     detail?.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) === true;
 }
 
+/**
+ * Heuristic: reprovisioning is triggered by known Node.js/Deno error codes on
+ * the error's `cause` (ECONNREFUSED, ECONNRESET, ENOTFOUND, EHOSTUNREACH).
+ * These codes are stable across Deno versions and represent network-layer
+ * failures where the sandbox pod is no longer reachable.
+ */
 function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;

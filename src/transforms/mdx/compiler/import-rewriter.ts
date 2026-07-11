@@ -61,40 +61,30 @@ function mapSpec(
   return abs.startsWith("http") ? abs : `file://${abs}`;
 }
 
-function rewriteLine(
-  line: string,
-  basedir: string,
-  target: CompilationTarget,
-  baseUrl?: string,
-): string {
-  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl);
-
-  return line
-    .replace(
-      /^(\s*import\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
-      (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
-    )
-    .replace(
-      /^(\s*import\s+)(["'])([^"']+)(\2)/,
-      (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
-    )
-    .replace(
-      /^(\s*export\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
-      (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
-    );
-}
-
 export function rewriteBodyImports(body: string, config: ImportRewriterConfig): string {
   const basedir = dirname(config.filePath);
+  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
 
-  return body
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trimStart();
-      if (!trimmed.startsWith("import") && !trimmed.startsWith("export")) return line;
-      return rewriteLine(line, basedir, config.target, config.baseUrl);
-    })
-    .join("\n");
+  // Rewrite `import … from '…'` and `export … from '…'`, including multiline
+  // destructured imports.  `[\s\S]*?` crosses newlines so that
+  //   import {
+  //     Foo,
+  //     Bar
+  //   } from "mod"
+  // is rewritten in one pass.  The non-greedy match stops at the first `from`
+  // keyword, which is correct for well-formed ESM.
+  let result = body.replace(
+    /(^[ \t]*(?:import|export)\s+[\s\S]*?\bfrom\b\s*)(["'])([^"']+)(\2)/gm,
+    (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
+  );
+
+  // Side-effect-only imports have no bindings or `from`: import "mod"
+  result = result.replace(
+    /^([ \t]*import\s+)(["'])([^"']+)(\2)/gm,
+    (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
+  );
+
+  return result;
 }
 
 export function rewriteCompiledImports(compiledCode: string, config: ImportRewriterConfig): string {
@@ -118,8 +108,10 @@ export function rewriteCompiledImports(compiledCode: string, config: ImportRewri
     /(import\(\s*["'])(\.{1,2}\/[^"']+)(["']\s*\))/g,
     /(import\(\s*["'])(file:\/\/[^"']+)(["']\s*\))/g,
   ]);
-
-  code = code.replace(/file:\/\/[A-Za-z0-9_\-./%]+/g, (match) => mapper(match));
+  // Note: `file://` URLs in import positions are already fully covered by the
+  // patterns above (`from "file://…"` and `import("file://…")`).  A blanket
+  // replacement across the whole code string would incorrectly rewrite URLs
+  // inside string literals and comments, so it is intentionally omitted here.
 
   return code;
 }

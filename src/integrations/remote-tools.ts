@@ -14,6 +14,12 @@ import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
 
+/**
+ * Default timeout for outbound integration API calls. Without it, a hung remote
+ * server would block the whole agent loop indefinitely.
+ */
+const INTEGRATION_REQUEST_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -44,13 +50,25 @@ type RemoteIntegrationToolExecutionContext = {
  */
 function resolveRequestToken(): string | undefined {
   try {
-    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
-      | {
-        getCurrentRequestContext?: () => { token?: string } | null;
-      }
-      | undefined;
-    const reqToken = mod?.getCurrentRequestContext?.()?.token;
-    if (reqToken) return reqToken;
+    const raw = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
+    if (raw === undefined) {
+      // Not in multi-project mode — fall through to env token.
+    } else if (
+      typeof raw !== "object" ||
+      raw === null ||
+      typeof (raw as Record<string, unknown>).getCurrentRequestContext !== "function"
+    ) {
+      // Adapter exists but doesn't match the expected shape. Warn so that a
+      // shape change doesn't silently fall back to the wrong project's token.
+      logger.warn(
+        "__vf_multi_project_adapter has unexpected shape — falling back to env token",
+        { actualType: typeof raw },
+      );
+    } else {
+      const mod = raw as { getCurrentRequestContext: () => { token?: string } | null };
+      const reqToken = mod.getCurrentRequestContext()?.token;
+      if (reqToken) return reqToken;
+    }
   } catch {
     // Not in multi-project mode
   }
@@ -76,6 +94,14 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
+function isToolListResponse(value: unknown): value is { tools: RemoteToolDefinition[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as Record<string, unknown>).tools)
+  );
+}
+
 async function fetchToolList(
   baseUrl: string,
   token: string,
@@ -86,17 +112,22 @@ async function fetchToolList(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    logger.warn("Failed to fetch integration tools from API", {
-      status: response.status,
-    });
-    return [];
+    // Throw so callers can distinguish a fetch failure from "no integrations
+    // configured" (which returns an empty tools array with status 200).
+    throw new Error(
+      `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
+    );
   }
 
-  const data = (await response.json()) as { tools: RemoteToolDefinition[] };
-  return data.tools ?? [];
+  const rawData = await response.json();
+  if (!isToolListResponse(rawData)) {
+    throw new Error("Integration tools API returned unexpected response shape");
+  }
+  return rawData.tools ?? [];
 }
 
 async function callRemoteTool(
@@ -118,6 +149,7 @@ async function callRemoteTool(
       run_id: context?.runId,
       agent_id: context?.agentId,
     }),
+    signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -177,7 +209,7 @@ export async function getRemoteIntegrationToolDefinitions(): Promise<
         : { type: "object", properties: {} },
     }));
   } catch (err) {
-    logger.warn("Failed to fetch remote integration tool definitions", {
+    logger.error("Failed to fetch remote integration tool definitions", {
       error: err instanceof Error ? err.message : String(err),
     });
     return [];
@@ -237,10 +269,11 @@ export async function syncIntegrationConfig(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ integrations }),
+      signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      logger.warn("Failed to sync integration config to API", {
+      logger.error("Failed to sync integration config to API", {
         status: response.status,
       });
     } else {
@@ -248,7 +281,7 @@ export async function syncIntegrationConfig(
       logger.info("Synced integration config to API", { synced: data.synced });
     }
   } catch (err) {
-    logger.warn("Failed to sync integration config", {
+    logger.error("Failed to sync integration config", {
       error: err instanceof Error ? err.message : String(err),
     });
   }

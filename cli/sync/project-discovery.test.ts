@@ -4,7 +4,17 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+} from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
+import { deleteToken } from "../auth/token-store.ts";
 import {
   fetchRemoteProjects,
   getCurrentUser,
@@ -14,6 +24,32 @@ import {
 } from "./project-discovery.ts";
 
 describe("project-discovery", () => {
+  let tempDir = "";
+  let originalXdgConfig: string | undefined;
+
+  beforeAll(async () => {
+    tempDir = await makeTempDir({ prefix: "project-discovery-test-" });
+    originalXdgConfig = getEnv("XDG_CONFIG_HOME");
+  });
+
+  beforeEach(async () => {
+    setEnv("XDG_CONFIG_HOME", tempDir);
+    await deleteToken();
+  });
+
+  afterEach(async () => {
+    await deleteToken();
+    if (originalXdgConfig == null) {
+      deleteEnv("XDG_CONFIG_HOME");
+    } else {
+      setEnv("XDG_CONFIG_HOME", originalXdgConfig);
+    }
+  });
+
+  afterAll(async () => {
+    await remove(tempDir, { recursive: true });
+  });
+
   describe("fetchRemoteProjects", () => {
     it("is a function", () => {
       assertEquals(typeof fetchRemoteProjects, "function");
@@ -38,6 +74,40 @@ describe("project-discovery", () => {
       if (!result.user) {
         assertExists(result.error);
         assertEquals(result.projects.length, 0);
+      }
+    });
+
+    it("returns projects for a valid project API key without requiring a user profile", async () => {
+      const originalFetch = globalThis.fetch;
+      const authorizations: string[] = [];
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+          const url = new URL(String(input));
+          assertEquals(url.pathname, "/projects");
+          authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{ id: "project-123", slug: "test-project", name: "Test Project" }],
+                page_info: {},
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch;
+
+        const result = await fetchRemoteProjects("vf_test_secret");
+
+        assertEquals(authorizations, ["Bearer vf_test_secret"]);
+        assertEquals(result.user, null);
+        assertEquals(result.credentialType, "apiKey");
+        assertEquals(result.error, undefined);
+        assertEquals(result.projects, [
+          { id: "project-123", slug: "test-project", name: "Test Project" },
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     });
   });

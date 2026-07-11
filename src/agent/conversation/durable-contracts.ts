@@ -1,11 +1,11 @@
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
   v.object({
-    sourceTargetKind: v.enum(["project", "preview_branch"]).nullable(),
-    runtimeTargetKind: v.enum(["main_branch", "preview_branch"]).nullable(),
+    sourceTargetKind: v.enum(["project", "environment", "preview_branch"]).nullable(),
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"]).nullable(),
+    targetEnvironmentId: v.string().uuid().nullable().optional(),
     targetBranchId: v.string().uuid().nullable(),
   })
 );
@@ -15,35 +15,60 @@ export const getConversationRunTargetsSchema = defineSchema((v) =>
  */
 export const ConversationRunTargetsSchema = lazySchema(getConversationRunTargetsSchema);
 
+/** Source target kind recorded on project-backed conversation runs. */
+export type ConversationRunSourceTargetKind = "project" | "environment" | "preview_branch";
+
+/** Runtime target kind recorded on project-backed conversation runs. */
+export type ConversationRunRuntimeTargetKind = "main_branch" | "environment" | "preview_branch";
+
 /** Public API contract for conversation run targets. */
-export type ConversationRunTargets = InferSchema<
-  ReturnType<typeof getConversationRunTargetsSchema>
->;
+export interface ConversationRunTargets {
+  sourceTargetKind: ConversationRunSourceTargetKind | null;
+  runtimeTargetKind: ConversationRunRuntimeTargetKind | null;
+  targetEnvironmentId?: string | null;
+  targetBranchId: string | null;
+}
 
 /** Resolves conversation run targets. */
 export function resolveConversationRunTargets(input: {
   projectId?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  environmentId?: string | null;
   branchId?: string | null;
 }): ConversationRunTargets {
+  if (!input.projectId) {
+    return getConversationRunTargetsSchema().parse({
+      sourceTargetKind: null,
+      runtimeTargetKind: null,
+      targetEnvironmentId: null,
+      targetBranchId: null,
+    }) as ConversationRunTargets;
+  }
+
+  if (input.runtimeTargetKind === "environment" && input.environmentId) {
+    return getConversationRunTargetsSchema().parse({
+      sourceTargetKind: "environment",
+      runtimeTargetKind: "environment",
+      targetEnvironmentId: input.environmentId,
+      targetBranchId: null,
+    }) as ConversationRunTargets;
+  }
+
   return getConversationRunTargetsSchema().parse(
-    !input.projectId
-      ? {
-        sourceTargetKind: null,
-        runtimeTargetKind: null,
-        targetBranchId: null,
-      }
-      : input.branchId
+    input.branchId
       ? {
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
+        targetEnvironmentId: null,
         targetBranchId: input.branchId,
       }
       : {
         sourceTargetKind: "project",
         runtimeTargetKind: "main_branch",
+        targetEnvironmentId: null,
         targetBranchId: null,
       },
-  );
+  ) as ConversationRunTargets;
 }
 
 /** Zod schema for get conversation run status. */
@@ -367,6 +392,8 @@ export interface CreateConversationAgentRunInput {
   agentId: string;
   implementationKind?: string | null;
   projectId?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  runtimeTargetEnvironmentId?: string | null;
   branchId?: string | null;
   abortSignal?: AbortSignal;
 }

@@ -1,12 +1,46 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ProviderCredential, ProviderName } from "./provider-store.ts";
+import { afterAll, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
+import {
+  createTestEnvironmentConfig,
+  type EnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
+import {
+  deleteProviderToken,
+  listProviderTokens,
+  type ProviderCredential,
+  type ProviderName,
+  readProviderToken,
+  saveProviderToken,
+} from "./provider-store.ts";
 
 describe("Provider Store", () => {
+  let tempDir = "";
+  let testEnv: EnvironmentConfig;
+
+  beforeAll(async () => {
+    tempDir = await makeTempDir({ prefix: "provider-store-test-" });
+    testEnv = createTestEnvironmentConfig({
+      homeDir: tempDir,
+      xdgConfigHome: tempDir,
+    });
+  });
+
+  beforeEach(async () => {
+    await Promise.all([
+      deleteProviderToken("anthropic", testEnv),
+      deleteProviderToken("openai", testEnv),
+    ]);
+  });
+
+  afterAll(async () => {
+    await remove(tempDir, { recursive: true });
+  });
+
   it("ProviderCredential has required fields", () => {
     const cred: ProviderCredential = {
-      apiKey: "sk-test-123",
+      apiKey: "<API_KEY>",
       validatedAt: "2026-03-31T00:00:00Z",
       provider: "anthropic",
     };
@@ -21,8 +55,22 @@ describe("Provider Store", () => {
   });
 
   it("listProviderTokens returns empty when no tokens", async () => {
-    const { listProviderTokens } = await import("./provider-store.ts");
-    const providers = await listProviderTokens();
-    assertEquals(Array.isArray(providers), true);
+    assertEquals(await listProviderTokens(testEnv), []);
+  });
+
+  it("stores, lists, reads, and deletes a provider credential", async () => {
+    const credential: ProviderCredential = {
+      apiKey: "<API_KEY>",
+      validatedAt: "2026-03-31T00:00:00Z",
+      provider: "anthropic",
+    };
+
+    await saveProviderToken("anthropic", credential, testEnv);
+
+    assertEquals(await listProviderTokens(testEnv), ["anthropic"]);
+    assertEquals(await readProviderToken("anthropic", testEnv), credential);
+
+    await deleteProviderToken("anthropic", testEnv);
+    assertEquals(await readProviderToken("anthropic", testEnv), null);
   });
 });

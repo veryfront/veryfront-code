@@ -75,6 +75,8 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   agentId?: string;
   projectId: string;
   branchId: string | null;
+  runtimeTargetKind?: DefaultHostedChatRuntimeCreationOptions["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
   model: string | undefined;
   clientProfile?: DefaultHostedChatRuntimeCreationOptions["clientProfile"];
   conversationId?: string;
@@ -148,6 +150,8 @@ function createDefaultTaskContext(
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
     branchId: input.options.branchId ?? null,
+    runtimeTargetKind: input.options.runtimeTargetKind ?? null,
+    runtimeTargetEnvironmentId: input.options.runtimeTargetEnvironmentId ?? null,
     model: input.modelId,
     clientProfile: input.options.clientProfile,
     conversationId: input.options.conversationId,

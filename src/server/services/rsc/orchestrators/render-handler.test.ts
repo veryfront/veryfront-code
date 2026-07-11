@@ -9,7 +9,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent-project",
         () => null,
-        false,
+        "production",
       );
 
       const response = await handler.handle("/nonexistent", new URLSearchParams());
@@ -23,7 +23,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent",
         () => null,
-        false,
+        "production",
       );
 
       const response = await handler.handle("/some-page", new URLSearchParams());
@@ -37,7 +37,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent",
         () => null,
-        false,
+        "production",
       );
 
       const response = await handler.handle("/test", new URLSearchParams());
@@ -50,7 +50,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent",
         () => null,
-        false,
+        "production",
       );
 
       const response = await handler.handle("/", new URLSearchParams());
@@ -62,7 +62,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent",
         () => null,
-        false,
+        "production",
       );
 
       const params = new URLSearchParams({ foo: "bar", baz: "qux" });

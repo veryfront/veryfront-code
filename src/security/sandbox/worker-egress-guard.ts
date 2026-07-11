@@ -76,6 +76,10 @@ function isPrivateIpv4(octets: number[]): boolean {
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168) ||
+    // 100.64.0.0/10 — CGNAT shared address space (RFC 6598)
+    (a === 100 && b >= 64 && b <= 127) ||
+    // 198.18.0.0/15 — benchmarking range (RFC 2544)
+    (a === 198 && (b === 18 || b === 19)) ||
     a === 0
   );
 }

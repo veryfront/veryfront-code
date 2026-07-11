@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildCommand } from "./command.ts";
+import { buildCommand, runWithBundlerShutdown } from "./command.ts";
 import type { BuildOptions } from "./types.ts";
 
 describe("commands/build/command", () => {
@@ -13,6 +13,45 @@ describe("commands/build/command", () => {
 
     it("accepts a single BuildOptions parameter", () => {
       assertEquals(buildCommand.length, 1);
+    });
+
+    it("awaits bundler shutdown before returning a successful result", async () => {
+      const order: string[] = [];
+
+      const result = await runWithBundlerShutdown(
+        async () => {
+          order.push("build");
+          return "complete";
+        },
+        async () => {
+          await Promise.resolve();
+          order.push("stop");
+        },
+      );
+
+      assertEquals(result, "complete");
+      assertEquals(order, ["build", "stop"]);
+    });
+
+    it("stops the bundler and preserves the build error", async () => {
+      const buildError = new Error("intentional build failure");
+      let stopped = false;
+
+      const error = await assertRejects(
+        () =>
+          runWithBundlerShutdown(
+            () => Promise.reject(buildError),
+            () => {
+              stopped = true;
+              return Promise.reject(new Error("secondary shutdown failure"));
+            },
+          ),
+        Error,
+        "intentional build failure",
+      );
+
+      assertEquals(error, buildError);
+      assertEquals(stopped, true);
     });
   });
 

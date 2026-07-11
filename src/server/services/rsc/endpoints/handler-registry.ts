@@ -7,6 +7,10 @@
  */
 
 import { RSCDevServerHandler } from "../orchestrators/index.ts";
+import {
+  getConfiguredRSCReactVersion,
+  type RSCServerHandlerOptions,
+} from "../orchestrators/handler.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 
@@ -21,6 +25,7 @@ const RSC_HANDLERS_CLEANUP_INTERVAL_MS = 300_000; // 5 minutes
 export interface HandlerCache<T> {
   get(key: string): T | undefined;
   set(key: string, value: T): void;
+  delete(key: string): boolean;
   clear(): void;
   readonly size: number;
 }
@@ -30,6 +35,7 @@ let cacheRegistered = false;
 
 /** Injected cache for testing (overrides default LRUCache) */
 let injectedCache: HandlerCache<RSCDevServerHandler> | null = null;
+const handlerKeysByProject = new Map<string, Set<string>>();
 
 function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   if (injectedCache) return injectedCache;
@@ -56,15 +62,45 @@ function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
 export function getRSCHandler(
   projectDir: string,
   projectId?: string,
+  options: RSCServerHandlerOptions = {},
 ): RSCDevServerHandler {
-  const cacheKey = projectId ?? projectDir;
+  const baseKey = projectId ?? projectDir;
+  const appDir = options.config?.directories?.app ?? "app";
+  const mode = options.mode ?? "production";
+  const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
+  const cacheKey = JSON.stringify([
+    baseKey,
+    options.isLocalProject === true,
+    mode,
+    appDir,
+    reactVersion,
+    ...(options.contentSourceId || options.releaseId
+      ? [options.releaseId ?? null, options.contentSourceId ?? null]
+      : []),
+  ]);
   const cache = getHandlersCache();
   const existing = cache.get(cacheKey);
   if (existing) return existing;
 
-  const handler = new RSCDevServerHandler(projectDir);
+  const handler = new RSCDevServerHandler(projectDir, options);
   cache.set(cacheKey, handler);
+  const projectKeys = handlerKeysByProject.get(baseKey) ?? new Set<string>();
+  projectKeys.add(cacheKey);
+  handlerKeysByProject.set(baseKey, projectKeys);
   return handler;
+}
+
+export function invalidateRSCHandlersForProject(
+  projectDir: string,
+  projectId?: string,
+): void {
+  const projectKey = projectId ?? projectDir;
+  const cacheKeys = handlerKeysByProject.get(projectKey);
+  if (!cacheKeys) return;
+
+  const cache = getHandlersCache();
+  for (const cacheKey of cacheKeys) cache.delete(cacheKey);
+  handlerKeysByProject.delete(projectKey);
 }
 
 export function __injectCacheForTests(
@@ -76,10 +112,12 @@ export function __injectCacheForTests(
 export function __resetRSCHandlerForTests(): void {
   const cache = injectedCache ?? rscHandlersByProject;
   cache?.clear();
+  handlerKeysByProject.clear();
 }
 
 export function __destroyRSCHandlerForTests(): void {
   injectedCache = null;
   rscHandlersByProject?.destroy();
   rscHandlersByProject = null;
+  handlerKeysByProject.clear();
 }

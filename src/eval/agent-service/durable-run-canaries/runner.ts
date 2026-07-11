@@ -483,6 +483,20 @@ function createDurableRunCanaryRunId(): string {
   return `run_${crypto.randomUUID()}`;
 }
 
+/**
+ * Returns true when an error represents an HTTP 404 Not Found response.
+ * Prefers a structured `.status` property (future-proofs against typed API
+ * errors) and falls back to a word-boundary match on the message so format
+ * variations like "HTTP 404:" or "failed: 404 Not Found" still match while
+ * embedded ids like "runs/404ab3" do not.
+ */
+function isNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const typed = error as { status?: unknown; statusCode?: unknown };
+  if (typed.status === 404 || typed.statusCode === 404) return true;
+  return /\b404\b/.test(error.message);
+}
+
 async function waitForRunSummaryVisibility(
   input: WaitForRunInput,
 ): Promise<DurableRunCanaryRunSummary> {
@@ -492,7 +506,7 @@ async function waitForRunSummaryVisibility(
     try {
       return await input.getRunSummary(input);
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes(" 404 ")) {
+      if (!isNotFoundError(error)) {
         throw error;
       }
     }

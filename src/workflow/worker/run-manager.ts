@@ -93,6 +93,8 @@ interface TrackedExecution {
   runId: string;
   status: RunExecutionStatus;
   createdAt: Date;
+  /** Consecutive sync cycles this execution was absent from the executor's list. */
+  missingPolls: number;
 }
 
 /** Resolved config type with defaults applied */
@@ -240,8 +242,16 @@ export class WorkflowRunManager {
     }
 
     this.pollTimeout = setTimeout(async () => {
-      await this.poll();
-      this.scheduleNextPoll();
+      // poll() guards itself, but reschedule from a finally so an unexpected
+      // rejection can never kill the loop (leaving the manager alive-but-idle).
+      try {
+        await this.poll();
+      } catch (error) {
+        this.recordError(error);
+        logger.error("Unhandled poll error:", error);
+      } finally {
+        this.scheduleNextPoll();
+      }
     }, this.config.pollInterval);
   }
 
@@ -293,7 +303,7 @@ export class WorkflowRunManager {
           continue;
         }
 
-        let pendingLockAcquired = false;
+        let pendingLockToken: string | null = null;
         let runToProcess: WorkflowRun | null = run;
 
         try {
@@ -313,11 +323,11 @@ export class WorkflowRunManager {
           // For pending runs, acquire a short lock to avoid duplicate execution creation
           // across managers between listRuns() and updateRun().
           if (run.status === "pending" && hasLockSupport(this.config.backend)) {
-            pendingLockAcquired = await this.config.backend.acquireLock(
+            pendingLockToken = await this.config.backend.acquireLock(
               run.id,
               this.config.stalledThreshold,
             );
-            if (!pendingLockAcquired) {
+            if (!pendingLockToken) {
               continue;
             }
 
@@ -335,9 +345,9 @@ export class WorkflowRunManager {
 
           await this.createExecutionForWorkflow(runToProcess);
         } finally {
-          if (pendingLockAcquired) {
+          if (pendingLockToken) {
             try {
-              await this.config.backend.releaseLock?.(run.id);
+              await this.config.backend.releaseLock?.(run.id, pendingLockToken);
             } catch (error) {
               logger.warn(
                 `[WorkflowRunManager] Failed to release pending lock for ${run.id}:`,
@@ -359,6 +369,29 @@ export class WorkflowRunManager {
   private async syncRunExecutionStatuses(): Promise<void> {
     try {
       const executions = await this.config.executor.listRunExecutions(this.managerId);
+      const presentRunIds = new Set(executions.map((e) => e.runId));
+
+      // Reconcile against the executor's live list. A child process reaped or
+      // OOM-killed before reporting a terminal status would otherwise stay in
+      // activeExecutions forever, permanently consuming a concurrency slot.
+      // Require two consecutive misses before reclaiming to avoid races with an
+      // execution not yet visible in the executor's list.
+      for (const [runId, tracked] of this.activeExecutions) {
+        if (presentRunIds.has(runId)) {
+          tracked.missingPolls = 0;
+          continue;
+        }
+
+        tracked.missingPolls++;
+        if (tracked.missingPolls >= 2) {
+          this.activeExecutions.delete(runId);
+          this.stats.executionsFailed++;
+          logger.warn(
+            `[WorkflowRunManager] Run execution ${tracked.executionId} for run ${runId} ` +
+              `vanished from executor list; freeing concurrency slot`,
+          );
+        }
+      }
 
       for (const executionInfo of executions) {
         const tracked = this.activeExecutions.get(executionInfo.runId);
@@ -411,6 +444,19 @@ export class WorkflowRunManager {
     };
 
     try {
+      // Mark running BEFORE spawning the execution. If we spawned first and then
+      // crashed before this update, a live process would sit behind a "pending"
+      // run that the next poll would execute again (duplicate execution). With
+      // the order reversed, a crash after this point leaves a "running" run with
+      // no process, which stalled-run recovery reclaims cleanly. A spawn failure
+      // is handled by the catch below, which marks the run failed.
+      await this.config.backend.updateRun(run.id, {
+        status: "running",
+        startedAt: new Date(),
+        heartbeatAt: new Date(),
+        workerId: `run-execution:${executionId}`,
+      });
+
       await this.config.executor.createRunExecution(executionConfig);
 
       const tracked: TrackedExecution = {
@@ -418,18 +464,11 @@ export class WorkflowRunManager {
         runId: run.id,
         status: "pending",
         createdAt: new Date(),
+        missingPolls: 0,
       };
 
       this.activeExecutions.set(run.id, tracked);
       this.stats.executionsCreated++;
-
-      // Mark workflow as running
-      await this.config.backend.updateRun(run.id, {
-        status: "running",
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-        workerId: `run-execution:${executionId}`,
-      });
 
       if (this.config.debug) {
         logger.info(`Created run execution ${executionId} for workflow ${run.id}`);

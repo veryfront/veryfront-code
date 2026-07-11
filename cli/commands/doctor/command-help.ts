@@ -7,9 +7,13 @@ export const doctorHelp: CommandHelp = {
   usage: "veryfront doctor [options]",
   options: [
     {
+      flag: "-p, --port <number>",
+      description: "Port used by the development server",
+    },
+    {
       flag: "-s, --strict",
       description: "Treat warnings as errors",
     },
   ],
-  examples: ["veryfront doctor", "veryfront doctor --strict"],
+  examples: ["veryfront doctor", "veryfront doctor --port 4321", "veryfront doctor --strict"],
 };

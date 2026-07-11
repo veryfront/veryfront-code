@@ -325,8 +325,13 @@ function convertAssistantPartToChannelResponsePart(
     });
   }
 
-  const isToolCallPart = part.type === "tool-call" ||
-    (part.type.startsWith("tool-") && part.type !== "tool-result");
+  // A tool-call part carries `toolCallId`; `tool-result` and any future
+  // `tool-*` parts that aren't calls do not. The structural check guards
+  // against misclassifying new `tool-*` part types as tool calls.
+  const isToolCallPart = (
+    part.type === "tool-call" ||
+    (part.type.startsWith("tool-") && part.type !== "tool-result")
+  ) && "toolCallId" in part;
   if (
     isToolCallPart &&
     "toolCallId" in part &&

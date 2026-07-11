@@ -2,6 +2,8 @@
 export interface MutableAgentProjectContext {
   projectId: string;
   branchId?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  runtimeTargetEnvironmentId?: string | null;
   availableSkillIds?: string[];
   /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
   skillSourcePaths?: Readonly<Record<string, string>>;
@@ -18,6 +20,8 @@ export function applyAgentProjectContextChange(
 
   context.projectId = projectId;
   context.branchId = null;
+  context.runtimeTargetKind = "main_branch";
+  context.runtimeTargetEnvironmentId = null;
   context.availableSkillIds = undefined;
   context.skillSourcePaths = undefined;
   return true;

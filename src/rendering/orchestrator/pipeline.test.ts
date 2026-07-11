@@ -61,9 +61,12 @@ describe("RenderPipeline helpers", () => {
       assertEquals(result, [{ kind: "tsx", path: "app/layout.tsx" }]);
     });
 
-    it("serializeLayoutProps converts the layout prop map into a plain object", () => {
-      const result = serializeLayoutProps(new Map([["layout-a", { title: "A" }]]));
-      assertEquals(result, { "layout-a": { title: "A" } });
+    it("serializeLayoutProps uses project-relative layout keys", () => {
+      const result = serializeLayoutProps(
+        new Map([["/project/layouts/main.tsx", { title: "A" }]]),
+        "/project",
+      );
+      assertEquals(result, { "layouts/main.tsx": { title: "A" } });
     });
   });
   describe("isHiddenSegment", () => {

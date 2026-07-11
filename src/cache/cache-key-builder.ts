@@ -48,31 +48,44 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
 }
 
 function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  if (_getCurrentRequestContext !== undefined) return _getCurrentRequestContext;
+  // Memoize only once the adapter is actually resolved. A miss must NOT be cached
+  // permanently: the multi-project adapter can be installed on globalThis after
+  // the first call, and caching null here would disable distributed caching for
+  // the whole process lifetime even after the adapter is later wired.
+  if (_getCurrentRequestContext) return _getCurrentRequestContext;
 
   try {
     const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
       | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
       | undefined;
-    _getCurrentRequestContext = mod?.getCurrentRequestContext ?? null;
+    const fn = mod?.getCurrentRequestContext ?? null;
+    if (fn) _getCurrentRequestContext = fn;
+    return fn;
   } catch (_) {
-    // expected: multi-project adapter may not be available
-    _getCurrentRequestContext = null;
+    // expected: multi-project adapter may not be available yet — re-check next call
+    return null;
   }
-
-  return _getCurrentRequestContext ?? null;
 }
 
 function extractCacheKeyContextFromMultiProjectContext(
   reqCtx: MultiProjectRequestContextType,
-): CacheKeyContext {
-  const projectId = reqCtx.projectId || reqCtx.projectSlug || "default";
+): CacheKeyContext | null {
+  // A genuinely missing project identity must NOT collapse to a shared "default"
+  // bucket — that would let unrelated projects serve each other's cached pages.
+  // Return null instead so callers skip caching for this request.
+  const projectId = reqCtx.projectId || reqCtx.projectSlug;
+  if (!projectId) return null;
+
   const mode: CacheKeyContext["mode"] = reqCtx.productionMode ? "production" : "preview";
 
   let versionId: string;
   if (reqCtx.productionMode) {
-    versionId = reqCtx.releaseId || "latest";
+    // In production a missing releaseId is an invariant violation, not a bucket we
+    // can safely default to "latest" (all releases would collide). Skip caching.
+    if (!reqCtx.releaseId) return null;
+    versionId = reqCtx.releaseId;
   } else {
+    // Preview: branch is a real scoping segment, and "main" is a safe default.
     versionId = reqCtx.branch || "main";
   }
 
@@ -107,13 +120,26 @@ export function getProjectScopedKeyAlways(prefix: string, resourceKey: string): 
   return buildProjectScopedKey(prefix, resourceKey, ctx);
 }
 
-export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext {
-  const projectId = handlerCtx.projectId || handlerCtx.projectSlug || "default";
+export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext | null {
+  // Return null (skip caching) rather than collapsing to a shared "default"
+  // bucket when identity is missing — a shared bucket would be a cross-tenant
+  // risk, but crashing lightweight no-identity paths (e.g. local CSS/JIT) is
+  // worse than simply not caching. Callers must treat null as "do not cache".
+  const projectId = handlerCtx.projectId || handlerCtx.projectSlug;
+  if (!projectId) {
+    return null;
+  }
+
   const mode = handlerCtx.resolvedEnvironment ?? handlerCtx.requestContext?.mode ?? "preview";
 
   let versionId: string;
   if (mode === "production") {
-    versionId = handlerCtx.releaseId || "latest";
+    // A production release without a releaseId cannot share a "latest" bucket
+    // across releases without cross-release cache pollution; skip caching.
+    if (!handlerCtx.releaseId) {
+      return null;
+    }
+    versionId = handlerCtx.releaseId;
   } else {
     versionId = handlerCtx.parsedDomain?.branch || "main";
   }

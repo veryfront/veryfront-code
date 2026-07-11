@@ -27,6 +27,23 @@ describe("worker-egress-guard", () => {
     assertEquals(isInternalEgressIp("2606:2800:220:1:248:1893:25c8:1946"), false);
   });
 
+  it("identifies CGNAT (100.64.0.0/10), benchmarking (198.18.0.0/15), and 0.0.0.0 as internal", () => {
+    // 0.0.0.0 — unspecified address
+    assertEquals(isInternalEgressIp("0.0.0.0"), true);
+    // 100.64.0.0/10 — CGNAT shared address space (RFC 6598), b in [64, 127]
+    assertEquals(isInternalEgressIp("100.64.0.1"), true);
+    assertEquals(isInternalEgressIp("100.127.255.255"), true);
+    // 198.18.0.0/15 — benchmarking range (RFC 2544), b in {18, 19}
+    assertEquals(isInternalEgressIp("198.18.0.1"), true);
+    assertEquals(isInternalEgressIp("198.19.255.255"), true);
+    // Public addresses just outside the CGNAT range boundaries
+    assertEquals(isInternalEgressIp("100.63.255.255"), false);
+    assertEquals(isInternalEgressIp("100.128.0.1"), false);
+    // Well-known public DNS servers
+    assertEquals(isInternalEgressIp("8.8.8.8"), false);
+    assertEquals(isInternalEgressIp("1.1.1.1"), false);
+  });
+
   it("blocks direct metadata, private, link-local, and localhost targets", async () => {
     await assertRejects(
       () => assertWorkerEgressAllowed("http://169.254.169.254/latest/meta-data/"),

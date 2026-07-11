@@ -76,11 +76,21 @@ describe("hosted-agent-run-lifecycle", () => {
       projectId: "project-1",
       userId: "user-1",
       agentId: "agent-1",
+      agentName: "Ops Agent",
+      modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
       rootRun: { runId: "run-1", messageId: "message-1" },
       upstreamParentConversationId: "parent-conversation-1",
       upstreamParentRunId: "parent-run-1",
       spawnedFromToolCallId: "tool-call-1",
       traceAttributes: {
+        "project.slug": "veryfront-ops-agent",
+        "service.name": "veryfront-ops-agent",
+        service: "veryfront-ops-agent",
+        "service.version": "0.0.34",
+        version: "0.0.34",
+        "deployment.environment.name": "production",
+        "deployment.environment": "production",
+        env: "production",
         "schedule.id": "schedule-1",
         "schedule.name": "Triage sweep",
         "run.trigger.kind": "schedule",
@@ -95,11 +105,24 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["parent.conversation.id"], "parent-conversation-1");
     assertEquals(span.attributes["parent.run.id"], "parent-run-1");
     assertEquals(span.attributes["tool.call.id"], "tool-call-1");
+    assertEquals(span.attributes["project.slug"], "veryfront-ops-agent");
+    assertEquals(span.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(span.attributes["service"], "veryfront-ops-agent");
+    assertEquals(span.attributes["service.version"], "0.0.34");
+    assertEquals(span.attributes["version"], "0.0.34");
+    assertEquals(span.attributes["deployment.environment.name"], "production");
+    assertEquals(span.attributes["deployment.environment"], "production");
+    assertEquals(span.attributes["env"], "production");
     assertEquals(span.attributes["schedule.id"], "schedule-1");
     assertEquals(span.attributes["schedule.name"], "Triage sweep");
     assertEquals(span.attributes["run.trigger.kind"], "schedule");
     assertEquals(span.attributes["run.trigger.id"], "schedule-1");
     assertEquals(span.attributes["gen_ai.operation.name"], "chat");
+    assertEquals(span.attributes["gen_ai.agent.name"], "Ops Agent");
+    assertEquals(
+      span.attributes["gen_ai.request.model"],
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    );
 
     const value = controller.withContext(() => "ok");
     assertEquals(value, "ok");
@@ -129,6 +152,7 @@ describe("hosted-agent-run-lifecycle", () => {
     );
     assertEquals(span.attributes["gen_ai.usage.input_tokens"], 10);
     assertEquals(span.attributes["gen_ai.usage.output_tokens"], 5);
+    assertEquals(span.attributes["gen_ai.usage.total_tokens"], 15);
     assertEquals(span.attributes["gen_ai.usage.cache_read.input_tokens"], 2);
     assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
   });

@@ -98,6 +98,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   authToken: string;
   conversationId?: string;
   branchId?: string | null;
+  runtimeTargetKind?: ChatRequestContext["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
   environmentContext?: string;
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -303,6 +305,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
       authToken: input.authToken,
       instructions: agentInstructions,
       ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
+      ...(input.runtimeTargetKind !== undefined
+        ? { runtimeTargetKind: input.runtimeTargetKind }
+        : {}),
+      ...(input.runtimeTargetEnvironmentId !== undefined
+        ? { runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId }
+        : {}),
       ...(runtimeConfig.requestedModel ? { model: runtimeConfig.requestedModel } : {}),
       ...(runtimeConfig.requestedThinking ? { thinking: runtimeConfig.requestedThinking } : {}),
       ...(runtimeConfig.requestedTemperature !== undefined
@@ -402,6 +410,8 @@ export async function prepareHostedChatExecution<
     authToken: input.request.authToken,
     conversationId: input.request.conversationId,
     branchId: normalized.effectiveValidatedContext.branchId,
+    runtimeTargetKind: normalized.effectiveValidatedContext.runtimeTargetKind,
+    runtimeTargetEnvironmentId: normalized.effectiveValidatedContext.runtimeTargetEnvironmentId,
     environmentContext: normalized.effectiveValidatedContext.environmentContext,
     rootRunContext,
     resolveModelId: input.resolveModelId,

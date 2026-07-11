@@ -16,6 +16,34 @@ import { cacheRegistry } from "../registry.ts";
 import { DEFAULT_EXCLUDED_QUERY_PARAMS, type QueryParamCacheOptions } from "./prefixes.ts";
 
 const querySegmentEncoder = new TextEncoder();
+const pathHashEncoder = new TextEncoder();
+
+// 64-bit FNV-1a parameters (run twice with independent seeds to yield a 128-bit
+// digest). Replaces the previous 32-bit DJB2 hash, whose ~16-bit birthday bound
+// meant cache-key collisions became likely at only ~77k unique paths — a
+// cross-tenant risk since two colliding project paths would share a cache prefix.
+const FNV64_MASK = (1n << 64n) - 1n;
+const FNV64_PRIME = 1099511628211n;
+const FNV64_OFFSET_A = 14695981039346656037n;
+const FNV64_OFFSET_B = 1099511628211n;
+
+/**
+ * Strong, deterministic, synchronous path hash. Produces a 128-bit lowercase-hex
+ * digest by running two independently-seeded 64-bit FNV-1a passes over the UTF-8
+ * bytes of the input. Sync (BigInt, no crypto.subtle) because the cache-key
+ * builders that call it are synchronous hot paths.
+ */
+function strongPathHash(input: string): string {
+  const bytes = pathHashEncoder.encode(input);
+  let a = FNV64_OFFSET_A;
+  let b = FNV64_OFFSET_B;
+  for (const rawByte of bytes) {
+    const byte = BigInt(rawByte);
+    a = ((a ^ byte) * FNV64_PRIME) & FNV64_MASK;
+    b = ((b ^ (byte + 0x9en)) * FNV64_PRIME) & FNV64_MASK;
+  }
+  return a.toString(16).padStart(16, "0") + b.toString(16).padStart(16, "0");
+}
 
 export function parseRenderCacheKey(cacheKey: string): {
   projectId: string;
@@ -55,14 +83,7 @@ export function hashPathWithName(path: string): string {
   // Extract folder name for readability
   const folderName = path.split("/").filter(Boolean).pop() || "unknown";
 
-  // Generate hash for uniqueness
-  let hash = 0;
-  for (let i = 0; i < path.length; i++) {
-    hash = (hash << 5) - hash + path.charCodeAt(i);
-    hash |= 0;
-  }
-
-  return `local-${Math.abs(hash).toString(16)}-${folderName}`;
+  return `local-${strongPathHash(path)}-${folderName}`;
 }
 
 /**
@@ -83,14 +104,7 @@ export function normalizeFilePath(filePath: string): string {
   const parts = filePath.split("/");
   const fileName = parts.pop() || "unknown";
 
-  // Hash the full path for uniqueness
-  let hash = 0;
-  for (let i = 0; i < filePath.length; i++) {
-    hash = (hash << 5) - hash + filePath.charCodeAt(i);
-    hash |= 0;
-  }
-
-  return `${Math.abs(hash).toString(16)}-${fileName}`;
+  return `${strongPathHash(filePath)}-${fileName}`;
 }
 
 /**

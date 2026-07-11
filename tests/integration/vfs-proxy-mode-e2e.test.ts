@@ -16,6 +16,7 @@ import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
+import { computeSourceHash } from "../e2e/setup/binary.ts";
 
 try {
   await loadEnv({ export: true, allowEmptyValues: true, examplePath: null });
@@ -30,43 +31,6 @@ async function getAvailablePort(): Promise<number> {
   const { port } = listener.addr as Deno.NetAddr;
   listener.close();
   return port;
-}
-
-async function computeSourceHash(): Promise<string> {
-  const decoder = new TextDecoder();
-
-  try {
-    const trees = ["HEAD:src", "HEAD:cli", "HEAD:scripts/build", "HEAD:extensions"];
-    const results = await Promise.all(
-      trees.map((ref) =>
-        new Deno.Command("git", {
-          args: ["rev-parse", ref],
-          stdout: "piped",
-          stderr: "null",
-        }).output()
-      ),
-    );
-
-    if (results.every((r) => r.success)) {
-      return results.map((r) => decoder.decode(r.stdout).trim()).join("-");
-    }
-  } catch {
-    // Fall through to the commit hash fallback.
-  }
-
-  try {
-    const result = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-
-    if (result.success) return decoder.decode(result.stdout).trim();
-  } catch {
-    // Fall through to a fresh timestamp.
-  }
-
-  return Date.now().toString();
 }
 
 async function ensureBinaryCompiled(): Promise<void> {

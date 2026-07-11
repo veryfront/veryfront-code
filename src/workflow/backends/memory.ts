@@ -67,7 +67,11 @@ export class MemoryBackend implements WorkflowBackend {
 
   updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
     const run = this.runs.get(runId);
-    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    // Reject rather than throw synchronously so callers see a rejected Promise
+    // consistently (matching the Redis backend's async error paths).
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
 
     logger.debug(`Updating run: ${runId}`, patch);
 
@@ -127,9 +131,22 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(runs.map((r) => structuredClone(r)));
   }
 
-  async countRuns(filter: RunFilter): Promise<number> {
-    const runs = await this.listRuns({ ...filter, limit: undefined, offset: undefined });
-    return runs.length;
+  countRuns(filter: RunFilter): Promise<number> {
+    // Count in place — no structuredClone per run (unlike listRuns).
+    const statuses = filter.status
+      ? Array.isArray(filter.status) ? filter.status : [filter.status]
+      : null;
+
+    let count = 0;
+    for (const run of this.runs.values()) {
+      if (filter.workflowId && run.workflowId !== filter.workflowId) continue;
+      if (statuses && !statuses.includes(run.status)) continue;
+      if (filter.createdAfter && run.createdAt < filter.createdAfter) continue;
+      if (filter.createdBefore && run.createdAt > filter.createdBefore) continue;
+      count++;
+    }
+
+    return Promise.resolve(count);
   }
 
   // =========================================================================
@@ -310,20 +327,29 @@ export class MemoryBackend implements WorkflowBackend {
   // Distributed Locking
   // =========================================================================
 
-  acquireLock(runId: string, duration: number): Promise<boolean> {
+  acquireLock(runId: string, duration: number): Promise<string | null> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
-    if (existing && existing.expiresAt > now) return Promise.resolve(false);
+    if (existing && existing.expiresAt > now) return Promise.resolve(null);
 
     logger.debug(`Acquiring lock for: ${runId}`);
 
-    this.locks.set(runId, { lockId: crypto.randomUUID(), expiresAt: now + duration });
-    return Promise.resolve(true);
+    const lockId = crypto.randomUUID();
+    this.locks.set(runId, { lockId, expiresAt: now + duration });
+    return Promise.resolve(lockId);
   }
 
-  releaseLock(runId: string): Promise<void> {
+  releaseLock(runId: string, lockId?: string): Promise<void> {
     logger.debug(`Releasing lock for: ${runId}`);
+
+    // Compare-and-delete: a stalled worker whose lock already expired and was
+    // re-acquired by another owner must not delete the new owner's lock.
+    const existing = this.locks.get(runId);
+    if (lockId !== undefined && existing && existing.lockId !== lockId) {
+      return Promise.resolve();
+    }
+
     this.locks.delete(runId);
     return Promise.resolve();
   }

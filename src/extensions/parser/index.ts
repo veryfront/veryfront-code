@@ -7,6 +7,7 @@
 export type {
   ASTNode,
   CodeParser,
+  FunctionDirectiveOptions,
   GenerateOptions,
   GenerateResult,
   InjectJsxNodePositionsOptions,

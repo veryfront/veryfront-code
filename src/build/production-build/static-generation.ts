@@ -23,6 +23,7 @@ import {
 import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { SSG_GENERATION_ERROR } from "#veryfront/errors";
 
 export interface PageRenderResult {
   html: string;
@@ -288,10 +289,6 @@ ${clientStyles}
 
       await traceStep(`write:${route.slug}`, () => adapter.fs.writeFile(outputPath, enhancedHtml));
 
-      stats.pages++;
-      stats.totalSize += getByteLength(enhancedHtml);
-      stats.ssgPaths.push(route.path);
-
       const pageData = {
         slug: route.slug,
         path: route.path,
@@ -314,9 +311,17 @@ ${clientStyles}
         await traceStep(`module:${route.slug}`, () => adapter.fs.writeFile(modulePath, moduleCode));
       }
 
+      stats.pages++;
+      stats.totalSize += getByteLength(enhancedHtml);
+      stats.ssgPaths.push(route.path);
       logger.debug(`Built page: ${route.slug}`);
     } catch (error) {
       logger.error(`Failed to build ${route.slug}:`, error);
+      throw SSG_GENERATION_ERROR.create({
+        detail: `Failed to build page ${route.path}`,
+        cause: error,
+        context: { route: route.path },
+      });
     }
   }
 
@@ -356,6 +361,7 @@ export async function buildAppRoutes(
           pageFile: route.pageFile,
           contentSourceId,
           reactVersion,
+          config: options.config,
           releaseAssetManifest: options.releaseAssetManifest,
           stylesheetHref,
           includePreviewStylesheet: false,
@@ -373,6 +379,11 @@ export async function buildAppRoutes(
       stats.totalSize += getByteLength(html);
     } catch (error) {
       logger.error(`Failed to build app route ${route.path}:`, error);
+      throw SSG_GENERATION_ERROR.create({
+        detail: `Failed to build app route ${route.path}`,
+        cause: error,
+        context: { route: route.path },
+      });
     }
   }
 

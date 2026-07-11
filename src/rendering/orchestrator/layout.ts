@@ -12,6 +12,7 @@ import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -58,9 +59,18 @@ interface LayoutPreloadSummary {
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
   private _preloadedImportMap: ImportMapConfig | null = null;
+  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
+  }
+
+  private getReactVersion(): Promise<string> {
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+    });
+    return this.reactVersionPromise;
   }
 
   getPreloadedImportMap(): ImportMapConfig | null {
@@ -115,6 +125,8 @@ export class LayoutOrchestrator {
           };
         }
 
+        const reactVersion = await this.getReactVersion();
+
         logger.debug("Preloading layout modules", {
           tsxCount: tsxLayouts.length,
           mdxCount: mdxLayouts.length,
@@ -160,6 +172,7 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  reactVersion,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -191,6 +204,7 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  reactVersion,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
@@ -267,10 +281,12 @@ export class LayoutOrchestrator {
     frontmatter?: Record<string, unknown>,
     headings?: Array<{ id: string; text: string; level: number }>,
     projectSlug?: string,
+    clientPageIsland?: { clientLayoutPaths: readonly string[] },
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
+        const reactVersion = await this.getReactVersion();
         const mergedComponents = {
           ...createDefaultMDXComponents(),
           ...this.config.componentRegistry,
@@ -292,6 +308,7 @@ export class LayoutOrchestrator {
           params,
           frontmatter,
           headings,
+          reactVersion,
         });
 
         const pageType = pageElement.type;
@@ -305,6 +322,7 @@ export class LayoutOrchestrator {
           layoutBundle,
           nestedLayouts,
           layoutDataMap,
+          clientPageIsland,
         );
 
         const resultType = result.type;

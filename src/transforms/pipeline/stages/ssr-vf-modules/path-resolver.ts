@@ -8,7 +8,11 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { resolveRelativeFrameworkSourceImport } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import {
+  isSafeFrameworkSourceKey,
+  resolveRelativeFrameworkSourceImport,
+} from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   EMBEDDED_SRC_DIR,
@@ -58,6 +62,11 @@ export async function resolveFrameworkFile(
     .replace(/\?.*$/, "")
     .replace(/\.js$/, "");
 
+  const frameworkRelativePath = pathWithoutPrefix.startsWith("_veryfront/")
+    ? pathWithoutPrefix.slice("_veryfront/".length)
+    : pathWithoutPrefix;
+  if (!isSafeFrameworkSourceKey(frameworkRelativePath)) return null;
+
   logger.debug(`${LOG_PREFIX} resolveFrameworkFile`, {
     input: vfModulePath,
     normalizedVfModulePath,
@@ -76,6 +85,7 @@ export async function resolveFrameworkFile(
 
     const relativePath = pathWithoutPrefix.slice(prefix.length);
     const pathWithPrefixDir = join(frameworkDir, prefix, relativePath);
+    if (!isWithinDirectory(frameworkDir, pathWithPrefixDir)) continue;
 
     logger.debug(`${LOG_PREFIX} Trying path with prefix`, {
       prefix,
@@ -93,6 +103,7 @@ export async function resolveFrameworkFile(
     if (prefix !== "_veryfront/") continue;
 
     const pathWithoutPrefixDir = join(frameworkDir, relativePath);
+    if (!isWithinDirectory(frameworkDir, pathWithoutPrefixDir)) continue;
     logger.debug(`${LOG_PREFIX} Trying path without prefix`, {
       frameworkDir,
       relativePath,
@@ -120,9 +131,8 @@ export async function resolveFrameworkFile(
  * Resolve a #veryfront/ import to the actual framework source file path.
  * Returns the resolved path if found, null otherwise.
  *
- * IMPORTANT: This function prefers regular src/ when present, then falls back
- * to embedded sources for compiled binaries. This matches resolveFrameworkFile's
- * behavior and ensures consistent path resolution for cycle detection.
+ * Uses the same runtime-aware lookup order as resolveFrameworkFile so cycle
+ * detection and source selection always agree.
  */
 export async function resolveVeryfrontSourcePath(
   specifier: string,
@@ -136,14 +146,7 @@ export async function resolveVeryfrontSourcePath(
   const relativePath = mappedTarget.slice("./src/".length);
   const hasExtension = /\.(tsx?|jsx?|mjs)$/.test(relativePath);
 
-  // Prefer regular src/ when present, then fall back to embedded sources.
-  // This order matches FRAMEWORK_LOOKUPS and resolveFrameworkFile to ensure
-  // consistent path resolution across the codebase, which is critical for
-  // cycle detection in transformingFiles.
-  const lookupDirs = [
-    join(FRAMEWORK_ROOT, "src"), // Regular sources for dev mode
-    EMBEDDED_SRC_DIR, // Embedded sources for compiled binaries (.src files)
-  ];
+  const lookupDirs = FRAMEWORK_LOOKUPS.map(([, frameworkDir]) => frameworkDir);
 
   for (const dir of lookupDirs) {
     const basePath = join(dir, relativePath);

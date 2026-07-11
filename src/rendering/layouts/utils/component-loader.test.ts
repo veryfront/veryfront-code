@@ -4,9 +4,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createLayoutComponentCache,
+  loadMDXLayout,
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import type { MdxBundle } from "#veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 describe("rendering/layouts/utils/component-loader", () => {
   describe("createLayoutComponentCache", () => {
@@ -234,18 +238,42 @@ describe("rendering/layouts/utils/component-loader", () => {
 
   describe("App Router document layout unwrapping", () => {
     it("should detect the App Router root layout path", () => {
-      assertEquals(
-        shouldUnwrapAppRouterDocumentLayout("/project/app/layout.tsx", "/project"),
-        true,
-      );
+      for (const extension of ["tsx", "jsx", "ts", "js"]) {
+        assertEquals(
+          shouldUnwrapAppRouterDocumentLayout(
+            `/project/app/layout.${extension}`,
+            "/project",
+          ),
+          true,
+        );
+      }
       assertEquals(
         shouldUnwrapAppRouterDocumentLayout("/project/app/dashboard/layout.tsx", "/project"),
         false,
       );
     });
 
+    it("should detect a configured App Router root layout path", () => {
+      assertEquals(
+        shouldUnwrapAppRouterDocumentLayout(
+          "/project/src/site/layout.tsx",
+          "/project",
+          "src/site",
+        ),
+        true,
+      );
+      assertEquals(
+        shouldUnwrapAppRouterDocumentLayout(
+          "/project/src/site/dashboard/layout.tsx",
+          "/project",
+          "src/site",
+        ),
+        false,
+      );
+    });
+
     it("should preserve body children without mounting html and body inside the root", () => {
-      function RootLayout({ children }: { children: React.ReactNode }) {
+      function RootLayout({ children }: { children?: React.ReactNode }) {
         return React.createElement(
           "html",
           null,
@@ -256,11 +284,40 @@ describe("rendering/layouts/utils/component-loader", () => {
       const WrappedLayout = unwrapAppRouterDocumentLayout(React, RootLayout);
       const result = WrappedLayout({
         children: React.createElement("button", { id: "counter" }, "Count: 0"),
-      }) as React.ReactElement;
+      }) as React.ReactElement<{ children?: React.ReactNode }>;
 
       assertEquals(result.type, "main");
       const child = React.Children.only(result.props.children) as React.ReactElement;
       assertEquals(child.type, "button");
     });
+  });
+
+  it("threads the project React version into MDX layout module loading", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let moduleReactVersion: unknown;
+    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
+      moduleReactVersion = args[6];
+      return Promise.resolve({ default: () => null });
+    }) as typeof mdxRenderer.loadModuleESM;
+
+    try {
+      await loadMDXLayout(
+        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
+        "/project",
+        { fs: {} } as unknown as RuntimeAdapter,
+        "project-18",
+        "project-slug",
+        "preview-main",
+        { imports: {} },
+        "18.3.1",
+      );
+
+      assertEquals(moduleReactVersion, "18.3.1");
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
   });
 });

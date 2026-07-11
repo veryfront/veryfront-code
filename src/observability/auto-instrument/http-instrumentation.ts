@@ -43,6 +43,10 @@ export function instrumentHttpHandler(
     const url = new URL(request.url);
     const httpAttrs = buildHttpAttributes(request, url);
     const parentContext = extractParentContext(request.headers);
+    // Track whether the handler has been invoked to prevent double-execution.
+    // If startActiveSpan throws after the callback already called handler(),
+    // the outer catch must propagate the error rather than re-invoke handler.
+    let handlerInvoked = false;
 
     try {
       return await getHttpTracer().startActiveSpan(
@@ -51,6 +55,7 @@ export function instrumentHttpHandler(
         parentContext,
         async (span) => {
           try {
+            handlerInvoked = true;
             const response = await handler(request);
             recordResponseSuccess(span, response, performance.now() - startTime, httpAttrs);
             return response;
@@ -63,6 +68,10 @@ export function instrumentHttpHandler(
         },
       );
     } catch (error) {
+      if (handlerInvoked) {
+        // Handler already ran — propagate its error without re-invoking.
+        throw error;
+      }
       logger.debug(
         "[auto-instrument] HTTP handler span failed, falling back to raw handler",
         error,
@@ -101,6 +110,9 @@ export function createInstrumentedFetch(
       /* expected: relative URLs cannot be parsed, leave defaults */
     }
 
+    // Tracks whether baseFetch was invoked to prevent double-execution on span failure.
+    let fetchInvoked = false;
+
     try {
       return await getHttpTracer().startActiveSpan(
         "http.client.fetch",
@@ -112,6 +124,7 @@ export function createInstrumentedFetch(
               set: (h, k, v) => h.set(k, v),
             });
 
+            fetchInvoked = true;
             const response = await baseFetch(input, { ...init, headers });
             recordResponseSuccess(span, response, performance.now() - startTime, fetchAttrs);
             return response;
@@ -124,6 +137,10 @@ export function createInstrumentedFetch(
         },
       );
     } catch (error) {
+      if (fetchInvoked) {
+        // baseFetch already ran — propagate its error without re-invoking.
+        throw error;
+      }
       logger.debug("Fetch span failed, falling back to base fetch", error);
       return await baseFetch(input, init);
     }
@@ -177,7 +194,7 @@ function recordResponseError(
 ): void {
   if (!span) return;
 
-  span.recordException(error as Error);
+  span.recordException(error instanceof Error ? error : new Error(String(error)));
   span.setAttributes({
     ...buildErrorAttributes(error),
     "http.duration_ms": Math.round(duration),

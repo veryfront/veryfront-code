@@ -129,6 +129,53 @@ describe("RenderPipeline behavior", () => {
     clearReleaseAssetManifestCache();
   });
 
+  it("resolves request-scoped module loader identity and the configured React version", async () => {
+    const pipeline = createPipeline("/project/pages/index.tsx", {
+      projectId: "project-config-id",
+      contentSourceId: "release-config-source",
+      config: {
+        react: { version: "^18.3.1" },
+      },
+    } as Partial<RenderPipelineConfig>);
+    const observedConfigs: Array<{
+      projectId?: string;
+      contentSourceId?: string;
+      reactVersion?: string;
+    }> = [];
+    (pipeline as any).loadModule = async (
+      _path: string,
+      config: typeof observedConfigs[number],
+    ) => {
+      observedConfigs.push(config);
+      return {};
+    };
+
+    await pipeline.resolvePageData("/", {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    });
+    assert(observedConfigs.length > 0);
+    for (const config of observedConfigs) {
+      assertEquals(config.projectId, "project-config-id");
+      assertEquals(config.contentSourceId, "release-config-source");
+      assertEquals(config.reactVersion, "18.3.1");
+    }
+
+    observedConfigs.length = 0;
+    await pipeline.resolvePageData("/", {
+      projectId: "project-request-id",
+      contentSourceId: "preview-request-source",
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    });
+    assert(observedConfigs.length > 0);
+    for (const config of observedConfigs) {
+      assertEquals(config.projectId, "project-request-id");
+      assertEquals(config.contentSourceId, "preview-request-source");
+      assertEquals(config.reactVersion, "18.3.1");
+    }
+  });
+
   it("renderPage uses a non-empty cache key for the root slug", async () => {
     const checks: Array<{ slug: string; cacheKey?: string }> = [];
     const persists: Array<{ slug: string; cacheKey?: string }> = [];
@@ -153,6 +200,58 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+  });
+
+  it("renderPage forwards project-relative layout props to HTML hydration", async () => {
+    const slug = "/behavior-render-layout-props";
+    const layoutPath = "/project/layouts/root.tsx";
+    let hydrationLayoutProps: Record<string, Record<string, unknown>> | undefined;
+    const pipeline = createPipeline("/project/pages/behavior-render-layout-props.tsx", {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+      ssrOrchestrator: {
+        performSSRRendering: async (
+          _element: unknown,
+          _context: unknown,
+          options: { layoutProps?: Record<string, Record<string, unknown>> } | undefined,
+        ) => {
+          hydrationLayoutProps = options?.layoutProps;
+          return {
+            fullHtml: "<!doctype html><html><body>ok</body></html>",
+            finalStream: null,
+            ssrHash: "test-hash",
+          };
+        },
+      } as any,
+    });
+
+    (pipeline as any).loadModule = async (path: string) =>
+      path === layoutPath ? { getServerData: () => ({ props: { theme: "docs" } }) } : {};
+
+    await pipeline.renderPage(slug, {
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(hydrationLayoutProps, {
+      "layouts/root.tsx": { theme: "docs" },
+    });
   });
 
   it("renderPage refreshes preview caches and retries stale MDX ESM export mismatches", async () => {
@@ -255,6 +354,31 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Page/Layout returned notFound",
     );
+  });
+
+  it("runs data hooks and extracts params for configured page roots", async () => {
+    const slug = "/users/42";
+    const projectId = "proj-custom-pages";
+    const pipeline = createPipeline("/project/src/legacy-pages/users/[id].tsx", {
+      directories: { app: "src/routes", pages: "src/legacy-pages" },
+    } as Partial<RenderPipelineConfig>);
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
+    (pipeline as any).dataFetcher = {
+      fetchData: async (_module: unknown, context: { params: Record<string, string> }) => ({
+        props: { loadedUserId: context.params.id },
+      }),
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(pageData.params, { id: "42" });
+    assertEquals(pageData.props, { loadedUserId: "42" });
   });
 
   it("resolvePageData emits request-profiler timings for first-hit stages", async () => {
@@ -489,6 +613,59 @@ describe("RenderPipeline behavior", () => {
     ]);
   });
 
+  it("resolvePageData exposes only the client layout suffix for a server-owned page island", async () => {
+    const slug = "/docs/guides";
+    const projectId = "proj-page-island";
+    const pagePath = "/project/app/docs/guides/page.tsx";
+    const serverLayoutPath = "/project/app/layout.tsx";
+    const clientLayoutPath = "/project/app/docs/layout.tsx";
+    const nestedClientLayoutPath = "/project/app/docs/guides/layout.tsx";
+    const sources = new Map([
+      [serverLayoutPath, "export default function RootLayout() {}"],
+      [clientLayoutPath, "'use client';\nexport default function DocsLayout() {}"],
+      [nestedClientLayoutPath, "'use client';\nexport default function GuidesLayout() {}"],
+    ]);
+    const pipeline = createPipeline(pagePath, {
+      pageResolver: {
+        resolvePage: async () => ({
+          entity: {
+            path: pagePath,
+            content: "'use client';\nexport default function GuidesPage() {}",
+            frontmatter: {},
+          },
+        }),
+      } as any,
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [
+            { kind: "tsx", componentPath: serverLayoutPath },
+            { kind: "tsx", componentPath: clientLayoutPath },
+            { kind: "tsx", componentPath: nestedClientLayoutPath },
+          ],
+        }),
+      } as any,
+      adapter: {
+        env: { get: () => undefined },
+        fs: {
+          exists: async () => false,
+          readFile: async (path: string) => sources.get(path) ?? "",
+        },
+      } as any,
+    });
+    primeCssCache(slug, projectId);
+
+    const pageData = await pipeline.resolvePageData(slug, { projectId });
+
+    assertEquals(pageData.layouts, [
+      { kind: "tsx", path: "app/docs/layout.tsx" },
+      { kind: "tsx", path: "app/docs/guides/layout.tsx" },
+    ]);
+    assertEquals(pageData.isolatedClientPage, true);
+    assertEquals(pageData.requiresFullDocumentNavigation, true);
+    assertEquals(pageData.appPath, undefined);
+  });
+
   it("resolvePageData includes layoutProps from fetched layout data", async () => {
     const slug = "/behavior-layout-props";
     const projectId = "proj-layout-props";
@@ -512,7 +689,7 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(
       {
-        "/project/layouts/root.tsx": { theme: "docs" },
+        "layouts/root.tsx": { theme: "docs" },
       },
       pageData.layoutProps,
     );

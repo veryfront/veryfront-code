@@ -56,5 +56,25 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       const result = renderAttributes({ tabIndex: 0 });
       assertEquals(result.includes('tabIndex="0"'), true);
     });
+
+    it("omits unsafe and event-handler names before interpolating attributes", () => {
+      const result = renderAttributes({
+        'x" http-equiv="refresh" content': "0;url=https://example.invalid",
+        onClick: "alert(1)",
+        ONLOAD: "alert(1)",
+        className: "safe",
+        htmlFor: "field",
+        "aria-label": "Field",
+        "data-test-id": "field",
+      });
+
+      assertEquals(result.includes("http-equiv"), false);
+      assertEquals(result.toLowerCase().includes("onclick"), false);
+      assertEquals(result.toLowerCase().includes("onload"), false);
+      assertEquals(result.includes('class="safe"'), true);
+      assertEquals(result.includes('htmlFor="field"'), true);
+      assertEquals(result.includes('aria-label="Field"'), true);
+      assertEquals(result.includes('data-test-id="field"'), true);
+    });
   });
 });

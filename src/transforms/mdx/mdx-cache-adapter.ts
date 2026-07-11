@@ -109,7 +109,7 @@ export class MDXCacheAdapter {
         nodeMap: new Map(),
       };
     } catch (error) {
-      logger.debug("Failed to retrieve cached bundle", { error, filePath });
+      logger.warn("Failed to retrieve cached bundle", { error, filePath });
       return undefined;
     }
   }
@@ -161,7 +161,7 @@ export class MDXCacheAdapter {
         ttl,
       });
     } catch (error) {
-      logger.debug("Failed to cache bundle", { error, filePath });
+      logger.warn("Failed to cache bundle", { error, filePath });
     }
   }
 

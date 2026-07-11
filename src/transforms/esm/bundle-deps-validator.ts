@@ -26,7 +26,7 @@ export function extractBundleDeps(code: string): Array<{ path: string; hash: str
   const seen = new Set<string>();
 
   // Match absolute file:// paths (legacy format)
-  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
+  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
   let match: RegExpExecArray | null;
   while ((match = absolutePattern.exec(code)) !== null) {
     const hash = match[2]!;
@@ -36,7 +36,7 @@ export function extractBundleDeps(code: string): Array<{ path: string; hash: str
   }
 
   // Match relative paths (new portable format): ./http-{hash}.mjs
-  const relativePattern = /["']\.\/http-(\d+)\.mjs["']/gi;
+  const relativePattern = /["']\.\/http-([a-f0-9]+)\.mjs["']/gi;
   while ((match = relativePattern.exec(code)) !== null) {
     const hash = match[1]!;
     if (seen.has(hash)) continue;
@@ -157,7 +157,7 @@ export async function findParentBundleWithEmbeddedUrl(
 ): Promise<{ path: string; sourceUrl: string } | null> {
   try {
     const files = fs.readDir(cacheDir);
-    const bundlePattern = /^http-(\d+)\.mjs$/;
+    const bundlePattern = /^http-([a-f0-9]+)\.mjs$/i;
 
     for await (const file of files) {
       if (!bundlePattern.test(file.name)) continue;

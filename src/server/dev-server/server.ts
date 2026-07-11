@@ -142,7 +142,13 @@ export class DevServer {
     if (isDiskCacheConfigured()) {
       void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
         (error: unknown) => {
-          logger.debug("[DevServer] Cache initialization failed, using memory fallback", { error });
+          // Warn (not debug): the cache was explicitly configured, so a failure likely
+          // indicates a misconfiguration (wrong Redis host/password). Developers need
+          // to see this — a debug log is too easy to miss.
+          logger.warn(
+            "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
+            { error },
+          );
         },
       );
     }
@@ -257,6 +263,10 @@ export class DevServer {
         logger.info(`Dev server running at ${url}`);
 
         try {
+          // _isReady must be set inside onListen — the server is only truly ready
+          // to accept connections once this callback fires. Setting it after
+          // adapter.serve() returns races with onListen on Deno (where serve is
+          // non-blocking) and would mark the server ready before it can accept.
           this._isReady = true;
           this._resolveReady();
         } catch (error) {
@@ -264,8 +274,6 @@ export class DevServer {
         }
       },
     });
-
-    this._isReady = true;
   }
 
   /** Return the request handler for use with external HTTP servers. */

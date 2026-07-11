@@ -39,7 +39,12 @@ function buildRules(importMap: Record<string, string>): RewriteRule[] {
     // deno.json values look like "npm:zod@4.3.6" — use as-is
     const escaped = escapeForRegex(pkg);
 
-    // Static imports
+    // Static imports.
+    // CONSTRAINT: these patterns match the specifier string anywhere in the
+    // source, including inside string literals and comments.  This is safe only
+    // because REWRITABLE_PACKAGES is empty and must remain limited to bare
+    // specifiers that cannot appear as non-import substrings.  If packages are
+    // added here, use the AST-aware replaceSpecifiers from esm/lexer.ts instead.
     rules.push({
       pattern: new RegExp(`from\\s+["']${escaped}["']`, "g"),
       replacement: `from "${mapped}"`,

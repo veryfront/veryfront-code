@@ -230,6 +230,7 @@ describe("getEntityBySlug", () => {
       const pagesDir = join(context.projectDir, "pages");
       await createTestFile(join(pagesDir, "test.jsx"), "// JSX file");
       await createTestFile(join(pagesDir, "another.ts"), "// TS file");
+      await createTestFile(join(pagesDir, "plain.js"), "// JS file");
       await createTestFile(join(pagesDir, "contact", "index.jsx"), "// Contact JSX");
 
       const jsxInfo = await getEntityBySlug(context.projectDir, "test");
@@ -239,6 +240,10 @@ describe("getEntityBySlug", () => {
       const tsInfo = await getEntityBySlug(context.projectDir, "another");
       assertExists(tsInfo);
       assertEquals(tsInfo.entity.content, "// TS file");
+
+      const jsInfo = await getEntityBySlug(context.projectDir, "plain");
+      assertExists(jsInfo);
+      assertEquals(jsInfo.entity.content, "// JS file");
 
       const contactInfo = await getEntityBySlug(context.projectDir, "contact");
       assertExists(contactInfo);

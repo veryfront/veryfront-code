@@ -51,7 +51,14 @@ export async function transformModuleWithDeps(
   useLocalAdapter = false,
 ): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
-  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
+  const cacheKey = getModuleCacheKey(
+    filePath,
+    projectId,
+    projectDir,
+    contentSourceId,
+    config.reactVersion,
+    mode,
+  );
 
   const cachedPath = await resolveCachedModulePath({
     cacheKey,
@@ -205,6 +212,11 @@ export async function loadModule(
     return await import(moduleUrl);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
+    // HEURISTIC: extract the bundle hash by matching the cache-path pattern in
+    // the error message. This relies on the path format
+    // `veryfront-http-bundle/http-<hash>.mjs` remaining stable. If the cache
+    // layout changes, this recovery silently stops firing — update the regex
+    // alongside any cache-dir rename.
     const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
 
     if (bundleMatch) {
@@ -237,7 +249,14 @@ export async function loadModule(
       });
 
       config.moduleCache.delete(
-        getModuleCacheKey(filePath, config.projectId, config.projectDir, config.contentSourceId),
+        getModuleCacheKey(
+          filePath,
+          config.projectId,
+          config.projectDir,
+          config.contentSourceId,
+          config.reactVersion,
+          config.mode,
+        ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
       // invalidation stays scoped to this tenant (the path-cache key is not

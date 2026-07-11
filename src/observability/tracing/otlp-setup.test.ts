@@ -3,12 +3,14 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
+  type AttributeValue,
   type Context,
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalTracerProvider,
   type Span,
   type SpanContext,
+  SpanKind,
   type Tracer,
 } from "./api-shim.ts";
 
@@ -23,6 +25,66 @@ describe("observability/tracing/otlp-setup", () => {
     const result = await withSpan("test.operation", async () => "ok");
 
     assertEquals(result, "ok");
+  });
+
+  it("withSpan forwards explicit span kind options", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    let capturedKind: number | undefined;
+    const spanContext: SpanContext = {
+      traceId: "00000000000000000000000000000000",
+      spanId: "0000000000000000",
+      traceFlags: 0,
+    };
+    const span: Span = {
+      setAttribute() {
+        return span;
+      },
+      setAttributes() {
+        return span;
+      },
+      setStatus() {
+        return span;
+      },
+      recordException() {},
+      addEvent() {
+        return span;
+      },
+      end() {},
+      spanContext() {
+        return spanContext;
+      },
+      updateName() {},
+    };
+
+    setGlobalTracerProvider({
+      getTracer() {
+        return {
+          startSpan(_name, options) {
+            capturedKind = options?.kind;
+            return span;
+          },
+          startActiveSpan<T>(
+            _name: string,
+            optionsOrFn:
+              | { kind?: number; attributes?: Record<string, AttributeValue> }
+              | ((span: Span) => T),
+            contextOrFn?: unknown,
+            fn?: (span: Span) => T,
+          ): T {
+            const callback = typeof optionsOrFn === "function"
+              ? optionsOrFn
+              : typeof contextOrFn === "function"
+              ? contextOrFn as (span: Span) => T
+              : fn!;
+            return callback(span);
+          },
+        };
+      },
+    });
+
+    await withSpan("genai.chat", async () => "ok", {}, { kind: SpanKind.CLIENT });
+
+    assertEquals(capturedKind, SpanKind.CLIENT);
   });
 
   it("withSpanSync should execute the callback when OTLP is unavailable", async () => {
@@ -100,7 +162,7 @@ describe("observability/tracing/otlp-setup", () => {
       startActiveSpan<T>(
         _name: string,
         optionsOrFn:
-          | { kind?: number; attributes?: Record<string, string | number | boolean | undefined> }
+          | { kind?: number; attributes?: Record<string, AttributeValue> }
           | ((span: Span) => T),
         contextOrFn?: unknown,
         fn?: (span: Span) => T,
@@ -235,7 +297,7 @@ describe("observability/tracing/otlp-setup", () => {
             optionsOrFn:
               | {
                 kind?: number;
-                attributes?: Record<string, string | number | boolean | undefined>;
+                attributes?: Record<string, AttributeValue>;
               }
               | ((span: Span) => T),
             contextOrFn?: unknown,

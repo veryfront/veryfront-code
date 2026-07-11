@@ -302,6 +302,93 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
   });
 
+  it("selects a requested agent and its local tools from a multi-agent runtime", async () => {
+    const agents = new Map([
+      ["assistant-1", createAgent("assistant-1")],
+      [
+        "assistant-2",
+        createAgentWithConfig("assistant-2", {
+          tools: { local_lookup: true },
+        }),
+      ],
+    ]);
+    let localToolsAgentId: string | undefined;
+    let runtimeAgentId: string | undefined;
+    let runtimeToolNames: string[] | undefined;
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => agents.get(id),
+      getAllAgentIds: () => [...agents.keys()],
+      getLocalTools: (agentId) => {
+        localToolsAgentId = agentId;
+        return { local_lookup: true };
+      },
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent, mergedTools) => {
+        runtimeAgentId = runtimeAgent.id;
+        runtimeToolNames = mergedTools && mergedTools !== true
+          ? Object.keys(mergedTools).sort()
+          : [];
+
+        return {
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "selected assistant-2",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: undefined,
+              metadata: { finishReason: "stop" },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "text-1",
+                    delta: "selected assistant-2",
+                  }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = createAgentStreamRequestBody({ agentId: "assistant-2" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    await result.response.text();
+    assertEquals(localToolsAgentId, "assistant-2");
+    assertEquals(runtimeAgentId, "assistant-2");
+    assertEquals(runtimeToolNames, ["local_lookup", "studio_focus_component"]);
+  });
+
   it("accepts the canonical runtime AG-UI request shape on the control-plane run stream route", async () => {
     let streamContext: Record<string, unknown> | undefined;
 
@@ -1800,8 +1887,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunFinished");
   });
 
-  it("uses explicit agent source context when the control plane requests a different source", async () => {
+  it("uses the verified request credential for proxy and explicit agent source contexts", async () => {
     const runWithContextCalls: Array<{
+      token?: string;
       productionMode?: boolean;
       releaseId?: string | null;
       branch?: string | null;
@@ -1853,6 +1941,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const body = createAgentStreamRequestBody({
       agentSource: { type: "branch", branch: "main" },
+      credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
@@ -1877,22 +1966,32 @@ describe("server/handlers/request/agent-stream.handler", () => {
       fs: createNoopFsAdapter(runWithContextCalls),
     };
 
-    const result = await handler.handle(
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      ctx,
-    );
+    const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    Deno.env.set("VERYFRONT_API_TOKEN", "expired-host-token");
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalHostToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalHostToken);
+    }
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(runWithContextCalls.length, 2);
+    assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
     assertEquals(runWithContextCalls[0]?.branch, "feature-a");
+    assertEquals(runWithContextCalls[1]?.token, "request-scoped-user-token");
     assertEquals(runWithContextCalls[1]?.branch, "main");
     assertEquals(runWithContextCalls[1]?.productionMode, false);
   });

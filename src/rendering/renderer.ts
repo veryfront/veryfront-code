@@ -174,6 +174,23 @@ function prewarmSlugDepth(slug: string): number {
   return comparable.split("/").filter(Boolean).length;
 }
 
+function prewarmSlugSegments(slug: string): string[] {
+  const comparable = normalizeComparableSlug(slug);
+  if (comparable === "/") return [];
+  return comparable.split("/").filter(Boolean);
+}
+
+function prewarmRouteFamilyRank(currentSlug: string, candidateSlug: string): number {
+  const currentSegments = prewarmSlugSegments(currentSlug);
+  if (currentSegments.length === 0) return 0;
+
+  const candidateSegments = prewarmSlugSegments(candidateSlug);
+  if (candidateSegments[0] !== currentSegments[0]) return 2;
+  if (currentSegments.length < 2) return 0;
+
+  return candidateSegments[1] === currentSegments[1] ? 0 : 1;
+}
+
 function selectPrewarmSlugs(
   currentSlug: string,
   pages: string[],
@@ -193,6 +210,8 @@ function selectPrewarmSlugs(
   }
 
   candidates.sort((a, b) =>
+    prewarmRouteFamilyRank(currentComparable, a.comparable) -
+      prewarmRouteFamilyRank(currentComparable, b.comparable) ||
     prewarmSlugDepth(a.comparable) - prewarmSlugDepth(b.comparable) ||
     a.comparable.localeCompare(b.comparable)
   );
@@ -796,6 +815,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      isLocalProject: ctx.isLocalProject === true,
     });
 
     const ssrOrchestrator = new SSROrchestrator({
@@ -835,6 +855,11 @@ export class Renderer {
       adapter: ctx.adapter,
       mode: ctx.mode,
       projectDir: ctx.projectDir,
+      isLocalProject: ctx.isLocalProject === true,
+      projectId: ctx.projectId,
+      contentSourceId: ctx.contentSourceId,
+      config: ctx.config,
+      directories: ctx.config.directories,
       queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
     });
 

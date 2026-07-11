@@ -27,6 +27,8 @@ import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheabi
 import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
+  extractRouterBasePath,
+  type RouterDirectories,
 } from "#veryfront/utils/route-path-utils.ts";
 import {
   extractRenderedCssHash,
@@ -35,8 +37,9 @@ import {
   serializeLayouts,
 } from "./pipeline-helpers.ts";
 import { join } from "#veryfront/compat/path";
-import type { MdxBundle, PageBundle } from "#veryfront/types";
+import type { EntityInfo, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { CacheLookupResult } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
@@ -66,6 +69,12 @@ import {
 } from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { assembleRenderResult } from "./render-result-assembly.ts";
 import { isMdxEsmExportMismatchError, recoverStaleMdxEsmPreviewCaches } from "../page-rendering.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type ClientPageIslandPlan,
+  planClientPageIsland,
+} from "#veryfront/rendering/rsc/page-island.ts";
+import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
@@ -111,6 +120,16 @@ export interface RenderPipelineConfig {
   adapter: RuntimeAdapter;
   mode: "development" | "production";
   projectDir: string;
+  /** Whether browser module URLs may use the local filesystem endpoint. */
+  isLocalProject?: boolean;
+  /** Stable project identity used to isolate transformed module caches. */
+  projectId?: string;
+  /** Release or preview source used to isolate transformed module caches. */
+  contentSourceId?: string;
+  /** Project configuration used to resolve the matching React runtime. */
+  config?: VeryfrontConfig;
+  /** Configured App and Pages Router roots. */
+  directories?: RouterDirectories;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
 }
@@ -143,17 +162,69 @@ export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
   private moduleLoaderConfig: ModuleLoaderConfig;
+  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
     this.dataFetcher = new DataFetcher(config.adapter);
     this.moduleLoaderConfig = {
       projectDir: config.projectDir,
-      projectId: config.projectDir,
+      projectId: config.projectId ?? config.projectDir,
+      contentSourceId: config.contentSourceId,
       adapter: config.adapter,
       mode: config.mode,
       moduleCache: createModuleCache(),
       esmCache: createEsmCache(),
+    };
+  }
+
+  private getReactVersion(): Promise<string> {
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+    });
+    return this.reactVersionPromise;
+  }
+
+  private planClientPageIsland(
+    pageInfo: EntityInfo,
+    nestedLayouts: LayoutItem[],
+    options?: RenderOptions,
+  ): Promise<ClientPageIslandPlan | null> {
+    const layouts = nestedLayouts
+      .map((layout) => ({
+        kind: layout.kind,
+        path: layout.componentPath ?? layout.path ?? "",
+      }))
+      .filter((layout) => Boolean(layout.path));
+
+    return planClientPageIsland({
+      pageSource: pageInfo.entity.content ?? "",
+      pagePath: pageInfo.entity.path,
+      projectDir: this.config.projectDir,
+      appDir: this.config.directories?.app ?? this.config.config?.directories?.app ?? "app",
+      layouts,
+      fs: this.config.adapter.fs,
+      strategy: determineClientModuleStrategy({
+        isLocalProject: this.config.isLocalProject,
+        environment: options?.environment,
+      }),
+    });
+  }
+
+  /**
+   * Build an immutable loader configuration for one render request. A pipeline can
+   * serve concurrent requests, so request identity must not be written into shared
+   * mutable state while module transforms are in flight.
+   */
+  private async resolveModuleLoaderConfig(
+    options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+  ): Promise<ModuleLoaderConfig> {
+    return {
+      ...this.moduleLoaderConfig,
+      projectId: options?.projectId ?? this.config.projectId ?? this.config.projectDir,
+      contentSourceId: options?.contentSourceId ?? this.config.contentSourceId,
+      reactVersion: await this.getReactVersion(),
     };
   }
 
@@ -166,8 +237,11 @@ export class RenderPipeline {
     this.moduleLoaderConfig.esmCache.clear();
   }
 
-  private loadModule(filePath: string): Promise<Record<string, unknown>> {
-    return loadModule(filePath, this.moduleLoaderConfig);
+  private loadModule(
+    filePath: string,
+    moduleLoaderConfig: ModuleLoaderConfig,
+  ): Promise<Record<string, unknown>> {
+    return loadModule(filePath, moduleLoaderConfig);
   }
 
   private async resolveCssFromRenderedHtml(
@@ -193,11 +267,15 @@ export class RenderPipeline {
    * Layout modules are considered non-critical - their failures are logged as warnings
    * and the page continues to render (possibly without that layout's data).
    */
-  private async loadModulesInParallel(modules: ModuleToLoad[]): Promise<LoadedModule[]> {
+  private async loadModulesInParallel(
+    modules: ModuleToLoad[],
+    options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+  ): Promise<LoadedModule[]> {
+    const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
     const results = await Promise.all(
       modules.map(async (m) => {
         try {
-          const mod = await this.loadModule(m.path);
+          const mod = await this.loadModule(m.path, moduleLoaderConfig);
           return { ...m, mod, error: null as Error | null };
         } catch (error) {
           return { ...m, mod: null, error: error as Error };
@@ -274,7 +352,7 @@ export class RenderPipeline {
         pagePath,
       });
 
-      const extracted = extractRouteParamsShared(pagePath, slug);
+      const extracted = extractRouteParamsShared(pagePath, slug, this.config.directories);
       if (extracted.matched) {
         params = extracted.params;
         renderPageLog.debug("Extracted route params", { slug, params });
@@ -290,13 +368,12 @@ export class RenderPipeline {
 
     const fileExtension = getExtensionName(pagePath);
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pagePath.includes("/pages/");
-    const isInAppDir = pagePath.includes("/app/");
+    const routerPath = extractRouterBasePath(pagePath, this.config.directories);
 
     const modulesToLoad = collectModulesToLoad(
       pagePath,
       isComponentPage,
-      isInPagesDir || isInAppDir,
+      routerPath.type !== null,
       nestedLayouts,
     );
 
@@ -311,7 +388,7 @@ export class RenderPipeline {
           SpanNames.RENDER_LOAD_MODULES,
           () =>
             withTimeoutThrow(
-              this.loadModulesInParallel(modulesToLoad),
+              this.loadModulesInParallel(modulesToLoad, options),
               MODULE_LOAD_TIMEOUT_MS,
               `Module loading for ${slug}`,
             ),
@@ -402,7 +479,7 @@ export class RenderPipeline {
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
-    const projectId = options?.projectId ?? this.config.projectDir;
+    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
     const cacheKey = this.buildCacheKey(slug, options);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
@@ -422,9 +499,6 @@ export class RenderPipeline {
     }
 
     setupSSRGlobals();
-
-    this.moduleLoaderConfig.projectId = projectId;
-    this.moduleLoaderConfig.contentSourceId = options?.contentSourceId;
 
     if (this.config.mode === "development") {
       clearSSRModuleCacheForProject(projectId);
@@ -552,6 +626,27 @@ export class RenderPipeline {
               }
 
               const { pageElement, pageBundle } = pageBundleResult;
+              const pageIslandPlan = await this.planClientPageIsland(
+                pageInfo,
+                layoutResult.nestedLayouts,
+                mergedOptions,
+              );
+              const clientPageIsland = pageIslandPlan
+                ? {
+                  clientLayoutPaths: pageIslandPlan.clientLayouts.map((layout) => layout.path),
+                  hasServerLayouts: pageIslandPlan.serverLayouts.length > 0,
+                }
+                : undefined;
+              const serializedLayoutProps = serializeLayoutProps(
+                layoutDataMap,
+                this.config.projectDir,
+              );
+              const hydrationOptions = layoutDataMap.size > 0
+                ? { ...mergedOptions, layoutProps: serializedLayoutProps }
+                : mergedOptions;
+              const renderOptions = clientPageIsland
+                ? { ...hydrationOptions, clientPageIsland }
+                : hydrationOptions;
 
               const mergedFrontmatter = {
                 ...pageInfo.entity.frontmatter,
@@ -580,6 +675,7 @@ export class RenderPipeline {
                         mergedFrontmatter,
                         headings,
                         options?.projectSlug,
+                        clientPageIsland,
                       ),
                     {
                       "render.slug": slug,
@@ -612,7 +708,7 @@ export class RenderPipeline {
                             slug,
                             cssImports: collectedCSSImports,
                           },
-                          mergedOptions,
+                          renderOptions,
                         ),
                         SSR_RENDER_TIMEOUT_MS,
                         `SSR rendering for ${slug}`,
@@ -696,9 +792,7 @@ export class RenderPipeline {
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     setupSSRGlobals();
 
-    const projectId = options?.projectId ?? this.config.projectDir;
-    this.moduleLoaderConfig.projectId = projectId;
-    this.moduleLoaderConfig.contentSourceId = options?.contentSourceId;
+    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
 
     if (this.config.mode === "development") {
       clearSSRModuleCacheForProject(projectId);
@@ -731,7 +825,10 @@ export class RenderPipeline {
 
     const pageProps: Record<string, unknown> = dataResolution.pageProps;
     const params = dataResolution.params;
-    const layoutProps = serializeLayoutProps(dataResolution.layoutProps);
+    const layoutProps = serializeLayoutProps(
+      dataResolution.layoutProps,
+      this.config.projectDir,
+    );
 
     const { frontmatter, headings } = await profilePhase(
       "page_data.extract_mdx_metadata",
@@ -745,13 +842,28 @@ export class RenderPipeline {
         ),
     );
 
-    const layouts = serializeLayouts(layoutResult.nestedLayouts, this.config.projectDir);
+    const pageIslandPlan = await this.planClientPageIsland(
+      pageInfo,
+      layoutResult.nestedLayouts,
+      options,
+    );
+    const clientLayoutPaths = new Set(
+      pageIslandPlan?.clientLayouts.map((layout) => layout.path) ?? [],
+    );
+    const hydrationLayouts = pageIslandPlan
+      ? layoutResult.nestedLayouts.filter((layout) =>
+        clientLayoutPaths.has(layout.componentPath ?? layout.path ?? "")
+      )
+      : layoutResult.nestedLayouts;
+    const layouts = serializeLayouts(hydrationLayouts, this.config.projectDir);
 
     const providers: string[] = [];
 
     const projectUpdatedAt = this.resolveProjectUpdatedAt();
 
-    const appPath = await profilePhase("page_data.resolve_app_path", () => this.resolveAppPath());
+    const appPath = pageIslandPlan
+      ? undefined
+      : await profilePhase("page_data.resolve_app_path", () => this.resolveAppPath());
 
     const { css, cssAction, cssError } = await profilePhase(
       "page_data.resolve_css",
@@ -764,6 +876,8 @@ export class RenderPipeline {
       pageType,
       layoutCount: layouts.length,
       appPath,
+      isolatedClientPage: pageIslandPlan ? true : undefined,
+      requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       headingsCount: headings.length,
       hasCss: !!css,
       cssAction,
@@ -782,6 +896,8 @@ export class RenderPipeline {
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
+      isolatedClientPage: pageIslandPlan ? true : undefined,
+      requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       releaseId: options?.releaseId,
       releaseAssetModules: buildReleaseAssetModules(options?.releaseAssetManifest),
       headings,

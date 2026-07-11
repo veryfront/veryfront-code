@@ -91,7 +91,11 @@ export class TaskStore {
   }
 
   private isExpired(task: Task): boolean {
-    return Date.now() - new Date(task.createdAt).getTime() > task.ttl;
+    // Only terminal tasks expire. A still-running ('working') or waiting
+    // ('input_required') task must not be deleted mid-flight while its tool is
+    // executing — expiry is measured from completion via lastUpdatedAt.
+    if (!TERMINAL_STATUSES.has(task.status)) return false;
+    return Date.now() - new Date(task.lastUpdatedAt).getTime() > task.ttl;
   }
 
   private lazySweep(): void {
@@ -111,28 +115,26 @@ export class TaskStore {
   }
 
   private evictOldest(): void {
-    // Evict the oldest terminal task, or the oldest task overall
+    // Only evict terminal tasks. A running ('working') or waiting
+    // ('input_required') task must never be evicted — doing so would drop a
+    // task whose tool is still executing without aborting it. If every task is
+    // non-terminal the store is briefly allowed to exceed MAX_TASKS rather than
+    // discard live work.
     let oldestTerminal: string | undefined;
-    let oldestAny: string | undefined;
     let oldestTerminalTime = Infinity;
-    let oldestAnyTime = Infinity;
 
     for (const [id, task] of this.tasks) {
+      if (!TERMINAL_STATUSES.has(task.status)) continue;
       const created = new Date(task.createdAt).getTime();
-      if (created < oldestAnyTime) {
-        oldestAnyTime = created;
-        oldestAny = id;
-      }
-      if (TERMINAL_STATUSES.has(task.status) && created < oldestTerminalTime) {
+      if (created < oldestTerminalTime) {
         oldestTerminalTime = created;
         oldestTerminal = id;
       }
     }
 
-    const toEvict = oldestTerminal ?? oldestAny;
-    if (toEvict) {
-      this.tasks.delete(toEvict);
-      this.results.delete(toEvict);
+    if (oldestTerminal) {
+      this.tasks.delete(oldestTerminal);
+      this.results.delete(oldestTerminal);
     }
   }
 }

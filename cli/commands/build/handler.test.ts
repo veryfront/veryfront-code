@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import { handleBuildCommand, parseBuildArgs } from "./handler.ts";
 
 describe("commands/build/handler", () => {
@@ -16,6 +17,17 @@ describe("commands/build/handler", () => {
   });
 
   describe("parseBuildArgs", () => {
+    it("parses the documented no-compress and no-split flags from raw argv", () => {
+      const args = parseCliArgs(["build", "--no-compress", "--no-split"]);
+      const result = parseBuildArgs(args);
+
+      assertEquals(result.success, true);
+      if (!result.success) return;
+
+      assertEquals(result.data.noCompress, true);
+      assertEquals(result.data.noSplit, true);
+    });
+
     it("parses output directory via --output flag", () => {
       const result = parseBuildArgs({
         _: ["build"],

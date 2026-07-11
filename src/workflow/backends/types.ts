@@ -59,8 +59,10 @@ export interface WorkflowBackend {
   acknowledge?(runId: string): Promise<void>;
   nack?(runId: string): Promise<void>;
 
-  acquireLock?(runId: string, duration: number): Promise<boolean>;
-  releaseLock?(runId: string): Promise<void>;
+  /** Acquire a lock, returning the owned lockId token on success or null on failure. */
+  acquireLock?(runId: string, duration: number): Promise<string | null>;
+  /** Release a lock. When lockId is provided, only release if it matches the owned token. */
+  releaseLock?(runId: string, lockId?: string): Promise<void>;
   extendLock?(runId: string, duration: number): Promise<boolean>;
   isLocked?(runId: string): Promise<boolean>;
 

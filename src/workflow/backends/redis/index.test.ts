@@ -127,6 +127,31 @@ class MockRedisAdapter implements RedisAdapter {
   // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+
+    // Atomic status-move script: reads old status from the run hash, then moves
+    // the run between status index sets and writes the new status.
+    // KEYS[1]=runKey, ARGV[1]=runId, ARGV[2]=newStatus, ARGV[3]=statusIndexPrefix
+    if (script.includes("hget") && script.includes("srem") && script.includes("sadd")) {
+      const runId = args[0]!;
+      const newStatus = args[1]!;
+      const statusPrefix = args[2]!;
+      const hash = this.hashes.get(key);
+      const old = hash?.get("status");
+
+      if (old === newStatus) return Promise.resolve(0);
+      if (hash) hash.set("status", newStatus);
+
+      if (old && old !== "") this.sets.get(statusPrefix + old)?.delete(runId);
+
+      let newSet = this.sets.get(statusPrefix + newStatus);
+      if (!newSet) {
+        newSet = new Set();
+        this.sets.set(statusPrefix + newStatus, newSet);
+      }
+      newSet.add(runId);
+      return Promise.resolve(1);
+    }
+
     const token = args[0];
     const owns = this.store.get(key) === token;
 
@@ -569,7 +594,7 @@ describe("RedisBackend", () => {
 
   describe("locking", () => {
     it("should acquire and release a lock", async () => {
-      assertEquals(await backend.acquireLock("run-lock", 5000), true);
+      assertExists(await backend.acquireLock("run-lock", 5000));
       assertEquals(await backend.isLocked("run-lock"), true);
 
       await backend.releaseLock("run-lock");
@@ -577,8 +602,8 @@ describe("RedisBackend", () => {
     });
 
     it("should fail to acquire lock when already held", async () => {
-      assertEquals(await backend.acquireLock("run-lock2", 5000), true);
-      assertEquals(await backend.acquireLock("run-lock2", 5000), false);
+      assertExists(await backend.acquireLock("run-lock2", 5000));
+      assertEquals(await backend.acquireLock("run-lock2", 5000), null);
     });
 
     it("should extend an existing lock", async () => {
@@ -592,7 +617,7 @@ describe("RedisBackend", () => {
 
     it("releaseLock should not delete a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertEquals(await backend.acquireLock("run-own", 5000), true);
+      assertExists(await backend.acquireLock("run-own", 5000));
       const lockKey = "test:lock:run-own";
 
       // Simulate lock expiry + worker B acquiring it: overwrite the stored
@@ -607,7 +632,7 @@ describe("RedisBackend", () => {
 
     it("extendLock should not extend a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertEquals(await backend.acquireLock("run-own2", 5000), true);
+      assertExists(await backend.acquireLock("run-own2", 5000));
       const lockKey = "test:lock:run-own2";
 
       // Simulate worker B taking over the lock.
@@ -639,7 +664,7 @@ describe("RedisBackend", () => {
         return realDel(...keys);
       };
 
-      assertEquals(await backend.acquireLock("run-atomic", 5000), true);
+      assertExists(await backend.acquireLock("run-atomic", 5000));
       await backend.releaseLock("run-atomic");
 
       // One atomic eval, and no separate get/del round-trips for the release.
@@ -777,8 +802,65 @@ describe("RedisBackend", () => {
   });
 
   describe("acknowledge", () => {
-    it("should resolve without error", async () => {
+    it("should resolve without error when nothing was dequeued", async () => {
       await backend.acknowledge("run-ack");
+    });
+
+    it("should XACK the exact stream message read by dequeue", async () => {
+      const ackCalls: Array<{ key: string; group: string; ids: string[] }> = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        ackCalls.push({ key, group, ids });
+        return realXack(key, group, ...ids);
+      };
+
+      await backend.enqueue({
+        runId: "run-ackx",
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      const job = await backend.dequeue();
+      assertExists(job);
+      assertEquals(job.runId, "run-ackx");
+
+      await backend.acknowledge("run-ackx");
+
+      assertEquals(ackCalls.length, 1);
+      assertEquals(ackCalls[0]!.key, "test:stream");
+      assertEquals(ackCalls[0]!.group, "test:group");
+      assertEquals(ackCalls[0]!.ids.length, 1);
+
+      // Second acknowledge is a no-op (already acked, nothing tracked).
+      await backend.acknowledge("run-ackx");
+      assertEquals(ackCalls.length, 1);
+    });
+
+    it("nack XACKs the consumed message before re-enqueueing", async () => {
+      const ackCalls: string[][] = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        ackCalls.push(ids);
+        return realXack(key, group, ...ids);
+      };
+
+      await backend.createRun(createTestRun("run-nack-ack"));
+      await backend.enqueue({
+        runId: "run-nack-ack",
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      await backend.dequeue();
+      await backend.nack("run-nack-ack");
+
+      // Old PEL entry acked exactly once, and a fresh job is queued.
+      assertEquals(ackCalls.length, 1);
+      const requeued = await backend.dequeue();
+      assertExists(requeued);
+      assertEquals(requeued.runId, "run-nack-ack");
     });
   });
 
@@ -810,6 +892,32 @@ describe("RedisBackend", () => {
       const results = await backend.listPendingApprovals({ status: "pending" });
       assertEquals(results.length, 1);
       assertEquals(results[0]!.approval.id, "ap-x");
+    });
+  });
+
+  describe("run indexes", () => {
+    it("backfills the all-runs index for runs created before the index existed", async () => {
+      await backend.createRun(createTestRun("legacy-run"));
+      mockRedis.sets.delete("test:index:runs");
+
+      const runs = await backend.listRuns({});
+
+      assertEquals(runs.map((run) => run.id), ["legacy-run"]);
+      assertEquals([...mockRedis.sets.get("test:index:runs")!], ["legacy-run"]);
+    });
+
+    it("counts the intersection of workflow and status indexes", async () => {
+      await backend.createRun(createTestRun("pending-x", { workflowId: "wf-x" }));
+      await backend.createRun(
+        createTestRun("running-x", { workflowId: "wf-x", status: "running" }),
+      );
+      await backend.createRun(createTestRun("pending-y", { workflowId: "wf-y" }));
+
+      assertEquals(await backend.countRuns({ workflowId: "wf-x", status: "pending" }), 1);
+      assertEquals(await backend.countRuns({ workflowId: "wf-x" }), 2);
+      assertEquals(await backend.countRuns({ status: ["pending", "running"] }), 3);
+      assertEquals(await backend.countRuns({ createdAfter: new Date("2026-01-01") }), 0);
+      assertEquals(await backend.countRuns({ createdBefore: new Date("2024-01-01") }), 0);
     });
   });
 });

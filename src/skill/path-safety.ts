@@ -10,12 +10,22 @@
 import { validatePath, type ValidationResult } from "#veryfront/security";
 import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { exists, readDir, stat } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function isInsideDir(baseDir: string, targetPath: string): boolean {
   const rel = relative(baseDir, targetPath);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  if (error instanceof VeryfrontError && error.slug === "file-not-found") {
+    return true;
+  }
+
+  const veryfrontError = fromError(error);
+  return veryfrontError?.type === "file" && veryfrontError.message.startsWith("File not found:");
 }
 
 async function pathExists(path: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
@@ -192,7 +202,16 @@ export async function listSkillSubdir(
 ): Promise<string[]> {
   const dirPath = join(skillRoot, subdir);
 
-  const dirExists = fsAdapter ? await fsAdapter.exists(dirPath) : await exists(dirPath);
+  let dirExists: boolean;
+  try {
+    dirExists = fsAdapter ? await fsAdapter.exists(dirPath) : await exists(dirPath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
   if (!dirExists) {
     return [];
   }

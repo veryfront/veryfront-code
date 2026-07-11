@@ -16,7 +16,7 @@ export async function createSSRResponse(
   element: React.ReactNode,
   options: SSRResponseOptions = {},
 ): Promise<Response> {
-  const { version } = getReactVersionInfo();
+  const version = options.reactVersion ?? getReactVersionInfo().version;
   const result = await renderToStreamAdapter(element, options);
   const headers = createHtmlHeaders(options.headers, version);
 

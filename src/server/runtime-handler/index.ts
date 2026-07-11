@@ -734,7 +734,12 @@ export function createVeryfrontHandler(
         });
 
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
-        completeRequestTracking(lifecycle.requestId, response.status, isTimeout);
+        completeRequestTracking(
+          lifecycle.requestId,
+          response.status,
+          isTimeout,
+          requestProfileRecord,
+        );
         completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
 
         return withServerTimingHeader(response, requestProfileRecord);

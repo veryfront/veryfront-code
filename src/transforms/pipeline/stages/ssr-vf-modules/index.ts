@@ -28,6 +28,7 @@ import {
   transformFrameworkSource,
 } from "./transform.ts";
 import {
+  buildFrameworkTransformCacheKey,
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
   FRAMEWORK_LOOKUPS,
@@ -52,11 +53,13 @@ export {
   transformFrameworkSource,
 } from "./transform.ts";
 export {
+  buildFrameworkTransformCacheKey,
   EMBEDDED_SRC_DIR,
   EXTENSIONS,
   FRAMEWORK_LOOKUPS,
   FRAMEWORK_ROOT,
   frameworkFileCache,
+  frameworkFileTransformFlight,
   frameworkTransformFlight,
   frameworkWriteFlight,
   LOG_PREFIX,
@@ -140,11 +143,18 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           contentLength: resolved.content.length,
         });
 
-        const cachePath = await frameworkTransformFlight.do(resolved.sourcePath, async () => {
+        const reactVersion = ctx.reactVersion ?? REACT_DEFAULT_VERSION;
+        const transformKey = buildFrameworkTransformCacheKey(
+          resolved.sourcePath,
+          reactVersion,
+          ctx.projectDir,
+          resolved.content,
+        );
+        const cachePath = await frameworkTransformFlight.do(transformKey, async () => {
           const transformed = await transformFrameworkSource(
             resolved.content,
             resolved.sourcePath,
-            ctx.reactVersion ?? REACT_DEFAULT_VERSION,
+            reactVersion,
             ctx.projectDir,
             fs,
           );

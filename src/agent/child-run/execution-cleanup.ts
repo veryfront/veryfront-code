@@ -1,3 +1,5 @@
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+
 /** Input payload for child run execution buffer cleanup. */
 export interface ChildRunExecutionBufferCleanupInput {
   closeReasoningBuffer: () => Promise<void>;
@@ -33,5 +35,14 @@ export async function finalizeChildRunExecutionResources(
   }
 
   await input.flushMirror?.();
-  await Promise.allSettled([input.closeTooling?.(), input.closeRuntime?.()]);
+  const [toolingResult, runtimeResult] = await Promise.allSettled([
+    input.closeTooling?.(),
+    input.closeRuntime?.(),
+  ]);
+  if (toolingResult.status === "rejected") {
+    agentLogger.warn("Child run teardown: closeTooling failed", { error: toolingResult.reason });
+  }
+  if (runtimeResult.status === "rejected") {
+    agentLogger.warn("Child run teardown: closeRuntime failed", { error: runtimeResult.reason });
+  }
 }

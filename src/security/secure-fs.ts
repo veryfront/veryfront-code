@@ -283,7 +283,11 @@ export class SecureFs {
   }
 
   getUnsafeAdapter(): RuntimeAdapter {
-    if (getHostEnv("NODE_ENV") === "production") {
+    // Fail closed: an unset NODE_ENV must be treated as production so a missing
+    // env var can never silently open this path-validation-bypassing escape
+    // hatch. Only an explicit non-production NODE_ENV unlocks it.
+    const nodeEnv = getHostEnv("NODE_ENV");
+    if (!nodeEnv || nodeEnv === "production") {
       throw SECURITY_VIOLATION.create({
         detail: "getUnsafeAdapter() is not allowed in production",
       });

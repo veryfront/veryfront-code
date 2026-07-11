@@ -113,6 +113,16 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("should preserve a '#' that is part of the value (no leading whitespace)", async () => {
+      const key = createKey("FRAGMENT");
+      await writeEnvFile(".env", `${key}=rediss://host:6379/0#pool=5`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "rediss://host:6379/0#pool=5");
+
+      cleanupKeys(key);
+    });
+
     it("should expand variables with ${VAR} syntax", async () => {
       const key1 = createKey("BASE");
       const key2 = createKey("EXPANDED");

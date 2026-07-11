@@ -13,6 +13,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import type { CacheStrategy } from "#veryfront/security";
 import { createSecureFs } from "#veryfront/security";
+import { serverLogger } from "#veryfront/utils";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
@@ -24,6 +26,8 @@ import {
 import { normalizeChunkPath } from "../../utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
 import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
+
+const logger = serverLogger.component("static-file-service");
 
 /**
  * Result of resolving a static file
@@ -191,8 +195,23 @@ export class StaticFileService {
         cacheStrategy: this.determineCacheStrategy(candidate, requestPath, options),
         source: candidate.source,
       };
-    } catch (_) {
-      /* expected: file may not exist */
+    } catch (error) {
+      // Candidate probing uses exceptions as control flow: this method is called
+      // once per candidate location (dist, public, ...). A missing file, or a
+      // candidate the security layer rejects (outside the allowed roots), just
+      // means "this candidate does not apply" — resolveFile() must still try the
+      // remaining candidates, so we fall through to null rather than throwing.
+      // Genuinely unexpected errors are logged for diagnosability but must not
+      // fail resolution of a sibling candidate that would have matched.
+      // NOTE: distinguishing a transient I/O failure (which should surface as a
+      // 500 rather than a CDN-cacheable 404) from an ordinary probe miss needs
+      // to happen a layer up, not here — tracked as a follow-up.
+      if (!isNotFoundError(error)) {
+        logger.debug("Static file candidate did not resolve", {
+          path: candidate.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       return null;
     }
   }

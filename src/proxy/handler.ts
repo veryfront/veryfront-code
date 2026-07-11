@@ -1,4 +1,5 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
+import { OAuthTokenRequestError } from "./oauth-client.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
@@ -16,6 +17,7 @@ import {
   createReleaseNotFoundProxyContext,
 } from "./proxy-error-context.ts";
 import { profileProxyServerTimingPhase, type ProxyServerTiming } from "./server-timing.ts";
+import { isVerifiedInternalControlPlaneRequest } from "./control-plane-signature.ts";
 
 export { __resetCachedAuthProviderForTests } from "./proxy-access-control.ts";
 
@@ -32,34 +34,6 @@ export const INTERNAL_PROXY_HEADERS = [
   "x-branch-id",
   "x-branch-name",
 ] as const;
-
-const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
-  "x-veryfront-control-plane-jws",
-  "x-veryfront-dispatch-jws",
-] as const;
-
-function isInternalControlPlanePath(pathname: string): boolean {
-  return pathname === "/channels/invoke" ||
-    pathname.startsWith("/api/control-plane/") ||
-    pathname.startsWith("/internal/tasks/") ||
-    pathname.startsWith("/internal/workflows/");
-}
-
-function isSignedInternalControlPlaneRequest(req: Request, url: URL): boolean {
-  const pathname = url.pathname;
-  if (!isInternalControlPlanePath(pathname)) {
-    return false;
-  }
-
-  const hasSignature = INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS.some((header) =>
-    !!req.headers.get(header)
-  );
-  if (!hasSignature) {
-    return false;
-  }
-
-  return !!req.headers.get("x-token");
-}
 
 interface ProjectRoutingLookupResult {
   id: string;
@@ -369,6 +343,12 @@ function getScope(environment: string | null): TokenScope {
 }
 
 function parseStatusFromError(error: unknown): number | null {
+  // Prefer the structured status carried by the token error (both fresh and
+  // negatively-cached token failures surface as OAuthTokenRequestError).
+  if (error instanceof OAuthTokenRequestError) return error.status;
+
+  // Defensive fallback for errors from other layers that only embed the status
+  // in their message text.
   const message = error instanceof Error ? error.message : String(error);
   const match = message.match(/failed: (\d+)/);
   return match ? Number(match[1]) : null;
@@ -523,6 +503,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     envMatcher: (env: ProjectLookupEnvironment) => boolean,
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
+    signedInternalControlPlaneRequest: boolean,
   ): Promise<
     | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
@@ -541,7 +522,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       apiBaseUrl: config.apiBaseUrl,
       logger,
       logContext,
-      isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+      isSignedInternalControlPlaneRequest: signedInternalControlPlaneRequest,
     });
     if (protectionError) return { error: protectionError };
 
@@ -562,6 +543,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     envMatcher: (env: ProjectLookupEnvironment) => boolean,
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
+    signedInternalControlPlaneRequest: boolean,
   ): Promise<
     | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
@@ -581,6 +563,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             envMatcher,
             undefined,
             logContext,
+            signedInternalControlPlaneRequest,
           );
         }
 
@@ -601,6 +584,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             envMatcher,
             undefined,
             logContext,
+            signedInternalControlPlaneRequest,
           );
         }
 
@@ -616,7 +600,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           apiBaseUrl: config.apiBaseUrl,
           logger,
           logContext,
-          isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+          isSignedInternalControlPlaneRequest: signedInternalControlPlaneRequest,
         });
         if (protectionError) return { error: protectionError };
 
@@ -640,6 +624,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const base = { scope, host, parsedDomain };
+
+    // Verify the control-plane/dispatch signature once per request. This gates
+    // both the protected-environment access bypass and the x-token forwarding
+    // below, so it must be a real cryptographic check, not header presence.
+    const signedInternalControlPlaneRequest = await isVerifiedInternalControlPlaneRequest(
+      req,
+      url,
+    );
 
     let projectSlug = parsedDomain.slug ?? undefined;
     let projectId: string | undefined;
@@ -691,14 +683,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           tokenManager,
           logger,
           allowSignedInternalControlPlaneToken: true,
-          signedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+          signedInternalControlPlaneRequest,
           tokenFetchErrorMessage: "Token fetch failed",
         },
       ));
 
       if (projectSlug && !token) {
         const status = parseStatusFromError(tokenFetchError);
-        if (status === 404) {
+        if (status === 404 || isMissingCustomDomainProjectError(tokenFetchError)) {
           if (scope === "preview") {
             logger?.info("Preview project not found", { projectSlug, host });
             return createProjectNotFoundProxyContext(base, "Preview project not found");
@@ -752,6 +744,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           (env) => env.domains?.some((d) => d.toLowerCase() === normalizedHost) ?? false,
           options.timing,
           { domain: host },
+          signedInternalControlPlaneRequest,
         );
 
         if ("error" in resolved) {
@@ -796,6 +789,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           (env) => env.name.toLowerCase() === targetEnv,
           options.timing,
           { projectSlug },
+          signedInternalControlPlaneRequest,
         );
 
         if ("error" in resolved) {
@@ -840,6 +834,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           (env) => env.name.toLowerCase() === "preview",
           options.timing,
           { projectSlug },
+          signedInternalControlPlaneRequest,
         );
 
         if ("error" in resolved) {
@@ -920,7 +915,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       config,
       tokenManager,
       logger,
-      signedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+      signedInternalControlPlaneRequest: await isVerifiedInternalControlPlaneRequest(req, url),
       tokenFetchErrorMessage: "Token fetch failed for API",
     });
     return token;
@@ -949,6 +944,13 @@ export type ProxyHandler = ReturnType<typeof createProxyHandler>;
 export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   const headers = new Headers(req.headers);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
+
+  // The `x-veryfront-*-jws` signature headers are deliberately NOT stripped:
+  // the downstream renderer re-verifies them against the raw request body and
+  // project audience (`verifyDispatchJws` / `verifyControlPlaneJws`). Since the
+  // proxy now trusts these headers only after cryptographic verification (see
+  // isVerifiedInternalControlPlaneRequest), forwarding an unverified/forged one
+  // is harmless — the renderer rejects it.
 
   if (ctx.token) headers.set("x-token", ctx.token);
   headers.set("x-project-slug", ctx.projectSlug ?? "");

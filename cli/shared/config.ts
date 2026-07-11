@@ -10,6 +10,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -54,16 +55,39 @@ export const getResolvedConfigSchema = defineSchema((v) =>
   v.object({
     apiUrl: v.string(),
     apiToken: v.string(),
+    apiTokenSource: v.enum(["env", "env-file", "config-file", "token-store"]).optional(),
     projectSlug: v.string(),
   })
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
+type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
 
-export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
+interface ConfigFileResolution {
+  config: VeryfrontConfig | null;
+  jsonProjectSlug?: string;
+  moduleProjectSlug?: string;
+  moduleProjectSlugFile?: string;
+}
+
+export type ProjectReferenceSource =
+  | { kind: "argument"; name: "--project-slug" }
+  | { kind: "environment"; name: "environment configuration" }
+  | { kind: "module-config"; name: string }
+  | { kind: "json-config"; name: "veryfront.json" }
+  | { kind: "tenant-environment"; name: string }
+  | { kind: "inferred"; name: "project files" };
+
+export interface ResolvedConfigDetails {
+  config: ResolvedConfig;
+  projectReferenceSource: ProjectReferenceSource;
+}
+
+async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
 
   let moduleProjectSlug: string | undefined;
+  let moduleProjectSlugFile: string | undefined;
   for (const ext of [".ts", ".js"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
 
@@ -75,6 +99,7 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
 
       if (config?.projectSlug) {
         moduleProjectSlug = config.projectSlug;
+        moduleProjectSlugFile = `veryfront.config${ext}`;
         break;
       }
     } catch (error) {
@@ -98,11 +123,20 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
     cliLogger.debug(`Failed to read veryfront.json:`, error);
   }
 
-  if (!moduleProjectSlug && !jsonConfig) return null;
-  return {
+  const config = !moduleProjectSlug && !jsonConfig ? null : {
     ...jsonConfig,
     ...(moduleProjectSlug ? { projectSlug: moduleProjectSlug } : {}),
   };
+  return {
+    config,
+    jsonProjectSlug: jsonConfig?.projectSlug,
+    moduleProjectSlug,
+    moduleProjectSlugFile,
+  };
+}
+
+export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
+  return (await readConfigFileResolution(projectDir)).config;
 }
 
 export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
@@ -143,30 +177,77 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
-function resolveTenantProjectReference(): string | undefined {
-  return getEnv("VERYFRONT_PROJECT_SLUG") ||
-    getEnv("TENANT_PROJECT_SLUG") ||
-    getEnv("VERYFRONT_PROJECT_ID") ||
-    getEnv("TENANT_PROJECT_ID") ||
-    undefined;
+function resolveTenantProjectReference(): { reference: string; name: string } | undefined {
+  for (
+    const name of [
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ] as const
+  ) {
+    const reference = getEnv(name);
+    if (reference) return { reference, name };
+  }
+  return undefined;
+}
+
+async function resolveApiTokenForMode(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  interactive: boolean,
+): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
+  const envToken = env.apiToken;
+  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
+  const storedToken = await readToken(env);
+
+  if (envToken && envSource.source !== "env-file") {
+    return {
+      apiToken: envToken,
+      apiTokenSource: "env",
+    };
+  }
+
+  if (configFile?.apiToken) {
+    return { apiToken: configFile.apiToken, apiTokenSource: "config-file" };
+  }
+
+  if (interactive && envToken && envSource.source === "env-file" && storedToken) {
+    return { apiToken: storedToken, apiTokenSource: "token-store" };
+  }
+
+  if (envToken) {
+    return {
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+    };
+  }
+
+  if (storedToken) {
+    return { apiToken: storedToken, apiTokenSource: "token-store" };
+  }
+
+  return { apiToken: null };
 }
 
 async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
   interactive: boolean,
-): Promise<ResolvedConfig> {
+): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
-  const configFile = await readConfigFile(dir);
+  const configFileResolution = await readConfigFileResolution(dir);
+  const configFile = configFileResolution.config;
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
 
-  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
+  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
 
   if (!apiToken && interactive) {
     const userInfo = await ensureAuthenticated(env);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
+    apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
   }
 
@@ -176,22 +257,45 @@ async function resolveConfigBase(
     );
   }
 
-  const projectSlug = env.projectSlug ??
-    configFile?.projectSlug ??
-    resolveTenantProjectReference() ??
-    (await inferProjectSlug(dir));
+  let projectSlug: string | null | undefined;
+  let projectReferenceSource: ProjectReferenceSource;
+  if (env.projectSlug !== undefined) {
+    projectSlug = env.projectSlug;
+    projectReferenceSource = { kind: "environment", name: "environment configuration" };
+  } else if (configFileResolution.moduleProjectSlug !== undefined) {
+    projectSlug = configFileResolution.moduleProjectSlug;
+    projectReferenceSource = {
+      kind: "module-config",
+      name: configFileResolution.moduleProjectSlugFile ?? "veryfront.config.ts",
+    };
+  } else if (configFileResolution.jsonProjectSlug !== undefined) {
+    projectSlug = configFileResolution.jsonProjectSlug;
+    projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
+  } else {
+    const tenantReference = resolveTenantProjectReference();
+    if (tenantReference) {
+      projectSlug = tenantReference.reference;
+      projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
+    } else {
+      projectSlug = await inferProjectSlug(dir);
+      projectReferenceSource = { kind: "inferred", name: "project files" };
+    }
+  }
   if (!projectSlug) {
     throw new Error(
       "Could not determine project reference. Set VERYFRONT_PROJECT_SLUG, TENANT_PROJECT_SLUG, VERYFRONT_PROJECT_ID, or add projectSlug to veryfront.config.ts",
     );
   }
 
-  return { apiUrl, apiToken, projectSlug };
+  return {
+    config: { apiUrl, apiToken, ...(apiTokenSource ? { apiTokenSource } : {}), projectSlug },
+    projectReferenceSource,
+  };
 }
 
 function createConfigResolver(interactive: boolean) {
-  return (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
-    resolveConfigByMode(projectDir, env, interactive);
+  return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+    (await resolveConfigByMode(projectDir, env, interactive)).config;
 }
 
 export const resolveConfig = createConfigResolver(false);
@@ -204,11 +308,18 @@ export const resolveConfig = createConfigResolver(false);
  */
 export const resolveConfigWithAuth = createConfigResolver(true);
 
+export function resolveConfigWithAuthDetails(
+  projectDir?: string,
+  env?: EnvironmentConfig,
+): Promise<ResolvedConfigDetails> {
+  return resolveConfigByMode(projectDir, env, true);
+}
+
 function resolveConfigByMode(
   projectDir: string | undefined,
   env: EnvironmentConfig | undefined,
   interactive: boolean,
-): Promise<ResolvedConfig> {
+): Promise<ResolvedConfigDetails> {
   return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
@@ -232,6 +343,13 @@ export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
+
+  function addTokenSourceHint(message: string, status: number): string {
+    if (config.apiTokenSource !== "env-file") return message;
+    if (status !== 401 && status !== 403 && status !== 404) return message;
+
+    return `${message}. VERYFRONT_API_TOKEN was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
+  }
 
   async function requestOnce<T>(
     method: string,
@@ -261,6 +379,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         // Keep default error message if JSON parsing fails
       }
 
+      errorMessage = addTokenSourceHint(errorMessage, response.status);
       const err = new Error(errorMessage) as Error & { status: number };
       err.status = response.status;
       throw err;

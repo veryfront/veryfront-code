@@ -24,8 +24,10 @@ import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
 import {
+  authorizeWebSocketRequest,
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
+  getClientWebSocketErrorLogLevel,
   getServerWebSocketErrorLogLevel,
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
@@ -46,8 +48,8 @@ import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { RendererRouter } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
-import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
@@ -102,7 +104,14 @@ function resolveProxyBinding(): { hostname: string; port: number } {
   return { hostname, port };
 }
 
-const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
+const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
+// Fail closed in production: never silently forward to localhost.
+if (!serverUrlFromEnv && isProduction()) {
+  throw new Error(
+    "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
+  );
+}
+const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
 const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
 const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
@@ -181,12 +190,18 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
  * Handle WebSocket upgrade requests.
  * Bridges browser WebSocket to server HMR WebSocket endpoint.
  */
-function handleWebSocketUpgrade(req: Request, url: URL): Response {
-  const host = req.headers.get("host") || "";
+async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response> {
+  const authorization = await authorizeWebSocketRequest(
+    req,
+    url,
+    proxyHandler.processRequest,
+  );
+  if (!authorization.allowed) return createProxyErrorResponse(authorization.error);
 
-  const parsed = parseProjectDomain(host);
-  const scope = parsed.environment === "preview" ? "preview" : "production";
-  const projectSlug = parsed.slug || undefined;
+  const { context } = authorization;
+  const host = context.host;
+  const scope = context.environment;
+  const projectSlug = context.projectSlug;
 
   const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
   const safePath = url.pathname.replace(/^\/\/+/, "/");
@@ -199,7 +214,7 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
     path: url.pathname,
     projectSlug,
     environment: scope,
-    parsedEnvironment: parsed.environment,
+    parsedEnvironment: context.parsedDomain.environment,
     targetUrl: targetUrl.toString(),
   });
 
@@ -299,8 +314,10 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
 
   clientSocket.onerror = (event) => {
     clearConnectTimeout();
-    proxyLogger.error("[WebSocket] Client connection error", {
-      error: event instanceof ErrorEvent ? event.message : "Unknown error",
+    const error = event instanceof ErrorEvent ? event.message : "Unknown error";
+    const logLevel = getClientWebSocketErrorLogLevel(error);
+    proxyLogger[logLevel]("[WebSocket] Client connection error", {
+      error,
     });
   };
 
@@ -622,7 +639,7 @@ function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
   if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return Promise.resolve(handleWebSocketUpgrade(req, url));
+    return handleWebSocketUpgrade(req, url);
   }
 
   switch (url.pathname) {

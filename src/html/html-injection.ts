@@ -7,8 +7,11 @@ import {
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
-import { buildNonceAttribute } from "./html-escape.ts";
-import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
+import {
+  escapeInlineJsonText,
+  jsonForInlineScript,
+} from "#veryfront/security/client/html-sanitizer.ts";
 import {
   getDevScripts,
   getDevStyles,
@@ -79,8 +82,11 @@ export function injectHTMLContent(
   let html = template;
 
   html = html.replace(/{{\s*content\s*}}/gi, content);
-  html = html.replace(/{{\s*title\s*}}/gi, metadata.title ?? "");
-  html = html.replace(/{{\s*description\s*}}/gi, metadata.description ?? "");
+  // Escape title and description: these come from user-authored frontmatter and
+  // may appear in both text nodes and attribute values (e.g. <title> and <meta
+  // content="">). escapeHTML handles &, <, >, ", and ' for both contexts.
+  html = html.replace(/{{\s*title\s*}}/gi, escapeHTML(metadata.title ?? ""));
+  html = html.replace(/{{\s*description\s*}}/gi, escapeHTML(metadata.description ?? ""));
 
   if (/{{\s*meta\s*}}/i.test(html)) {
     html = html.replace(/{{\s*meta\s*}}/gi, generateMetaTags(metadata));
@@ -101,8 +107,9 @@ export function injectHTMLContent(
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
   if (options.importMapJson && /<\/head>/i.test(html)) {
     const nonceAttr = buildNonceAttribute(options.nonce);
-    const importMapTag =
-      `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
+    const importMapTag = `<script type="importmap"${nonceAttr}>\n${
+      escapeInlineJsonText(options.importMapJson)
+    }\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
   }
 

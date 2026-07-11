@@ -74,7 +74,16 @@ export class DiskCacheBackend implements CacheBackend {
       const raw = await readFile(this.filePath(key), "utf-8");
       const envelope = parseDiskCacheEnvelope(JSON.parse(raw));
       if (!envelope) return null;
-      if (envelope.key !== key) return null;
+      if (envelope.key !== key) {
+        // The filename hash collided: this file belongs to a different key, so a
+        // prior write for one of them silently overwrote the other's data. Surface
+        // it (instead of a silent miss) so collisions are diagnosable in prod.
+        logger.warn("[DiskCache] Filename hash collision; stored key does not match", {
+          requestedKey: key.slice(-60),
+          storedKey: envelope.key.slice(-60),
+        });
+        return null;
+      }
       if (envelope.expiresAt != null && Date.now() > envelope.expiresAt) {
         this.del(key).catch((cleanupError) => {
           logger.debug("[DiskCache] Expired entry cleanup failed", {

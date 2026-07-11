@@ -1,7 +1,6 @@
 import { dirname, join } from "#veryfront/compat/path";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
 
 export interface FilesystemCacheStoreOptions {
@@ -95,7 +94,12 @@ export class FilesystemCacheStore implements CacheStore {
       const fs = await this.getLocalFS();
       await fs.mkdir(path, { recursive: true });
     } catch (error) {
-      if (getErrorMessage(error).includes("exists")) return;
+      // mkdir({ recursive: true }) should not throw when the directory already
+      // exists on Node or Deno, but custom FS adapters may. Check the error
+      // code/name rather than matching a locale-dependent message string.
+      const code = (error as { code?: string })?.code;
+      const name = (error as { name?: string })?.name;
+      if (code === "EEXIST" || code === "AlreadyExists" || name === "AlreadyExists") return;
       throw error;
     }
   }

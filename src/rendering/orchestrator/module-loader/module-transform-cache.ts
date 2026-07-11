@@ -17,6 +17,7 @@ import {
 import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -115,12 +116,24 @@ export async function transformModuleCodeWithCache(
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
   const contentHash = hashCodeHex(input.fileContent);
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
-  const cacheKey = generateTransformCacheKey(scopedPath, contentHash, true);
+  const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
+  const configHash = hashCodeHex(JSON.stringify([
+    input.projectDir,
+    input.mode,
+    reactVersion,
+  ]));
+  const cacheKey = generateTransformCacheKey(
+    scopedPath,
+    contentHash,
+    true,
+    false,
+    { configHash },
+  );
   const transformOptions = {
     projectId: input.effectiveProjectId,
     dev: input.mode === "development",
     ssr: true,
-    reactVersion: input.reactVersion,
+    reactVersion,
   };
 
   await deps.initializeTransformCache();

@@ -88,6 +88,23 @@ function pendingRequestKey(requestId: string | number, sessionId?: string): stri
   return JSON.stringify([sessionId ?? null, typeof requestId, requestId]);
 }
 
+/**
+ * Whether an Origin header points at the local loopback interface (any port).
+ * Used as the default Origin allowlist when none is configured.
+ */
+function isLoopbackOrigin(origin: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+}
+
 /** Configuration used by integration loader. */
 export interface IntegrationLoaderConfig {
   integrations: Record<string, IntegrationRuntimeConfig | undefined>;
@@ -336,9 +353,13 @@ export class MCPServer {
       try {
         this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
       } catch (error) {
-        // Config sync failed — non-fatal, integration tools from API won't reflect config
-        logger.debug("Failed to sync integration config to API during tools/list", {
-          error: error instanceof Error ? error.message : String(error),
+        // Config sync failed — non-fatal, but integration tools from API won't reflect config.
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.warn("Failed to sync integration config to API during tools/list", {
+          error: errMsg,
+        });
+        this.emitLogNotification("warning", "Failed to sync integration config to API", {
+          error: errMsg,
         });
       }
     }
@@ -390,6 +411,12 @@ export class MCPServer {
     const tool = registry.tools.get(toolName);
     if (!tool) {
       throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    // Tools disabled for MCP are hidden from tools/list; reject calls to them
+    // too so a client can't invoke a capability it was never offered.
+    if (tool.mcp?.enabled === false) {
+      throw new JsonRpcError(-32601, `Unknown tool: ${toolName}`);
     }
 
     if (tool.inputSchema && typeof tool.inputSchema.parse === "function") {
@@ -657,6 +684,26 @@ export class MCPServer {
     });
   }
 
+  /**
+   * Emit a `notifications/message` log entry to the connected MCP client,
+   * but only if `level` meets the minimum threshold set via `logging/setLevel`.
+   * This is what makes `this.logLevel` functional rather than a no-op field.
+   */
+  private emitLogNotification(
+    level: typeof MCPServer.LOG_LEVELS[number],
+    message: string,
+    data?: Record<string, unknown>,
+  ): void {
+    const emitIdx = MCPServer.LOG_LEVELS.indexOf(level);
+    const minIdx = MCPServer.LOG_LEVELS.indexOf(this.logLevel);
+    if (emitIdx < minIdx) return;
+    this.onNotification?.({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level, logger: "veryfront-mcp", data: { message, ...data } },
+    });
+  }
+
   private setLogLevel(
     params: JSONRPCParams | undefined,
   ): Promise<Record<string, unknown>> {
@@ -750,11 +797,7 @@ export class MCPServer {
       handleRequest: (request, context, sessionId) =>
         this.handleRequest(request, context, sessionId),
       extractRequestContext: (request) => this.extractRequestContext(request),
-      isOriginAllowed: (requestOrigin) =>
-        !requestOrigin ||
-        !this.config.cors?.enabled ||
-        !this.config.cors.origins?.length ||
-        this.config.cors.origins.includes(requestOrigin),
+      isOriginAllowed: (requestOrigin) => this.isOriginAllowed(requestOrigin),
       sessionCapabilities: this.sessionCapabilities,
       sessionManager: this.sessionManager,
     });
@@ -771,6 +814,25 @@ export class MCPServer {
     return Object.keys(context).length > 0 ? context : undefined;
   }
 
+  /**
+   * Origin allowlist for the HTTP transport, enforced independently of the CORS
+   * response configuration to defend against DNS-rebinding attacks. Non-browser
+   * clients (no Origin header) are permitted. When explicit origins are
+   * configured they are the allowlist; otherwise only loopback origins are
+   * accepted so a default `auth: "none"` local server is not reachable from an
+   * attacker-controlled page.
+   */
+  private isOriginAllowed(requestOrigin?: string | null): boolean {
+    if (!requestOrigin) return true;
+
+    const configuredOrigins = this.config.cors?.origins;
+    if (configuredOrigins && configuredOrigins.length > 0) {
+      return configuredOrigins.includes(requestOrigin);
+    }
+
+    return isLoopbackOrigin(requestOrigin);
+  }
+
   private async validateAuth(request: Request): Promise<boolean> {
     const auth = this.config.auth;
     if (auth.type === "none") return true;
@@ -778,7 +840,12 @@ export class MCPServer {
     const authHeader = request.headers.get("Authorization");
     if (!authHeader) return false;
 
-    const token = authHeader.replace("Bearer ", "");
+    // Parse strictly: accept only "Bearer <token>" (scheme case-insensitive) and
+    // reject other/no-scheme headers rather than passing a malformed value on.
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+    if (!bearerMatch) return false;
+    const token = (bearerMatch[1] ?? "").trim();
+    if (!token) return false;
 
     // When bearer auth is configured without a validate function, reject all requests
     if (!auth.validate) {

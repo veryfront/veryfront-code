@@ -190,11 +190,14 @@ export interface ResolvedOtlpExtensionConfig {
   metricsHeaders: Record<string, string>;
   logsHeaders: Record<string, string>;
   tracesEnabled: boolean;
+  llmObservabilityEnabled: boolean;
   metricsEnabled: boolean;
   logsEnabled: boolean;
   tracesUrl: string | undefined;
+  llmObservabilityUrl: string | undefined;
   metricsUrl: string | undefined;
   logsUrl: string | undefined;
+  llmObservabilityHeaders: Record<string, string>;
   metricsExportIntervalMillis: number;
   metricsTemporalityPreference: "delta" | "cumulative" | "lowmemory";
 }
@@ -274,11 +277,78 @@ function resolveDeploymentEnvironment(
     "development";
 }
 
+export function unifiedServiceResourceAttributes(options: {
+  serviceName: string;
+  serviceVersion: string;
+  deploymentEnvironment: string;
+}): Record<string, string> {
+  return {
+    "service.name": options.serviceName,
+    "service.version": options.serviceVersion,
+    "deployment.environment": options.deploymentEnvironment,
+    "deployment.environment.name": options.deploymentEnvironment,
+    service: options.serviceName,
+    version: options.serviceVersion,
+    env: options.deploymentEnvironment,
+  };
+}
+
 function headersOrDefault(
   signalHeaders: Record<string, string> | undefined,
   defaultHeaders: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
   return signalHeaders ?? defaultHeaders;
+}
+
+function getHeaderValue(
+  headers: Record<string, string> | undefined,
+  headerName: string,
+): string | undefined {
+  const normalizedName = headerName.toLowerCase();
+  return Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === normalizedName)?.[1];
+}
+
+function setHeaderValue(headers: Record<string, string>, headerName: string, value: string): void {
+  const normalizedName = headerName.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === normalizedName && key !== headerName) {
+      delete headers[key];
+    }
+  }
+  headers[headerName] = value;
+}
+
+function resolveLlmObservabilityEnabled(
+  read: EnvReader,
+  tracesHeaders: Record<string, string>,
+): boolean {
+  const explicitFlag = isTruthySignalFlag(read("DD_LLMOBS_ENABLED") ?? read("OTEL_LLMOBS_ENABLED"));
+  if (explicitFlag !== undefined) return explicitFlag;
+  return getHeaderValue(tracesHeaders, "dd-otlp-source") === "llmobs";
+}
+
+function resolveLlmObservabilityHeaders(
+  read: EnvReader,
+  tracesHeaders: Record<string, string>,
+  mlAppFallback: string | undefined,
+): Record<string, string> {
+  const headers = { ...tracesHeaders };
+  const datadogApiKey = getHeaderValue(headers, "dd-api-key") ??
+    read("DD_API_KEY") ??
+    read("DATADOG_OTLP_API_KEY");
+  if (datadogApiKey) {
+    setHeaderValue(headers, "dd-api-key", datadogApiKey);
+  }
+  setHeaderValue(headers, "dd-otlp-source", "llmobs");
+
+  const mlApp = read("DD_LLMOBS_ML_APP")?.trim() ||
+    getHeaderValue(headers, "dd-ml-app")?.trim() ||
+    mlAppFallback?.trim();
+  if (mlApp) {
+    setHeaderValue(headers, "dd-ml-app", mlApp);
+  }
+
+  return headers;
 }
 
 function metricTemporalityPreference(
@@ -478,6 +548,9 @@ export function resolveOtlpExtensionConfig(
   const resourceAttributes = parseResourceAttributes(read("OTEL_RESOURCE_ATTRIBUTES"));
   const endpoint = read("OTEL_EXPORTER_OTLP_ENDPOINT");
   const tracesEndpoint = read("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ?? endpoint;
+  const llmObservabilityEndpoint = read("OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT") ??
+    read("DD_LLMOBS_OTLP_ENDPOINT") ??
+    tracesEndpoint;
   const metricsEndpoint = read("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ?? endpoint;
   const logsEndpoint = read("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") ?? endpoint;
   const metricsExportIntervalMillis = Number.parseInt(
@@ -497,22 +570,29 @@ export function resolveOtlpExtensionConfig(
     headers,
     parseHeaders(read("OTEL_EXPORTER_OTLP_LOGS_HEADERS")),
   );
+  const serviceName = resolveServiceName(read, resourceAttributes);
+  const serviceVersion = resolveServiceVersion(read, resourceAttributes);
+  const deploymentEnvironment = resolveDeploymentEnvironment(read, resourceAttributes);
+  const llmObservabilityHeaders = resolveLlmObservabilityHeaders(read, tracesHeaders, serviceName);
 
   return {
-    serviceName: resolveServiceName(read, resourceAttributes),
-    serviceVersion: resolveServiceVersion(read, resourceAttributes),
-    deploymentEnvironment: resolveDeploymentEnvironment(read, resourceAttributes),
+    serviceName,
+    serviceVersion,
+    deploymentEnvironment,
     headers,
     tracesHeaders,
     metricsHeaders,
     logsHeaders,
+    llmObservabilityHeaders,
     tracesEnabled: resolveSignalEnabled(read("OTEL_TRACES_ENABLED"), read("OTEL_TRACES_EXPORTER")),
+    llmObservabilityEnabled: resolveLlmObservabilityEnabled(read, tracesHeaders),
     metricsEnabled: resolveSignalEnabled(
       read("OTEL_METRICS_ENABLED"),
       read("OTEL_METRICS_EXPORTER"),
     ),
     logsEnabled: resolveSignalEnabled(read("OTEL_LOGS_ENABLED"), read("OTEL_LOGS_EXPORTER")),
     tracesUrl: resolveOtlpSignalUrl(tracesEndpoint, "traces"),
+    llmObservabilityUrl: resolveOtlpSignalUrl(llmObservabilityEndpoint, "traces"),
     metricsUrl: resolveOtlpSignalUrl(metricsEndpoint, "metrics"),
     logsUrl: resolveOtlpSignalUrl(logsEndpoint, "logs"),
     metricsExportIntervalMillis: Number.isFinite(metricsExportIntervalMillis)
@@ -522,6 +602,195 @@ export function resolveOtlpExtensionConfig(
       read("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"),
     ),
   };
+}
+
+type SpanExporterLike = {
+  export(spans: unknown[], resultCallback: (result: { code: number; error?: Error }) => void): void;
+  shutdown(): Promise<void>;
+  forceFlush?(): Promise<void>;
+};
+
+type ReadableSpanLike = {
+  attributes?: Record<string, unknown>;
+  resource?: {
+    attributes?: Record<string, unknown>;
+  };
+  instrumentationScope?: {
+    name?: string;
+    version?: string;
+    schemaUrl?: string;
+  };
+  spanContext?: (() => { traceId?: string }) | { traceId?: string };
+};
+
+function isGenAiSpan(span: unknown): boolean {
+  const attributes = (span as ReadableSpanLike).attributes;
+  return typeof attributes?.["gen_ai.operation.name"] === "string";
+}
+
+type LlmObservabilityServiceIdentity = {
+  serviceName: string;
+  serviceVersion: string;
+  deploymentEnvironment: string;
+};
+
+function getStringAttribute(
+  attributes: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = attributes?.[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getSpanTraceId(span: unknown): string | undefined {
+  const context = (span as ReadableSpanLike).spanContext;
+  const spanContext = typeof context === "function" ? context.call(span) : context;
+  return typeof spanContext?.traceId === "string" ? spanContext.traceId : undefined;
+}
+
+function resolveLlmObservabilityServiceIdentity(
+  span: unknown,
+  fallback?: LlmObservabilityServiceIdentity,
+): LlmObservabilityServiceIdentity | null {
+  const readableSpan = span as ReadableSpanLike;
+  const spanAttributes = readableSpan.attributes;
+  const resourceAttributes = readableSpan.resource?.attributes;
+  const serviceName = getStringAttribute(spanAttributes, "service.name") ??
+    getStringAttribute(spanAttributes, "service") ??
+    fallback?.serviceName;
+  if (!serviceName) return null;
+
+  const serviceVersion = getStringAttribute(spanAttributes, "service.version") ??
+    getStringAttribute(spanAttributes, "version") ??
+    fallback?.serviceVersion ??
+    getStringAttribute(resourceAttributes, "service.version") ??
+    getStringAttribute(resourceAttributes, "version") ??
+    VERSION;
+  const deploymentEnvironment = getStringAttribute(spanAttributes, "deployment.environment.name") ??
+    getStringAttribute(spanAttributes, "deployment.environment") ??
+    getStringAttribute(spanAttributes, "env") ??
+    fallback?.deploymentEnvironment ??
+    getStringAttribute(resourceAttributes, "deployment.environment.name") ??
+    getStringAttribute(resourceAttributes, "deployment.environment") ??
+    getStringAttribute(resourceAttributes, "env") ??
+    "development";
+
+  return { serviceName, serviceVersion, deploymentEnvironment };
+}
+
+function cloneResourceWithAttributes(
+  resource: ReadableSpanLike["resource"],
+  attributes: Record<string, string>,
+): ReadableSpanLike["resource"] {
+  if (!resource) return { attributes };
+  const clone = Object.create(Object.getPrototypeOf(resource)) as ReadableSpanLike["resource"];
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(resource));
+  Object.defineProperty(clone, "attributes", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: {
+      ...(resource.attributes ?? {}),
+      ...attributes,
+    },
+  });
+  return clone;
+}
+
+function cloneInstrumentationScopeWithName(
+  instrumentationScope: ReadableSpanLike["instrumentationScope"],
+  name: string,
+): ReadableSpanLike["instrumentationScope"] {
+  return {
+    ...(instrumentationScope ?? {}),
+    name,
+  };
+}
+
+function cloneReadableSpanWithResource(
+  span: unknown,
+  resource: ReadableSpanLike["resource"],
+  instrumentationScope: ReadableSpanLike["instrumentationScope"],
+): unknown {
+  const clone = Object.create(Object.getPrototypeOf(span));
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(span));
+  Object.defineProperty(clone, "resource", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: resource,
+  });
+  Object.defineProperty(clone, "instrumentationScope", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: instrumentationScope,
+  });
+  return clone;
+}
+
+export function rewriteLlmObservabilitySpanResource(
+  span: unknown,
+  fallback?: LlmObservabilityServiceIdentity,
+): unknown {
+  const identity = resolveLlmObservabilityServiceIdentity(span, fallback);
+  if (!identity) return span;
+
+  const readableSpan = span as ReadableSpanLike;
+  const resource = cloneResourceWithAttributes(
+    readableSpan.resource,
+    unifiedServiceResourceAttributes(identity),
+  );
+  const instrumentationScope = cloneInstrumentationScopeWithName(
+    readableSpan.instrumentationScope,
+    identity.serviceName,
+  );
+  return cloneReadableSpanWithResource(span, resource, instrumentationScope);
+}
+
+function rewriteLlmObservabilitySpanResources(spans: unknown[]): unknown[] {
+  const identitiesByTraceId = new Map<string, LlmObservabilityServiceIdentity>();
+  for (const span of spans) {
+    const traceId = getSpanTraceId(span);
+    if (!traceId) continue;
+    const identity = resolveLlmObservabilityServiceIdentity(span);
+    if (identity) identitiesByTraceId.set(traceId, identity);
+  }
+
+  return spans.map((span) =>
+    rewriteLlmObservabilitySpanResource(span, identitiesByTraceId.get(getSpanTraceId(span) ?? ""))
+  );
+}
+
+class FilteringSpanExporter {
+  constructor(
+    private readonly delegate: SpanExporterLike,
+    private readonly includeSpan: (span: unknown) => boolean,
+    private readonly successCode: number,
+  ) {}
+
+  export(
+    spans: unknown[],
+    resultCallback: (result: { code: number; error?: Error }) => void,
+  ): void {
+    const includedSpans = rewriteLlmObservabilitySpanResources(spans.filter(this.includeSpan));
+    if (includedSpans.length === 0) {
+      resultCallback({ code: this.successCode });
+      return;
+    }
+
+    this.delegate.export(includedSpans, resultCallback);
+  }
+
+  shutdown(): Promise<void> {
+    return this.delegate.shutdown();
+  }
+
+  forceFlush(): Promise<void> {
+    return this.delegate.forceFlush?.() ?? Promise.resolve();
+  }
 }
 
 class OtlpTracingExporter implements TracingExporter {
@@ -536,33 +805,65 @@ class OtlpTracingExporter implements TracingExporter {
   async start(_ctxConfig: Record<string, unknown>): Promise<void> {
     const cfg = resolveOtlpExtensionConfig(readEnv);
 
-    // Honor OTEL_TRACES_ENABLED: when unset/false, skip exporter wiring so
-    // deployments opting out never create OTLP traffic or set globals.
-    if (!cfg.tracesEnabled && !cfg.metricsEnabled && !cfg.logsEnabled) return;
+    // Honor signal gates: when unset/false, skip exporter wiring so deployments
+    // opting out never create OTLP traffic or set globals.
+    if (
+      !cfg.tracesEnabled && !cfg.llmObservabilityEnabled && !cfg.metricsEnabled && !cfg.logsEnabled
+    ) {
+      return;
+    }
 
     const otel = await loadOpenTelemetryRuntime();
-    const resource = otel.resources.resourceFromAttributes({
-      [otel.semanticConventions.ATTR_SERVICE_NAME]: cfg.serviceName,
-      [otel.semanticConventions.ATTR_SERVICE_VERSION]: cfg.serviceVersion,
-      "deployment.environment": cfg.deploymentEnvironment,
-      "deployment.environment.name": cfg.deploymentEnvironment,
-    });
+    const resource = otel.resources.resourceFromAttributes(unifiedServiceResourceAttributes({
+      serviceName: cfg.serviceName,
+      serviceVersion: cfg.serviceVersion,
+      deploymentEnvironment: cfg.deploymentEnvironment,
+    }));
 
-    if (cfg.tracesEnabled) {
-      if (!cfg.tracesUrl) {
+    if (cfg.tracesEnabled || cfg.llmObservabilityEnabled) {
+      if (cfg.tracesEnabled && !cfg.tracesUrl) {
         throw new Error(
           "OTEL_TRACES_ENABLED=true requires OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         );
       }
 
-      const exporter = new otel.traceExporter.OTLPTraceExporter({
-        url: cfg.tracesUrl,
-        headers: cfg.tracesHeaders,
-      });
+      if (cfg.llmObservabilityEnabled && !cfg.llmObservabilityUrl) {
+        throw new Error(
+          "DD_LLMOBS_ENABLED=true requires OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, or OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT",
+        );
+      }
+
+      const spanProcessors = [];
+
+      if (cfg.tracesEnabled && cfg.tracesUrl) {
+        spanProcessors.push(
+          new otel.sdkTraceBase.BatchSpanProcessor(
+            new otel.traceExporter.OTLPTraceExporter({
+              url: cfg.tracesUrl,
+              headers: cfg.tracesHeaders,
+            }),
+          ),
+        );
+      }
+
+      if (cfg.llmObservabilityEnabled && cfg.llmObservabilityUrl) {
+        spanProcessors.push(
+          new otel.sdkTraceBase.BatchSpanProcessor(
+            new FilteringSpanExporter(
+              new otel.traceExporter.OTLPTraceExporter({
+                url: cfg.llmObservabilityUrl,
+                headers: cfg.llmObservabilityHeaders,
+              }) as SpanExporterLike,
+              isGenAiSpan,
+              otel.core.ExportResultCode.SUCCESS,
+            ) as never,
+          ),
+        );
+      }
 
       const provider = new otel.sdkTraceBase.BasicTracerProvider({
         resource,
-        spanProcessors: [new otel.sdkTraceBase.BatchSpanProcessor(exporter)],
+        spanProcessors,
       });
 
       // Wire OTel SDK globals so the real API delegates to this provider.
@@ -660,6 +961,11 @@ class OtlpTracingExporter implements TracingExporter {
         body: "OpenTelemetry log export initialized",
         attributes: {
           "service.name": cfg.serviceName,
+          "service.version": cfg.serviceVersion,
+          "deployment.environment.name": cfg.deploymentEnvironment,
+          service: cfg.serviceName,
+          version: cfg.serviceVersion,
+          env: cfg.deploymentEnvironment,
         },
       });
     }
@@ -727,21 +1033,23 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
 
   async initialize(options: NodeTelemetryInitializeOptions): Promise<boolean> {
     const tracesEnabled = options.tracesEnabled ?? true;
+    const llmObservabilityEnabled = options.llmObservabilityEnabled ?? false;
     const metricsEnabled = options.metricsEnabled ?? false;
     const logsEnabled = options.logsEnabled ?? false;
 
-    if (!tracesEnabled && !metricsEnabled && !logsEnabled) return false;
+    if (!tracesEnabled && !llmObservabilityEnabled && !metricsEnabled && !logsEnabled) return false;
 
     const otel = await loadOpenTelemetryRuntime();
-    const resource = otel.resources.resourceFromAttributes({
-      "service.name": options.serviceName,
-      "service.version": options.serviceVersion,
-      "deployment.environment": options.deploymentEnvironment,
-      "deployment.environment.name": options.deploymentEnvironment,
-    });
+    const resource = otel.resources.resourceFromAttributes(unifiedServiceResourceAttributes({
+      serviceName: options.serviceName,
+      serviceVersion: options.serviceVersion,
+      deploymentEnvironment: options.deploymentEnvironment,
+    }));
 
-    const spanProcessors = tracesEnabled
-      ? [
+    const spanProcessors = [];
+
+    if (tracesEnabled) {
+      spanProcessors.push(
         new otel.sdkTraceBase.BatchSpanProcessor(
           new otel.traceExporter.OTLPTraceExporter({
             url: options.tracesEndpoint,
@@ -752,8 +1060,27 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
             scheduledDelayMillis: 500,
           },
         ),
-      ]
-      : [];
+      );
+    }
+
+    if (llmObservabilityEnabled) {
+      spanProcessors.push(
+        new otel.sdkTraceBase.BatchSpanProcessor(
+          new FilteringSpanExporter(
+            new otel.traceExporter.OTLPTraceExporter({
+              url: options.llmObservabilityEndpoint ?? options.tracesEndpoint,
+              headers: headersOrDefault(options.llmObservabilityHeaders, options.tracesHeaders),
+            }) as SpanExporterLike,
+            isGenAiSpan,
+            otel.core.ExportResultCode.SUCCESS,
+          ) as never,
+          {
+            maxExportBatchSize: 100,
+            scheduledDelayMillis: 500,
+          },
+        ),
+      );
+    }
 
     const metricReaders = metricsEnabled
       ? [
@@ -840,6 +1167,7 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
       tracesEnabled,
       metricsEnabled,
       logsEnabled,
+      llmObservabilityEnabled,
     });
 
     options.processTarget?.on("SIGTERM", async () => {
@@ -883,6 +1211,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
         keys: [
           "OTEL_EXPORTER_OTLP_ENDPOINT",
           "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+          "OTEL_EXPORTER_OTLP_LLMOBS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_HEADERS",
@@ -896,6 +1225,12 @@ const extOpenTelemetry: ExtensionFactory = () => {
           "DD_SERVICE",
           "DD_VERSION",
           "DD_ENV",
+          "DD_API_KEY",
+          "DATADOG_OTLP_API_KEY",
+          "DD_LLMOBS_ENABLED",
+          "DD_LLMOBS_ML_APP",
+          "DD_LLMOBS_OTLP_ENDPOINT",
+          "OTEL_LLMOBS_ENABLED",
           "VERYFRONT_VERSION",
           "RELEASE_VERSION",
           "APP_ENVIRONMENT",

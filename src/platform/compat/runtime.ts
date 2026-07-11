@@ -34,7 +34,8 @@ function hasRealDeno(): boolean {
  * Detects by binary name: "deno" or "deno.exe" = standard runtime, anything else = compiled.
  * @internal Exported for testing only.
  */
-export function testDenoCompiledDetection(execPath: string): boolean {
+export function testDenoCompiledDetection(execPath: string, standalone?: boolean): boolean {
+  if (standalone !== undefined) return standalone;
   if (!execPath) return false;
 
   const binaryName = execPath.split(/[/\\]/).pop()?.toLowerCase();
@@ -49,7 +50,11 @@ function isDenoCompiledBinary(): boolean {
   if (!deno) return false;
 
   try {
-    return testDenoCompiledDetection(deno.execPath());
+    const standalone = Reflect.get(deno.build, "standalone");
+    return testDenoCompiledDetection(
+      deno.execPath(),
+      typeof standalone === "boolean" ? standalone : undefined,
+    );
   } catch (_) {
     /* expected: Deno.execPath() may not be available in all environments */
     return false;

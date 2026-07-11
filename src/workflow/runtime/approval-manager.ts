@@ -47,6 +47,12 @@ export interface ApprovalRequest {
   payload: unknown;
   /** When approval expires */
   expiresAt?: Date;
+  /**
+   * Set when notifying approvers failed. The approval was still created and the
+   * workflow is paused, but approvers were NOT informed — the caller should
+   * re-notify or alert an operator rather than assume delivery.
+   */
+  notificationError?: string;
 }
 
 /** Manages pending approvals, processing decisions, and resuming workflows */
@@ -99,13 +105,21 @@ export class ApprovalManager {
       runId: run.id,
     });
 
-    await this.config.backend.savePendingApproval(run.id, approval);
-
+    // Attempt notification before persisting so a failure is recorded ON the
+    // stored approval (savePendingApproval appends, so we cannot amend it after
+    // the fact without duplicating). The failure is also returned to the caller.
     try {
       await this.config.notifier?.(approval, run);
     } catch (error) {
-      logger.error("Failed to notify approvers", error);
+      const message = error instanceof Error ? error.message : String(error);
+      approval.notificationError = message;
+      logger.error(
+        "Failed to notify approvers; approval created but approvers were NOT informed",
+        { approvalId: approval.id, runId: run.id, error: message },
+      );
     }
+
+    await this.config.backend.savePendingApproval(run.id, approval);
 
     return {
       approvalId: approval.id,
@@ -114,6 +128,7 @@ export class ApprovalManager {
       message: approval.message,
       payload: approval.payload,
       expiresAt: approval.expiresAt,
+      notificationError: approval.notificationError,
     };
   }
 

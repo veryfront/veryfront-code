@@ -1,4 +1,5 @@
 import type { ComponentProps } from "#veryfront/types";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateProdHydrationScript(
@@ -8,7 +9,8 @@ export function generateProdHydrationScript(
   nonce?: string,
 ): string {
   const nonceAttr = buildNonceAttribute(nonce);
-  const pageProps = JSON.stringify(props ?? {});
+  const pageProps = jsonForInlineScript(props ?? {});
+  const pageSpecifier = jsonForInlineScript(`@/pages/${slug}`);
 
   return `
   <script type="module"${nonceAttr}>
@@ -16,7 +18,7 @@ export function generateProdHydrationScript(
     import * as ReactDOM from 'react-dom/client';
     import { App } from '@/components/app';
     import { Layout } from '@/components/layout';
-    import { Page } from '@/pages/${slug}';
+    import { Page } from ${pageSpecifier};
 
     const root = document.getElementById('root');
     if (!root) return;

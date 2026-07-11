@@ -33,6 +33,14 @@ export interface CacheTier<T = string> {
   /** Set a value in this tier */
   set(key: string, value: T, ttlSeconds?: number): Promise<void>;
 
+  /**
+   * Get the remaining TTL (in seconds) for a key, if this tier tracks expiry.
+   * Returns null when the key is absent or the tier cannot report a TTL.
+   * Used so backfill to higher tiers preserves the source entry's remaining
+   * lifetime instead of resurrecting a near-expired value with a fresh default.
+   */
+  getRemainingTtlSeconds?(key: string): Promise<number | null>;
+
   /** Delete a value from this tier */
   delete?(key: string): Promise<void>;
 
@@ -131,13 +139,15 @@ export class MultiTierCache<T = string> {
 
         const l2Value = await this.getFromTier(this.config.l2, key, "l2");
         if (l2Value !== null) {
-          await this.maybeAwaitBackfill(this.backfill(key, l2Value, ["l1"]));
+          await this.maybeAwaitBackfill(this.backfill(key, l2Value, ["l1"], this.config.l2));
           return l2Value;
         }
 
         const l3Value = await this.getFromTier(this.config.l3, key, "l3");
         if (l3Value !== null) {
-          await this.maybeAwaitBackfill(this.backfill(key, l3Value, ["l1", "l2"]));
+          await this.maybeAwaitBackfill(
+            this.backfill(key, l3Value, ["l1", "l2"], this.config.l3),
+          );
           return l3Value;
         }
 
@@ -160,11 +170,16 @@ export class MultiTierCache<T = string> {
         span?.setAttribute("cache.key", key);
         span?.setAttribute("cache.ttl_seconds", ttl);
 
-        const tiers = [this.config.l1, this.config.l2, this.config.l3].filter(
+        // L1/L2 are per-pod tiers: their write may be best-effort (fire-and-forget
+        // under asyncBackfill). L3 is the distributed/authoritative tier whose
+        // failure must be observable to the caller — otherwise `await set()`
+        // resolves "successfully" while a cross-pod read later misses, silently
+        // losing data. So L3 is always awaited and its failure propagates.
+        const perPodTiers = [this.config.l1, this.config.l2].filter(
           (t): t is CacheTier<T> => t !== undefined,
         );
 
-        const setOps = tiers.map((tier) =>
+        const perPodOps = perPodTiers.map((tier) =>
           tier.set(key, value, ttl).catch((error) => {
             logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
               key: key.slice(-60),
@@ -174,15 +189,26 @@ export class MultiTierCache<T = string> {
         );
 
         if (this.config.asyncBackfill) {
-          void Promise.all(setOps).catch((err) => {
+          void Promise.all(perPodOps).catch((err) => {
             logger.warn(`[${this.config.name}] Cache backfill failed`, {
               error: err instanceof Error ? err.message : String(err),
             });
           });
-          return;
+        } else {
+          await Promise.all(perPodOps);
         }
 
-        await Promise.all(setOps);
+        if (this.config.l3) {
+          try {
+            await this.config.l3.set(key, value, ttl);
+          } catch (error) {
+            logger.error(`[${this.config.name}] Set error in ${this.config.l3.name}`, {
+              key: key.slice(-60),
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        }
       },
       { "cache.operation": "set" },
     );
@@ -229,7 +255,7 @@ export class MultiTierCache<T = string> {
         "l2",
         results,
         (k, v) => {
-          backfillPromises.push(this.backfill(k, v, ["l1"]));
+          backfillPromises.push(this.backfill(k, v, ["l1"], this.config.l2));
         },
       );
     }
@@ -244,7 +270,7 @@ export class MultiTierCache<T = string> {
           if (v !== null) {
             results.set(k, v);
             this.stats.l3Hits++;
-            backfillPromises.push(this.backfill(k, v, ["l1", "l2"]));
+            backfillPromises.push(this.backfill(k, v, ["l1", "l2"], this.config.l3));
           } else {
             results.set(k, null);
             this.stats.misses++;
@@ -368,11 +394,34 @@ export class MultiTierCache<T = string> {
     await promise;
   }
 
-  private async backfill(key: string, value: T, tiers: ("l1" | "l2")[]): Promise<void> {
+  private async backfill(
+    key: string,
+    value: T,
+    tiers: ("l1" | "l2")[],
+    sourceTier?: CacheTier<T>,
+  ): Promise<void> {
     if (!this.config.backfillOnHit) return;
 
     this.stats.backfills++;
-    const ttl = this.config.defaultTtlSeconds;
+
+    // Derive the backfill TTL from the source entry's remaining lifetime when the
+    // source tier can report it. Writing defaultTtl unconditionally resurrects a
+    // near-expired value (e.g. a 5s entry would get a fresh 300s on L1 backfill).
+    // Fall back to defaultTtl when the source tier does not track expiry.
+    let ttl = this.config.defaultTtlSeconds;
+    if (sourceTier?.getRemainingTtlSeconds) {
+      try {
+        const remaining = await sourceTier.getRemainingTtlSeconds(key);
+        if (remaining !== null && remaining !== undefined) {
+          if (remaining <= 0) return; // already expired at source; do not resurrect
+          ttl = Math.min(remaining, this.config.defaultTtlSeconds);
+        }
+      } catch (error) {
+        logger.debug(`[${this.config.name}] remaining-TTL lookup failed; using default`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     const backfillOps: Promise<void>[] = [];
 

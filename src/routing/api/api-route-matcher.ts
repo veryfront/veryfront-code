@@ -2,6 +2,7 @@ import type { Route, RouteMatch } from "#veryfront/routing/matchers/types.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { safeDecodeParam } from "#veryfront/routing/matchers/decode-param.ts";
+import { parseRoute } from "#veryfront/routing/matchers/route-parser.ts";
 
 /** Max entries in the route-match LRU cache */
 const ROUTE_CACHE_MAX_ENTRIES = 500;
@@ -43,53 +44,24 @@ export class ApiRouteMatcher {
   }
 
   addRoute(pattern: string, page: string): void {
-    const originalPattern = pattern;
-    let regex = pattern;
-    let isOptionalCatchAll = false;
-    let isCatchAll = false;
-
-    const paramNames: string[] = [];
-    for (
-      const match of originalPattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)
-    ) {
-      const optionalCatchAll = match[1];
-      const catchAll = match[2];
-      const param = match[3];
-
-      if (optionalCatchAll) {
-        paramNames.push(optionalCatchAll);
-        isOptionalCatchAll = true;
-        isCatchAll = true;
-        continue;
-      }
-
-      if (catchAll) {
-        paramNames.push(catchAll);
-        isCatchAll = true;
-        continue;
-      }
-
-      if (param) paramNames.push(param);
-    }
-
-    regex = regex
-      .replace(/\/?\[\[\.\.\.([^\]]+)\]\]/g, "(?:/(.+))?")
-      .replace(/\[\.\.\.([^\]]+)\]/g, "(.+)")
-      .replace(/\[([^\]]+)\]/g, "([^/]+)");
-
     if (pattern !== "/" && pattern.endsWith("/")) {
       pattern = pattern.slice(0, -1);
-      if (regex.endsWith("/")) regex = regex.slice(0, -1);
     }
 
+    const parsed = parseRoute(pattern, page);
     const route: Route = { pattern, page };
     this._routes.set(pattern, {
-      regex: new RegExp(`^${regex}$`),
+      regex: parsed.regex!,
       route,
-      paramNames,
-      isOptionalCatchAll,
-      isCatchAll,
+      paramNames: parsed.paramNames!,
+      isOptionalCatchAll: parsed.isOptionalCatchAll!,
+      isCatchAll: parsed.isCatchAll!,
     });
+
+    // A path may have been negatively cached (null / 404) before this route was
+    // registered (dev hot-reload / late route discovery). Invalidate so the newly
+    // added route becomes visible instead of the stale miss sticking forever.
+    this.routeCache.clear();
   }
 
   private normalizePathname(path: string): string {

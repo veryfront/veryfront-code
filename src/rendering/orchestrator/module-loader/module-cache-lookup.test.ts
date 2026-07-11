@@ -22,16 +22,32 @@ async function withCachedFile<T>(
 describe("module-loader/module-cache-lookup", () => {
   it("builds a stable cache key scoped by project, source, and file path", () => {
     assertEquals(
-      getModuleCacheKey("/project/app/page.tsx", "project-id", "/project", "source-id"),
-      "project-id:source-id:/project/app/page.tsx",
+      getModuleCacheKey(
+        "/project/app/page.tsx",
+        "project-id",
+        "/project",
+        "source-id",
+        "19.0.0",
+        "production",
+      ),
+      '["project-id","source-id","19.0.0","production","/project/app/page.tsx"]',
     );
   });
 
   it("uses projectDir and default source when IDs are unavailable", () => {
     assertEquals(
       getModuleCacheKey("/project/app/page.tsx", undefined, "/project", undefined),
-      "/project:default:/project/app/page.tsx",
+      '["/project","default","19.2.4","default","/project/app/page.tsx"]',
     );
+  });
+
+  it("isolates in-memory module paths by React version and runtime mode", () => {
+    const base = ["/project/app/page.tsx", "project-id", "/project", "source-id"] as const;
+    const react18 = getModuleCacheKey(...base, "18.3.1", "production");
+    const react19 = getModuleCacheKey(...base, "19.0.0", "production");
+    const development = getModuleCacheKey(...base, "19.0.0", "development");
+
+    assertEquals(new Set([react18, react19, development]).size, 3);
   });
 
   it("returns a valid in-memory cached module path", async () => {

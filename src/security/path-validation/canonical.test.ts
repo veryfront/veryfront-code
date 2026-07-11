@@ -28,10 +28,12 @@ describe("security/path-validation/canonical", () => {
       assertEquals(isSymlink, false);
     });
 
-    it("should use adapter.fs.stat when adapter and followSymlinks are provided", async () => {
+    it("should detect symlinks via adapter.fs.lstat", async () => {
+      // lstat (not stat) is the correct symlink detector: stat() follows the
+      // link and always reports isSymlink:false, so detection must use lstat.
       const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
         fs: {
-          stat: (_path: string) =>
+          lstat: (_path: string) =>
             Promise.resolve({
               isSymlink: true,
               isDirectory: false,

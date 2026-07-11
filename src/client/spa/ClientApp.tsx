@@ -1,5 +1,14 @@
-import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { type Router, RouterProvider } from "veryfront/router";
+import {
+  type ComponentType,
+  type ReactElement,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { RouterProvider, type RouterValue } from "veryfront/router";
 import { PageContextProvider, type PageContextValue } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
@@ -36,16 +45,17 @@ interface ClientAppProps {
   initialData: PageDataResponse;
 }
 
-declare global {
-  interface Window {
-    __VERYFRONT_SPA_NAVIGATE__?: (data: PageDataResponse) => Promise<void>;
-    veryFrontRouter?: {
-      registerNavigationHandler?: (handler: (data: PageDataResponse) => Promise<void>) => void;
-    };
-  }
+interface ClientRouterBridge {
+  navigate?: (url: string, push?: boolean) => Promise<void>;
+  registerNavigationHandler?: (handler: (data: PageDataResponse) => Promise<void>) => void;
 }
 
-function PageLoading(): JSX.Element {
+const clientGlobal = globalThis as typeof globalThis & {
+  __VERYFRONT_SPA_NAVIGATE__?: (data: PageDataResponse) => Promise<void>;
+  veryFrontRouter?: ClientRouterBridge;
+};
+
+function PageLoading(): ReactElement {
   return (
     <div className="veryfront-page-loading" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading page...</span>
@@ -53,7 +63,7 @@ function PageLoading(): JSX.Element {
   );
 }
 
-function PageError({ error, onRetry }: { error: Error; onRetry: () => void }): JSX.Element {
+function PageError({ error, onRetry }: { error: Error; onRetry: () => void }): ReactElement {
   return (
     <div className="veryfront-page-error">
       <h1>Something went wrong</h1>
@@ -80,18 +90,8 @@ function getDomain(): string {
   return globalThis.location?.hostname ?? "";
 }
 
-function getUrl(path: string | { pathname: string }): string {
-  return typeof path === "string" ? path : path.pathname;
-}
-
 async function navigateViaRouter(url: string, push?: boolean): Promise<void> {
-  const router = globalThis.veryFrontRouter;
-  if (!router || !("navigate" in router)) return;
-
-  await (router as { navigate: (url: string, push?: boolean) => Promise<void> }).navigate(
-    url,
-    push,
-  );
+  await clientGlobal.veryFrontRouter?.navigate?.(url, push);
 }
 
 function createClientAppState(
@@ -115,7 +115,7 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
+export function ClientApp({ initialData }: ClientAppProps): ReactElement {
   const [state, setState] = useState<ClientAppState>(() =>
     createClientAppState(
       initialData,
@@ -124,15 +124,24 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   );
 
   const [isMounted, setIsMounted] = useState(false);
+  const navigationSequence = useRef(0);
 
   useEffect(() => {
     if (state.pageComponent || !initialData.pagePath) return;
+    const initialLoadNavigationId = navigationSequence.current;
+    let cancelled = false;
 
-    (async () => {
+    void (async () => {
       const Component = await loadComponent(initialData.pagePath);
-      if (!Component) return;
+      if (
+        !Component || cancelled || initialLoadNavigationId !== navigationSequence.current
+      ) return;
       setState((prev) => ({ ...prev, pageComponent: Component }));
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [initialData.pagePath, state.pageComponent]);
 
   useEffect(() => {
@@ -144,11 +153,13 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }, []);
 
   const handleNavigate = useCallback(async (data: PageDataResponse): Promise<void> => {
+    const navigationId = ++navigationSequence.current;
     setState((prev) => ({ ...prev, isNavigating: true, error: null }));
 
     try {
       const layoutPreloads = (data.layouts || []).map((l) => preloadComponent(l.path));
       const [PageComponent] = await Promise.all([loadComponent(data.pagePath), ...layoutPreloads]);
+      if (navigationId !== navigationSequence.current) return;
 
       if (!PageComponent) {
         throw PAGE_NOT_FOUND.create({ detail: `Failed to load page component: ${data.pagePath}` });
@@ -158,6 +169,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
       setState(createClientAppState(data, PageComponent));
     } catch (error) {
+      if (navigationId !== navigationSequence.current) return;
       console.error("[Veryfront SPA] Navigation failed:", error);
       setState((prev) => ({
         ...prev,
@@ -168,11 +180,12 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }, []);
 
   useEffect(() => {
-    globalThis.__VERYFRONT_SPA_NAVIGATE__ = handleNavigate;
-    globalThis.veryFrontRouter?.registerNavigationHandler?.(handleNavigate);
+    clientGlobal.__VERYFRONT_SPA_NAVIGATE__ = handleNavigate;
+    clientGlobal.veryFrontRouter?.registerNavigationHandler?.(handleNavigate);
 
     return () => {
-      delete globalThis.__VERYFRONT_SPA_NAVIGATE__;
+      navigationSequence.current++;
+      delete clientGlobal.__VERYFRONT_SPA_NAVIGATE__;
     };
   }, [handleNavigate]);
 
@@ -231,7 +244,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   // the route match knows. On the client the provider derives the live
   // `pathname`/`query` from the navigation store; `params`/`domain`/`isPreview`
   // are seeded from here.
-  const routerValue: Router = {
+  const routerValue: RouterValue = {
     domain: getDomain(),
     path: activePathname,
     pathname: activePathname,
@@ -239,16 +252,16 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     query,
     isPreview: false,
     isMounted,
-    navigate: async (path, _options) => {
-      await navigateViaRouter(getUrl(path));
+    navigate: async (path) => {
+      await navigateViaRouter(path);
     },
-    push: async (path, _options) => {
-      await navigateViaRouter(getUrl(path));
+    push: async (path) => {
+      await navigateViaRouter(path);
     },
-    replace: async (path, _options) => {
-      await navigateViaRouter(getUrl(path), false);
+    replace: async (path) => {
+      await navigateViaRouter(path, false);
     },
-    reload: () => {
+    reload: async () => {
       globalThis.location.reload();
     },
   };
@@ -269,7 +282,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     globalThis.location.reload();
   }, []);
 
-  function renderPageContent(): JSX.Element {
+  function renderPageContent(): ReactElement {
     if (state.error) return <PageError error={state.error} onRetry={handleRetry} />;
     if (!state.pageComponent) return <PageLoading />;
 

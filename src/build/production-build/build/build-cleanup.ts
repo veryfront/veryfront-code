@@ -16,7 +16,11 @@ export async function cleanupCaches(): Promise<void> {
 }
 
 export async function performCleanup(renderer: VeryfrontRenderer): Promise<void> {
-  await cleanupRenderer(renderer);
+  try {
+    await cleanupRenderer(renderer);
+  } catch (_) {
+    logger.warn("Renderer cleanup failed");
+  }
   await cleanupCaches();
 }
 

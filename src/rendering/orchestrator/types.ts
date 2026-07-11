@@ -9,6 +9,8 @@ export type { RenderResult };
 export interface RendererOptions {
   projectDir: string;
   mode: "development" | "production";
+  /** Whether browser-facing local filesystem module URLs are trusted. */
+  isLocalProject?: boolean;
   port?: number;
   adapter?: RuntimeAdapter;
   moduleServerUrl?: string;
@@ -63,6 +65,13 @@ export interface RenderOptions {
   forceProductionScripts?: boolean;
   /** Internal SSR module-tracking session id for first-response manifest preloads */
   renderSessionId?: string;
+  /** Project-relative layout props serialized for browser reconstruction. */
+  layoutProps?: Record<string, Record<string, unknown>>;
+  /** Internal server/client ownership plan for App Router page hydration. */
+  clientPageIsland?: {
+    clientLayoutPaths: string[];
+    hasServerLayouts: boolean;
+  };
 }
 
 export interface RenderContext {
@@ -83,6 +92,10 @@ export interface PageDataResponse {
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
   appPath?: string;
+  /** Page and client layout modules render inside a server-owned layout island. */
+  isolatedClientPage?: boolean;
+  /** Server-owned layout markup requires a document navigation for this target. */
+  requiresFullDocumentNavigation?: boolean;
   /** Production release id used to version fallback module URLs. */
   releaseId?: string;
   /** Production release asset URLs keyed by logical source path. */

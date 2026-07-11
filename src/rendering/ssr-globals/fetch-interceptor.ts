@@ -85,9 +85,21 @@ function createSSRFetch(): typeof fetch {
       SpanNames.HTTP_CLIENT_FETCH,
       async () => {
         if (clientOnly) {
+          // SSR-skip contract: client-only API routes must not execute during SSR.
+          // We return a synthetic response rather than letting the fetch proceed
+          // so the component can render an empty/loading state on the server.
+          //
+          // Consumers must check `_ssrSkipped: true` in the body OR the
+          // `X-VF-SSR-Skipped: true` response header to distinguish this sentinel
+          // from a real empty-data response. Components that only check
+          // `response.ok` or `data.length` will silently render an empty state —
+          // this is intentional for client-only routes.
           const response = new Response(JSON.stringify({ data: [], _ssrSkipped: true }), {
             status: 200,
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-VF-SSR-Skipped": "true",
+            },
           });
           setActiveSpanAttributes({ "http.status_code": response.status });
           return response;
@@ -111,6 +123,18 @@ function createSSRFetch(): typeof fetch {
   };
 }
 
+/**
+ * Install the SSR fetch interceptor as a process-global patch.
+ *
+ * CONCURRENCY CONSTRAINT: this mutates `globalThis.fetch` for the entire
+ * process. In the multi-tenant renderer, all concurrent SSR renders share the
+ * same patched fetch. The URL-rewrite logic reads `getSSRServerPort()` /
+ * `getSSRProjectDomain()` which are themselves process-wide globals set once at
+ * server startup (see context.ts). As long as those values do not change between
+ * requests this is safe; if they do, the last writer wins and cross-tenant
+ * request bleed is possible. Per-request scoping (e.g. AsyncLocalStorage) would
+ * eliminate the hazard but requires broader refactoring.
+ */
 export function enableSSRFetchInterception(): void {
   if (!getSSRServerPort()) return;
   (globalThis as Record<string, unknown>).fetch = createSSRFetch();

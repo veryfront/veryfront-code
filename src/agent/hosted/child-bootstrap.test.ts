@@ -10,6 +10,7 @@ const CHILD_CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
 const PARENT_MESSAGE_ID = "33333333-3333-4333-a333-333333333333";
 const CHILD_MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const PROJECT_ID = "55555555-5555-4555-8555-555555555555";
+const ENVIRONMENT_ID = "77777777-7777-4777-8777-777777777777";
 const BRANCH_ID = "66666666-6666-4666-8666-666666666666";
 const originalFetch = globalThis.fetch;
 
@@ -167,6 +168,81 @@ describe("agent/hosted-child-bootstrap", () => {
         runtime_target_kind: "preview_branch",
         source_target_branch_id: BRANCH_ID,
         runtime_target_branch_id: BRANCH_ID,
+      },
+    });
+  });
+
+  it("bootstraps child runs with environment source and runtime targets", async () => {
+    const requests: { url: string; body: unknown }[] = [];
+    stubFetchWithRecorder(async (input, init) => {
+      requests.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+
+      const requestCount = requests.length;
+      if (requestCount === 1) {
+        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
+      }
+      if (requestCount === 2) {
+        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
+      }
+      if (requestCount === 3) {
+        return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
+      }
+      if (requestCount === 4) {
+        return acceptedRunResponse({ run_id: "run_child_env_1" });
+      }
+      if (requestCount === 5) {
+        return jsonResponse(
+          {
+            run_id: "run_child_env_1",
+            conversation_id: CHILD_CONVERSATION_ID,
+            message_id: CHILD_MESSAGE_ID,
+            latest_event_id: 7,
+            latest_external_event_sequence: 3,
+            status: "running",
+          },
+          200,
+        );
+      }
+
+      throw new Error("Unexpected fetch call");
+    });
+
+    await bootstrapHostedChildRun({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      ensureProjectId: PROJECT_ID,
+      runProjectId: PROJECT_ID,
+      parentConversationId: PARENT_CONVERSATION_ID,
+      parentRunId: "parent-run-1",
+      parentMessageId: PARENT_MESSAGE_ID,
+      spawnedFromToolCallId: "tool-call-1",
+      description: "Inspect logs",
+      prompt: "Find the latest logs.",
+      runId: "run_child_env_1",
+      agentId: "invoke-agent-child",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: ENVIRONMENT_ID,
+    });
+
+    assertEquals(requests[3]?.body, {
+      kind: "agent",
+      owner: {
+        kind: "conversation",
+        id: CHILD_CONVERSATION_ID,
+      },
+      public_id: "run_child_env_1",
+      parent_run_id: "parent-run-1",
+      request: {
+        mode: "agent",
+        agent_id: "invoke-agent-child",
+        initial_status: "running",
+        source_target_kind: "environment",
+        runtime_target_kind: "environment",
+        source_target_environment_id: ENVIRONMENT_ID,
+        runtime_target_environment_id: ENVIRONMENT_ID,
       },
     });
   });

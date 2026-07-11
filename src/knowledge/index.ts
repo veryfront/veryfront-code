@@ -511,7 +511,7 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not decode cursor";
-    throw new Error(`Invalid knowledge lookup cursor: ${message}`);
+    throw new Error(`Invalid knowledge lookup cursor: ${message}`, { cause: error });
   }
 }
 

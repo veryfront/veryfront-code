@@ -32,7 +32,14 @@ export class CorsHandler extends BaseHandler {
       const cfg = await getConfig(ctx.projectDir, ctx.adapter);
       corsConfig = cfg?.security?.cors ?? corsConfig;
     } catch (error) {
-      this.logWarn("Failed to load CORS config — using defaults", { error }, ctx);
+      // Falling back to ctx.securityConfig?.cors (set at request time). If that is
+      // also absent, ResponseBuilder.preflight will use its own restrictive defaults.
+      // Verify the fallback is not more permissive than the config-file value intended.
+      this.logWarn(
+        "Failed to load CORS config — falling back to security-context defaults",
+        { error },
+        ctx,
+      );
     }
 
     const response = ResponseBuilder.preflight(req, {

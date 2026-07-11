@@ -907,16 +907,42 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then((tools) =>
     options.model.doStream(buildDirectModelOptions(options, tools))
   );
-  const branchedStreamsPromise = directResultPromise.then(({ stream }) => stream.tee());
+  // Guard against an unhandled rejection when a branch is consumed lazily (or a
+  // branch is never consumed at all) and doStream rejects.
+  directResultPromise.catch(() => {});
+
+  // Do NOT eagerly tee. Per WHATWG, tee() buffers every chunk in whichever branch
+  // is not being read — and in practice callers consume only one of these streams
+  // (fullStream). Eager teeing would hold the entire LLM output in memory with no
+  // backpressure. Instead, the first branch to be consumed reads the source
+  // directly; we only tee if a second branch is also consumed (both generators
+  // set their flag synchronously before the first `await` below, so concurrent
+  // dual consumption is detected and teed correctly).
+  const hasStarted: Record<"full" | "text", boolean> = { full: false, text: false };
+  let teed: Promise<[ReadableStream<unknown>, ReadableStream<unknown>]> | null = null;
+
+  const acquire = async (branch: "full" | "text"): Promise<ReadableStream<unknown>> => {
+    const other = branch === "full" ? "text" : "full";
+    const { stream } = await directResultPromise;
+
+    // Only one branch consumed (the common case): hand it the raw stream so it
+    // reads with full backpressure and nothing is buffered.
+    if (!hasStarted[other] && teed === null) return stream;
+
+    // Both branches are consumed: tee once (memoized) so each sees every chunk.
+    if (teed === null) teed = Promise.resolve(stream.tee());
+    const [fullBranch, textBranch] = await teed;
+    return branch === "full" ? fullBranch : textBranch;
+  };
 
   return {
     fullStream: (async function* () {
-      const [fullStreamBranch] = await branchedStreamsPromise;
-      yield* mapReadableStream(fullStreamBranch);
+      hasStarted.full = true;
+      yield* mapReadableStream(await acquire("full"));
     })(),
     textStream: (async function* () {
-      const [, textStreamBranch] = await branchedStreamsPromise;
-      yield* textDeltasFromStream(textStreamBranch);
+      hasStarted.text = true;
+      yield* textDeltasFromStream(await acquire("text"));
     })(),
   };
 }

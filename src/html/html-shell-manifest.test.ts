@@ -39,6 +39,12 @@ function prodOptions(overrides: Partial<HTMLGenerationOptions> = {}): HTMLGenera
   };
 }
 
+function extractImportMap(html: string): Record<string, string> {
+  const match = html.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
+  assert(match?.[1], "expected an inline import map");
+  return (JSON.parse(match[1]) as { imports?: Record<string, string> }).imports ?? {};
+}
+
 function manifest(): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
@@ -272,11 +278,12 @@ describe("html shell release asset manifest consumption", () => {
     );
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assert(!result.start.includes(`/_vf/assets/${CHAT_HASH}.js`));
-    assertStringIncludes(
-      result.start,
-      `"veryfront/chat":"/_vf_modules/_veryfront/chat/index.js?vf_release=rel-1&vf_runtime=${VERYFRONT_VERSION}"`,
+    const imports = extractImportMap(result.start);
+    assertEquals(
+      imports["veryfront/chat"],
+      `/_vf_modules/_veryfront/chat/index.js?vf_release=rel-1&vf_runtime=${VERYFRONT_VERSION}`,
     );
-    assertStringIncludes(result.start, `"@/":"/_vf_modules/"`);
+    assertEquals(imports["@/"], "/_vf_modules/");
   });
 
   it("falls back to the existing URL for an uncovered page when the flag is on", async () => {

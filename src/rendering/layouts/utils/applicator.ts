@@ -27,6 +27,7 @@ export function applyLayoutsESM(
   projectSlug: string,
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
+  reactVersion?: string,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -72,6 +73,7 @@ export function applyLayoutsESM(
                   projectSlug,
                   contentSourceId,
                   preloadedImportMap,
+                  reactVersion,
                 ),
               spanAttrs,
             );
@@ -94,6 +96,7 @@ export function applyLayoutsESM(
                 projectId,
                 projectSlug,
                 contentSourceId,
+                reactVersion,
               ),
             spanAttrs,
           );
@@ -124,6 +127,7 @@ export function applyLayoutsESM(
             projectSlug,
             contentSourceId,
             preloadedImportMap,
+            reactVersion,
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
@@ -151,8 +155,9 @@ export async function applyLayoutsFunctionBody(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
 ): Promise<BundledReact.ReactElement> {
-  const React = await getProjectReact();
+  const React = await getProjectReact(reactVersion);
   let element = pageElement;
 
   logger.debug("Using function-body wrapping for layouts");
@@ -193,6 +198,7 @@ export async function applyLayoutsFunctionBody(
         projectId,
         projectSlug,
         contentSourceId,
+        reactVersion,
       );
 
       const child = ensureValidChild(element, React);

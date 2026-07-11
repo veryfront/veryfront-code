@@ -8,6 +8,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { clearConfigCache, getConfig } from "#veryfront/config";
+import { VeryfrontError } from "#veryfront/errors";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -80,25 +81,27 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       });
     });
 
-    it("should handle config with syntax errors", async () => {
+    it("should reject config with syntax errors", async () => {
       await withConfigTest(
         `export default { invalid syntax here`,
         async ({ projectDir, adapter }) => {
-          const config = await getConfig(projectDir, adapter);
-          assertExists(config);
+          const error = await assertRejects(() => getConfig(projectDir, adapter));
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, "config-parse-error");
         },
       );
     });
 
-    it("should handle config with runtime errors", async () => {
+    it("should reject config with runtime errors", async () => {
       await withConfigTest(
         `
         throw new Error('Runtime error');
         export default {};
       `,
         async ({ projectDir, adapter }) => {
-          const config = await getConfig(projectDir, adapter);
-          assertExists(config);
+          const error = await assertRejects(() => getConfig(projectDir, adapter));
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, "config-parse-error");
         },
       );
     });

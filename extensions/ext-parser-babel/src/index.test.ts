@@ -50,6 +50,59 @@ describe("ext-parser-babel", () => {
       assert(code.includes("const x"));
     });
 
+    it("parses TypeScript module variants used by the browser bundler", async () => {
+      for (const filePath of ["file.mts", "file.cts"]) {
+        const ast = await parser.parse({
+          code: "const value: string = 'ok';",
+          filePath,
+        });
+        assert(ast);
+      }
+    });
+
+    it("parses CommonJS top-level return accepted by the bundler", async () => {
+      const ast = await parser.parse({
+        code: "if (module.parent) return; module.exports = true;",
+        filePath: "file.cjs",
+      });
+      assert(ast);
+    });
+
+    it("parses legacy import assertions accepted by the bundler", async () => {
+      const ast = await parser.parse({
+        code: 'import data from "./data.json" assert { type: "json" };',
+        filePath: "file.mjs",
+      });
+      assert(ast);
+    });
+
+    it("parses decorator auto-accessors accepted by the bundler", async () => {
+      const ast = await parser.parse({
+        code: "class Store { @logged accessor value = 1; }",
+        filePath: "file.ts",
+      });
+      assert(ast);
+    });
+
+    it("reports function directives without exposing Babel AST details", async () => {
+      assertEquals(
+        await parser.hasFunctionDirective?.({
+          code: `export async function save() { "use server"; return true; }`,
+          filePath: "actions.ts",
+          directive: "use server",
+        }),
+        true,
+      );
+      assertEquals(
+        await parser.hasFunctionDirective?.({
+          code: `export function shared() { const ready = true; "use server"; return ready; }`,
+          filePath: "shared.ts",
+          directive: "use server",
+        }),
+        false,
+      );
+    });
+
     it("traverse visits matching node types", async () => {
       const ast = await parser.parse({ code: "const x = 1; const y = 2;", filePath: "f.ts" });
       let count = 0;

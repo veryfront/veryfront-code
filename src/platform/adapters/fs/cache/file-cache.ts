@@ -209,7 +209,7 @@ export class FileCache {
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(key, serialized);
       backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
-        logger.debug("Backend set failed", { key, error });
+        logger.warn("Backend set failed", { key, error });
       });
       return;
     }
@@ -298,22 +298,41 @@ export class FileCache {
     );
   }
 
-  deleteByPrefix(prefix: string): number {
+  /** Clears only the in-memory fallback cache entries by prefix. Does NOT touch the backend. */
+  private clearLocalByPrefix(prefix: string): number {
     let count = 0;
-
     for (const key of this.fallbackCache.keys()) {
       if (!key.startsWith(prefix)) continue;
-
       const entry = this.fallbackCache.get(key);
       if (entry) this.fallbackMemoryUsed -= entry.size;
       this.fallbackCache.delete(key);
       count++;
     }
+    return count;
+  }
 
-    // Fire-and-forget backend deletion
+  /** Clears only the in-memory fallback cache entries by prefix+suffix. Does NOT touch the backend. */
+  private clearLocalByPrefixAndSuffix(prefix: string, suffix: string): number {
+    let count = 0;
+    const suffixWithColon = `:${suffix}`;
+    for (const key of this.fallbackCache.keys()) {
+      if (!key.startsWith(prefix) || !key.endsWith(suffixWithColon)) continue;
+      const entry = this.fallbackCache.get(key);
+      if (entry) this.fallbackMemoryUsed -= entry.size;
+      this.fallbackCache.delete(key);
+      count++;
+    }
+    return count;
+  }
+
+  deleteByPrefix(prefix: string): number {
+    const count = this.clearLocalByPrefix(prefix);
+
+    // Fire-and-forget backend deletion; failure logged at warn so operators can detect
+    // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     cacheBackend?.delByPattern?.(`${prefix}*`).catch((error) => {
-      logger.debug("Backend invalidation failed", { prefix, error });
+      logger.warn("Backend invalidation failed", { prefix, error });
     });
 
     return count;
@@ -323,7 +342,10 @@ export class FileCache {
     return withSpan(
       "platform.fs.cache.deleteByPrefixAsync",
       async () => {
-        const count = this.deleteByPrefix(prefix);
+        // Clear local cache first, then await the single backend deletion.
+        // Intentionally does NOT call deleteByPrefix() to avoid a double backend
+        // delete (sync fire-and-forget + async await on the same pattern).
+        const count = this.clearLocalByPrefix(prefix);
 
         // Await backend deletion for cross-pod consistency
         // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
@@ -338,22 +360,13 @@ export class FileCache {
   }
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
-    let count = 0;
-    const suffixWithColon = `:${suffix}`;
+    const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
-    for (const key of this.fallbackCache.keys()) {
-      if (!key.startsWith(prefix) || !key.endsWith(suffixWithColon)) continue;
-
-      const entry = this.fallbackCache.get(key);
-      if (entry) this.fallbackMemoryUsed -= entry.size;
-      this.fallbackCache.delete(key);
-      count++;
-    }
-
-    // Fire-and-forget backend deletion
+    // Fire-and-forget backend deletion; failure logged at warn so operators can detect
+    // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
-      logger.debug("Backend invalidation failed", { prefix, suffix, error });
+      logger.warn("Backend invalidation failed", { prefix, suffix, error });
     });
 
     return count;
@@ -363,7 +376,10 @@ export class FileCache {
     return withSpan(
       "platform.fs.cache.deleteByPrefixAndSuffixAsync",
       async () => {
-        const count = this.deleteByPrefixAndSuffix(prefix, suffix);
+        // Clear local cache first, then await the single backend deletion.
+        // Intentionally does NOT call deleteByPrefixAndSuffix() to avoid a double backend
+        // delete (sync fire-and-forget + async await on the same pattern).
+        const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
         // Await backend deletion for cross-pod consistency
         // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again

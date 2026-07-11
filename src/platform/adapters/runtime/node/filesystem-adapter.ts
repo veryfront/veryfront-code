@@ -70,6 +70,24 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    const fs = await import("node:fs/promises");
+    const stats = await fs.lstat(path);
+
+    return {
+      size: stats.size,
+      isFile: stats.isFile(),
+      isDirectory: stats.isDirectory(),
+      isSymlink: stats.isSymbolicLink(),
+      mtime: stats.mtime,
+    };
+  }
+
+  async realPath(path: string): Promise<string> {
+    const fs = await import("node:fs/promises");
+    return await fs.realpath(path);
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     const fs = await import("node:fs/promises");
     await fs.mkdir(path, options);

@@ -263,6 +263,96 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateFullHTML", () => {
+    it("does not hydrate full documents for non-prologue use-client text", async () => {
+      const serverSources = [
+        "// 'use client';\nexport default function Page() {}",
+        "export default function Page() {\n  'use client';\n}",
+        "import React from 'react';\n'use client';\nexport default function Page() {}",
+      ];
+
+      for (const pageSource of serverSources) {
+        const html = await createHTMLGenerator({
+          readFile: async (path: string) => path.endsWith("/app/page.tsx") ? pageSource : "",
+        }).generateFullHTML(createHTMLContext());
+
+        assertEquals(html.includes('id="veryfront-hydration-data"'), false);
+        assertEquals(html.includes("/_veryfront/hydration-runtime.js"), false);
+      }
+    });
+
+    it("selects client modules from project trust instead of render mode", async () => {
+      const readFile = async () => `'use client';`;
+      const remoteDevelopmentHtml = await createHTMLGenerator({
+        mode: "development",
+        isLocalProject: false,
+        readFile,
+      }).generateFullHTML(createHTMLContext({ options: { environment: "preview" } }));
+      const localProductionHtml = await createHTMLGenerator({
+        mode: "production",
+        isLocalProject: true,
+        readFile,
+      }).generateFullHTML(createHTMLContext({ options: { environment: "preview" } }));
+
+      const parseHydrationData = (html: string) => {
+        const payload = html.match(
+          /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
+        )?.[1];
+        assertExists(payload);
+        return JSON.parse(payload) as { clientModuleStrategy?: string };
+      };
+
+      assertEquals(parseHydrationData(remoteDevelopmentHtml).clientModuleStrategy, "rsc-module");
+      assertEquals(parseHydrationData(localProductionHtml).clientModuleStrategy, "fs");
+    });
+
+    it("publishes only client-owned layouts for an isolated page island", async () => {
+      const generator = createHTMLGenerator({
+        mode: "production",
+        isLocalProject: false,
+      });
+      const serverLayoutPath = "/project/app/layout.tsx";
+      const clientLayoutPath = "/project/app/dashboard/layout.tsx";
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          '<main id="server-layout"><div id="veryfront-page-island"><button>Count: 0</button></div></main>',
+        nestedLayouts: [
+          { kind: "tsx", path: serverLayoutPath, componentPath: serverLayoutPath },
+          { kind: "tsx", path: clientLayoutPath, componentPath: clientLayoutPath },
+        ],
+        options: {
+          environment: "production",
+          clientPageIsland: {
+            clientLayoutPaths: [clientLayoutPath],
+            hasServerLayouts: true,
+          },
+          layoutProps: {
+            "app/layout.tsx": { audience: "server" },
+            "app/dashboard/layout.tsx": { theme: "docs" },
+          },
+        },
+      }));
+
+      const payload = html.match(
+        /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
+      )?.[1];
+      assertExists(payload);
+      const hydrationData = JSON.parse(payload) as {
+        isolatedClientPage?: boolean;
+        layouts?: Array<{ kind?: string; path?: string }>;
+        layoutProps?: Record<string, Record<string, unknown>>;
+      };
+
+      assertEquals(hydrationData.isolatedClientPage, true);
+      assertEquals(hydrationData.layouts, [{
+        kind: "tsx",
+        path: "app/dashboard/layout.tsx",
+      }]);
+      assertEquals(hydrationData.layoutProps, {
+        "app/dashboard/layout.tsx": { theme: "docs" },
+      });
+    });
+
     it("forwards nonce when injecting import maps into full HTML documents", async () => {
       const generator = createHTMLGenerator({
         readFile: async () => `'use client';`,

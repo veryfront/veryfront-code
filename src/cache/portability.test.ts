@@ -85,6 +85,14 @@ describe("Cache Portability", () => {
       assertEquals(hasHardcodedCachePaths(code), true);
     });
 
+    it("detects .cache under non-standard deploy roots (nix/store, workspace)", () => {
+      const nix =
+        `import x from "file:///nix/store/abc123/.cache/veryfront-http-bundle/http-1.mjs"`;
+      const workspace = `import x from "file:///workspace/proj/.cache/veryfront-mdx-esm/mod-1.mjs"`;
+      assertEquals(hasHardcodedCachePaths(nix), true);
+      assertEquals(hasHardcodedCachePaths(workspace), true);
+    });
+
     it("does not detect portable tokens", () => {
       const code = `import x from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs"`;
       assertEquals(hasHardcodedCachePaths(code), false);

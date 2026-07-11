@@ -11,8 +11,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}-{2}', github.workflow, github.ref, github.sha) }}
+  # Only cancel superseded pull_request runs. Never cancel push runs on main:
+  # a push run can be publishing a stable release (npm publish, git tag, GitHub
+  # release, downstream deploy dispatch), and cancelling it mid-publish leaves a
+  # partially released version. Push runs also need unique groups because
+  # GitHub keeps at most one pending run per concurrency group; a later main
+  # push can otherwise replace an earlier queued release run even when
+  # cancel-in-progress is false. See veryfront-studio#5544.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ============================================
@@ -338,16 +345,30 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       is_stable: ${{ steps.check.outputs.is_stable }}
+      stable_release_requested: ${{ steps.check.outputs.stable_release_requested }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
       - name: Detect release type
         id: check
         run: |
           VERSION=$(jq -r '.version' deno.json)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          STABLE_RELEASE_REQUESTED=$(bash scripts/ci/stable-release-requested.sh \
+            "${{ github.event_name }}" \
+            "$VERSION" \
+            "${{ github.event.before }}")
+          echo "stable_release_requested=${STABLE_RELEASE_REQUESTED}" >> $GITHUB_OUTPUT
+
           if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_stable=true" >> $GITHUB_OUTPUT
-            echo "::notice::Stable version detected: $VERSION → will publish as latest"
+            if [[ "$STABLE_RELEASE_REQUESTED" == "true" ]]; then
+              echo "::notice::Stable release requested: $VERSION → will publish as latest"
+            else
+              echo "::notice::Stable version unchanged: $VERSION → skipping publication"
+            fi
           else
             echo "is_stable=false" >> $GITHUB_OUTPUT
             echo "::notice::Pre-release version detected: $VERSION → will publish as rc"
@@ -520,12 +541,12 @@ jobs:
 
   # ============================================
   # CD: Stable Release (clean semver only)
-  # Runs when deno.json version is X.Y.Z (no suffix)
+  # Runs when deno.json changes to X.Y.Z (no suffix), or on manual dispatch
   # Publishes with --tag latest, creates git tag, updates Homebrew
   # ============================================
 
   release:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
     needs: [ci, tests, coverage, tests-binary-e2e, tests-npm-install-smoke, build-binaries, version-check]
     runs-on: ubuntu-latest
     environment: production

@@ -58,7 +58,16 @@ export function createOAuthCallbackHandler(
   } = options;
 
   function getAppUrl(): string {
-    return baseUrl ?? env.appUrl ?? "http://localhost:3000";
+    const appUrl = baseUrl ?? env.appUrl;
+    if (appUrl) return appUrl;
+    // Fail closed in production: never silently redirect OAuth callbacks to
+    // localhost. Require APP_URL (or an explicit baseUrl) to be configured.
+    if (env.nodeEnv === "production" || env.veryfrontEnv === "production") {
+      throw new Error(
+        "OAuth callback base URL not configured: set APP_URL (or pass baseUrl) in production.",
+      );
+    }
+    return "http://localhost:3000";
   }
 
   function redirectWithError(

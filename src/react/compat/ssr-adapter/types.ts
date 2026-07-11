@@ -1,4 +1,6 @@
 export interface SSROptions {
+  /** React version used to select an isolated server renderer module. */
+  reactVersion?: string;
   onError?: (error: Error) => void;
   bootstrapScripts?: string[];
   bootstrapModules?: string[];

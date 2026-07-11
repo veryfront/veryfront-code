@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
@@ -189,8 +189,8 @@ describe("WebSocketManager", () => {
       assertEquals(parsePokeWebSocketMessage(JSON.stringify(null)), null);
     });
 
-    it("throws for malformed JSON so callers can keep parse-error logging", () => {
-      assertThrows(() => parsePokeWebSocketMessage("{"), SyntaxError);
+    it("returns null for malformed JSON (parser logs the error at warn)", () => {
+      assertEquals(parsePokeWebSocketMessage("{"), null);
     });
   });
   let originalWebSocket: typeof WebSocket;

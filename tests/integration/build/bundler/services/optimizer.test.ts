@@ -11,7 +11,7 @@
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import * as esbuild from "npm:esbuild@0.28.1";
+import * as esbuild from "veryfront/extensions/bundler";
 import { optimizeBundle } from "../../../../../src/build/renderer/services/optimizer.ts";
 import type {
   BundleResult,
@@ -35,10 +35,7 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      // Only stop esbuild if a test explicitly opted to keep it alive
-      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
-        await esbuild.stop();
-      }
+      await esbuild.stop();
     });
 
     it("optimizes bundle in production mode", async () => {

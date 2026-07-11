@@ -13,6 +13,8 @@ export interface CommandOptions {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  /** Start from an empty environment before applying `env`. */
+  clearEnv?: boolean;
   /** Capture stdout/stderr to return in result */
   capture?: boolean;
   /** Inherit stdio from parent process (shows output in terminal) */
@@ -116,6 +118,7 @@ export async function runCommand(
     args = [],
     cwd: cmdCwd,
     env: cmdEnv,
+    clearEnv = false,
     capture = false,
     inherit = false,
     shell = false,
@@ -132,6 +135,7 @@ export async function runCommand(
       args,
       cwd: cmdCwd,
       env: cmdEnv,
+      clearEnv,
       stdin: inherit ? "inherit" : "null",
       stdout: stdioMode,
       stderr: stdioMode,
@@ -198,7 +202,7 @@ export async function runCommand(
     const proc = bunGlobal.Bun.spawn({
       cmd: bunCmd,
       cwd: cmdCwd,
-      env: cmdEnv,
+      env: clearEnv ? cmdEnv ?? {} : cmdEnv,
       stdout: bunStdio,
       stderr: bunStdio,
     });
@@ -244,7 +248,7 @@ export async function runCommand(
   return await new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd: cmdCwd,
-      env: cmdEnv ? { ...process.env, ...cmdEnv } : undefined,
+      env: clearEnv ? cmdEnv ?? {} : cmdEnv ? { ...process.env, ...cmdEnv } : undefined,
       stdio: nodeStdio,
       shell,
     });
@@ -289,9 +293,20 @@ export async function runCommand(
       });
     });
 
-    child.on("error", () => {
+    child.on("error", (spawnError: Error) => {
       timeout.clear();
-      resolve({ success: false, code: 1 });
+      // Include the spawn error message so callers can distinguish ENOENT
+      // ("command not found"), EACCES ("permission denied"), etc.
+      resolve({
+        success: false,
+        code: 1,
+        stdout: capture ? stdout : undefined,
+        stderr: capture
+          ? (stderr
+            ? `${stderr}\nSpawn error: ${spawnError.message}`
+            : `Spawn error: ${spawnError.message}`)
+          : undefined,
+      });
     });
   });
 }

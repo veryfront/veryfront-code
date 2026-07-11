@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { SecurityConfigLoader } from "./config.ts";
 
@@ -159,5 +159,31 @@ describe("security/http/config", () => {
     await loader.ensureLoaded();
 
     assertEquals(loader.getSecurityConfig()?.csrf, false);
+  });
+
+  it("rejects a failed load for the current caller and retries on the next call", async () => {
+    let shouldFail = true;
+    const config = new Proxy(
+      { security: { csrf: true } },
+      {
+        get(target, property, receiver) {
+          if (shouldFail) throw new Error("config load failed");
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+    const loader = new SecurityConfigLoader("/project", createMockAdapter(), config);
+
+    await assertRejects(
+      () => loader.ensureLoaded(),
+      Error,
+      "config load failed",
+    );
+    assertEquals(loader.getSecurityConfig(), null);
+
+    shouldFail = false;
+    await loader.ensureLoaded();
+
+    assertEquals(loader.getSecurityConfig()?.csrf, true);
   });
 });

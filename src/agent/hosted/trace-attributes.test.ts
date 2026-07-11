@@ -6,6 +6,7 @@ import {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  buildProjectServiceTraceAttributes,
   buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
   isAgentTraceAttributeValue,
@@ -44,6 +45,8 @@ describe("agent/agent-trace-attributes", () => {
         projectId: "project-1",
         userId: "user-1",
         agentId: "builder",
+        agentName: "Builder",
+        modelId: "anthropic/claude-sonnet-4-6",
         runId: "run-1",
         parentRunId: "run-parent",
         parentConversationId: "conversation-parent",
@@ -69,6 +72,8 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.operation.name": "chat",
         "gen_ai.conversation.id": "conversation-1",
         "gen_ai.agent.id": "builder",
+        "gen_ai.agent.name": "Builder",
+        "gen_ai.request.model": "anthropic/claude-sonnet-4-6",
       },
     );
   });
@@ -85,6 +90,58 @@ describe("agent/agent-trace-attributes", () => {
         "schedule.name": "Triage sweep",
         "run.trigger.kind": "schedule",
         "run.trigger.id": "schedule-1",
+      },
+    );
+  });
+
+  it("builds project service attributes from Datadog env aliases", () => {
+    const vars: Record<string, string> = {
+      DD_SERVICE: "veryfront-ops-agent",
+      DD_VERSION: "0.0.34",
+      DD_ENV: "production",
+    };
+
+    assertEquals(
+      buildProjectServiceTraceAttributes({
+        projectSlug: "veryfront-ops-agent",
+        readEnv: (key) => vars[key],
+      }),
+      {
+        "project.slug": "veryfront-ops-agent",
+        "service.name": "veryfront-ops-agent",
+        service: "veryfront-ops-agent",
+        "service.version": "0.0.34",
+        version: "0.0.34",
+        "deployment.environment.name": "production",
+        "deployment.environment": "production",
+        env: "production",
+      },
+    );
+  });
+
+  it("prefers OpenTelemetry resource attributes for project service attributes", () => {
+    const vars: Record<string, string> = {
+      OTEL_RESOURCE_ATTRIBUTES:
+        "service.name=investment-ops-agent,service.version=0.0.13,deployment.environment=production",
+      DD_SERVICE: "veryfront-ops-agent",
+      DD_VERSION: "0.0.34",
+      DD_ENV: "staging",
+    };
+
+    assertEquals(
+      buildProjectServiceTraceAttributes({
+        projectSlug: "investment-ops-agent",
+        readEnv: (key) => vars[key],
+      }),
+      {
+        "project.slug": "investment-ops-agent",
+        "service.name": "investment-ops-agent",
+        service: "investment-ops-agent",
+        "service.version": "0.0.13",
+        version: "0.0.13",
+        "deployment.environment.name": "production",
+        "deployment.environment": "production",
+        env: "production",
       },
     );
   });
@@ -144,6 +201,7 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.tool.call.id": "tool-call-1",
         "gen_ai.usage.input_tokens": 10,
         "gen_ai.usage.output_tokens": 5,
+        "gen_ai.usage.total_tokens": 15,
       },
     );
   });
@@ -169,6 +227,7 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.response.finish_reasons": ["stop"],
         "gen_ai.usage.input_tokens": 11,
         "gen_ai.usage.output_tokens": 7,
+        "gen_ai.usage.total_tokens": 18,
         "gen_ai.usage.cache_creation.input_tokens": 1,
         "gen_ai.usage.cache_read.input_tokens": 2,
         "gen_ai.usage.reasoning.output_tokens": 4,

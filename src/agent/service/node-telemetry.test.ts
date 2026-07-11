@@ -33,12 +33,15 @@ describe("agent/node-agent-service-telemetry", () => {
       samplingRatio: 1,
       exporterHeaders: undefined,
       tracesEnabled: true,
+      llmObservabilityEnabled: false,
       metricsEnabled: false,
       logsEnabled: false,
       tracesEndpoint: undefined,
+      llmObservabilityEndpoint: undefined,
       metricsEndpoint: undefined,
       logsEndpoint: undefined,
       tracesHeaders: undefined,
+      llmObservabilityHeaders: undefined,
       metricsHeaders: undefined,
       logsHeaders: undefined,
       metricsExportIntervalMillis: 60000,
@@ -95,12 +98,15 @@ describe("agent/node-agent-service-telemetry", () => {
       samplingRatio: 0.5,
       exporterHeaders: { "x-api-key": "secret", "x-tenant": "myorg" },
       tracesEnabled: true,
+      llmObservabilityEnabled: false,
       metricsEnabled: true,
       logsEnabled: true,
       tracesEndpoint: "https://collector.example/otlp/v1/traces",
+      llmObservabilityEndpoint: "https://collector.example/otlp/v1/traces",
       metricsEndpoint: "https://collector.example/otlp/v1/metrics",
       logsEndpoint: "https://collector.example/otlp/v1/logs",
       tracesHeaders: { "x-api-key": "secret", "x-tenant": "myorg" },
+      llmObservabilityHeaders: undefined,
       metricsHeaders: { "x-api-key": "secret", "x-tenant": "myorg" },
       logsHeaders: {
         "x-api-key": "secret",
@@ -175,13 +181,80 @@ describe("agent/node-agent-service-telemetry", () => {
 
     assertEquals(config.enabled, true);
     assertEquals(config.tracesEnabled, false);
+    assertEquals(config.llmObservabilityEnabled, false);
     assertEquals(config.metricsEnabled, true);
     assertEquals(config.logsEnabled, true);
     assertEquals(config.metricsEndpoint, "https://metrics.example/v1/metrics");
     assertEquals(config.logsEndpoint, "https://logs.example/v1/logs");
+    assertEquals(config.llmObservabilityEndpoint, "https://collector.example/base/v1/traces");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "global",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "agent-service",
+    });
     assertEquals(config.metricsHeaders, { "dd-api-key": "metrics" });
     assertEquals(config.logsHeaders, { "dd-api-key": "global" });
     assertEquals(config.metricsTemporalityPreference, "cumulative");
+  });
+
+  it("builds Datadog LLM Observability OTLP headers from customer OTEL config", () => {
+    const config = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        OTEL_TRACES_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+        DD_LLMOBS_ENABLED: "true",
+        DD_LLMOBS_ML_APP: "veryfront-ops-agent",
+      },
+      defaultServiceName: "veryfront-ops-agent",
+    });
+
+    assertEquals(config.llmObservabilityEnabled, true);
+    assertEquals(config.llmObservabilityEndpoint, "https://otlp.datadoghq.eu/v1/traces");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "veryfront-ops-agent",
+    });
+  });
+
+  it("defaults the Datadog LLM app to the resolved service name", () => {
+    const config = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        DD_SERVICE: "investment-ops-agent",
+        OTEL_TRACES_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+        DD_LLMOBS_ENABLED: "true",
+      },
+      defaultServiceName: "veryfront-ops-agent",
+    });
+
+    assertEquals(config.serviceName, "investment-ops-agent");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "investment-ops-agent",
+    });
+  });
+
+  it("preserves a Datadog LLM app supplied through OTLP headers", () => {
+    const config = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        DD_SERVICE: "investment-ops-agent",
+        OTEL_TRACES_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted,dd-ml-app=header-app",
+        DD_LLMOBS_ENABLED: "true",
+      },
+      defaultServiceName: "veryfront-ops-agent",
+    });
+
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "header-app",
+    });
   });
 
   it("delegates enabled telemetry initialization to a NodeTelemetryProvider", async () => {
@@ -194,11 +267,17 @@ describe("agent/node-agent-service-telemetry", () => {
       samplingRatio: 0.5,
       exporterHeaders: { "x-api-key": "redacted" },
       tracesEnabled: true,
+      llmObservabilityEnabled: true,
       metricsEnabled: true,
       logsEnabled: true,
       tracesEndpoint: "https://collector.example/v1/traces",
+      llmObservabilityEndpoint: "https://collector.example/v1/traces",
       metricsEndpoint: "https://collector.example/v1/metrics",
       logsEndpoint: "https://collector.example/v1/logs",
+      llmObservabilityHeaders: {
+        "dd-api-key": "redacted",
+        "dd-otlp-source": "llmobs",
+      },
       metricsExportIntervalMillis: 10000,
       metricsTemporalityPreference: "delta",
       instrumentation: {
@@ -224,12 +303,18 @@ describe("agent/node-agent-service-telemetry", () => {
         samplingRatio: 0.5,
         exporterHeaders: { "x-api-key": "redacted" },
         tracesEnabled: true,
+        llmObservabilityEnabled: true,
         metricsEnabled: true,
         logsEnabled: true,
         tracesEndpoint: "https://collector.example/v1/traces",
+        llmObservabilityEndpoint: "https://collector.example/v1/traces",
         metricsEndpoint: "https://collector.example/v1/metrics",
         logsEndpoint: "https://collector.example/v1/logs",
         tracesHeaders: undefined,
+        llmObservabilityHeaders: {
+          "dd-api-key": "redacted",
+          "dd-otlp-source": "llmobs",
+        },
         metricsHeaders: undefined,
         logsHeaders: undefined,
         metricsExportIntervalMillis: 10000,

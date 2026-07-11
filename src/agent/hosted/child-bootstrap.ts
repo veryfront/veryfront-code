@@ -21,6 +21,8 @@ export interface BootstrapHostedChildRunInput extends HostedChildConversationBod
   runId?: string;
   agentId: string;
   implementationKind?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  runtimeTargetEnvironmentId?: string | null;
   branchId?: string | null;
 }
 
@@ -67,6 +69,8 @@ export async function bootstrapHostedChildRun(
     agentId: input.agentId,
     implementationKind: input.implementationKind,
     projectId: input.runProjectId ?? null,
+    runtimeTargetKind: input.runtimeTargetKind,
+    runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId,
     branchId: input.branchId,
   });
 

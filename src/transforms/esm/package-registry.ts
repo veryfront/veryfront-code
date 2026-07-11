@@ -6,6 +6,8 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
+
+const logger = rendererLogger.component("package-registry");
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   buildReactUrl,
@@ -135,16 +137,30 @@ export async function readProjectDependencyVersions(
     dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront });
 
     return { react, veryfront };
-  } catch (_) {
+  } catch (error) {
+    // ENOENT means there is no package.json in the project dir — expected for
+    // framework-only environments.  Any other error (permission denied, malformed
+    // JSON, etc.) is logged at warn so it is visible without crashing the server.
+    const isNotFound = error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: unknown }).code === "ENOENT";
+    if (!isNotFound) {
+      logger.warn("Failed to read project dependency versions", {
+        packageJsonPath,
+        error: String(error),
+      });
+    }
     return {};
   }
 }
 
 /**
  * Resolve React version for a project with consistent priority:
- * 1. Config override: config.client.cdn.versions.react
- * 2. package.json detection (via cross-runtime filesystem)
- * 3. DEFAULT_REACT_VERSION fallback
+ * 1. Public config override: config.react.version
+ * 2. Legacy CDN config override: config.client.cdn.versions.react
+ * 3. package.json detection (via cross-runtime filesystem)
+ * 4. DEFAULT_REACT_VERSION fallback
  *
  * This is the single source of truth for React version resolution.
  * Both HTML import map generation and module server transforms should use this.
@@ -155,7 +171,13 @@ export async function resolveProjectReactVersion(options: {
 }): Promise<string> {
   const { projectDir, config } = options;
 
-  // 1. Config override takes highest priority
+  // 1. The documented public config override takes highest priority.
+  const publicConfigVersion = config?.react?.version;
+  if (publicConfigVersion) {
+    return normalizeReactVersion(stripSemverRange(publicConfigVersion));
+  }
+
+  // 2. Preserve the older CDN-specific override for compatibility.
   const versionsConfig = config?.client?.cdn?.versions;
   if (versionsConfig && versionsConfig !== "auto") {
     const configVersion = versionsConfig.react;
@@ -165,12 +187,12 @@ export async function resolveProjectReactVersion(options: {
     }
   }
 
-  // 2. Detect from package.json
+  // 3. Detect from package.json
   if (projectDir) {
     const detected = await readProjectDependencyVersions(projectDir);
     if (detected.react) return detected.react;
   }
 
-  // 3. Fallback to default
+  // 4. Fallback to default
   return DEFAULT_REACT_VERSION;
 }

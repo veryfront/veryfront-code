@@ -17,6 +17,13 @@ export interface UserInfo {
   name?: string;
 }
 
+export interface ApiKeyIdentity {
+  authenticated: true;
+  type: "apiKey";
+}
+
+export type AuthIdentity = UserInfo | ApiKeyIdentity;
+
 const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "google", label: "Google" },
   { id: "github", label: "GitHub" },
@@ -34,19 +41,23 @@ export function createOAuthAuthorizationUrl(
   provider: "google" | "github" | "microsoft",
   callbackUrl: string,
   state: string,
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): string {
   const stateBoundCallbackUrl = new URL(callbackUrl);
   stateBoundCallbackUrl.searchParams.set("state", state);
 
-  const authUrl = new URL(`${getApiUrl().replace(/\/$/, "")}/auth/${provider}`);
+  const authUrl = new URL(`${getApiUrl(env).replace(/\/$/, "")}/auth/${provider}`);
   authUrl.searchParams.set("redirect_uri", stateBoundCallbackUrl.toString());
   authUrl.searchParams.set("state", state);
   return authUrl.toString();
 }
 
-export async function validateToken(token: string): Promise<UserInfo | null> {
+export async function validateToken(
+  token: string,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<UserInfo | null> {
   try {
-    const response = await fetch(`${getApiUrl()}/me`, {
+    const response = await fetch(`${getApiUrl(env).replace(/\/$/, "")}/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     });
 
@@ -60,6 +71,46 @@ export async function validateToken(token: string): Promise<UserInfo | null> {
   } catch {
     return null;
   }
+}
+
+export function isApiKeyToken(token: string): boolean {
+  return token.startsWith("vf_");
+}
+
+export function isApiKeyIdentity(identity: AuthIdentity): identity is ApiKeyIdentity {
+  return "type" in identity && identity.type === "apiKey";
+}
+
+async function validateApiKey(
+  token: string,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<boolean> {
+  if (!isApiKeyToken(token)) return false;
+
+  try {
+    const url = new URL(`${getApiUrl(env).replace(/\/$/, "")}/projects`);
+    url.searchParams.set("limit", "1");
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function validateCredential(
+  token: string,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<AuthIdentity | null> {
+  if (!token) return null;
+
+  if (isApiKeyToken(token)) {
+    return (await validateApiKey(token, env)) ? { authenticated: true, type: "apiKey" } : null;
+  }
+
+  return validateToken(token, env);
 }
 
 async function promptAuthMethod(): Promise<AuthMethod> {
@@ -125,10 +176,13 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   }
 }
 
-async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Promise<string | null> {
+async function loginWithOAuth(
+  provider: "google" | "github" | "microsoft",
+  env: EnvironmentConfig,
+): Promise<string | null> {
   console.log();
 
-  if (!canOpenBrowser()) {
+  if (!canOpenBrowser(env)) {
     console.log("  " + warning("Browser login not available in this environment."));
     console.log("  " + dim("Please use the API token option instead."));
     return null;
@@ -146,7 +200,7 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = createOAuthAuthorizationUrl(provider, callbackUrl, state);
+  const authUrl = createOAuthAuthorizationUrl(provider, callbackUrl, state, env);
 
   console.log("  " + brand("Opening browser to log in..."));
   console.log();
@@ -201,7 +255,10 @@ async function loginWithToken(): Promise<string | null> {
   return token;
 }
 
-export async function login(method?: AuthMethod): Promise<UserInfo | null> {
+export async function login(
+  method?: AuthMethod,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<AuthIdentity | null> {
   const authMethod = method ?? (isTTY() ? await promptAuthMethod() : "token");
 
   let token: string | null = null;
@@ -209,7 +266,7 @@ export async function login(method?: AuthMethod): Promise<UserInfo | null> {
     case "google":
     case "github":
     case "microsoft":
-      token = await loginWithOAuth(authMethod);
+      token = await loginWithOAuth(authMethod, env);
       break;
     case "token":
       token = await loginWithToken();
@@ -220,32 +277,36 @@ export async function login(method?: AuthMethod): Promise<UserInfo | null> {
 
   console.log("  " + dim("Validating token..."));
 
-  const userInfo = await validateToken(token);
-  if (!userInfo) {
+  const identity = await validateCredential(token, env);
+  if (!identity) {
     console.log();
     console.log("  " + error("✗") + " Invalid token");
     return null;
   }
 
-  await saveToken(token);
+  await saveToken(token, env);
   console.log();
-  console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
-  return userInfo;
+  console.log(
+    isApiKeyIdentity(identity)
+      ? "  " + success("✓") + " Authenticated with an API key"
+      : "  " + success("✓") + " Logged in as " + brand(identity.email),
+  );
+  return identity;
 }
 
 export async function ensureAuthenticated(
   env: EnvironmentConfig = getEnvironmentConfig(),
-): Promise<UserInfo | null> {
+): Promise<AuthIdentity | null> {
   if (env.apiToken) {
-    const userInfo = await validateToken(env.apiToken);
-    if (userInfo) return userInfo;
+    const credential = await validateCredential(env.apiToken, env);
+    if (credential) return credential;
     console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
   }
 
   const storedToken = await readToken(env);
   if (storedToken) {
-    const userInfo = await validateToken(storedToken);
-    if (userInfo) return userInfo;
+    const credential = await validateCredential(storedToken, env);
+    if (credential) return credential;
     await deleteToken(env);
     console.log("  " + warning("Session expired. Please log in again."));
   }
@@ -255,45 +316,66 @@ export async function ensureAuthenticated(
     return null;
   }
 
-  return login();
+  return login(undefined, env);
 }
 
-export async function logout(): Promise<void> {
-  await deleteToken();
+export async function logout(env: EnvironmentConfig = getEnvironmentConfig()): Promise<void> {
+  await deleteToken(env);
   console.log();
   console.log("  " + success("✓") + " Logged out");
 }
 
-export async function whoami(
-  env: EnvironmentConfig = getEnvironmentConfig(),
-): Promise<UserInfo | null> {
-  if (env.apiToken) {
-    const userInfo = await validateToken(env.apiToken);
-    if (userInfo) {
-      if (isJsonMode()) {
-        await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source: "env" }));
-        return userInfo;
-      }
-      console.log();
-      console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
-      console.log("  " + dim("(via VERYFRONT_API_TOKEN)"));
+async function reportCredential(
+  token: string,
+  source: "env" | "token-store",
+  env: EnvironmentConfig,
+): Promise<AuthIdentity | null> {
+  const credential = await validateCredential(token, env);
+  if (!credential) return null;
+
+  if (!isApiKeyIdentity(credential)) {
+    const userInfo = credential;
+    if (isJsonMode()) {
+      await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source }));
       return userInfo;
     }
+
+    console.log();
+    console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
+  } else {
+    if (isJsonMode()) {
+      await outputJson(createSuccessEnvelope("whoami", {
+        authenticated: true,
+        credential_type: "api_key",
+        source,
+      }));
+      return { authenticated: true, type: "apiKey" };
+    }
+
+    console.log();
+    console.log("  " + success("✓") + " Authenticated with an API key");
   }
 
-  const storedToken = await readToken();
+  console.log(
+    "  " + dim(
+      source === "env" ? "(via VERYFRONT_API_TOKEN)" : `Token stored at: ${getTokenLocation(env)}`,
+    ),
+  );
+  return credential;
+}
+
+export async function whoami(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<AuthIdentity | null> {
+  if (env.apiToken) {
+    const result = await reportCredential(env.apiToken, "env", env);
+    if (result) return result;
+  }
+
+  const storedToken = await readToken(env);
   if (storedToken) {
-    const userInfo = await validateToken(storedToken);
-    if (userInfo) {
-      if (isJsonMode()) {
-        await outputJson(createSuccessEnvelope("whoami", { ...userInfo, source: "token-store" }));
-        return userInfo;
-      }
-      console.log();
-      console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
-      console.log("  " + dim(`Token stored at: ${getTokenLocation()}`));
-      return userInfo;
-    }
+    const result = await reportCredential(storedToken, "token-store", env);
+    if (result) return result;
   }
 
   if (isJsonMode()) {
@@ -308,7 +390,7 @@ export async function whoami(
   // Show provider tokens
   try {
     const { listProviderTokens } = await import("./provider-store.ts");
-    const providers = await listProviderTokens();
+    const providers = await listProviderTokens(env);
     for (const p of providers) {
       console.log("  " + success("✓") + ` ${p} API key configured`);
     }

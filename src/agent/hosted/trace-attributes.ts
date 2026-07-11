@@ -1,4 +1,5 @@
 type TracePrimitive = string | number | boolean;
+type EnvReader = (name: string) => string | undefined;
 /** Public API contract for a value can be used as an agent trace attribute. */
 export type AgentTraceAttributeValue =
   | TracePrimitive
@@ -12,6 +13,7 @@ export type AgentTraceAttributes = Record<string, AgentTraceAttributeValue>;
 export type AgentTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
+  totalTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
@@ -26,6 +28,20 @@ function compactTraceAttributes(attributes: AgentTraceAttributes): AgentTraceAtt
 
 function getNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function parseResourceAttributes(value: string | undefined): Record<string, string> {
+  if (!value) return {};
+
+  const attributes: Record<string, string> = {};
+  for (const part of value.split(",")) {
+    const [rawKey, ...rawValueParts] = part.split("=");
+    const key = rawKey?.trim();
+    if (!key || rawValueParts.length === 0) continue;
+    const attributeValue = rawValueParts.join("=").trim();
+    if (attributeValue) attributes[key] = attributeValue;
+  }
+  return attributes;
 }
 
 function isAgentTraceAttributePrimitive(value: unknown): value is TracePrimitive {
@@ -73,7 +89,45 @@ export function buildScheduleTraceAttributes(
   });
 }
 
-function resolveGenAiProviderName(modelId: string | null | undefined): string | null {
+/** Builds Datadog unified service trace attributes for a hosted project run. */
+export function buildProjectServiceTraceAttributes(input: {
+  projectSlug?: string | null;
+  readEnv: EnvReader;
+}): AgentTraceAttributes {
+  const resourceAttributes = parseResourceAttributes(input.readEnv("OTEL_RESOURCE_ATTRIBUTES"));
+  const projectSlug = getNonEmptyString(input.projectSlug);
+  const serviceName = getNonEmptyString(input.readEnv("OTEL_SERVICE_NAME")) ??
+    getNonEmptyString(resourceAttributes["service.name"]) ??
+    getNonEmptyString(input.readEnv("DD_SERVICE")) ??
+    projectSlug ??
+    "veryfront-agent-service";
+  const serviceVersion = getNonEmptyString(resourceAttributes["service.version"]) ??
+    getNonEmptyString(input.readEnv("OTEL_SERVICE_VERSION")) ??
+    getNonEmptyString(input.readEnv("DD_VERSION")) ??
+    getNonEmptyString(input.readEnv("VERYFRONT_VERSION")) ??
+    getNonEmptyString(input.readEnv("RELEASE_VERSION"));
+  const deploymentEnvironment = getNonEmptyString(
+    resourceAttributes["deployment.environment.name"],
+  ) ??
+    getNonEmptyString(resourceAttributes["deployment.environment"]) ??
+    getNonEmptyString(input.readEnv("OTEL_DEPLOYMENT_ENVIRONMENT")) ??
+    getNonEmptyString(input.readEnv("DD_ENV")) ??
+    getNonEmptyString(input.readEnv("APP_ENVIRONMENT")) ??
+    getNonEmptyString(input.readEnv("VERYFRONT_ENVIRONMENT"));
+
+  return compactTraceAttributes({
+    "project.slug": projectSlug,
+    "service.name": serviceName,
+    "service": serviceName,
+    "service.version": serviceVersion,
+    "version": serviceVersion,
+    "deployment.environment.name": deploymentEnvironment,
+    "deployment.environment": deploymentEnvironment,
+    "env": deploymentEnvironment,
+  });
+}
+
+export function resolveGenAiProviderName(modelId: string | null | undefined): string | null {
   const normalizedModelId = modelId?.startsWith("veryfront-cloud/")
     ? modelId.slice("veryfront-cloud/".length)
     : modelId;
@@ -95,6 +149,12 @@ function resolveGenAiProviderName(modelId: string | null | undefined): string | 
 }
 
 function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttributes {
+  const totalTokens = typeof usage?.totalTokens === "number"
+    ? usage.totalTokens
+    : typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number"
+    ? usage.inputTokens + usage.outputTokens
+    : undefined;
+
   return compactTraceAttributes({
     ...(typeof usage?.inputTokens === "number"
       ? { "gen_ai.usage.input_tokens": usage.inputTokens }
@@ -102,6 +162,7 @@ function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttribute
     ...(typeof usage?.outputTokens === "number"
       ? { "gen_ai.usage.output_tokens": usage.outputTokens }
       : {}),
+    ...(typeof totalTokens === "number" ? { "gen_ai.usage.total_tokens": totalTokens } : {}),
     ...(typeof usage?.cacheCreationInputTokens === "number"
       ? { "gen_ai.usage.cache_creation.input_tokens": usage.cacheCreationInputTokens }
       : {}),
@@ -123,6 +184,8 @@ export function buildAgentRunTraceAttributes(input: {
   projectId?: string | null;
   userId: string;
   agentId: string;
+  agentName?: string | null;
+  modelId?: string | null;
   runId?: string | null;
   parentRunId?: string | null;
   parentConversationId?: string | null;
@@ -148,6 +211,8 @@ export function buildAgentRunTraceAttributes(input: {
     "gen_ai.operation.name": input.operationName,
     "gen_ai.conversation.id": input.conversationId,
     "gen_ai.agent.id": input.agentId,
+    "gen_ai.agent.name": input.agentName,
+    "gen_ai.request.model": input.modelId,
   });
 }
 
