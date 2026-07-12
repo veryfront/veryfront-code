@@ -35,10 +35,11 @@ require_env() {
   done
 }
 
-# Package directories in the `deno task build:npm` output (publish modes).
+# Package directories in dependency order for publish modes. The root package
+# pins auto-loaded extensions to the same version, so publish it last.
 package_dirs() {
-  printf '%s\n' npm
   find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort
+  printf '%s\n' npm
 }
 
 # Package names derived from the deno.json workspace (preflight runs before

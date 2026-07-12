@@ -3,7 +3,8 @@
 #
 # Verifies, against the real `deno task build:npm` artifacts installed into a
 # throwaway npm project, that:
-#   1. a `veryfront` install with co-published required packages runs the CLI under Node
+#   1. a `veryfront` install with co-published required packages runs the CLI
+#      and activates the parser extension under Node
 #   2. the @huggingface/transformers optional peer is declared
 #   3. loading a missing extension fails naming the installable package
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
@@ -40,11 +41,41 @@ cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-parser-babel-*.tgz
 
-echo "== 1. root install: CLI runs under Node"
+echo "== 1. root install: CLI and parser extension run under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
   fail "CLI --version failed on root install"
 node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
   fail "CLI schema --json failed on root install (bundled ext-schema-zod broken)"
+node -e "
+const p = require('./node_modules/veryfront/package.json');
+if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(1);
+" || fail "root package does not pin @veryfront/ext-parser-babel to its version"
+node --input-type=module -e "
+const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-extensions.js');
+const resolved = m.createOptionalBuiltinExtension({
+  name: 'ext-parser-babel',
+  origin: 'veryfront/ext-parser-babel',
+  sourceDirectory: 'ext-parser-babel',
+  contracts: { provides: ['CodeParser'] },
+  capabilities: [],
+});
+let codeParser;
+const logger = { debug() {}, info() {}, warn() {}, error() {} };
+await resolved.extension.setup({
+  get() {},
+  require() { throw new Error('unexpected contract requirement'); },
+  provide(name, impl) { if (name === 'CodeParser') codeParser = impl; },
+  config: {},
+  logger,
+});
+if (!codeParser) throw new Error('CodeParser was not registered');
+const ast = await codeParser.parse({
+  code: 'export default function Page(): JSX.Element { return <main />; }',
+  filePath: 'app/page.tsx',
+});
+if (ast?.type !== 'File') throw new Error('TSX parse failed');
+await resolved.extension.teardown?.();
+" || fail "root optional builtin did not register a working CodeParser"
 
 echo "== 2. root install: transformers optional peer declared"
 node -e "
