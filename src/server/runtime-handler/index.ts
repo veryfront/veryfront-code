@@ -84,6 +84,7 @@ import {
 } from "./tracing.ts";
 import {
   completeRequestTracking,
+  completeRequestTrackingOnResponseEnd,
   endContentMetrics,
   endRequestLifecycle,
   incrementRequestMetrics,
@@ -735,15 +736,14 @@ export function createVeryfrontHandler(
         });
 
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
-        completeRequestTracking(
+        completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
+
+        return completeRequestTrackingOnResponseEnd(
           lifecycle.requestId,
-          response.status,
+          withServerTimingHeader(response, requestProfileRecord),
           isTimeout,
           requestProfileRecord,
         );
-        completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
-
-        return withServerTimingHeader(response, requestProfileRecord);
       } finally {
         endRequestLifecycle(lifecycle);
       }

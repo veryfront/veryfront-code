@@ -22,6 +22,10 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
+import {
+  completeOnResponseBodySettlement,
+  isEventStreamResponse,
+} from "#veryfront/platform/compat/http/response-lifecycle.ts";
 
 interface RequestLifecycleContext {
   /** Request ID for tracking */
@@ -110,6 +114,28 @@ export function completeRequestTracking(
   profile?: RequestProfileRecord | null,
 ): void {
   requestTracker.complete(requestId, status, isTimeout, profile);
+}
+
+/**
+ * Keep streaming responses in the shutdown drain set until their body settles.
+ * Handler completion only means response headers are ready; an SSE body may
+ * continue producing events for several minutes after that point.
+ */
+export function completeRequestTrackingOnResponseEnd(
+  requestId: string,
+  response: Response,
+  isTimeout: boolean,
+  profile?: RequestProfileRecord | null,
+): Response {
+  if (!isEventStreamResponse(response)) {
+    completeRequestTracking(requestId, response.status, isTimeout, profile);
+    return response;
+  }
+
+  requestTracker.markLongLived(requestId);
+  return completeOnResponseBodySettlement(response, () => {
+    completeRequestTracking(requestId, response.status, isTimeout, profile);
+  });
 }
 
 /**

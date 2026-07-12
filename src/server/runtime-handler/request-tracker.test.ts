@@ -275,5 +275,26 @@ describe("server/runtime-handler/request-tracker", () => {
         globalThis.clearTimeout = originalClearTimeout;
       }
     });
+
+    it("should stop slow-request timers without completing a long-lived request", () => {
+      const clearedTimers: ReturnType<typeof setTimeout>[] = [];
+      const originalClearTimeout = globalThis.clearTimeout;
+      globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+        if (id !== undefined) clearedTimers.push(id);
+        originalClearTimeout(id);
+      }) as typeof clearTimeout;
+
+      try {
+        const beforeCount = requestTracker.getInFlightCount();
+        requestTracker.start("req-stream", "proj", "/stream", "POST");
+        requestTracker.markLongLived("req-stream");
+
+        assertEquals(clearedTimers.length, 1);
+        assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+        requestTracker.complete("req-stream", 200);
+      } finally {
+        globalThis.clearTimeout = originalClearTimeout;
+      }
+    });
   });
 });

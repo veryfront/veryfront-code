@@ -15,4 +15,23 @@ describe("proxy main request URL parsing", () => {
     assertStringIncludes(source, "getReplayableRequestBodies(req, maxRetries)");
     assertStringIncludes(source, "body: upstreamBodies[attempt] ?? null");
   });
+
+  it("drains tracked responses before closing the proxy server", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "if (shuttingDown) return createProxyDrainingResponse()");
+    assertStringIncludes(
+      source,
+      "proxyRequestDrainTracker.start(requestId, req.method, url.pathname)",
+    );
+    assertStringIncludes(
+      source,
+      "proxyRequestDrainTracker.completeOnResponseEnd(requestId, response)",
+    );
+
+    const drainIndex = source.indexOf("await proxyRequestDrainTracker.waitForDrain");
+    const closeIndex = source.indexOf("await closeProxyServerWithin");
+    assertEquals(drainIndex >= 0, true);
+    assertEquals(closeIndex > drainIndex, true);
+  });
 });
