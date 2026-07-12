@@ -22,7 +22,11 @@
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
-import { isRetryableConnectionError } from "./retry.ts";
+import {
+  getFramedRequestBody,
+  getUpstreamRetryCount,
+  isRetryableConnectionError,
+} from "./retry.ts";
 import {
   authorizeWebSocketRequest,
   closeBridgePeer,
@@ -393,9 +397,13 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
 
           injectContext(newHeaders);
 
-          // Only retry idempotent methods (GET, HEAD, OPTIONS)
-          const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
-          const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
+          const maxRetries = getUpstreamRetryCount(
+            req.method,
+            url.pathname,
+            req.headers,
+            VERYFRONT_SERVER_RETRY_COUNT,
+          );
+          const upstreamBody = getFramedRequestBody(req.headers, req.body);
           let lastError: Error | null = null;
           // After a retryable connection error to a dedicated server, fall back to shared pool
           let skipDedicated = false;
@@ -449,7 +457,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                       fetch(serverUrl.toString(), {
                         method: req.method,
                         headers: newHeaders,
-                        body: req.body,
+                        body: upstreamBody,
                         redirect: "manual",
                         signal: abortController.signal,
                       }),

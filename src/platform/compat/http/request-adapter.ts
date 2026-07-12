@@ -20,7 +20,7 @@ export function convertNodeRequestToWebRequest(
   url: string,
 ): Request {
   const method = req.method ?? "GET";
-  const hasBody = !BODYLESS_METHODS.has(method.toUpperCase());
+  const hasBody = requestCanCarryBody(method) && requestDeclaresBody(req.headers);
 
   // `duplex` is part of the WHATWG fetch spec but not yet in the lib.dom
   // `RequestInit` type, hence the intersection.
@@ -35,6 +35,27 @@ export function convertNodeRequestToWebRequest(
   }
 
   return new Request(url, init);
+}
+
+function requestCanCarryBody(method: string): boolean {
+  return !BODYLESS_METHODS.has(method.toUpperCase());
+}
+
+function requestDeclaresBody(headers: NodeIncomingMessage["headers"]): boolean {
+  const contentLengthHeader = headers["content-length"];
+  const contentLength = Array.isArray(contentLengthHeader)
+    ? contentLengthHeader.find((value) => value.trim().length > 0)
+    : contentLengthHeader;
+  if (contentLength !== undefined && contentLength.trim() !== "" && contentLength !== "0") {
+    return true;
+  }
+
+  const transferEncodingHeader = headers["transfer-encoding"];
+  const transferEncoding = Array.isArray(transferEncodingHeader)
+    ? transferEncodingHeader.join(",")
+    : transferEncodingHeader;
+
+  return transferEncoding !== undefined && transferEncoding.trim() !== "";
 }
 
 /**

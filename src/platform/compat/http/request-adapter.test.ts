@@ -65,7 +65,7 @@ describe("convertNodeRequestToWebRequest", () => {
     const result = convertNodeRequestToWebRequest(
       createMockReq(
         "POST",
-        { "content-type": "application/json" },
+        { "content-type": "application/json", "content-length": "38" },
         ['{"jsonrpc":"2.0",', '"method":"initialize"}'],
       ) as never,
       "http://localhost/mcp",
@@ -75,6 +75,26 @@ describe("convertNodeRequestToWebRequest", () => {
     assertEquals(result.method, "POST");
     assertExists(result.body);
     assertEquals(await result.text(), '{"jsonrpc":"2.0","method":"initialize"}');
+  });
+
+  it("should not attach a body stream for bodyless POST requests", () => {
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("POST", {}) as never,
+      "http://localhost/api/control-plane/runs/run_1/stream",
+    );
+
+    assertEquals(result.method, "POST");
+    assertEquals(result.body, null);
+  });
+
+  it("should attach a body stream for chunked POST requests", async () => {
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("POST", { "transfer-encoding": "chunked" }, ["chunk"]) as never,
+      "http://localhost/mcp",
+    );
+
+    assertExists(result.body);
+    assertEquals(await result.text(), "chunk");
   });
 
   it("should preserve headers", () => {
