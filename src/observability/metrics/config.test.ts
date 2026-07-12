@@ -9,6 +9,8 @@ function adapterWithEnv(env: { get: (key: string) => string | undefined }): Runt
   return { env } as unknown as RuntimeAdapter;
 }
 
+const emptyEnvAdapter = adapterWithEnv({ get: () => undefined });
+
 describe("observability/metrics/config", () => {
   describe("DEFAULT_CONFIG", () => {
     it("should have expected defaults", () => {
@@ -22,14 +24,14 @@ describe("observability/metrics/config", () => {
 
   describe("loadConfig", () => {
     it("should return defaults for empty config", () => {
-      const result = loadConfig({});
+      const result = loadConfig({}, emptyEnvAdapter);
       assertEquals(result.enabled, false);
       assertEquals(result.exporter, "console");
       assertEquals(result.prefix, "veryfront");
     });
 
     it("should merge user config", () => {
-      const result = loadConfig({ enabled: true, prefix: "myapp" });
+      const result = loadConfig({ enabled: true, prefix: "myapp" }, emptyEnvAdapter);
       assertEquals(result.enabled, true);
       assertEquals(result.prefix, "myapp");
       assertEquals(result.exporter, "console");
