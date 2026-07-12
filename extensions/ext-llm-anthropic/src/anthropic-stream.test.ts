@@ -2,6 +2,8 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { streamAnthropicCompatibleParts } from "./anthropic-stream.ts";
 
+type AnthropicStreamOptions = Parameters<typeof streamAnthropicCompatibleParts>[1];
+
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   return streamFromChunks([text], { close: true });
 }
@@ -25,7 +27,7 @@ function streamFromChunks(
 
 function streamFromChunksWithCancelSpy(
   chunks: string[],
-  options: { closeDelayMs?: number; onCancel: () => void },
+  options: { closeDelayMs?: number; onCancel: () => void; onClose?: () => void },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -35,7 +37,10 @@ function streamFromChunksWithCancelSpy(
         controller.enqueue(encoder.encode(chunk));
       }
       if (options.closeDelayMs !== undefined) {
-        closeTimer = setTimeout(() => controller.close(), options.closeDelayMs);
+        closeTimer = setTimeout(() => {
+          controller.close();
+          options.onClose?.();
+        }, options.closeDelayMs);
       }
     },
     cancel() {
@@ -47,9 +52,12 @@ function streamFromChunksWithCancelSpy(
   });
 }
 
-async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown[]> {
+async function collectParts(
+  stream: ReadableStream<Uint8Array>,
+  options?: AnthropicStreamOptions,
+): Promise<unknown[]> {
   const parts: unknown[] = [];
-  for await (const part of streamAnthropicCompatibleParts(stream)) {
+  for await (const part of streamAnthropicCompatibleParts(stream, options)) {
     parts.push(part);
   }
   return parts;
@@ -379,6 +387,58 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         billableOutputTokens: 4,
         costSource: "gateway",
         usageCaptureStatus: "complete",
+      },
+    });
+  });
+
+  it("can finish a client tool-use step without canceling a delayed gateway tail", async () => {
+    let cancelCount = 0;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const parts = await collectParts(
+      streamFromChunksWithCancelSpy([
+        [
+          data({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
+          }),
+          data({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+          }),
+          data({ type: "content_block_stop", index: 0 }),
+          data({
+            type: "message_delta",
+            delta: { stop_reason: "tool_use" },
+            usage: { output_tokens: 4 },
+          }),
+          data({ type: "message_stop" }),
+        ].join(""),
+      ], {
+        closeDelayMs: 150,
+        onCancel: () => {
+          cancelCount++;
+          resolveClosed();
+        },
+        onClose: resolveClosed,
+      }),
+      { clientToolUseTrailingUsageTimeoutMode: "drain" },
+    );
+
+    await closed;
+
+    assertEquals(cancelCount, 0);
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool_use" },
+      usage: {
+        inputTokens: undefined,
+        outputTokens: 4,
+        totalTokens: 4,
       },
     });
   });

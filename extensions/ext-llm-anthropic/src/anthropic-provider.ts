@@ -238,8 +238,13 @@ export function createAnthropicModelRuntime(
   modelId: string,
 ): ModelRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch;
+  const providerName = config.name ?? "anthropic";
+  const streamOptions = providerName === "veryfront-cloud"
+    ? { clientToolUseTrailingUsageTimeoutMode: "drain" as const }
+    : undefined;
+
   return {
-    provider: config.name ?? "anthropic",
+    provider: providerName,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
@@ -302,7 +307,9 @@ export function createAnthropicModelRuntime(
         const drained = warnings.drain();
         return {
           stream: ReadableStream.from(
-            withToolInputStatusTransitions(streamAnthropicCompatibleParts(responseStream)),
+            withToolInputStatusTransitions(
+              streamAnthropicCompatibleParts(responseStream, streamOptions),
+            ),
           ),
           ...(drained.length > 0 ? { warnings: drained } : {}),
         };
