@@ -190,6 +190,83 @@ describe("anthropic-provider", () => {
     });
   });
 
+  it("drains delayed Veryfront Cloud tool-use tails instead of canceling the gateway response", async () => {
+    const encoder = new TextEncoder();
+    let cancelCount = 0;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const runtime = createAnthropicModelRuntime({
+      authToken: "vf_test_provider",
+      baseURL: "https://api.veryfront.com/ai/gateway/anthropic/v1",
+      name: "veryfront-cloud",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"bash"}}\n\n',
+                  ),
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"pwd\\"}"}}\n\n',
+                  ),
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                  ),
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}\n\n',
+                  ),
+                );
+                controller.enqueue(
+                  encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'),
+                );
+                setTimeout(() => {
+                  controller.close();
+                  resolveClosed();
+                }, 150);
+              },
+              cancel() {
+                cancelCount++;
+                resolveClosed();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Call the tool" }],
+      }],
+      maxOutputTokens: 64,
+    });
+
+    const parts = await collectAsync(result.stream);
+    await closed;
+
+    assertEquals(cancelCount, 0);
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool_use" },
+      usage: {
+        inputTokens: undefined,
+        outputTokens: 4,
+        totalTokens: 4,
+      },
+    });
+  });
+
   it("sends image URL user parts as Anthropic vision content", async () => {
     let requestedInit: RequestInit | undefined;
 
