@@ -589,6 +589,34 @@ describe("FSAdapterWrapper", () => {
       assertEquals(result, "result");
     });
 
+    it("readOptionalTextFile should delegate when supported", async () => {
+      const calls: string[] = [];
+      const fsAdapter = createMockFSAdapter({
+        readFile: (path: string) => {
+          calls.push(`readFile:${path}`);
+          return Promise.resolve("required");
+        },
+        readOptionalTextFile: (path: string) => {
+          calls.push(`readOptionalTextFile:${path}`);
+          return Promise.resolve("optional");
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      const content = await wrapper.readOptionalTextFile("/globals.css");
+
+      assertEquals(content, "optional");
+      assertEquals(calls, ["readOptionalTextFile:/globals.css"]);
+    });
+
+    it("readOptionalTextFile should fall back to readFile when unsupported", async () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+
+      const content = await wrapper.readOptionalTextFile("/exists.txt");
+
+      assertEquals(content, "content");
+    });
+
     it("runWithContext should preserve adapter binding for production release materialization", async () => {
       const adapter = new MultiProjectFSAdapter({
         veryfront: {
