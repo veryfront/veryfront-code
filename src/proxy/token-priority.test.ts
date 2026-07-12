@@ -52,7 +52,64 @@ function createTokenServer(token: string) {
 
 describe("Token Priority Cascade", () => {
   describe("preview scope token priority", () => {
-    it("prefers user auth cookie over OAuth in preview", async () => {
+    it("uses OAuth for preview page metadata even when a user cookie is present", async () => {
+      const projectLookupAuthHeaders: string[] = [];
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return Response.json({
+            access_token: "oauth-preview-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          projectLookupAuthHeaders.push(req.headers.get("authorization") ?? "");
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+              protected: false,
+            }],
+          });
+        }
+
+        return new Response("Not found", { status: 404 });
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://my-project.preview.veryfront.com/page", {
+          headers: {
+            host: "my-project.preview.veryfront.com",
+            cookie: "authToken=user-cookie-token",
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.token, "oauth-preview-token");
+        assertEquals(ctx.error, undefined);
+        assertEquals(projectLookupAuthHeaders.length, 2);
+        assertEquals(
+          projectLookupAuthHeaders.every((header) => header === "Bearer oauth-preview-token"),
+          true,
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("uses OAuth for preview page routing instead of the user cookie", async () => {
       const { server, port } = createTokenServer("oauth-token");
 
       try {
@@ -67,7 +124,7 @@ describe("Token Priority Cascade", () => {
 
         const ctx = await handler.processRequest(req);
 
-        assertEquals(ctx.token, "user-cookie-token");
+        assertEquals(ctx.token, "oauth-token");
         assertEquals(ctx.error, undefined);
 
         await handler.close();

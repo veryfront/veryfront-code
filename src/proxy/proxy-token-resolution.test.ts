@@ -42,6 +42,34 @@ describe("proxy/proxy-token-resolution", () => {
     assertEquals(tokenManagerCalls, []);
   });
 
+  it("can require service tokens for preview metadata while preserving the user token", async () => {
+    const result = await resolveProxyRequestToken({
+      req: new Request("https://my-project.preview.veryfront.com/page", {
+        headers: { cookie: "authToken=user-cookie-token" },
+      }),
+      url: new URL("https://my-project.preview.veryfront.com/page"),
+      scope: "preview",
+      host: "my-project.preview.veryfront.com",
+      projectSlug: "my-project",
+      config: {
+        apiClientId: "client",
+        apiClientSecret: "secret",
+        apiToken: "static-token",
+      },
+      tokenManager: {
+        getToken() {
+          return Promise.resolve("oauth-token");
+        },
+      },
+      tokenStrategy: "service-first",
+      tokenFetchErrorMessage: "Token fetch failed",
+    });
+
+    assertEquals(result.token, "oauth-token");
+    assertEquals(result.userToken, "user-cookie-token");
+    assertEquals(result.tokenSource, "service");
+  });
+
   it("returns custom-domain token fetch errors without logging expected misses as errors", async () => {
     const loggedErrors: string[] = [];
     const notFoundError = new Error(
