@@ -13,6 +13,7 @@ export interface CacheCoordinatorOptions {
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
   ttlMs?: number;
+  staleMs?: number;
   /**
    * Project identifier for cache key prefixing.
    * Required for multi-tenant isolation - all cache keys will be prefixed with this value.
@@ -32,7 +33,7 @@ export interface CacheCoordinatorOptions {
   contentSourceId?: string;
 }
 
-export type CacheLookupStatus = "hit" | "miss" | "expired";
+export type CacheLookupStatus = "hit" | "miss" | "stale" | "expired";
 
 export interface CacheLookupResult {
   cachedResult?: RenderResult;
@@ -46,6 +47,7 @@ export interface CacheLookupResult {
 export class CacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
+  private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
   private readonly projectId: string | undefined;
   private readonly contentSourceId: string | undefined;
@@ -53,6 +55,7 @@ export class CacheCoordinator {
 
   constructor(options: CacheCoordinatorOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
+    this.staleMs = options.staleMs ?? 0;
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
 
@@ -103,6 +106,19 @@ export class CacheCoordinator {
         }
 
         if (this.isExpired(cached)) {
+          if (this.isStaleUsable(cached)) {
+            const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+            recordCacheLookup("stale", lookupDurationMs);
+            return {
+              cachedResult: this.hydrateResult(cached),
+              depAwareSlug: slug,
+              moduleCacheKey: key,
+              cachedModule: cached.result.pageModule,
+              cacheStatus: "stale",
+              lookupDurationMs,
+            };
+          }
+
           await this.store.delete(key);
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
           recordCacheLookup("expired", lookupDurationMs);
@@ -152,6 +168,7 @@ export class CacheCoordinator {
           nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
           storedAt: now,
           expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
+          staleUntil: this.ttlMs && this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
         };
 
         await this.store.set(key, payload);
@@ -195,6 +212,10 @@ export class CacheCoordinator {
     return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
   }
 
+  private isStaleUsable(entry: CachePayload): boolean {
+    return typeof entry.staleUntil === "number" && Date.now() <= entry.staleUntil;
+  }
+
   private hydrateResult(entry: CachePayload): RenderResult {
     let nodeMap: Map<number, unknown> | undefined;
     if (entry.nodeMapEntries) {
@@ -222,5 +243,5 @@ function roundDurationMs(value: number): number {
 function recordCacheLookup(status: CacheLookupStatus, durationMs: number): void {
   markRequestProfilePhase("render.cache_lookup", durationMs);
   markRequestProfilePhase(`render.cache_${status}`);
-  metrics.recordCacheGet(status === "hit");
+  metrics.recordCacheGet(status === "hit" || status === "stale");
 }
