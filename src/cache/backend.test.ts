@@ -481,6 +481,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "request-token",
+      tokenTrust: "verified-control-plane",
       projectSlug: projectRef,
     }),
   };
@@ -529,7 +530,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   }
 });
 
-Deno.test("ApiCacheBackend prefers request token and falls back to host API token", async () => {
+Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
@@ -541,6 +542,7 @@ Deno.test("ApiCacheBackend prefers request token and falls back to host API toke
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "run-scoped-request-token",
+      tokenTrust: "verified-control-plane",
       projectId: "project-123",
       projectSlug: "project-slug",
     }),
@@ -566,6 +568,17 @@ Deno.test("ApiCacheBackend prefers request token and falls back to host API toke
 
     globals.__vf_multi_project_adapter = {
       getCurrentRequestContext: () => ({
+        token: "unverified-proxy-token",
+        projectId: "project-123",
+        projectSlug: "project-slug",
+      }),
+    };
+    const unverifiedRequestDeleted = await cache.delByPattern("agent:*");
+
+    assertEquals(unverifiedRequestDeleted, 3);
+
+    globals.__vf_multi_project_adapter = {
+      getCurrentRequestContext: () => ({
         projectId: "project-123",
         projectSlug: "project-slug",
       }),
@@ -575,6 +588,7 @@ Deno.test("ApiCacheBackend prefers request token and falls back to host API toke
     assertEquals(hostFallbackDeleted, 3);
     assertEquals(capturedAuthorizations, [
       "Bearer run-scoped-request-token",
+      "Bearer host-framework-token",
       "Bearer host-framework-token",
     ]);
   } finally {

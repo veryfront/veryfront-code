@@ -8,6 +8,7 @@ import type {
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
+import type { RequestTokenTrust } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { serverLogger } from "#veryfront/utils";
 import { ResponseBuilder } from "./response/index.ts";
 
@@ -113,7 +114,7 @@ export abstract class BaseHandler implements Handler {
   protected withProxyContext<T>(
     ctx: HandlerContext,
     fn: () => Promise<T>,
-    options: { requireToken?: boolean } = {},
+    options: { requireToken?: boolean; tokenTrust?: RequestTokenTrust } = {},
   ): Promise<T> {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
@@ -132,6 +133,7 @@ export abstract class BaseHandler implements Handler {
           releaseId?: string | null;
           branch?: string | null;
           environmentName?: string | null;
+          tokenTrust?: RequestTokenTrust;
         },
       ) => Promise<R>;
     };
@@ -187,6 +189,7 @@ export abstract class BaseHandler implements Handler {
           releaseId: ctx.releaseId,
           branch,
           environmentName: ctx.environmentName,
+          tokenTrust: options.tokenTrust,
         },
       );
     }
