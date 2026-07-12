@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { isRetryableConnectionError } from "./retry.ts";
+import {
+  getFramedRequestBody,
+  getUpstreamRetryCount,
+  isRetryableConnectionError,
+} from "./retry.ts";
 
 describe("isRetryableConnectionError", () => {
   it("returns false for non-Error values", () => {
@@ -81,6 +85,89 @@ describe("isRetryableConnectionError", () => {
         ),
       ),
       true,
+    );
+  });
+});
+
+describe("getUpstreamRetryCount", () => {
+  it("retries idempotent requests", () => {
+    assertEquals(getUpstreamRetryCount("GET", "/", new Headers(), 1), 1);
+    assertEquals(getUpstreamRetryCount("HEAD", "/", new Headers(), 2), 2);
+  });
+
+  it("does not retry ordinary POST requests", () => {
+    assertEquals(getUpstreamRetryCount("POST", "/api/submit", new Headers(), 1), 0);
+  });
+
+  it("retries bodyless control-plane run stream POST requests", () => {
+    assertEquals(
+      getUpstreamRetryCount("POST", "/api/control-plane/runs/run_1/stream", new Headers(), 1),
+      1,
+    );
+  });
+
+  it("retries control-plane run stream POST requests with explicit zero content length", () => {
+    assertEquals(
+      getUpstreamRetryCount(
+        "POST",
+        "/api/control-plane/runs/run_1/stream",
+        new Headers({ "content-length": "0" }),
+        1,
+      ),
+      1,
+    );
+  });
+
+  it("does not retry control-plane run stream POST requests with a body", () => {
+    assertEquals(
+      getUpstreamRetryCount(
+        "POST",
+        "/api/control-plane/runs/run_1/stream",
+        new Headers({ "content-length": "1" }),
+        1,
+      ),
+      0,
+    );
+    assertEquals(
+      getUpstreamRetryCount(
+        "POST",
+        "/api/control-plane/runs/run_1/stream",
+        new Headers({ "transfer-encoding": "chunked" }),
+        1,
+      ),
+      0,
+    );
+  });
+});
+
+describe("getFramedRequestBody", () => {
+  function createBody(): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+  }
+
+  it("drops Deno-style empty POST streams when content length is zero", () => {
+    const body = createBody();
+
+    assertEquals(
+      getFramedRequestBody(new Headers({ "content-length": "0" }), body),
+      null,
+    );
+  });
+
+  it("preserves request streams when body framing is present", () => {
+    const body = createBody();
+
+    assertEquals(
+      getFramedRequestBody(new Headers({ "content-length": "1" }), body),
+      body,
+    );
+    assertEquals(
+      getFramedRequestBody(new Headers({ "transfer-encoding": "chunked" }), body),
+      body,
     );
   });
 });

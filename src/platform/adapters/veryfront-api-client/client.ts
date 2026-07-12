@@ -283,22 +283,27 @@ export class VeryfrontApiClient {
     }
   }
 
-  getFile(pathOrId: string): Promise<FileDetail> {
+  getFile(pathOrId: string, options: { expectedMissing?: boolean } = {}): Promise<FileDetail> {
     const projectRef = this.requireProjectSlug();
     const context = this.getContext();
 
     switch (context.type) {
       case "branch":
-        return this.operations.getBranchFile(projectRef, context.name, pathOrId);
+        return this.operations.getBranchFile(projectRef, context.name, pathOrId, options);
       case "environment":
-        return this.operations.getEnvironmentFile(projectRef, context.name, pathOrId);
+        return this.operations.getEnvironmentFile(projectRef, context.name, pathOrId, options);
       case "release":
-        return this.operations.getReleaseFile(projectRef, context.version, pathOrId);
+        return this.operations.getReleaseFile(projectRef, context.version, pathOrId, options);
     }
   }
 
   async getFileContent(pathOrId: string): Promise<string> {
     const file = await this.getFile(pathOrId);
+    return file.content;
+  }
+
+  async getOptionalFileContent(pathOrId: string): Promise<string> {
+    const file = await this.getFile(pathOrId, { expectedMissing: true });
     return file.content;
   }
 

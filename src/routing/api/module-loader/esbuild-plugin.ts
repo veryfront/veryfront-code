@@ -138,6 +138,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
   const lockfile = opts.lockfile ??
     (opts.projectDir ? createLockfileManager(opts.projectDir) : null);
   const moduleCache = createHTTPModuleCache(opts.projectDir);
+  let lockfileFlushDisabled = false;
 
   return {
     name: "vf-api-http-fetch",
@@ -197,13 +198,16 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
         await lockfile.set(url, entry);
 
+        if (lockfileFlushDisabled) return;
+
         try {
           await lockfile.flush();
           logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
         } catch (error) {
           if (!isReadOnlyFileSystemError(error)) throw error;
-          logger.warn(
-            `[http] could not persist lockfile entry for ${url}: ${
+          lockfileFlushDisabled = true;
+          logger.debug(
+            `[http] lockfile flush disabled on read-only filesystem for ${url}: ${
               describePersistenceError(error)
             }`,
           );
