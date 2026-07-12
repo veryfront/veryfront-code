@@ -167,6 +167,9 @@ when the tool input is complete enough to commit.
 `invoke_agent` creates an isolated child run. The child receives its own
 conversation context and tool inventory. The parent transcript receives a compact
 summary/result and durable child-run identifiers, not the full child transcript.
+The default `result_mode` is `summary`; use `structured` when critical contract
+ids such as model ids, tool ids, provider tool ids, and import paths must survive
+a bounded summary. Use `full` only when the parent needs exact delegated output.
 
 When the parent needs the child to act on critical facts from prior tool
 results, it should pass generic `context`. This is the child execution payload:

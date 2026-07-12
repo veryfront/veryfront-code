@@ -323,6 +323,48 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertStringIncludes(fullResult.text ?? "", '"model": "anthropic/claude-sonnet-4-6"');
   });
 
+  it("rebuilds durable invoke structured facts from stored full child text", () => {
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+    const fullResultText = [
+      "# Create an agent",
+      "x".repeat(64_500),
+      '    "model": "anthropic/claude-sonnet-4-6"',
+      '    "tool_ids": ["harvest__list_time_entries"]',
+    ].join("\n");
+    const snapshot = {
+      ...buildChildRunExecutionSnapshot(baseSuccessResult()),
+      fullResultText,
+    };
+
+    const structuredResult = buildHostedDurableChildInvokeSuccessResult(
+      {
+        result: baseSuccessResult(),
+        snapshot,
+        identifiers,
+        targets,
+      },
+      { resultMode: "structured" },
+    );
+
+    assertEquals(structuredResult.summary?.truncated, true);
+    assertEquals(structuredResult.text?.includes("anthropic/claude-sonnet-4-6"), false);
+    assertEquals(structuredResult.summary?.contractFacts, {
+      modelIds: ["anthropic/claude-sonnet-4-6"],
+      toolIds: ["harvest__list_time_entries"],
+    });
+  });
+
   it("preserves existing durable summary metadata when full snapshot text is unavailable", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
