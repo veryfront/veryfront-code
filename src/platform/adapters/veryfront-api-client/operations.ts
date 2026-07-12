@@ -63,6 +63,11 @@ export interface FileDetail {
   release_version?: string | null;
 }
 
+export interface GetFileOptions {
+  /** True when the caller is probing an optional candidate and expects a possible 404. */
+  expectedMissing?: boolean;
+}
+
 export interface StyleArtifactSelector {
   branch?: string;
   environmentName?: string;
@@ -276,7 +281,12 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  getBranchFile(projectRef: string, branchRef: string, pathOrId: string): Promise<FileDetail> {
+  getBranchFile(
+    projectRef: string,
+    branchRef: string,
+    pathOrId: string,
+    options: GetFileOptions = {},
+  ): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
@@ -286,7 +296,7 @@ export class VeryfrontAPIOperations {
         }?${params}`;
         logger.debug("getBranchFile", { projectRef, branchRef, pathOrId });
 
-        const raw = await this.request(url);
+        const raw = await this.request(url, { expected404: options.expectedMissing === true });
         const response = getBranchFileDetailSchema().parse(raw);
 
         return {
@@ -360,6 +370,7 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     environmentName: string,
     pathOrId: string,
+    options: GetFileOptions = {},
   ): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
@@ -370,7 +381,7 @@ export class VeryfrontAPIOperations {
         }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
-        const raw = await this.request(url);
+        const raw = await this.request(url, { expected404: options.expectedMissing === true });
         const response = getEnvironmentFileDetailSchema().parse(raw);
 
         return {
@@ -423,7 +434,12 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  getReleaseFile(projectRef: string, version: string, pathOrId: string): Promise<FileDetail> {
+  getReleaseFile(
+    projectRef: string,
+    version: string,
+    pathOrId: string,
+    options: GetFileOptions = {},
+  ): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
@@ -433,7 +449,7 @@ export class VeryfrontAPIOperations {
         }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getReleaseFile", { projectRef, version, pathOrId });
 
-        const raw = await this.request(url);
+        const raw = await this.request(url, { expected404: options.expectedMissing === true });
         const response = getReleaseFileDetailSchema().parse(raw);
 
         return {
