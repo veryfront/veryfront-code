@@ -95,7 +95,7 @@ describe("Token Priority Cascade", () => {
 
         const ctx = await handler.processRequest(req);
 
-        assertEquals(ctx.token, "oauth-preview-token");
+        assertEquals(ctx.token, "user-cookie-token");
         assertEquals(ctx.error, undefined);
         assertEquals(projectLookupAuthHeaders.length, 2);
         assertEquals(
@@ -109,7 +109,7 @@ describe("Token Priority Cascade", () => {
       }
     });
 
-    it("uses OAuth for preview page routing instead of the user cookie", async () => {
+    it("keeps the preview user cookie for page routing", async () => {
       const { server, port } = createTokenServer("oauth-token");
 
       try {
@@ -124,7 +124,7 @@ describe("Token Priority Cascade", () => {
 
         const ctx = await handler.processRequest(req);
 
-        assertEquals(ctx.token, "oauth-token");
+        assertEquals(ctx.token, "user-cookie-token");
         assertEquals(ctx.error, undefined);
 
         await handler.close();
