@@ -587,6 +587,94 @@ export function GET() {
     });
   });
 
+  it("should drain an active SSE response before production serve exits on SIGTERM", async () => {
+    const projectDir = await createTestProject(
+      "sigterm-drain-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "pages/api/events.ts": `
+const encoder = new TextEncoder();
+
+export function GET() {
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode("data: open\\n\\n"));
+      setTimeout(() => {
+        controller.enqueue(encoder.encode("data: complete\\n\\n"));
+        controller.close();
+      }, 1500);
+    },
+  }), {
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
+      assertEquals(response.status, 200, "Should start the SSE response");
+
+      const reader = response.body?.getReader();
+      assert(reader, "Should expose the SSE response body");
+      const firstChunk = await reader.read();
+      assertEquals(firstChunk.done, false, "Should keep the SSE response open");
+
+      let processExited = false;
+      const statusPromise = server.process.status.then((status) => {
+        processExited = true;
+        return status;
+      });
+
+      server.process.kill("SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assertEquals(
+        processExited,
+        false,
+        `Production serve exited before the active SSE response drained:\n${server.logs.join("")}`,
+      );
+
+      while (!(await reader.read()).done) {
+        // Consume the body so request tracking can observe stream completion.
+      }
+
+      const status = await Promise.race([
+        statusPromise,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Production serve did not exit after SSE drain")),
+            10_000,
+          )
+        ),
+      ]);
+      assertEquals(status.success, true, "Production serve should exit successfully after drain");
+
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (server.logs.join("").includes("Graceful shutdown complete")) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      const logs = server.logs.join("");
+      const receivedSignalIndex = logs.indexOf(
+        "Received SIGTERM, initiating graceful shutdown...",
+      );
+      const drainedIndex = logs.indexOf("All requests drained successfully");
+      const shutdownCompleteIndex = logs.indexOf("Graceful shutdown complete");
+
+      assert(receivedSignalIndex >= 0, `Should log SIGTERM handling:\n${logs}`);
+      assert(drainedIndex > receivedSignalIndex, `Should drain after SIGTERM:\n${logs}`);
+      assert(
+        shutdownCompleteIndex > drainedIndex,
+        `Should complete shutdown after the SSE response drains:\n${logs}`,
+      );
+    });
+  });
+
   it("should handle nested API routes", async () => {
     const projectDir = await createTestProject(
       "api-nested-test",

@@ -1,4 +1,5 @@
 import { cwd } from "veryfront/platform";
+import { gracefullyShutdownProductionServer } from "veryfront/server";
 import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals, showLogo } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
@@ -88,10 +89,13 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
 
-    cliLogger.info(`Received ${signal}, shutting down production server...`);
     try {
-      shutdownController.abort();
-      await server.stop();
+      await gracefullyShutdownProductionServer({
+        signal,
+        abort: () => shutdownController.abort(),
+        stop: server.stop,
+        logger: cliLogger,
+      });
     } catch (error) {
       cliLogger.warn("Error while shutting down production server:", error);
     } finally {
@@ -99,9 +103,7 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
     }
   };
 
-  registerTerminationSignals((signal) => {
-    void shutdown(signal);
-  });
+  registerTerminationSignals(shutdown);
 
   await new Promise(() => {});
 }
