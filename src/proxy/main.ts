@@ -23,9 +23,9 @@
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import {
-  getFramedRequestBody,
+  getReplayableRequestBodies,
   getUpstreamRetryCount,
-  isRetryableConnectionError,
+  shouldRetryUpstreamRequest,
 } from "./retry.ts";
 import {
   authorizeWebSocketRequest,
@@ -398,12 +398,11 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
           injectContext(newHeaders);
 
           const maxRetries = getUpstreamRetryCount(
-            req.method,
+            req,
             url.pathname,
-            req.headers,
             VERYFRONT_SERVER_RETRY_COUNT,
           );
-          const upstreamBody = getFramedRequestBody(req.headers, req.body);
+          const upstreamBodies = getReplayableRequestBodies(req, maxRetries);
           let lastError: Error | null = null;
           // After a retryable connection error to a dedicated server, fall back to shared pool
           let skipDedicated = false;
@@ -457,7 +456,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                       fetch(serverUrl.toString(), {
                         method: req.method,
                         headers: newHeaders,
-                        body: upstreamBody,
+                        body: upstreamBodies[attempt] ?? null,
                         redirect: "manual",
                         signal: abortController.signal,
                       }),
@@ -511,7 +510,10 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
               }
 
               // Check if this is a retryable error and we have retries left
-              if (isRetryableConnectionError(error) && attempt < maxRetries) {
+              if (
+                shouldRetryUpstreamRequest(req, url.pathname, error) &&
+                attempt < maxRetries
+              ) {
                 // If we were targeting a dedicated server, fall back to shared pool on retry
                 if (dedicatedServerUrl) {
                   skipDedicated = true;

@@ -1,11 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
-  getFramedRequestBody,
+  getReplayableRequestBodies,
   getUpstreamRetryCount,
   isRetryableConnectionError,
+  shouldRetryUpstreamRequest,
 } from "./retry.ts";
+
+const RUN_STREAM_PATH = "/api/control-plane/runs/run_1/stream";
+const RUN_STREAM_URL = `http://proxy.test${RUN_STREAM_PATH}`;
 
 describe("isRetryableConnectionError", () => {
   it("returns false for non-Error values", () => {
@@ -91,83 +96,161 @@ describe("isRetryableConnectionError", () => {
 
 describe("getUpstreamRetryCount", () => {
   it("retries idempotent requests", () => {
-    assertEquals(getUpstreamRetryCount("GET", "/", new Headers(), 1), 1);
-    assertEquals(getUpstreamRetryCount("HEAD", "/", new Headers(), 2), 2);
+    assertEquals(getUpstreamRetryCount(new Request("http://proxy.test/"), "/", 1), 1);
+    assertEquals(
+      getUpstreamRetryCount(
+        new Request("http://proxy.test/", { method: "HEAD" }),
+        "/",
+        2,
+      ),
+      2,
+    );
   });
 
   it("does not retry ordinary POST requests", () => {
-    assertEquals(getUpstreamRetryCount("POST", "/api/submit", new Headers(), 1), 0);
+    const request = new Request("http://proxy.test/api/submit", {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
+    assertEquals(getUpstreamRetryCount(request, "/api/submit", 1), 0);
   });
 
-  it("retries bodyless control-plane run stream POST requests", () => {
+  it("retries bounded signed control-plane run stream requests", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
     assertEquals(
-      getUpstreamRetryCount("POST", "/api/control-plane/runs/run_1/stream", new Headers(), 1),
+      getUpstreamRetryCount(request, RUN_STREAM_PATH, 1),
+      1,
+    );
+    assertEquals(
+      getUpstreamRetryCount(request, RUN_STREAM_PATH, 3),
       1,
     );
   });
 
-  it("retries control-plane run stream POST requests with explicit zero content length", () => {
+  it("keeps chunked, invalid, and oversized stream requests single-shot", () => {
+    const requests = [
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "transfer-encoding": "chunked" },
+        body: "{}",
+      }),
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "content-length": "invalid" },
+        body: "{}",
+      }),
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "content-length": String(DEFAULT_MAX_BODY_SIZE_BYTES + 1) },
+        body: "{}",
+      }),
+    ];
+
+    for (const request of requests) {
+      assertEquals(getUpstreamRetryCount(request, RUN_STREAM_PATH, 1), 0);
+    }
+  });
+});
+
+describe("shouldRetryUpstreamRequest", () => {
+  it("retries a bounded stream invocation only when connection is refused", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
     assertEquals(
-      getUpstreamRetryCount(
-        "POST",
-        "/api/control-plane/runs/run_1/stream",
-        new Headers({ "content-length": "0" }),
-        1,
-      ),
-      1,
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection refused")),
+      true,
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("os error 111")),
+      true,
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection reset")),
+      false,
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection closed")),
+      false,
     );
   });
 
-  it("does not retry control-plane run stream POST requests with a body", () => {
+  it("retains broad connection retries for bodyless idempotent requests", () => {
+    const request = new Request("http://proxy.test/");
     assertEquals(
-      getUpstreamRetryCount(
-        "POST",
-        "/api/control-plane/runs/run_1/stream",
-        new Headers({ "content-length": "1" }),
-        1,
-      ),
-      0,
+      shouldRetryUpstreamRequest(request, "/", new Error("connection reset")),
+      true,
     );
+  });
+
+  it("never retries an ordinary POST", () => {
+    const request = new Request("http://proxy.test/api/submit", {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
     assertEquals(
-      getUpstreamRetryCount(
-        "POST",
-        "/api/control-plane/runs/run_1/stream",
-        new Headers({ "transfer-encoding": "chunked" }),
-        1,
-      ),
-      0,
+      shouldRetryUpstreamRequest(request, "/api/submit", new Error("connection refused")),
+      false,
     );
   });
 });
 
-describe("getFramedRequestBody", () => {
-  function createBody(): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.close();
-      },
+describe("getReplayableRequestBodies", () => {
+  it("creates an independent signed payload stream for every attempt", async () => {
+    const payload = JSON.stringify({ run: { runId: "run_1" } });
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": String(payload.length) },
+      body: payload,
     });
-  }
 
-  it("drops Deno-style empty POST streams when content length is zero", () => {
-    const body = createBody();
+    const bodies = getReplayableRequestBodies(request, 2);
 
-    assertEquals(
-      getFramedRequestBody(new Headers({ "content-length": "0" }), body),
-      null,
-    );
+    assertEquals(bodies.length, 3);
+    assertEquals(await new Response(bodies[0]).text(), payload);
+    assertEquals(await new Response(bodies[1]).text(), payload);
+    assertEquals(await new Response(bodies[2]).text(), payload);
   });
 
-  it("preserves request streams when body framing is present", () => {
-    const body = createBody();
+  it("keeps every bodyless attempt bodyless", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "0" },
+    });
 
-    assertEquals(
-      getFramedRequestBody(new Headers({ "content-length": "1" }), body),
-      body,
-    );
-    assertEquals(
-      getFramedRequestBody(new Headers({ "transfer-encoding": "chunked" }), body),
-      body,
-    );
+    assertEquals(getReplayableRequestBodies(request, 1), [null, null]);
+  });
+
+  it("does not tee chunked or oversized request bodies", () => {
+    const requests = [
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "transfer-encoding": "chunked" },
+        body: "{}",
+      }),
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "content-length": String(DEFAULT_MAX_BODY_SIZE_BYTES + 1) },
+        body: "{}",
+      }),
+    ];
+
+    for (const request of requests) {
+      const bodies = getReplayableRequestBodies(request, 1);
+      assertEquals(bodies.length, 1);
+      assertEquals(bodies[0], request.body);
+    }
   });
 });
