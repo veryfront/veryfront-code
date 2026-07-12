@@ -32,6 +32,7 @@ export interface ResolveProxyRequestTokenOptions {
   logger?: ProxyTokenResolutionLogger;
   allowSignedInternalControlPlaneToken?: boolean;
   signedInternalControlPlaneRequest?: boolean;
+  tokenStrategy?: "preview-user-first" | "service-first";
   tokenFetchErrorMessage: string;
 }
 
@@ -71,6 +72,8 @@ export async function resolveProxyRequestToken(
   const userToken = extractUserToken(req.headers.get("cookie") ?? "");
   const useSignedInternalControlPlaneToken = options.allowSignedInternalControlPlaneToken &&
     options.signedInternalControlPlaneRequest;
+  const tokenStrategy = options.tokenStrategy ?? "preview-user-first";
+  const useUserTokenForPreview = tokenStrategy === "preview-user-first";
 
   let token: string | undefined;
   let tokenSource: ResolvedProxyRequestToken["tokenSource"];
@@ -83,7 +86,7 @@ export async function resolveProxyRequestToken(
       pathname: url.pathname,
       scope,
     });
-  } else if (scope === "preview" && userToken) {
+  } else if (scope === "preview" && userToken && useUserTokenForPreview) {
     token = userToken;
     tokenSource = "user";
     logger?.debug("Using user auth token for preview");

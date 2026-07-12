@@ -7,7 +7,9 @@ import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
+  isConfigOptionalControlPlaneRunRequest,
   listRuntimeAgents,
+  resolveAgentSkills,
   RuntimeAgentListResponseSchema,
   verifyControlPlaneJws,
 } from "./control-plane.ts";
@@ -122,6 +124,33 @@ function createAgent(overrides: {
     clearMemory: async () => {},
   };
 }
+
+describe("control-plane run route classification", () => {
+  for (
+    const { method, pathname } of [
+      { method: "POST", pathname: "/api/control-plane/runs/run_1/stream" },
+      { method: "POST", pathname: "/api/control-plane/runs/run_1/resume" },
+      { method: "DELETE", pathname: "/api/control-plane/runs/run_1" },
+    ]
+  ) {
+    it(`treats ${method} ${pathname} as config optional`, () => {
+      assertEquals(isConfigOptionalControlPlaneRunRequest(method, pathname), true);
+    });
+  }
+
+  for (
+    const { method, pathname } of [
+      { method: "POST", pathname: "/api/control-plane/runs/run_1/execute" },
+      { method: "GET", pathname: "/api/control-plane/runs/run_1/stream" },
+      { method: "DELETE", pathname: "/api/control-plane/runs/run_1/extra" },
+      { method: "POST", pathname: "/page" },
+    ]
+  ) {
+    it(`keeps ${method} ${pathname} strict`, () => {
+      assertEquals(isConfigOptionalControlPlaneRunRequest(method, pathname), false);
+    });
+  }
+});
 
 describe("channels/control-plane", () => {
   describe("verifyControlPlaneJws", () => {
@@ -555,11 +584,6 @@ describe("channels/control-plane", () => {
     });
   });
 });
-
-// ── Owner-aware agent skill metadata (review round 3) ─────────────────────
-
-import { resolveAgentSkills } from "./control-plane.ts";
-import type { Agent } from "#veryfront/agent/types.ts";
 
 Deno.test("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
   skillRegistry.clearAll();

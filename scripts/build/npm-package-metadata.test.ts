@@ -603,6 +603,15 @@ describe("npm supply-chain policy", () => {
     );
   });
 
+  it("uses native Node timers so root imports can release background intervals", async () => {
+    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+    assertStringIncludes(source, "timers: false");
+    assertEquals(source.includes("timers: true"), false);
+    assertStringIncludes(source, 'VF_DISABLE_LRU_INTERVAL: "0"');
+    assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
+  });
+
   it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {
     const generatedFiles = [
       "npm/esm/cli/commands/mcp/handler.js",
