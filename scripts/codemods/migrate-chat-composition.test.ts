@@ -152,6 +152,100 @@ export function Example() {
   );
 });
 
+Deno.test("chat composition codemod retains different session spreads on the first pass", () => {
+  const source = `
+import { Chat, useChat } from "veryfront/chat";
+export function Example() {
+  const primary = useChat();
+  const secondary = useChat();
+  return <Chat {...primary} {...secondary} />;
+}
+`;
+  const result = migrateChatComposition(source);
+  const second = migrateChatComposition(result.code);
+
+  assert(result.changed);
+  assert(!result.code.includes("chat={"));
+  assertStringIncludes(result.code, "{...primary}");
+  assertStringIncludes(result.code, "{...secondary}");
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertEquals(result.warnings, [
+    "A Chat element spreads different useChat results.",
+  ]);
+  assert(second.changed);
+  assertEquals(
+    second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+    1,
+  );
+});
+
+Deno.test("chat composition codemod collapses repeated spreads of one session", () => {
+  const source = `
+import { Chat, useChat } from "veryfront/chat";
+export function Example() {
+  const chat = useChat();
+  return <Chat {...chat} {...chat} />;
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "<Chat chat={chat} />");
+  assert(!result.code.includes("{...chat}"));
+  assertEquals(result.warnings, []);
+});
+
+Deno.test("chat composition codemod retains mixed proven and unknown spreads", () => {
+  const source = `
+import { Chat, useChat } from "veryfront/chat";
+export function Example(props: object) {
+  const chat = useChat();
+  return <Chat {...props} {...chat} />;
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assert(!result.code.includes("chat={"));
+  assertStringIncludes(result.code, "{...props}");
+  assertStringIncludes(result.code, "{...chat}");
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertEquals(result.warnings, [
+    "A Chat element mixes a useChat result with another spread.",
+  ]);
+});
+
+Deno.test("chat composition codemod does not infer a session beside spread props", () => {
+  const elements = [
+    "<Chat {...props} messages={chat.messages} input={chat.input} />",
+    "<Chat messages={chat.messages} input={chat.input} {...props} />",
+  ];
+
+  for (const element of elements) {
+    const source = `
+import { Chat } from "veryfront/chat";
+export const Example = ({ chat, props }) => ${element};
+`;
+    const result = migrateChatComposition(source);
+    const second = migrateChatComposition(result.code);
+
+    assert(result.changed);
+    assert(!result.code.includes("chat={chat}"));
+    assertStringIncludes(result.code, "messages={chat.messages}");
+    assertStringIncludes(result.code, "input={chat.input}");
+    assertStringIncludes(result.code, "{...props}");
+    assertStringIncludes(result.code, "TODO(veryfront-migration)");
+    assertEquals(result.warnings, [
+      "A Chat session cannot be inferred safely beside spread props.",
+    ]);
+    assert(second.changed);
+    assertEquals(
+      second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+      1,
+    );
+  }
+});
+
 Deno.test("chat composition codemod marks unmatched flat props beside a session", () => {
   const source = `
 import { Chat, useChat } from "veryfront/chat";
@@ -183,6 +277,36 @@ export const Example = ({ chat, submit }) => (
   assertStringIncludes(result.code, "onSubmit={submit}");
   assertStringIncludes(result.code, "TODO(veryfront-migration)");
   assertEquals(result.warnings.length, 1);
+});
+
+Deno.test("chat composition codemod retains flat props beside an explicit session and spread", () => {
+  const elements = [
+    "<Chat chat={chat} {...props} messages={chat.messages} />",
+    "<Chat messages={chat.messages} {...props} chat={chat} />",
+  ];
+
+  for (const element of elements) {
+    const source = `
+import { Chat } from "veryfront/chat";
+export const Example = ({ chat, props }) => ${element};
+`;
+    const result = migrateChatComposition(source);
+    const second = migrateChatComposition(result.code);
+
+    assert(result.changed);
+    assertStringIncludes(result.code, "chat={chat}");
+    assertStringIncludes(result.code, "messages={chat.messages}");
+    assertStringIncludes(result.code, "{...props}");
+    assertStringIncludes(result.code, "TODO(veryfront-migration)");
+    assertEquals(result.warnings, [
+      "Flat Chat props beside an explicit session and spread require manual migration.",
+    ]);
+    assert(second.changed);
+    assertEquals(
+      second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+      1,
+    );
+  }
 });
 
 Deno.test("chat composition codemod leaves an unproven Chat spread unchanged", () => {
@@ -273,6 +397,35 @@ export const CustomMessage = ({ message }) => <Message message={message} showSou
   assertEquals(result.warnings.length, 1);
 });
 
+Deno.test("chat composition codemod retains feature toggles beside spread props", () => {
+  const elements = [
+    "<Message {...props} showSources />",
+    "<Message showSources {...props} />",
+  ];
+
+  for (const element of elements) {
+    const source = `
+import { Message } from "veryfront/chat";
+export const Example = ({ props }) => ${element};
+`;
+    const result = migrateChatComposition(source);
+    const second = migrateChatComposition(result.code);
+
+    assert(result.changed);
+    assertStringIncludes(result.code, "showSources");
+    assertStringIncludes(result.code, "{...props}");
+    assertStringIncludes(result.code, "TODO(veryfront-migration)");
+    assertEquals(result.warnings, [
+      "Presence-driven props on Message require manual migration beside a spread: showSources.",
+    ]);
+    assert(second.changed);
+    assertEquals(
+      second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+      1,
+    );
+  }
+});
+
 Deno.test("chat composition codemod uses the fixed Message.Content step behavior", () => {
   const source = `
 import { Message } from "veryfront/chat";
@@ -353,6 +506,90 @@ export const Example = ({ sources, renderSource }) => (
   assertEquals(result.warnings, []);
 });
 
+Deno.test("chat composition codemod leaves unstable render callbacks for manual migration", () => {
+  const cases = [
+    "factory()",
+    "renderer.render",
+    "(source, index) => renderer.render(source, index)",
+    "globalRenderer",
+  ];
+
+  for (const expression of cases) {
+    const source = `
+import { Sources } from "veryfront/chat";
+export const Example = ({ factory, renderer }) => (
+  <Sources renderPill={${expression}} />
+);
+`;
+    const result = migrateChatComposition(source);
+    const second = migrateChatComposition(result.code);
+
+    assert(result.changed);
+    assertStringIncludes(result.code, "renderPill={");
+    assert(!result.code.includes("renderItem={"));
+    assertStringIncludes(result.code, "TODO(veryfront-migration)");
+    assertEquals(result.warnings, [
+      "Manual render-prop migration required: renderPill.",
+    ]);
+    assert(second.changed);
+    assertEquals(
+      second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+      1,
+    );
+  }
+});
+
+Deno.test("chat composition codemod leaves a reassigned render callback for manual migration", () => {
+  const source = `
+import { Sources } from "veryfront/chat";
+export function Example(first, second) {
+  let renderPill = first;
+  const element = <Sources renderPill={renderPill} />;
+  renderPill = second;
+  return element;
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "renderPill={renderPill}");
+  assert(!result.code.includes("renderItem={"));
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertEquals(result.warnings, [
+    "Manual render-prop migration required: renderPill.",
+  ]);
+});
+
+Deno.test("chat composition codemod retains adaptable render props beside a spread", () => {
+  const elements = [
+    "<Sources {...props} renderPill={renderPill} />",
+    "<Sources renderPill={renderPill} {...props} />",
+  ];
+
+  for (const element of elements) {
+    const source = `
+import { Sources } from "veryfront/chat";
+export const Example = ({ props, renderPill }) => ${element};
+`;
+    const result = migrateChatComposition(source);
+    const second = migrateChatComposition(result.code);
+
+    assert(result.changed);
+    assertStringIncludes(result.code, "renderPill={renderPill}");
+    assert(!result.code.includes("renderItem={"));
+    assertStringIncludes(result.code, "{...props}");
+    assertStringIncludes(result.code, "TODO(veryfront-migration)");
+    assertEquals(result.warnings, [
+      "A render prop on Sources requires manual migration beside a spread: renderPill.",
+    ]);
+    assert(second.changed);
+    assertEquals(
+      second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+      1,
+    );
+  }
+});
+
 Deno.test("chat composition codemod adapts Message.Tokens.renderRow", () => {
   const source = `
 import { Message } from "veryfront/chat";
@@ -369,6 +606,33 @@ export const Example = ({ renderToken }) => (
   assertStringIncludes(result.code, "renderToken(item)");
   assert(!result.code.includes("renderRow"));
   assertEquals(result.warnings, []);
+});
+
+Deno.test("chat composition codemod handles Chat.Message nested compounds", () => {
+  const source = `
+import { Chat } from "veryfront/chat";
+export const Example = ({ renderTool, renderToken }) => (
+  <>
+    <Chat.Message.Content showSources renderTool={renderTool} />
+    <Chat.Message.Part showSteps renderTool={renderTool} />
+    <Chat.Message.Tokens renderRow={renderToken} />
+    <Chat.MessageList.Content showSources />
+  </>
+);
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "<Chat.Message.Content");
+  assertStringIncludes(result.code, "showSources");
+  assertStringIncludes(result.code, "renderTool={renderTool}");
+  assertStringIncludes(result.code, "<Chat.Message.Part");
+  assert(!result.code.includes("showSteps"));
+  assertStringIncludes(result.code, "<Chat.Message.Tokens renderItem={({");
+  assertStringIncludes(result.code, "renderToken(item)");
+  assertStringIncludes(result.code, "<Chat.MessageList.Content showSources />");
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertEquals(result.warnings.length, 3);
 });
 
 Deno.test("chat composition codemod does not rewrite a shadowed chat binding", () => {

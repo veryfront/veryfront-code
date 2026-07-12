@@ -223,6 +223,9 @@ function canonicalElementName(fullName: string, canonicalBase: string): string {
     if (member === "MessageList") return "ChatMessageList";
     if (member === "Input" || member === "Composer") return "ChatInput";
     if (member === "Message") return "Message";
+    if (member.startsWith("Message.")) {
+      return canonicalElementName(member, "Message");
+    }
   }
   if (canonicalBase === "Message") {
     if (member === "Content") return "MessageContent";
@@ -235,7 +238,7 @@ function canonicalElementName(fullName: string, canonicalBase: string): string {
   if (canonicalBase === "ModelSelector" && member === "Content") {
     return "ModelSelectorContent";
   }
-  return canonicalBase;
+  return canonicalBase + member.replaceAll(".", "");
 }
 
 function attributeName(attribute: t.JSXAttribute): string | undefined {
@@ -345,25 +348,56 @@ function rewriteFlatChatSession(
     : undefined;
   let session = t.isIdentifier(existingChatExpression) ? existingChatExpression : undefined;
 
-  const sessionSpread = opening.attributes.find((attribute) =>
-    t.isJSXSpreadAttribute(attribute) &&
-    t.isIdentifier(attribute.argument) &&
-    isChatResultReference(attribute.argument)
+  const sessionSpreads = opening.attributes.filter(
+    (attribute): attribute is t.JSXSpreadAttribute =>
+      t.isJSXSpreadAttribute(attribute) &&
+      t.isIdentifier(attribute.argument) &&
+      isChatResultReference(attribute.argument),
   );
-  if (sessionSpread && t.isJSXSpreadAttribute(sessionSpread)) {
-    const spreadSession = sessionSpread.argument as t.Identifier;
+  if (sessionSpreads.length > 0) {
+    const sessionSpreadSet = new Set(sessionSpreads);
+    const otherSpreads = opening.attributes.filter((attribute) =>
+      t.isJSXSpreadAttribute(attribute) && !sessionSpreadSet.has(attribute)
+    );
+    const spreadSessions = sessionSpreads.map((attribute) => attribute.argument as t.Identifier);
+    const spreadSession = spreadSessions[0];
+
+    if (otherSpreads.length > 0) {
+      addTodo(
+        element,
+        "Reconcile the useChat result with the other spread props before migrating Chat.",
+        sessionSpreads[0],
+      );
+      warnings.push(
+        "A Chat element mixes a useChat result with another spread.",
+      );
+      return true;
+    }
+
+    if (!spreadSessions.every((candidate) => sameBinding(spreadSession, candidate))) {
+      addTodo(
+        element,
+        "Reconcile the spread useChat sessions before migrating Chat.",
+        sessionSpreads[0],
+      );
+      warnings.push("A Chat element spreads different useChat results.");
+      return true;
+    }
+
     if (existingChat && (!session || !sameBinding(session, spreadSession))) {
       addTodo(
         element,
         "Reconcile the spread useChat session with the explicit chat prop.",
-        sessionSpread,
+        sessionSpreads[0],
       );
       warnings.push(
         "A Chat element uses different useChat results for chat and a spread.",
       );
-      changed = true;
+      return true;
     } else {
-      opening.attributes = opening.attributes.filter((attribute) => attribute !== sessionSpread);
+      opening.attributes = opening.attributes.filter((attribute) =>
+        !(t.isJSXSpreadAttribute(attribute) && sessionSpreadSet.has(attribute))
+      );
       changed = true;
       if (!existingChat) {
         session = spreadSession;
@@ -386,6 +420,18 @@ function rewriteFlatChatSession(
       : undefined;
     const inputSession = input ? memberBaseForAttribute(input, "input") : undefined;
     if (inferredSession && inputSession && sameBinding(inferredSession, inputSession)) {
+      const remainingSpread = opening.attributes.find(t.isJSXSpreadAttribute);
+      if (remainingSpread) {
+        addTodo(
+          element,
+          "Reconcile the spread props before inferring the Chat session.",
+          remainingSpread,
+        );
+        warnings.push(
+          "A Chat session cannot be inferred safely beside spread props.",
+        );
+        return true;
+      }
       session = inferredSession;
       opening.attributes.unshift(
         t.jsxAttribute(
@@ -398,6 +444,25 @@ function rewriteFlatChatSession(
   }
 
   if (hasAttribute(opening, "chat")) {
+    const flat = opening.attributes.filter(
+      (attribute): attribute is t.JSXAttribute =>
+        t.isJSXAttribute(attribute) &&
+        FLAT_CHAT_PROPS.has(attributeName(attribute) ?? ""),
+    );
+    if (
+      flat.length > 0 &&
+      opening.attributes.some(t.isJSXSpreadAttribute)
+    ) {
+      addTodo(
+        element,
+        "Reconcile the flat Chat props with the explicit session and spread props.",
+        flat[0],
+      );
+      warnings.push(
+        "Flat Chat props beside an explicit session and spread require manual migration.",
+      );
+      return true;
+    }
     opening.attributes = opening.attributes.filter((attribute) => {
       if (!t.isJSXAttribute(attribute)) return true;
       const name = attributeName(attribute);
@@ -451,6 +516,28 @@ function rewriteToggles(
 ): boolean {
   const defaults = DEFAULT_TOGGLES[canonicalElement];
   if (!defaults) return false;
+  const toggleAttributes = element.openingElement.attributes.filter(
+    (attribute): attribute is t.JSXAttribute =>
+      t.isJSXAttribute(attribute) &&
+      (attributeName(attribute) ?? "") in defaults,
+  );
+  if (
+    toggleAttributes.length > 0 &&
+    element.openingElement.attributes.some(t.isJSXSpreadAttribute)
+  ) {
+    const names = toggleAttributes.map((attribute) => attributeName(attribute));
+    addTodo(
+      element,
+      `Reconcile ${names.join(", ")} with the spread props before compound migration.`,
+      toggleAttributes[0],
+    );
+    warnings.push(
+      `Presence-driven props on ${canonicalElement} require manual migration beside a spread: ${
+        names.join(", ")
+      }.`,
+    );
+    return true;
+  }
   let changed = false;
   const manual: t.JSXAttribute[] = [];
   element.openingElement.attributes = element.openingElement.attributes.filter(
@@ -556,7 +643,38 @@ function rewriteLegacyRenderProps(
   element: t.JSXElement,
   canonicalElement: string,
   warnings: string[],
+  isStableReference: (node: t.Identifier) => boolean,
 ): boolean {
+  const renderProps = element.openingElement.attributes.filter(
+    (attribute): attribute is t.JSXAttribute => {
+      if (!t.isJSXAttribute(attribute)) return false;
+      const name = attributeName(attribute);
+      return name === "renderPill" && canonicalElement === "Sources" ||
+        name === "renderRow" && canonicalElement === "MessageTokens" ||
+        (name === "renderTrigger" || name === "renderRow") &&
+          canonicalElement === "ModelSelector" ||
+        name === "renderCard" && canonicalElement === "InlineCitation" ||
+        name === "renderSkill" && canonicalElement === "ToolCall";
+    },
+  );
+  if (
+    renderProps.length > 0 &&
+    element.openingElement.attributes.some(t.isJSXSpreadAttribute)
+  ) {
+    const names = renderProps.map((attribute) => attributeName(attribute));
+    addTodo(
+      element,
+      `Reconcile ${names.join(", ")} with the spread props before render-prop migration.`,
+      renderProps[0],
+    );
+    warnings.push(
+      `A render prop on ${canonicalElement} requires manual migration beside a spread: ${
+        names.join(", ")
+      }.`,
+    );
+    return true;
+  }
+
   let changed = false;
   const manual: t.JSXAttribute[] = [];
   for (const attribute of element.openingElement.attributes) {
@@ -564,7 +682,7 @@ function rewriteLegacyRenderProps(
     const name = attributeName(attribute);
     if (name === "renderPill" && canonicalElement === "Sources") {
       const expression = expressionValue(attribute);
-      if (expression) {
+      if (t.isIdentifier(expression) && isStableReference(expression)) {
         attribute.name = t.jsxIdentifier("renderItem");
         attribute.value = t.jsxExpressionContainer(renderItemAdapter(expression, true));
         changed = true;
@@ -573,7 +691,7 @@ function rewriteLegacyRenderProps(
       }
     } else if (name === "renderRow" && canonicalElement === "MessageTokens") {
       const expression = expressionValue(attribute);
-      if (expression) {
+      if (t.isIdentifier(expression) && isStableReference(expression)) {
         attribute.name = t.jsxIdentifier("renderItem");
         attribute.value = t.jsxExpressionContainer(renderItemAdapter(expression, false));
         changed = true;
@@ -641,6 +759,7 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
 
   let rootPath: NodePath<t.Program> | undefined;
   const referenceBindings = new WeakMap<t.Node, object>();
+  const stableReferences = new WeakSet<t.Node>();
   traverse(ast, {
     Program(path: NodePath<t.Program>) {
       rootPath = path;
@@ -648,7 +767,10 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
     Identifier(path: NodePath<t.Identifier>) {
       if (!path.isReferencedIdentifier()) return;
       const binding = path.scope.getBinding(path.node.name);
-      if (binding) referenceBindings.set(path.node, binding);
+      if (binding) {
+        referenceBindings.set(path.node, binding);
+        if (binding.constant) stableReferences.add(path.node);
+      }
     },
   });
   if (!rootPath) throw new Error("Unable to resolve the parsed module scope.");
@@ -759,7 +881,12 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
     changed = rewriteToggles(node, canonical, warnings) || changed;
     changed = rewriteRemovedProps(node, canonical, warnings) || changed;
     changed = rewriteRemovedSlots(node, warnings) || changed;
-    changed = rewriteLegacyRenderProps(node, canonical, warnings) || changed;
+    changed = rewriteLegacyRenderProps(
+      node,
+      canonical,
+      warnings,
+      (identifier) => stableReferences.has(identifier),
+    ) || changed;
     if (
       REMOVED_RENDER_TOOL_COMPONENTS.has(canonical) &&
       hasAttribute(node.openingElement, "renderTool")
