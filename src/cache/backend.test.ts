@@ -18,6 +18,12 @@ import {
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { RedisClient } from "#veryfront/utils/redis-client.ts";
+import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
+import {
+  createControlPlaneSignature,
+  createCtx,
+} from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
+import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
 
 type RecordedSpan = {
   name: string;
@@ -26,6 +32,39 @@ type RecordedSpan = {
 
 async function importBackend(): Promise<typeof import("./backend.ts")> {
   return await import("./backend.ts");
+}
+
+async function createVerifiedCacheClaims(options: {
+  token: string;
+  projectId: string;
+  projectSlug: string;
+}) {
+  const rawBody = JSON.stringify({
+    credentials: { authToken: options.token },
+  });
+  const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
+    audience: options.projectSlug,
+    projectId: options.projectId,
+  });
+  const ctx = createCtx(publicKeyPem);
+  ctx.projectId = options.projectId;
+  ctx.projectSlug = options.projectSlug;
+  const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+  const originalSigningKey = Deno.env.get(signingKeyEnv);
+  Deno.env.set(signingKeyEnv, publicKeyPem);
+
+  try {
+    return await verifyControlPlaneRequest(
+      new Request("https://example.test/api/control-plane/runs/run-1/stream", {
+        headers: { "x-veryfront-control-plane-jws": jws },
+      }),
+      ctx,
+      rawBody,
+    );
+  } finally {
+    if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+    else Deno.env.set(signingKeyEnv, originalSigningKey);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -481,7 +520,6 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "request-token",
-      tokenTrust: "verified-control-plane",
       projectSlug: projectRef,
     }),
   };
@@ -502,7 +540,15 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
       circuitBreakerName: "api-cache-url-encoding-test",
     });
 
-    await cache.get("secret-cache-key");
+    const verifiedClaims = await createVerifiedCacheClaims({
+      token: "request-token",
+      projectId: projectRef,
+      projectSlug: "project-slug",
+    });
+    await runWithVerifiedCacheApiCredential(
+      verifiedClaims,
+      () => cache.get("secret-cache-key"),
+    );
 
     const encodedProjectRef = encodeURIComponent(projectRef);
     assertEquals(
@@ -537,17 +583,19 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
   const capturedAuthorizations: string[] = [];
+  const capturedUrls: string[] = [];
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
-      token: "run-scoped-request-token",
+      token: "forged-request-token",
       tokenTrust: "verified-control-plane",
-      projectId: "project-123",
-      projectSlug: "project-slug",
+      projectId: "forged-project",
+      projectSlug: "forged-project-slug",
     }),
   };
-  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrls.push(String(input));
     capturedAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
     return Promise.resolve(
       new Response(JSON.stringify({ deleted: 3 }), {
@@ -562,9 +610,25 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
       apiBaseUrl: "https://api.example.test",
       circuitBreakerName: "api-cache-host-token-test",
     });
-    const requestScopedDeleted = await cache.delByPattern("agent:*");
+    const verifiedClaims = await createVerifiedCacheClaims({
+      token: "run-scoped-request-token",
+      projectId: "project-123",
+      projectSlug: "project-slug",
+    });
+    const requestScopedDeleted = await runWithVerifiedCacheApiCredential(
+      verifiedClaims,
+      () => cache.delByPattern("agent:*"),
+    );
 
     assertEquals(requestScopedDeleted, 3);
+    assertEquals(
+      capturedUrls[0],
+      "https://api.example.test/projects/project-123/cache/del-pattern",
+    );
+
+    const forgedTrustDeleted = await cache.delByPattern("agent:*");
+
+    assertEquals(forgedTrustDeleted, 3);
 
     globals.__vf_multi_project_adapter = {
       getCurrentRequestContext: () => ({
@@ -576,6 +640,13 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
     const unverifiedRequestDeleted = await cache.delByPattern("agent:*");
 
     assertEquals(unverifiedRequestDeleted, 3);
+
+    Deno.env.delete("VERYFRONT_API_TOKEN");
+    const requestFallbackDeleted = await cache.delByPattern("agent:*");
+
+    assertEquals(requestFallbackDeleted, 3);
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
 
     globals.__vf_multi_project_adapter = {
       getCurrentRequestContext: () => ({
@@ -589,6 +660,8 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
     assertEquals(capturedAuthorizations, [
       "Bearer run-scoped-request-token",
       "Bearer host-framework-token",
+      "Bearer host-framework-token",
+      "Bearer unverified-proxy-token",
       "Bearer host-framework-token",
     ]);
   } finally {

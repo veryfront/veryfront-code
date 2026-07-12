@@ -108,23 +108,6 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "runWithContext"));
     });
 
-    it("preserves verified token trust in runWithContext", async () => {
-      await withAdapterAsync(async (adapter) => {
-        await adapter.runWithContext(
-          "project-a",
-          "test-token",
-          async () => {
-            assertEquals(
-              getCurrentRequestContext()?.tokenTrust,
-              "verified-control-plane",
-            );
-          },
-          "project-id-a",
-          { tokenTrust: "verified-control-plane" },
-        );
-      });
-    });
-
     it("should have refreshSourceSnapshot method", () => {
       withAdapter((adapter) => assertMethod(adapter, "refreshSourceSnapshot"));
     });
@@ -382,20 +365,6 @@ describe("runWithRequestContext", () => {
       async () => {
         const ctx = getCurrentRequestContext();
         assertEquals(ctx!.projectId, "pid-456");
-      },
-    );
-  });
-
-  it("should preserve verified control-plane token trust", async () => {
-    await runWithRequestContext(
-      {
-        projectSlug: "proj",
-        token: "tok",
-        tokenTrust: "verified-control-plane",
-      },
-      async () => {
-        const ctx = getCurrentRequestContext();
-        assertEquals(ctx!.tokenTrust, "verified-control-plane");
       },
     );
   });

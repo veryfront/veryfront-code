@@ -1,13 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export type RequestTokenTrust = "verified-control-plane";
-
 export interface RequestContext {
   projectSlug: string;
   projectId?: string;
   token: string;
-  /** Trust marker set only after the control-plane request signature is verified. */
-  tokenTrust?: RequestTokenTrust;
   productionMode: boolean;
   /** Release ID for production mode (mutually exclusive with branch) */
   releaseId?: string | null;
@@ -71,7 +67,6 @@ export function runWithRequestContext<T>(
   options: {
     projectSlug: string;
     token: string;
-    tokenTrust?: RequestTokenTrust;
     projectId?: string;
     productionMode?: boolean;
     releaseId?: string | null;
@@ -85,7 +80,6 @@ export function runWithRequestContext<T>(
     projectSlug: options.projectSlug,
     projectId: options.projectId,
     token: options.token,
-    tokenTrust: options.tokenTrust,
     productionMode,
     releaseId: options.releaseId ?? null,
     branch: productionMode ? null : (options.branch ?? null),
