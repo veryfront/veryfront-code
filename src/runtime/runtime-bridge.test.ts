@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -197,6 +197,28 @@ describe("runtime-bridge", () => {
         },
       },
     ]);
+  });
+
+  it("throws a clear error when both stream branches are consumed sequentially", async () => {
+    const model = createStreamModel("test", "test/sequential-dual-stream", async () => ({
+      stream: ReadableStream.from([
+        { type: "text-delta", delta: "Hel" },
+        { type: "text-delta", delta: "lo" },
+        { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+      ]),
+    }));
+
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(await collectAsync(result.textStream), ["Hel", "lo"]);
+    await assertRejects(
+      () => collectAsync(result.fullStream),
+      Error,
+      "Consume fullStream and textStream concurrently, or consume only one branch",
+    );
   });
 
   it("forwards reasoning options to direct stream models", async () => {

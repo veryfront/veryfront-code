@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
-import { computeDepsHash, createDependencyHashCache } from "./dependency-graph.ts";
+import {
+  computeDepsHash,
+  createDependencyHashCache,
+  invalidateDependencyHashCache,
+} from "./dependency-graph.ts";
 import { computeConfigHash } from "./config-hash.ts";
 import { buildTransformCacheKey } from "./keys.ts";
 
@@ -125,6 +129,36 @@ describe("Dependency tracking cache invalidation", () => {
       await computeDepsHash("/project/pages/b.js", getContent, "/project", cache);
 
       expect(reads.get("/project/components/shared.js")).toBe(1);
+    });
+
+    it("recomputes changed files and their dependents after explicit invalidation", async () => {
+      const files = new Map<string, string>([
+        [
+          "/project/pages/index.js",
+          `import { helper } from "./helper.ts";\nexport default helper;\n`,
+        ],
+        ["/project/pages/helper.js", "export const helper = 'v1';\n"],
+      ]);
+      const cache = createDependencyHashCache();
+
+      const hash1 = await computeDepsHash(
+        "/project/pages/index.js",
+        createGetContent(files),
+        "/project",
+        cache,
+      );
+
+      files.set("/project/pages/helper.js", "export const helper = 'v2';\n");
+      const invalidated = invalidateDependencyHashCache(cache, ["/project/pages/helper.js"]);
+      const hash2 = await computeDepsHash(
+        "/project/pages/index.js",
+        createGetContent(files),
+        "/project",
+        cache,
+      );
+
+      expect(invalidated).toBe(2);
+      expect(hash2).not.toBe(hash1);
     });
 
     it("does not deadlock concurrent roots with circular local imports in one cache", async () => {
