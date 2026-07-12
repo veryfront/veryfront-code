@@ -8,6 +8,7 @@ export type { DirectoryEntry };
 export interface FSAdapter {
   readFile(path: string): Promise<Uint8Array | string>;
   readTextFile?(path: string): Promise<string>;
+  readOptionalTextFile?(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<{
     isFile: boolean;
