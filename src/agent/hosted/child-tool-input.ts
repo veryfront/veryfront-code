@@ -6,7 +6,7 @@ import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts"
 
 /** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
-const HOSTED_CHILD_FORK_RESULT_MODES = ["summary", "full"] as const;
+const HOSTED_CHILD_FORK_RESULT_MODES = ["summary", "full", "structured"] as const;
 
 /** Hosted child fork result return mode. */
 export type HostedChildForkResultMode = ChildRunResultMode;
@@ -34,7 +34,7 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
       "Max steps override. Omit for the hosted child default. Values below the default are raised to the default.",
     ),
     result_mode: v.enum(HOSTED_CHILD_FORK_RESULT_MODES).optional().describe(
-      'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required.',
+      'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required. Use "structured" when critical contract ids must survive a bounded summary.',
     ),
   })
 );

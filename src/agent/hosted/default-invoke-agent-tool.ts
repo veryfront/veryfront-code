@@ -602,7 +602,7 @@ export function createDefaultHostedInvokeAgentTool<
     inputSchema: defaultHostedInvokeAgentInputSchema,
     additionalDescriptionParts: [
       "agent_id is required. Use it to target a specific built-in or custom child agent.",
-      'result_mode defaults to "summary"; use "full" only when exact delegated output is required.',
+      'result_mode defaults to "summary"; use "structured" when critical contract ids must survive the bounded summary; use "full" only when exact delegated output is required.',
     ],
     buildFailureResult: buildHostedDurableChildInvokeFailureResult,
     decorateResult: withRootOwnedChildResultHint,
