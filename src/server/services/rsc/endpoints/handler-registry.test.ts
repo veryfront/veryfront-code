@@ -11,6 +11,11 @@ import {
 } from "./handler-registry.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
+// Every handler constructed during a test, including ones later evicted.
+// The constructor starts async React-version detection (reads package.json);
+// afterEach awaits it so the op sanitizer never races the file operation.
+const createdHandlers = new Set<RSCDevServerHandler>();
+
 function createStubCache(): HandlerCache<RSCDevServerHandler> & {
   entries: Map<string, RSCDevServerHandler>;
 } {
@@ -21,6 +26,7 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
       return entries.get(key);
     },
     set(key: string, value: RSCDevServerHandler) {
+      createdHandlers.add(value);
       entries.set(key, value);
     },
     delete(key: string) {
@@ -36,7 +42,9 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
 }
 
 describe("server/services/rsc/endpoints/handler-registry", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all([...createdHandlers].map((handler) => handler.settleBackgroundWork()));
+    createdHandlers.clear();
     __destroyRSCHandlerForTests();
   });
 

@@ -83,6 +83,21 @@ export class RSCDevServerHandler {
   private readonly reactVersionPromise: Promise<string>;
   private readonly fs?: RuntimeAdapter["fs"];
 
+  /**
+   * Await background work started by the constructor. React version
+   * detection reads the project's package.json, so constructing a handler
+   * without ever serving a request leaves that async file operation racing
+   * the caller — which trips Deno's op sanitizer in tests that only
+   * exercise registry/cache behavior. Awaiting here settles it.
+   */
+  async settleBackgroundWork(): Promise<void> {
+    try {
+      await this.reactVersionPromise;
+    } catch (_) {
+      /* expected: version detection failures fall back at use sites */
+    }
+  }
+
   handleManifest(): Promise<Response> {
     return this.manifestHandler.handle(this.clientManifest);
   }
