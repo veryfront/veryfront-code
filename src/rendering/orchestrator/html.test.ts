@@ -12,7 +12,8 @@ import {
   configureReleaseAssetManifestFetcher,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { type HTMLGeneratorConfig } from "./html.ts";
+import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
 import {
@@ -420,6 +421,83 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
       assertEquals(html.includes('id="vf-tailwind-css"'), false);
+    });
+    it("uses optional file reads when probing the global stylesheet", async () => {
+      const calls: string[] = [];
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            readFile: async (path: string) => {
+              calls.push(`readFile:${path}`);
+              if (path.endsWith("/app/page.tsx")) return "'use client';";
+              throw new Error(`unexpected required read: ${path}`);
+            },
+            readOptionalTextFile: async (path: string) => {
+              calls.push(`readOptionalTextFile:${path}`);
+              if (path.endsWith("/globals.css")) return "";
+              return "";
+            },
+            exists: async () => false,
+            stat: async () => ({
+              isFile: false,
+              isDirectory: false,
+              isSymlink: false,
+              size: 0,
+              mtime: null,
+            }),
+            readDir: async function* () {},
+          },
+        } as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      await generator.generateFullHTML(createHTMLContext({
+        options: { environment: "production" },
+      }));
+
+      assertEquals(calls.includes("readOptionalTextFile:/project/globals.css"), true);
+      assertEquals(calls.includes("readFile:/project/globals.css"), false);
+    });
+
+    it("uses wrapped optional file reads when probing the global stylesheet", async () => {
+      const calls: string[] = [];
+      const wrappedFs = new FSAdapterWrapper({
+        readFile: async (path: string) => {
+          calls.push(`underlyingReadFile:${path}`);
+          if (path.endsWith("/app/page.tsx")) return "'use client';";
+          throw new Error(`unexpected required read: ${path}`);
+        },
+        readOptionalTextFile: async (path: string) => {
+          calls.push(`underlyingReadOptionalTextFile:${path}`);
+          return "";
+        },
+        exists: async () => false,
+        stat: async () => ({
+          isFile: false,
+          isDirectory: false,
+          isSymlink: false,
+          size: 0,
+          mtime: null,
+        }),
+      });
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: { fs: wrappedFs } as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      await generator.generateFullHTML(createHTMLContext({
+        options: { environment: "production" },
+      }));
+
+      assertEquals(
+        calls.includes("underlyingReadOptionalTextFile:/project/globals.css"),
+        true,
+      );
+      assertEquals(calls.includes("underlyingReadFile:/project/globals.css"), false);
     });
 
     it("preserves full-document layout head/body output for explicit dark-mode requests", async () => {

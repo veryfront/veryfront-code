@@ -453,7 +453,12 @@ export class HTMLGenerator {
   private async loadProjectFile(filename: string): Promise<string | undefined> {
     try {
       const filePath = join(this.config.projectDir, filename);
-      const content = await this.config.adapter.fs.readFile(filePath);
+      const fs = this.config.adapter.fs as typeof this.config.adapter.fs & {
+        readOptionalTextFile?: (path: string) => Promise<string>;
+      };
+      const content = fs.readOptionalTextFile
+        ? await fs.readOptionalTextFile(filePath)
+        : await fs.readFile(filePath);
       logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
     } catch (_) {

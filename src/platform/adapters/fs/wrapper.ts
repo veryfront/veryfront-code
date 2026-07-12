@@ -33,6 +33,7 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     },
   ): Promise<T>;
   readFileBytes(path: string): Promise<Uint8Array>;
+  readOptionalTextFile(path: string): Promise<string>;
   readdir(path: string): Promise<DirectoryEntry[]>;
   shutdown(): Promise<void>;
 }
@@ -184,6 +185,14 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
 
     const result = await this._fsAdapter.readFile(path);
     return typeof result === "string" ? result : new TextDecoder().decode(result);
+  }
+
+  async readOptionalTextFile(path: string): Promise<string> {
+    if (this._fsAdapter.readOptionalTextFile) {
+      return this._fsAdapter.readOptionalTextFile(path);
+    }
+
+    return this.readFile(path);
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
