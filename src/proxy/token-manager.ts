@@ -94,8 +94,8 @@ export class TokenManager {
     );
   }
 
-  async invalidateToken(scope: TokenScope, projectSlug?: string): Promise<void> {
-    const cacheKey = this.getCacheKey(scope, projectSlug);
+  async invalidateToken(scope: TokenScope, projectKey?: string): Promise<void> {
+    const cacheKey = this.getCacheKey(scope, projectKey);
     this.negativeCache.delete(cacheKey);
     await this.cache.delete(cacheKey);
   }

@@ -429,6 +429,323 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("refreshes cached service token and retries when proxy metadata rejects it", async () => {
+      const { entries, logger } = createRecordingLogger();
+      let tokenRequests = 0;
+      let routingLookups = 0;
+      let accessLookups = 0;
+      let fullProjectLookups = 0;
+      const authorizationHeaders: string[] = [];
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          authorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          authorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          authorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          logger,
+        });
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+        assertEquals(accessLookups, 1);
+        assertEquals(fullProjectLookups, 0);
+        assertEquals(authorizationHeaders, [
+          "Bearer stale-token",
+          "Bearer fresh-token",
+          "Bearer fresh-token",
+        ]);
+        assertEquals(
+          entries.some((entry) =>
+            entry.level === "warn" &&
+            entry.message === "Proxy API token rejected during metadata lookup; refreshing token"
+          ),
+          true,
+        );
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes cached service token when proxy access metadata rejects it", async () => {
+      let tokenRequests = 0;
+      let routingLookups = 0;
+      let accessLookups = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+        assertEquals(accessLookups, 2);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes cached service token when fallback domain lookup rejects it", async () => {
+      let tokenRequests = 0;
+      let routingLookups = 0;
+      let fullProjectLookups = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return createNotFoundResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+        assertEquals(fullProjectLookups, 2);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("returns 502 when refreshed service token is still rejected by metadata", async () => {
+      let tokenRequests = 0;
+      let routingLookups = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return new Response("Unauthorized", { status: 401 });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy API token rejected by API");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
     it("returns 404 error when custom domain not found", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -842,6 +1159,131 @@ describe("Proxy Handler", () => {
   });
 
   describe("protected environments", () => {
+    it("uses a service token for preview metadata when the request has a user cookie", async () => {
+      let tokenRequests = 0;
+      const metadataAuthorizationHeaders: string[] = [];
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: "preview-service-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          metadataAuthorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer user-cookie-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          metadataAuthorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer user-cookie-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://my-project.preview.veryfront.com/page", {
+            headers: {
+              host: "my-project.preview.veryfront.com",
+              cookie: "authToken=user-cookie-token",
+            },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.projectId, "proj-123");
+        assertEquals(ctx.token, "user-cookie-token");
+        assertEquals(tokenRequests, 1);
+        assertEquals(metadataAuthorizationHeaders, [
+          "Bearer preview-service-token",
+          "Bearer preview-service-token",
+        ]);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("does not use a preview user cookie for metadata when service token minting fails", async () => {
+      let metadataRequests = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response("service token unavailable", { status: 500 });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          metadataRequests++;
+          if (req.headers.get("authorization") === "Bearer user-cookie-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://my-project.preview.veryfront.com/page", {
+            headers: {
+              host: "my-project.preview.veryfront.com",
+              cookie: "authToken=user-cookie-token",
+            },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy API token unavailable");
+        assertEquals(ctx.token, "user-cookie-token");
+        assertEquals(metadataRequests, 0);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
     it("redirects to sign-in for protected custom domain without auth token", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);

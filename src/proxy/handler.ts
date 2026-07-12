@@ -95,6 +95,28 @@ function normalizeProjectLookupKey(lookupKey: string): string {
   return lookupKey.trim().replace(/:\d+$/, "").toLowerCase();
 }
 
+type ProxyLookupType = "domain" | "routing" | "access";
+
+class ProxyLookupAuthError extends Error {
+  constructor(
+    readonly lookupType: ProxyLookupType,
+    readonly status: number,
+  ) {
+    super(`Proxy ${lookupType} lookup rejected service token: ${status}`);
+    this.name = "ProxyLookupAuthError";
+  }
+}
+
+function isProxyLookupAuthError(error: unknown): error is ProxyLookupAuthError {
+  return error instanceof ProxyLookupAuthError;
+}
+
+function throwIfProxyLookupAuthFailure(status: number, lookupType: ProxyLookupType): void {
+  if (status === 401 || status === 403) {
+    throw new ProxyLookupAuthError(lookupType, status);
+  }
+}
+
 async function lookupProjectByDomain(
   domain: string,
   apiBaseUrl: string,
@@ -137,6 +159,7 @@ async function lookupProjectByDomain(
               statusText: response.statusText,
             });
           }
+          throwIfProxyLookupAuthFailure(response.status, "domain");
           return null;
         }
 
@@ -148,6 +171,7 @@ async function lookupProjectByDomain(
         });
         return result;
       } catch (error) {
+        if (isProxyLookupAuthError(error)) throw error;
         logger?.error("Domain lookup failed", error as Error, { domain });
         return null;
       }
@@ -200,6 +224,7 @@ async function lookupProjectRoutingMetadata(
               statusText: response.statusText,
             });
           }
+          throwIfProxyLookupAuthFailure(response.status, "routing");
           return null;
         }
 
@@ -211,6 +236,7 @@ async function lookupProjectRoutingMetadata(
         });
         return result;
       } catch (error) {
+        if (isProxyLookupAuthError(error)) throw error;
         logger?.error("Proxy routing metadata lookup failed", error as Error, { lookupKey });
         return null;
       }
@@ -264,6 +290,7 @@ async function lookupProjectAccessMetadata(
               statusText: response.statusText,
             });
           }
+          throwIfProxyLookupAuthFailure(response.status, "access");
           return null;
         }
 
@@ -276,6 +303,7 @@ async function lookupProjectAccessMetadata(
         });
         return result;
       } catch (error) {
+        if (isProxyLookupAuthError(error)) throw error;
         logger?.error("Proxy access metadata lookup failed", error as Error, { lookupKey });
         return null;
       }
@@ -315,6 +343,10 @@ export interface ProxyContext {
     redirectUrl?: string;
   };
 }
+
+type ResolvedProjectMetadata =
+  | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
+  | { error: { status: number; message: string; redirectUrl?: string } };
 
 export interface ProxyLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
@@ -504,10 +536,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
     signedInternalControlPlaneRequest: boolean,
-  ): Promise<
-    | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
-    | { error: { status: number; message: string; redirectUrl?: string } }
-  > {
+  ): Promise<ResolvedProjectMetadata> {
     const lookupResult = await resolveProjectLookup(lookupKey, token, timing);
     if (!lookupResult) return { projectId: undefined, releaseId: undefined };
 
@@ -544,10 +573,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
     signedInternalControlPlaneRequest: boolean,
-  ): Promise<
-    | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
-    | { error: { status: number; message: string; redirectUrl?: string } }
-  > {
+  ): Promise<ResolvedProjectMetadata> {
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.project_lookup",
@@ -667,12 +693,100 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     let userToken: string | undefined;
     let token: string | undefined;
+    let tokenSource: "signed-internal" | "user" | "service" | "static" | undefined;
+    let metadataToken: string | undefined;
     let tokenFetchError: unknown;
+
+    async function resolveProjectMetadataWithTokenRetry(
+      lookupKey: string,
+      envMatcher: (env: ProjectLookupEnvironment) => boolean,
+      timing: ProxyServerTiming | undefined,
+      logContext: Record<string, unknown>,
+      tokenIdentity: { projectSlug?: string; customDomain?: string },
+    ): Promise<ResolvedProjectMetadata> {
+      if (!metadataToken) {
+        return { error: { status: 502, message: "Proxy API token unavailable" } };
+      }
+
+      const resolveWithCurrentToken = () =>
+        resolveProjectMetadataAndProtection(
+          req,
+          url,
+          metadataToken!,
+          userToken,
+          lookupKey,
+          envMatcher,
+          timing,
+          logContext,
+          signedInternalControlPlaneRequest,
+        );
+
+      try {
+        return await resolveWithCurrentToken();
+      } catch (error) {
+        if (!isProxyLookupAuthError(error)) throw error;
+
+        const projectKey = tokenIdentity.projectSlug ?? tokenIdentity.customDomain;
+        logger?.warn("Proxy API token rejected during metadata lookup; refreshing token", {
+          lookupKey,
+          host,
+          scope,
+          projectSlug: tokenIdentity.projectSlug,
+          customDomain: tokenIdentity.customDomain,
+          status: error.status,
+          lookupType: error.lookupType,
+        });
+
+        routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
+        await tokenManager.invalidateToken(scope, projectKey);
+
+        try {
+          metadataToken = await tokenManager.getToken(
+            scope,
+            tokenIdentity.projectSlug,
+            tokenIdentity.customDomain,
+          );
+          if (tokenSource !== "user" && tokenSource !== "signed-internal") {
+            token = metadataToken;
+          }
+        } catch (refreshError) {
+          logger?.error(
+            "Failed to refresh proxy API token after metadata auth rejection",
+            refreshError as Error,
+            {
+              lookupKey,
+              host,
+              scope,
+              projectSlug: tokenIdentity.projectSlug,
+              customDomain: tokenIdentity.customDomain,
+            },
+          );
+          return { error: { status: 502, message: "Failed to refresh proxy API token" } };
+        }
+
+        try {
+          return await resolveWithCurrentToken();
+        } catch (retryError) {
+          if (!isProxyLookupAuthError(retryError)) throw retryError;
+
+          logger?.error("Proxy API token rejected after refresh", retryError, {
+            lookupKey,
+            host,
+            scope,
+            projectSlug: tokenIdentity.projectSlug,
+            customDomain: tokenIdentity.customDomain,
+            status: retryError.status,
+            lookupType: retryError.lookupType,
+          });
+          return { error: { status: 502, message: "Proxy API token rejected by API" } };
+        }
+      }
+    }
 
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
     } else {
-      ({ token, userToken, tokenFetchError } = await resolveProxyRequestToken(
+      ({ token, tokenSource, userToken, tokenFetchError } = await resolveProxyRequestToken(
         {
           req,
           url,
@@ -687,6 +801,23 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           tokenFetchErrorMessage: "Token fetch failed",
         },
       ));
+      metadataToken = token;
+
+      if (tokenSource === "user" && config.apiClientId && config.apiClientSecret) {
+        const customDomain = projectSlug ? undefined : host;
+        metadataToken = undefined;
+        try {
+          metadataToken = await tokenManager.getToken(scope, projectSlug, customDomain);
+        } catch (error) {
+          tokenFetchError = error;
+          if (!isMissingCustomDomainProjectError(error)) {
+            logger?.error("Metadata service token fetch failed", error as Error, {
+              projectSlug,
+              customDomain,
+            });
+          }
+        }
+      }
 
       if (projectSlug && !token) {
         const status = parseStatusFromError(tokenFetchError);
@@ -714,6 +845,19 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         return createProxyErrorContext(base, { status: 502, message });
       }
 
+      if (projectSlug && tokenSource === "user" && !metadataToken) {
+        const status = parseStatusFromError(tokenFetchError);
+        if (status === 404 || isMissingCustomDomainProjectError(tokenFetchError)) {
+          if (scope === "preview") {
+            logger?.info("Preview project not found", { projectSlug, host });
+            return createProjectNotFoundProxyContext(base, "Preview project not found", token);
+          }
+
+          logger?.info("Project not found", { projectSlug, host, scope });
+          return createProjectNotFoundProxyContext(base, "Project not found", token);
+        }
+      }
+
       if (isCustomDomain && !projectSlug) {
         if (!token) {
           if (isMissingCustomDomainProjectError(tokenFetchError)) {
@@ -735,16 +879,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
 
         const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
-        const resolved = await resolveProjectMetadataAndProtection(
-          req,
-          url,
-          token,
-          userToken,
+        const resolved = await resolveProjectMetadataWithTokenRetry(
           host,
           (env) => env.domains?.some((d) => d.toLowerCase() === normalizedHost) ?? false,
           options.timing,
           { domain: host },
-          signedInternalControlPlaneRequest,
+          { customDomain: host },
         );
 
         if ("error" in resolved) {
@@ -780,16 +920,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       } else if (projectSlug && scope === "production" && token && parsedDomain.environment) {
         const targetEnv = parsedDomain.environment.toLowerCase();
 
-        const resolved = await resolveProjectMetadataAndProtection(
-          req,
-          url,
-          token,
-          userToken,
+        const resolved = await resolveProjectMetadataWithTokenRetry(
           projectSlug,
           (env) => env.name.toLowerCase() === targetEnv,
           options.timing,
           { projectSlug },
-          signedInternalControlPlaneRequest,
+          { projectSlug },
         );
 
         if ("error" in resolved) {
@@ -825,16 +961,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       } else if (projectSlug && scope === "preview" && token) {
         // Preview uses branch-based content (no releaseId needed), but must
         // still enforce the environment's `protected` flag like other scopes.
-        const resolved = await resolveProjectMetadataAndProtection(
-          req,
-          url,
-          token,
-          userToken,
+        const resolved = await resolveProjectMetadataWithTokenRetry(
           projectSlug,
           (env) => env.name.toLowerCase() === "preview",
           options.timing,
           { projectSlug },
-          signedInternalControlPlaneRequest,
+          { projectSlug },
         );
 
         if ("error" in resolved) {
