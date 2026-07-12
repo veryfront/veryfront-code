@@ -80,6 +80,10 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "readTextFile"));
     });
 
+    it("should have readOptionalTextFile method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "readOptionalTextFile"));
+    });
+
     it("should have exists method", () => {
       withAdapter((adapter) => assertMethod(adapter, "exists"));
     });
@@ -182,6 +186,47 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(capturedBranch, "main");
         assertEquals(cachedBeforeRefresh, "stale-content");
         assertEquals(cachedAfterRefresh, undefined);
+      });
+    });
+
+    it("delegates optional text reads to the active project adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let optionalPath: string | undefined;
+        let normalReadCalled = false;
+
+        (adapter as any).manager = {
+          getAdapter() {
+            return Promise.resolve({
+              readOptionalTextFile(path: string) {
+                optionalPath = path;
+                return Promise.resolve("optional stylesheet");
+              },
+              readTextFile() {
+                normalReadCalled = true;
+                return Promise.resolve("normal read");
+              },
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const content = await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            () => adapter.readOptionalTextFile("app/globals.css"),
+            "project-id-a",
+            { branch: "main" },
+          );
+
+          assertEquals(content, "optional stylesheet");
+          assertEquals(optionalPath, "app/globals.css");
+          assertEquals(normalReadCalled, false);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
       });
     });
 

@@ -730,6 +730,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
+  async readOptionalTextFile(path: string): Promise<string> {
+    await this.ensureInitialized();
+    return this.withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
+  }
+
   async readdir(path: string): Promise<DirectoryEntry[]> {
     await this.ensureInitialized();
     return this.withBranchSnapshotRecovery(

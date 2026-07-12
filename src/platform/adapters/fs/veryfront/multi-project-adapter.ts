@@ -185,6 +185,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return adapter.readTextFile(path);
   }
 
+  async readOptionalTextFile(path: string): Promise<string> {
+    const adapter = await this.getAdapter();
+    return adapter.readOptionalTextFile(path);
+  }
+
   async exists(path: string): Promise<boolean> {
     const adapter = await this.getAdapter();
     return adapter.exists(path);
