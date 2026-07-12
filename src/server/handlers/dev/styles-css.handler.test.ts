@@ -326,4 +326,88 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCandidateManifests(PROJECT_SLUG);
     }
   });
+
+  it("includes CSS imported by source modules in the compiled stylesheet", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [
+        {
+          path: "/project/app/layout.tsx",
+          content:
+            'import "./styles.css";\nexport default function Layout({ children }) { return children; }',
+        },
+        { path: "/project/app/page.tsx", content: '<div className="calc">Hello</div>' },
+      ],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    adapter.fs.files.set(
+      "/project/app/styles.css",
+      ".calc { background: #191919; border-radius: 20px; }",
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(
+        body.includes(".calc"),
+        true,
+        "CSS imported from app/layout.tsx must be part of the compiled stylesheet",
+      );
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not duplicate the configured stylesheet when it is also imported by a module", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [
+        {
+          path: "/project/app/layout.tsx",
+          content: 'import "../globals.css";\nexport default ({ children }) => children;',
+        },
+      ],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.length > 0, true);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
 });

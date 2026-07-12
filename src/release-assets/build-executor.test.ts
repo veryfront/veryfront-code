@@ -1327,6 +1327,103 @@ describe("release asset build executor", () => {
     assertEquals(seenStylesheet, '@import "tailwindcss"; /* custom */');
   });
 
+  it("merges module-imported CSS into the stylesheet passed to compileProjectCss", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "app/styles.css", content: ".calc { background: #191919; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import "./styles.css";\nexport default ({ children }) => children;',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"calc\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".calc{background:#191919}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assert(
+      seenStylesheet!.includes('@import "tailwindcss";'),
+      "resolved stylesheet must be preserved",
+    );
+    assert(
+      seenStylesheet!.includes(".calc"),
+      "CSS imported from app/layout.tsx must be merged into the stylesheet",
+    );
+  });
+
+  it("does not duplicate the resolved stylesheet when a module imports it directly", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss"; /* custom */' },
+      {
+        path: "app/layout.tsx",
+        content: 'import "../globals.css";\nexport default ({ children }) => children;',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"p-4\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assertEquals(seenStylesheet!.split("/* custom */").length - 1, 1);
+  });
+
+  it("keeps CSS module files out of the merged release stylesheet", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "components/button.module.css", content: ".button { color: red; }" },
+      {
+        path: "components/Button.tsx",
+        content: 'import styles from "./button.module.css";\nexport const Button = () => null;',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: "body{}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assertEquals(
+      seenStylesheet!.includes(".button"),
+      false,
+      "CSS module content must not be inlined unscoped into the release stylesheet",
+    );
+  });
+
   it("passes helper-composed Tailwind candidates to compileProjectCss", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [

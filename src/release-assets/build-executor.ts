@@ -33,6 +33,10 @@ import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
+import {
+  collectCssImportPaths,
+  CSS_IMPORTING_SOURCE_EXTENSIONS,
+} from "#veryfront/html/styles-builder/css-import-extraction.ts";
 import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
@@ -1635,7 +1639,8 @@ async function runBuildInner(
   if (client.compileProjectCss) {
     try {
       const candidates = collectClassCandidates(sourceByPath);
-      const stylesheet = resolveProjectStylesheet(sourceByPath, input.stylesheetPath);
+      const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, input.stylesheetPath);
+      const stylesheet = mergeModuleCssImports(sourceByPath, resolvedStylesheet);
       const compiled = await client.compileProjectCss(candidates, stylesheet);
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
@@ -1784,15 +1789,54 @@ async function runBuildInner(
 function resolveProjectStylesheet(
   sourceByPath: Map<string, string>,
   stylesheetPath: string | undefined,
-): string | undefined {
+): { content: string; path: string } | undefined {
   const candidatePaths = stylesheetPath
     ? [stylesheetPath, stylesheetPath.replace(/^\.?\//, "")]
     : ["globals.css", "src/globals.css"];
   for (const path of candidatePaths) {
     const content = sourceByPath.get(path);
-    if (typeof content === "string") return content;
+    if (typeof content === "string") return { content, path };
   }
   return undefined;
+}
+
+/**
+ * Merge plain CSS files imported by project modules (`import "./styles.css"`
+ * in a layout or component) into the resolved stylesheet. The production SSR
+ * pipeline includes these imports per page at render time; release assets are
+ * compiled once per release, so the merge happens here instead — mirroring the
+ * dev /_vf_styles route.
+ *
+ * `*.module.css` files are skipped: their class names are rewritten per-module
+ * by the runtime, so inlining them raw would leak unscoped selectors.
+ */
+function mergeModuleCssImports(
+  sourceByPath: Map<string, string>,
+  stylesheet: { content: string; path: string } | undefined,
+): string | undefined {
+  const sourceFiles: Array<{ path: string; content: string }> = [];
+  for (const [path, content] of sourceByPath) {
+    if (!CSS_IMPORTING_SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext))) continue;
+    // Resolution is rooted at "/" so relative and @/ specifiers resolve
+    // against the release file set's project-relative paths.
+    sourceFiles.push({ path: `/${path}`, content });
+  }
+
+  const segments: string[] = [];
+  for (const importedPath of collectCssImportPaths(sourceFiles, "/")) {
+    const relativePath = importedPath.replace(/^\/+/, "");
+    if (relativePath === stylesheet?.path) continue;
+    if (relativePath.endsWith(".module.css")) continue;
+    const content = sourceByPath.get(relativePath);
+    if (content) segments.push(content);
+  }
+
+  if (segments.length === 0) return stylesheet?.content;
+
+  logger.debug("Merged module CSS imports into release stylesheet", {
+    importedCount: segments.length,
+  });
+  return [stylesheet?.content, ...segments].filter(Boolean).join("\n");
 }
 
 /** Extract Tailwind class candidates from materialized source. */
