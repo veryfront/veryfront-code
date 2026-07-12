@@ -481,6 +481,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "request-token",
+      tokenTrust: "verified-control-plane",
       projectSlug: projectRef,
     }),
   };
@@ -529,24 +530,25 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   }
 });
 
-Deno.test("ApiCacheBackend uses host API token before request token", async () => {
+Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
-  let capturedAuthorization = "";
+  const capturedAuthorizations: string[] = [];
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "run-scoped-request-token",
+      tokenTrust: "verified-control-plane",
       projectId: "project-123",
       projectSlug: "project-slug",
     }),
   };
   globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-    capturedAuthorization = new Headers(init?.headers).get("authorization") ?? "";
+    capturedAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
     return Promise.resolve(
       new Response(JSON.stringify({ deleted: 3 }), {
         status: 200,
@@ -560,10 +562,35 @@ Deno.test("ApiCacheBackend uses host API token before request token", async () =
       apiBaseUrl: "https://api.example.test",
       circuitBreakerName: "api-cache-host-token-test",
     });
-    const deleted = await cache.delByPattern("agent:*");
+    const requestScopedDeleted = await cache.delByPattern("agent:*");
 
-    assertEquals(deleted, 3);
-    assertEquals(capturedAuthorization, "Bearer host-framework-token");
+    assertEquals(requestScopedDeleted, 3);
+
+    globals.__vf_multi_project_adapter = {
+      getCurrentRequestContext: () => ({
+        token: "unverified-proxy-token",
+        projectId: "project-123",
+        projectSlug: "project-slug",
+      }),
+    };
+    const unverifiedRequestDeleted = await cache.delByPattern("agent:*");
+
+    assertEquals(unverifiedRequestDeleted, 3);
+
+    globals.__vf_multi_project_adapter = {
+      getCurrentRequestContext: () => ({
+        projectId: "project-123",
+        projectSlug: "project-slug",
+      }),
+    };
+    const hostFallbackDeleted = await cache.delByPattern("agent:*");
+
+    assertEquals(hostFallbackDeleted, 3);
+    assertEquals(capturedAuthorizations, [
+      "Bearer run-scoped-request-token",
+      "Bearer host-framework-token",
+      "Bearer host-framework-token",
+    ]);
   } finally {
     if (originalAdapter === undefined) {
       delete globals.__vf_multi_project_adapter;

@@ -9,6 +9,7 @@ import {
   asyncLocalStorage,
   clearRequestScopedFileCache,
   type RequestContext,
+  type RequestTokenTrust,
 } from "./request-context.ts";
 export {
   clearRequestScopedFileCache,
@@ -18,7 +19,7 @@ export {
   setRequestScopedFile,
   wrapWithCurrentContext,
 } from "./request-context.ts";
-export type { RequestContext } from "./request-context.ts";
+export type { RequestContext, RequestTokenTrust } from "./request-context.ts";
 
 const logger = baseLogger.component("multi-project-fs-adapter");
 
@@ -53,6 +54,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenTrust?: RequestTokenTrust;
     },
   ): Promise<T> {
     const startTime = performance.now();
@@ -74,6 +76,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       projectSlug,
       projectId,
       token,
+      tokenTrust: options?.tokenTrust,
       productionMode,
       releaseId: productionMode ? releaseId : null,
       branch: productionMode ? null : branch,
@@ -112,6 +115,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
     store.projectSlug = projectSlug;
     store.token = token;
+    store.tokenTrust = undefined;
   }
 
   setProductionMode(_enabled: boolean, _releaseId?: string | null): void {

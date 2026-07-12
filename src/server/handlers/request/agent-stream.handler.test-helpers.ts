@@ -71,6 +71,7 @@ export type SourceContextTestFsAdapter = FileSystemAdapter & {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenTrust?: "verified-control-plane";
     },
   ): Promise<R>;
 };
@@ -82,6 +83,7 @@ export function createNoopFsAdapter(
     releaseId?: string | null;
     branch?: string | null;
     environmentName?: string | null;
+    tokenTrust?: "verified-control-plane";
   }>,
 ): SourceContextTestFsAdapter {
   return {

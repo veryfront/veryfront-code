@@ -20,6 +20,7 @@ const ERROR_BODY_MAX_LENGTH = 500;
 
 type CacheRequestContext = {
   token?: string;
+  tokenTrust?: "verified-control-plane";
   projectId?: string;
   projectSlug?: string;
 };
@@ -98,13 +99,16 @@ export class ApiCacheBackend implements CacheBackend {
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
-    // Cache API calls are framework-owned operations; use the host token when
-    // available so project/request-scoped credentials cannot shadow it.
-    const token = hostToken || reqCtx?.token || envToken || null;
-    const tokenSource = hostToken
+    const verifiedRequestToken = reqCtx?.tokenTrust === "verified-control-plane"
+      ? reqCtx.token
+      : undefined;
+    // Ordinary proxy headers are not cache credentials. Only a request token
+    // explicitly marked after control-plane verification may override the host.
+    const token = verifiedRequestToken || hostToken || envToken || null;
+    const tokenSource = verifiedRequestToken
+      ? "verified-control-plane"
+      : hostToken
       ? "host-env"
-      : reqCtx?.token
-      ? "request"
       : envToken
       ? "env"
       : "none";

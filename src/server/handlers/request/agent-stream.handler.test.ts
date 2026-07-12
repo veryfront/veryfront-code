@@ -1894,6 +1894,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenTrust?: "verified-control-plane";
     }> = [];
 
     const handler = new AgentStreamHandler({
@@ -1990,8 +1991,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(runWithContextCalls.length, 2);
     assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
+    assertEquals(runWithContextCalls[0]?.tokenTrust, "verified-control-plane");
     assertEquals(runWithContextCalls[0]?.branch, "feature-a");
     assertEquals(runWithContextCalls[1]?.token, "request-scoped-user-token");
+    assertEquals(runWithContextCalls[1]?.tokenTrust, "verified-control-plane");
     assertEquals(runWithContextCalls[1]?.branch, "main");
     assertEquals(runWithContextCalls[1]?.productionMode, false);
   });
