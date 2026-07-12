@@ -98,13 +98,13 @@ export class ApiCacheBackend implements CacheBackend {
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
-    // Cache API calls are framework-owned operations; use the host token when
-    // available so project/request-scoped credentials cannot shadow it.
-    const token = hostToken || reqCtx?.token || envToken || null;
-    const tokenSource = hostToken
-      ? "host-env"
-      : reqCtx?.token
+    // Request credentials are verified control-plane context. Host credentials
+    // remain a fallback, while project environment values cannot shadow either.
+    const token = reqCtx?.token || hostToken || envToken || null;
+    const tokenSource = reqCtx?.token
       ? "request"
+      : hostToken
+      ? "host-env"
       : envToken
       ? "env"
       : "none";
