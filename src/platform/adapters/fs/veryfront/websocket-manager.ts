@@ -91,7 +91,15 @@ export class WebSocketManager {
     lastPokeTime: 0,
   };
 
-  constructor(private readonly deps: WebSocketDeps) {}
+  private apiToken: string;
+
+  constructor(private readonly deps: WebSocketDeps) {
+    this.apiToken = deps.apiToken;
+  }
+
+  setApiToken(token: string): void {
+    this.apiToken = token;
+  }
 
   private getConnectionLogContext(context: Record<string, unknown> = {}): Record<string, unknown> {
     return getConnectionLogContextHelper(this.deps.projectSlug, context);
@@ -179,7 +187,7 @@ export class WebSocketManager {
       // Send the API token via a WebSocket subprotocol header instead of
       // a query-string parameter. Query strings can leak into server
       // access logs, proxy logs, and the browser's Referer header.
-      this.ws = new WebSocket(url, [`bearer-${this.deps.apiToken}`]);
+      this.ws = new WebSocket(url, [`bearer-${this.apiToken}`]);
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
       this.wsErrorLogged = false;
 

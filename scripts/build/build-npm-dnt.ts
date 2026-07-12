@@ -99,7 +99,10 @@ await build({
 	// FormData/File/Blob as globals natively, so no shim is needed.
 	shims: {
 		deno: true,
-		timers: true,
+		// Node 18+ provides native timers. Keeping the dnt timer shim here turns
+		// Timeout objects into numbers, which prevents unrefTimer() from releasing
+		// framework background intervals in short-lived Node processes.
+		timers: false,
 		crypto: true,
 	},
 
@@ -331,6 +334,57 @@ await buildExtensionPackages({
 	version,
 	license,
 });
+
+await verifyNpmRootImportLifecycle();
+
+async function verifyNpmRootImportLifecycle(): Promise<void> {
+	const timeoutMs = 10_000;
+	const child = new Deno.Command("node", {
+		args: [
+			"--input-type=module",
+			"--eval",
+			'const mod = await import("./esm/src/index.js"); if (typeof mod.defineConfig !== "function") throw new Error("defineConfig export missing");',
+		],
+		cwd: "./npm",
+		env: { VF_DISABLE_LRU_INTERVAL: "0" },
+		stdout: "piped",
+		stderr: "piped",
+	}).spawn();
+	const outputPromise = child.output();
+	let timeoutId: number | undefined;
+	const result = await Promise.race([
+		outputPromise.then((output) => ({ kind: "complete" as const, output })),
+		new Promise<{ kind: "timeout" }>((resolve) => {
+			timeoutId = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+		}),
+	]);
+
+	if (timeoutId !== undefined) clearTimeout(timeoutId);
+
+	if (result.kind === "timeout") {
+		try {
+			child.kill();
+		} catch {
+			// The process may exit between the timeout and the kill attempt.
+		}
+		const output = await outputPromise.catch(() => undefined);
+		const stderr = output ? new TextDecoder().decode(output.stderr).trim() : "";
+		throw new Error(
+			`Built npm root import did not exit within ${timeoutMs}ms; ` +
+				`a referenced import-time handle is still active.${stderr ? `\n${stderr}` : ""}`,
+		);
+	}
+
+	if (!result.output.success) {
+		const stderr = new TextDecoder().decode(result.output.stderr).trim();
+		throw new Error(
+			`Built npm root import failed with exit code ${result.output.code}.` +
+				(stderr ? `\n${stderr}` : ""),
+		);
+	}
+
+	console.log("✅ Verified npm root import lifecycle");
+}
 
 function addTypesExportEntries(
 	exportsMap: Record<string, string | { import?: string; types?: string }>,
