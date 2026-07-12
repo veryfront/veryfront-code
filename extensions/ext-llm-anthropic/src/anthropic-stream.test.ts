@@ -104,6 +104,19 @@ async function nextWithTimeout<T>(
   }
 }
 
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out after ${timeoutMs}ms waiting for condition`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 function data(payload: unknown): string {
   return `event: ${(payload as { type: string }).type}\r\ndata: ${JSON.stringify(payload)}\r\n\r\n`;
 }
@@ -432,6 +445,54 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     await closed;
 
     assertEquals(cancelCount, 0);
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool_use" },
+      usage: {
+        inputTokens: undefined,
+        outputTokens: 4,
+        totalTokens: 4,
+      },
+    });
+  });
+
+  it("cancels and releases a gateway tail after the drain deadline", async () => {
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      [
+        data({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+        }),
+        data({ type: "content_block_stop", index: 0 }),
+        data({
+          type: "message_delta",
+          delta: { stop_reason: "tool_use" },
+          usage: { output_tokens: 4 },
+        }),
+        data({ type: "message_stop" }),
+      ].join(""),
+    ], {
+      closeDelayMs: 600,
+      onCancel: () => cancelCount++,
+    });
+
+    const parts = await collectParts(stream, {
+      clientToolUseTrailingUsageGraceMs: 5,
+      clientToolUseTrailingUsageTimeoutMode: "drain",
+      clientToolUseTrailingUsageDrainTimeoutMs: 20,
+    });
+
+    await waitForCondition(() => cancelCount === 1 && !stream.locked, 500);
+
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
     assertEquals(parts.at(-1), {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
