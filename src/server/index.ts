@@ -48,6 +48,10 @@ const DEFAULT_SERVER_PORT = 3_000;
 
 export { DevServer, startDevServer, startProductionServer };
 export {
+  gracefullyShutdownProductionServer,
+  type GracefulProductionShutdownOptions,
+} from "./graceful-shutdown.ts";
+export {
   createVeryfrontServer,
   type CreateVeryfrontServerOptions,
   type NodeVeryfrontServiceServer,

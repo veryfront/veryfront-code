@@ -10,6 +10,7 @@ order: 28
 import {
   createHandler,
   createVeryfrontServer,
+  gracefullyShutdownProductionServer,
   startDevServer,
   startNodeVeryfrontServer,
   startProductionServer,
@@ -48,6 +49,7 @@ await server.fetch(new Request("https://example.com/health"));
 |------|-------------|--------|
 | `createHandler` | Create a Veryfront request handler for development or production. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L191) |
 | `createVeryfrontServer` | Create veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L148) |
+| `gracefullyShutdownProductionServer` | Run the one-shot process shutdown lifecycle, draining tracked requests and SSE response bodies before bounded cleanup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/graceful-shutdown.ts#L218) |
 | `startDevServer` | Starts dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/index.ts#L14) |
 | `startNodeVeryfrontServer` | Starts node veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L558) |
 | `startProductionServer` | Starts production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L166) |
@@ -71,6 +73,7 @@ await server.fetch(new Request("https://example.com/health"));
 | `DevServerOptions` | Options accepted by dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L1) |
 | `DiscoveryOptions` | Configuration for AI primitives discovery during server startup | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L115) |
 | `FileWatcherMetrics` | Public API contract for file watcher metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L32) |
+| `GracefulProductionShutdownOptions` | Inputs required to drain and stop a production server process. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/graceful-shutdown.ts#L25) |
 | `NodeVeryfrontServiceServer` | Public API contract for node veryfront service server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L74) |
 | `RouteDirectory` | Public API contract for route directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L26) |
 | `ServerHandle` | Public API contract for server handle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L152) |
