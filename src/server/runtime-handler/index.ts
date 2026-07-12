@@ -586,6 +586,7 @@ export function createVeryfrontHandler(
               branch: reqCtx.branch,
               environmentName: projectRes.environmentName,
               parsedDomain: projectRes.parsedDomain,
+              pathname: url.pathname,
               isProxyMode,
             }));
 

@@ -117,6 +117,32 @@ describe("VeryfrontFSAdapter", () => {
     }
   });
 
+  describe("request tokens", () => {
+    it("syncs request-scoped tokens into the WebSocket manager", () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "static-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      });
+      let websocketToken: string | undefined;
+
+      (adapter as unknown as { wsManager: { setApiToken: (token: string) => void } }).wsManager = {
+        setApiToken: (token: string) => {
+          websocketToken = token;
+        },
+      };
+
+      adapter.setRequestToken("fresh-request-token");
+      assertEquals(websocketToken, "fresh-request-token");
+
+      adapter.clearRequestToken();
+      assertEquals(websocketToken, "static-token");
+    });
+  });
+
   describe("content context", () => {
     const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
 

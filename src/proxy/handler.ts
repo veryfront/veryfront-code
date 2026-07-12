@@ -798,6 +798,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           logger,
           allowSignedInternalControlPlaneToken: true,
           signedInternalControlPlaneRequest,
+          tokenStrategy: "service-first",
           tokenFetchErrorMessage: "Token fetch failed",
         },
       ));

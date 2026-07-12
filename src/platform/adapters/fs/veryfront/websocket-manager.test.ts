@@ -606,6 +606,26 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
+  it("uses the latest API token when opening a WebSocket", () => {
+    const manager = createWebSocketManager();
+
+    manager.connect("project-1");
+    let socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+    assertEquals(socket.protocols, ["bearer-test-token"]);
+
+    manager.setApiToken("fresh-request-token");
+    socket.emitClose();
+
+    runOnlyScheduledTimer();
+
+    socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+    assertEquals(socket.protocols, ["bearer-fresh-request-token"]);
+
+    manager.dispose();
+  });
+
   it("should derive wss:// from https:// base URL", () => {
     const cache = {
       deleteByPrefixAsync: async () => 0,
