@@ -21,12 +21,13 @@ const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
 ];
 const MODEL_FIELD_PATTERN = /(?:^|[,{(\s])["']?model["']?\s*[:=]\s*["']([^"'`\s]+)["']/gim;
 const MODEL_ID_PATTERN =
-  /\b(?:veryfront-cloud\/)?(?:anthropic|openai|google|mistral|xai|deepseek|moonshot|cohere|perplexity|groq|azure)\/[A-Za-z0-9._:-]+\b/g;
-const TOOL_IDS_FIELD_PATTERN =
-  /(?:^|[,{(\s])["']?(?:tool_ids|tools)["']?\s*[:=]\s*\[([\s\S]*?)\]/gim;
+  /\b(?:veryfront-cloud\/)?(?:anthropic|openai|google|google-ai-studio|mistral|xai|deepseek|moonshot|moonshotai|cohere|perplexity|groq|azure)\/[A-Za-z0-9._:-]+\b/g;
+const TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s*\[([\s\S]*?)\]/gim;
 const PROVIDER_TOOL_IDS_FIELD_PATTERN =
   /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[([\s\S]*?)\]/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
+const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
+const OBJECT_TOOL_ID_FIELD_PATTERN = /["'](?:id|name)["']\s*:\s*["']([^"']+)["']/g;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -124,6 +125,12 @@ function addContractFact(target: string[], value: string): void {
   target.push(value);
 }
 
+function addToolIdFact(target: string[], value: string): void {
+  if (TOOL_ID_VALUE_PATTERN.test(value)) {
+    addContractFact(target, value);
+  }
+}
+
 function addPatternMatches(
   target: string[],
   text: string,
@@ -145,7 +152,83 @@ function extractQuotedValues(text: string): string[] {
   return values;
 }
 
-function addArrayFieldValues(
+function parseJsonArrayFieldBody(fieldBody: string): unknown[] | undefined {
+  try {
+    const parsed = JSON.parse(`[${fieldBody}]`);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function addToolIdsFromParsedArray(
+  target: string[],
+  values: unknown[],
+  includeObjectFields: boolean,
+): void {
+  for (const value of values) {
+    if (typeof value === "string") {
+      addToolIdFact(target, value);
+      continue;
+    }
+
+    if (!includeObjectFields || !isPlainRecord(value)) {
+      continue;
+    }
+
+    for (const key of ["id", "name"] as const) {
+      const fieldValue = value[key];
+      if (typeof fieldValue === "string") {
+        addToolIdFact(target, fieldValue);
+      }
+    }
+  }
+}
+
+function addToolIdsFromFieldBody(
+  target: string[],
+  fieldBody: string,
+  includeObjectFields: boolean,
+): void {
+  const parsedValues = parseJsonArrayFieldBody(fieldBody);
+  if (parsedValues) {
+    addToolIdsFromParsedArray(target, parsedValues, includeObjectFields);
+    return;
+  }
+
+  if (includeObjectFields && fieldBody.includes("{")) {
+    OBJECT_TOOL_ID_FIELD_PATTERN.lastIndex = 0;
+    for (const match of fieldBody.matchAll(OBJECT_TOOL_ID_FIELD_PATTERN)) {
+      const value = match[1];
+      if (typeof value === "string") {
+        addToolIdFact(target, value);
+      }
+    }
+    return;
+  }
+
+  for (const value of extractQuotedValues(fieldBody)) {
+    addToolIdFact(target, value);
+  }
+}
+
+function addToolArrayFieldValues(
+  target: string[],
+  text: string,
+  pattern: RegExp,
+): void {
+  pattern.lastIndex = 0;
+  for (const match of text.matchAll(pattern)) {
+    const fieldName = match[1];
+    const fieldBody = match[2];
+    if (typeof fieldBody !== "string") {
+      continue;
+    }
+    addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
+  }
+}
+
+function addProviderToolArrayFieldValues(
   target: string[],
   text: string,
   pattern: RegExp,
@@ -157,7 +240,7 @@ function addArrayFieldValues(
       continue;
     }
     for (const value of extractQuotedValues(fieldBody)) {
-      addContractFact(target, value);
+      addToolIdFact(target, value);
     }
   }
 }
@@ -194,8 +277,8 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
 
   addPatternMatches(modelIds, text, MODEL_FIELD_PATTERN, 1);
   addPatternMatches(modelIds, text, MODEL_ID_PATTERN);
-  addArrayFieldValues(toolIds, text, TOOL_IDS_FIELD_PATTERN);
-  addArrayFieldValues(providerToolIds, text, PROVIDER_TOOL_IDS_FIELD_PATTERN);
+  addToolArrayFieldValues(toolIds, text, TOOL_IDS_FIELD_PATTERN);
+  addProviderToolArrayFieldValues(providerToolIds, text, PROVIDER_TOOL_IDS_FIELD_PATTERN);
   addPatternMatches(toolIds, text, INTEGRATION_TOOL_ID_PATTERN);
   addPatternMatches(importPaths, text, IMPORT_FROM_PATTERN, 1);
   addPatternMatches(importPaths, text, BARE_IMPORT_PATTERN, 1);
