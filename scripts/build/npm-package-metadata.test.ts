@@ -146,6 +146,41 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
   }
 });
 
+Deno.test("npm publish orders extensions before the root package", async () => {
+  const packageRoot = await Deno.makeTempDir();
+
+  try {
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-zeta`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-alpha`, {
+      recursive: true,
+    });
+
+    const output = await new Deno.Command("bash", {
+      args: ["-c", 'source "$SCRIPT_PATH"\npackage_dirs'],
+      cwd: packageRoot,
+      env: {
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    assertEquals(
+      new TextDecoder().decode(output.stdout).trim().split("\n"),
+      [
+        "npm/extensions/ext-alpha",
+        "npm/extensions/ext-zeta",
+        "npm",
+      ],
+    );
+  } finally {
+    await Deno.remove(packageRoot, { recursive: true });
+  }
+});
+
 // Extensions whose implementations are statically imported by
 // src/extensions/builtin-extensions.ts and therefore ship inside the root
 // npm package. Their dependencies must stay in root; every other workspace
@@ -415,7 +450,7 @@ describe("npm supply-chain policy", () => {
     assertEquals(source.includes("importFirstPartyExtensionModule"), false);
   });
 
-  it("packs auto-loaded extension tarballs for npm install smoke tests", async () => {
+  it("packs and exercises auto-loaded extensions in npm install smoke tests", async () => {
     const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
@@ -436,6 +471,9 @@ describe("npm supply-chain policy", () => {
         tarballName,
       );
     }
+
+    assertStringIncludes(source, "CodeParser was not registered");
+    assertStringIncludes(source, "app/page.tsx");
   });
 
   it("loads CLI command handlers after global routing decisions", async () => {
