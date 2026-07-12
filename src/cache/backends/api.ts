@@ -9,6 +9,7 @@ import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -20,7 +21,6 @@ const ERROR_BODY_MAX_LENGTH = 500;
 
 type CacheRequestContext = {
   token?: string;
-  tokenTrust?: "verified-control-plane";
   projectId?: string;
   projectSlug?: string;
 };
@@ -99,20 +99,22 @@ export class ApiCacheBackend implements CacheBackend {
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
-    const verifiedRequestToken = reqCtx?.tokenTrust === "verified-control-plane"
-      ? reqCtx.token
-      : undefined;
-    // Ordinary proxy headers are not cache credentials. Only a request token
-    // explicitly marked after control-plane verification may override the host.
-    const token = verifiedRequestToken || hostToken || envToken || null;
+    const verifiedCredential = getVerifiedCacheApiCredential();
+    const verifiedRequestToken = verifiedCredential?.token;
+    // The private verified-request context cannot be changed through the
+    // globally exposed filesystem request context.
+    const token = verifiedRequestToken || hostToken || reqCtx?.token || envToken || null;
     const tokenSource = verifiedRequestToken
       ? "verified-control-plane"
       : hostToken
       ? "host-env"
+      : reqCtx?.token
+      ? "request"
       : envToken
       ? "env"
       : "none";
-    const projectRef = reqCtx?.projectId || reqCtx?.projectSlug ||
+    const projectRef = verifiedCredential?.projectId || verifiedCredential?.projectSlug ||
+      reqCtx?.projectId || reqCtx?.projectSlug ||
       tryGetCacheKeyContext()?.projectId || null;
 
     if (!token || !projectRef) {

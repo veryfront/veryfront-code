@@ -5,6 +5,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
 import {
@@ -1888,17 +1889,21 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("uses the verified request credential for proxy and explicit agent source contexts", async () => {
+    let observedCacheCredential:
+      | ReturnType<typeof getVerifiedCacheApiCredential>
+      | undefined;
     const runWithContextCalls: Array<{
       token?: string;
       productionMode?: boolean;
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
-      tokenTrust?: "verified-control-plane";
     }> = [];
 
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async () => {
+        observedCacheCredential = getVerifiedCacheApiCredential();
+      },
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
@@ -1968,7 +1973,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     };
 
     const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
     Deno.env.set("VERYFRONT_API_TOKEN", "expired-host-token");
+    Deno.env.set(signingKeyEnv, publicKeyPem);
     let result;
     try {
       result = await handler.handle(
@@ -1985,18 +1993,73 @@ describe("server/handlers/request/agent-stream.handler", () => {
     } finally {
       if (originalHostToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
       else Deno.env.set("VERYFRONT_API_TOKEN", originalHostToken);
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
     }
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(runWithContextCalls.length, 2);
     assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
-    assertEquals(runWithContextCalls[0]?.tokenTrust, "verified-control-plane");
     assertEquals(runWithContextCalls[0]?.branch, "feature-a");
     assertEquals(runWithContextCalls[1]?.token, "request-scoped-user-token");
-    assertEquals(runWithContextCalls[1]?.tokenTrust, "verified-control-plane");
     assertEquals(runWithContextCalls[1]?.branch, "main");
     assertEquals(runWithContextCalls[1]?.productionMode, false);
+    assertEquals(observedCacheCredential, {
+      token: "request-scoped-user-token",
+      projectId: "proj-1",
+      projectSlug: "demo-project",
+    });
+    assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("does not promote an unsigned header fallback into the verified cache scope", async () => {
+    let observedCacheCredential:
+      | ReturnType<typeof getVerifiedCacheApiCredential>
+      | undefined;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        observedCacheCredential = getVerifiedCacheApiCredential();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime should not be created for an unknown agent");
+      },
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "unsigned-header-token";
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 404);
+    assertEquals(observedCacheCredential, undefined);
+    assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 
   it("returns 409 when the same run is started twice", async () => {

@@ -34,7 +34,6 @@ class TestHandler extends BaseHandler {
     fn: () => Promise<T>,
     options?: {
       requireToken?: boolean;
-      tokenTrust?: "verified-control-plane";
     },
   ): Promise<T> {
     return this.withProxyContext(ctx, fn, options);

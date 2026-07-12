@@ -1,4 +1,5 @@
 import {
+  type ControlPlaneClaims,
   type ControlPlaneSurface,
   verifyControlPlaneJws,
 } from "#veryfront/channels/control-plane.ts";
@@ -9,7 +10,63 @@ import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts"
 
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
+const CONTROL_PLANE_SIGNING_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const logger = serverLogger.component("internal-agents-auth");
+
+declare const verifiedControlPlaneRequestBrand: unique symbol;
+
+export type VerifiedControlPlaneRequestClaims = ControlPlaneClaims & {
+  readonly [verifiedControlPlaneRequestBrand]: true;
+};
+
+export interface VerifiedControlPlaneCacheCredential {
+  readonly token: string;
+  readonly projectId: string;
+  readonly projectSlug: string;
+}
+
+interface VerifiedControlPlaneCacheCredentialGrant {
+  readonly credential: VerifiedControlPlaneCacheCredential | null;
+  readonly expiresAt: number;
+}
+
+const verifiedCacheCredentials = new WeakMap<
+  VerifiedControlPlaneRequestClaims,
+  VerifiedControlPlaneCacheCredentialGrant
+>();
+
+function extractVerifiedCacheCredential(
+  rawBody: string,
+  claims: ControlPlaneClaims,
+): VerifiedControlPlaneCacheCredential | null {
+  try {
+    const body = JSON.parse(rawBody) as Record<string, unknown>;
+    const credentials = body.credentials;
+    if (!credentials || typeof credentials !== "object" || Array.isArray(credentials)) {
+      return null;
+    }
+
+    const token = (credentials as Record<string, unknown>).authToken;
+    if (typeof token !== "string" || token.length === 0) return null;
+
+    return Object.freeze({
+      token,
+      projectId: claims.project_id,
+      projectSlug: claims.aud,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export function consumeVerifiedControlPlaneCacheCredential(
+  claims: VerifiedControlPlaneRequestClaims,
+): VerifiedControlPlaneCacheCredential | null {
+  const grant = verifiedCacheCredentials.get(claims);
+  verifiedCacheCredentials.delete(claims);
+  if (!grant || grant.expiresAt <= Math.floor(Date.now() / 1000)) return null;
+  return grant.credential;
+}
 
 export class ControlPlaneRequestError extends Error {
   readonly status: number;
@@ -25,8 +82,8 @@ export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): strin
   // Project env overlays intentionally hide host secrets from request-scoped reads.
   // Control-plane verification is framework-owned config, so it must fall back to
   // the host environment when the runtime adapter env is overlay-aware.
-  return ctx.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-    getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  return ctx.adapter.env.get(CONTROL_PLANE_SIGNING_KEY_ENV) ??
+    getHostEnv(CONTROL_PLANE_SIGNING_KEY_ENV);
 }
 
 export async function verifyControlPlaneRequest(
@@ -37,7 +94,8 @@ export async function verifyControlPlaneRequest(
     expectedSubject?: string;
     expectedSurface?: ControlPlaneSurface;
   } = {},
-) {
+): Promise<VerifiedControlPlaneRequestClaims> {
+  const hostPublicKeyPem = getHostEnv(CONTROL_PLANE_SIGNING_KEY_ENV);
   const publicKeyPem = getControlPlaneVerificationPublicKey(ctx);
   if (!publicKeyPem) {
     throw new ControlPlaneRequestError(
@@ -57,14 +115,41 @@ export async function verifyControlPlaneRequest(
   }
 
   try {
-    return await verifyControlPlaneJws(controlPlaneJws, rawBody, {
+    const verificationOptions = {
       audience: projectSlug,
       expectedProjectId: ctx.projectId,
       expectedSubject: options.expectedSubject,
       expectedSurface: options.expectedSurface,
       publicKeyPem,
       maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
-    });
+    };
+    const claims = await verifyControlPlaneJws(
+      controlPlaneJws,
+      rawBody,
+      verificationOptions,
+    );
+    const verifiedClaims = claims as VerifiedControlPlaneRequestClaims;
+    let hostVerified = hostPublicKeyPem === publicKeyPem && Boolean(hostPublicKeyPem);
+    if (hostPublicKeyPem && !hostVerified) {
+      try {
+        await verifyControlPlaneJws(controlPlaneJws, rawBody, {
+          ...verificationOptions,
+          publicKeyPem: hostPublicKeyPem,
+        });
+        hostVerified = true;
+      } catch {
+        // Compatibility verification can still succeed through the adapter,
+        // but only the host key may mint the cache credential capability.
+      }
+    }
+    verifiedCacheCredentials.set(
+      verifiedClaims,
+      Object.freeze({
+        credential: hostVerified ? extractVerifiedCacheCredential(rawBody, claims) : null,
+        expiresAt: claims.exp,
+      }),
+    );
+    return verifiedClaims;
   } catch (error) {
     // verifyControlPlaneJws performs only crypto and claim validation with no
     // external I/O — any error it throws means the signature is invalid.
