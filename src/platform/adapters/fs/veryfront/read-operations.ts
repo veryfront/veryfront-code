@@ -90,6 +90,19 @@ export class ReadOperations {
     );
   }
 
+  readOptionalTextFile(path: string): Promise<string> {
+    return withSpan(
+      "fs.veryfront.readOptionalTextFile",
+      async () => {
+        const normalizedPath = this.normalizer.normalize(path);
+        const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
+        logger.debug("readOptionalTextFile called", { path, normalizedPath, apiPath });
+        return await this.client.getOptionalFileContent(apiPath);
+      },
+      { "fs.path": path },
+    );
+  }
+
   private getRequestScopedHit(
     normalizedPath: string,
     cacheKey: string,

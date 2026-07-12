@@ -1147,6 +1147,10 @@ type StyleArtifactSourceProvider = {
   getContentContext?: () => ResolvedContentContext | null;
 };
 
+type OptionalTextFileReader = {
+  readOptionalTextFile(path: string): Promise<string>;
+};
+
 const DEFAULT_STYLESHEET_PATHS = [
   "globals.css",
   "global.css",
@@ -1207,14 +1211,35 @@ function textFromFileContent(content: Uint8Array | string): string {
   return typeof content === "string" ? content : new TextDecoder().decode(content);
 }
 
+function getOptionalTextFileReader(ctx: HandlerContext): OptionalTextFileReader | null {
+  const wrappedFs = ctx.adapter.fs as {
+    getUnderlyingAdapter?: () => unknown;
+    readOptionalTextFile?: OptionalTextFileReader["readOptionalTextFile"];
+  };
+
+  if (typeof wrappedFs.readOptionalTextFile === "function") {
+    return { readOptionalTextFile: wrappedFs.readOptionalTextFile.bind(wrappedFs) };
+  }
+
+  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+  const underlying = wrappedFs.getUnderlyingAdapter() as Partial<OptionalTextFileReader>;
+  if (typeof underlying.readOptionalTextFile !== "function") return null;
+
+  return { readOptionalTextFile: underlying.readOptionalTextFile.bind(underlying) };
+}
+
 async function readStylesheetFromAdapter(
   ctx: HandlerContext,
   stylesheetPath?: string,
 ): Promise<string | undefined> {
+  const optionalReader = getOptionalTextFileReader(ctx);
+
   for (const path of stylesheetCandidatePaths(stylesheetPath)) {
     try {
-      const content = await ctx.adapter.fs.readFile(path);
-      if (content) return textFromFileContent(content);
+      const content = optionalReader
+        ? await optionalReader.readOptionalTextFile(path)
+        : textFromFileContent(await ctx.adapter.fs.readFile(path));
+      if (content) return content;
     } catch {
       // keep searching
     }
