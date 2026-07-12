@@ -7,6 +7,7 @@ import {
   getCachedConfigSync,
   getConfig,
   mergeConfigs,
+  rewriteBareVeryfrontConfigImports,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
@@ -45,6 +46,67 @@ export default config as const;
       assert(result.includes('"keep as const text"'));
       assertEquals(module.default.title, "Typed Project");
       assertEquals(module.default.description, "keep as const text");
+    });
+  });
+
+  describe("rewriteBareVeryfrontConfigImports", () => {
+    afterAll(async () => {
+      await stopEsbuild();
+    });
+
+    it("rewrites bare veryfront specifiers to a loadable shim", () => {
+      const rewritten = rewriteBareVeryfrontConfigImports(
+        'import { defineConfig } from "veryfront";\nexport default defineConfig({});',
+      );
+
+      assert(!rewritten.includes('"veryfront"'), "bare specifier must be replaced");
+      assert(rewritten.includes("data:text/javascript,"), "specifier must point at the shim");
+    });
+
+    it("handles single quotes and leaves other specifiers untouched", () => {
+      const rewritten = rewriteBareVeryfrontConfigImports(
+        "import { defineConfig } from 'veryfront';\nimport other from './local.ts';\nimport 'veryfront';",
+      );
+
+      assert(!rewritten.includes("'veryfront'"));
+      assert(rewritten.includes("./local.ts"), "relative imports must stay untouched");
+    });
+
+    it("does not rewrite veryfront subpath or lookalike specifiers", () => {
+      const source =
+        'import { a } from "veryfront/head";\nimport { b } from "not-veryfront";\nconst s = "veryfront";';
+      assertEquals(rewriteBareVeryfrontConfigImports(source), source);
+    });
+
+    it("produces a module whose defineConfig behaves as identity end to end", async () => {
+      const source = [
+        'import { defineConfig } from "veryfront";',
+        'export default defineConfig({ projectSlug: "shimmed", title: "Shim" });',
+      ].join("\n");
+
+      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
+      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
+      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
+        default: { projectSlug: string; title: string };
+      };
+
+      assertEquals(module.default.projectSlug, "shimmed");
+      assertEquals(module.default.title, "Shim");
+    });
+
+    it("shims defineConfigWithEnv with a working environment factory", async () => {
+      const source = [
+        'import { defineConfigWithEnv } from "veryfront";',
+        "export default defineConfigWithEnv((env) => ({ title: `env:${env}` }));",
+      ].join("\n");
+
+      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
+      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
+      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
+        default: { title: string };
+      };
+
+      assert(module.default.title.startsWith("env:"), "factory must receive an env name");
     });
   });
 
