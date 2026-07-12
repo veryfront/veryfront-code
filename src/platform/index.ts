@@ -42,12 +42,9 @@ export {
   createFileSystem,
   exists,
   type FileSystem,
-  isNotFoundError,
-  lstat,
   mkdir,
   readDir,
   readTextFile,
-  realPath,
   remove,
   writeTextFile,
 } from "./compat/fs.ts";
