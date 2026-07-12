@@ -230,10 +230,9 @@ describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof createAgUiHandler, "function");
-    assertExists(Chat);
+    assertEquals(typeof Chat, "function");
     const chatRecord = Chat as unknown as Record<string, unknown>;
     const messageRecord = Message as unknown as Record<string, unknown>;
-    assertEquals(typeof chatRecord.render, "function");
     assertExists(chatRecord.Root);
     assertExists(chatRecord.MessageList);
     assertExists(chatRecord.Input);
@@ -261,6 +260,16 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+});
+
+describe("Guide: memory-and-streaming.md", () => {
+  it("uses the canonical useChat event handlers", async () => {
+    const guide = await readGuide("memory-and-streaming.md");
+
+    assertStringIncludes(guide, "handleInputChange");
+    assertStringIncludes(guide, "handleSubmit");
+    assertEquals(guide.includes("const { messages, input, onChange, onSubmit"), false);
   });
 });
 
@@ -761,7 +770,7 @@ describe("Guide: create-frontend.md", () => {
         '"use client";',
         'import { Chat, useChat } from "veryfront/chat"',
         "useChat()",
-        '<Chat {...chat} placeholder="Ask me anything..." />',
+        '<Chat chat={chat} placeholder="Ask me anything..." />',
       ]
     ) {
       assertStringIncludes(guide, snippet);

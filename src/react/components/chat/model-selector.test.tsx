@@ -1,7 +1,7 @@
 import { renderToString } from "react-dom/server";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import type { ModelOption } from "./model-selector.tsx";
+import type { ModelOption, ModelSelectorProps } from "./model-selector.tsx";
 import { ModelSelector, useModelSelector } from "./model-selector.tsx";
 
 const models: ModelOption[] = [
@@ -14,7 +14,7 @@ const models: ModelOption[] = [
 // exercise the parts that DO render server-side — the trigger, the provider,
 // and the hook-throws contract. See the reported limitation.
 
-describe("ModelSelector — preset (back-compat)", () => {
+describe("ModelSelector preset", () => {
   it("renders the pill trigger with the selected model label", () => {
     const html = renderToString(
       <ModelSelector
@@ -38,16 +38,18 @@ describe("ModelSelector — preset (back-compat)", () => {
     assertStringIncludes(html, "GPT-4o");
   });
 
-  it("honours the renderTrigger back-compat render-prop", () => {
+  it("accepts the canonical collection item renderer", () => {
+    const renderItem: NonNullable<ModelSelectorProps["renderItem"]> = ({ item, index }) => (
+      <span>{index}: {item.label}</span>
+    );
     const html = renderToString(
       <ModelSelector
         models={models}
         value="openai/gpt-4o"
         onChange={() => {}}
-        renderTrigger={({ model }) => <span>CUSTOM_TRIGGER {model?.label}</span>}
+        renderItem={renderItem}
       />,
     );
-    assertStringIncludes(html, "CUSTOM_TRIGGER");
     assertStringIncludes(html, "GPT-4o");
   });
 });
@@ -62,6 +64,7 @@ describe("ModelSelector — composability contract", () => {
       >
         <ModelSelector.Trigger />
         <ModelSelector.Content>
+          <ModelSelector.Search />
           <ModelSelector.List>
             <ModelSelector.Item model={models[0]!} />
           </ModelSelector.List>
@@ -86,7 +89,7 @@ describe("ModelSelector — composability contract", () => {
   });
 
   it("exposes every documented sub-part off the compound", () => {
-    for (const part of ["Root", "Trigger", "Content", "List", "Item"]) {
+    for (const part of ["Root", "Trigger", "Content", "Search", "List", "Item"]) {
       assertEquals(
         typeof (ModelSelector as unknown as Record<string, unknown>)[part] !==
           "undefined",

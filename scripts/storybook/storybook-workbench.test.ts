@@ -25,7 +25,10 @@ async function readText(path: string): Promise<string> {
 
 /** Slugify a story `title` to the id prefix Storybook derives from it. */
 function toStorybookId(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
+    /^-+|-+$/g,
+    "",
+  );
 }
 
 /** Recursively yield every `*.stories.tsx` file under `dir`. */
@@ -46,7 +49,9 @@ describe("Storybook UI workbench", () => {
       (m) => m[1],
     );
     assert(navIds.length > 0, "expected NavGrid ids in the Overview");
-    const dupes = [...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i))];
+    const dupes = [
+      ...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i)),
+    ];
     assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
 
     // Every linkable docs page: an autodocs story titled under one of the two
@@ -66,7 +71,11 @@ describe("Storybook UI workbench", () => {
     const navSet = new Set(navIds);
     const missing = [...expected].filter((id) => !navSet.has(id)).sort();
     const extra = [...navSet].filter((id) => !expected.has(id)).sort();
-    assertEquals(missing, [], `components with no Overview link: ${missing.join(", ")}`);
+    assertEquals(
+      missing,
+      [],
+      `components with no Overview link: ${missing.join(", ")}`,
+    );
     assertEquals(
       extra,
       [],
@@ -223,20 +232,36 @@ describe("Storybook UI workbench", () => {
     // target name. Sub-agents take one row each and turn it green.
     const target = [
       { file: "Chat", title: "Chat", names: ["Chat"] },
-      { file: "Attachment", title: "Attachment", names: ["Attachment"] },
+      {
+        file: "AttachmentPill",
+        title: "AttachmentPill",
+        names: ["AttachmentPill"],
+      },
       { file: "Markdown", title: "Markdown", names: ["Markdown"] },
       { file: "Sources", title: "Sources", names: ["Sources"] },
       { file: "Reasoning", title: "Reasoning", names: ["Reasoning"] },
       { file: "ToolCall", title: "ToolCall", names: ["ToolCall"] },
       { file: "Message", title: "Message", names: ["Message"] },
       { file: "AgentCard", title: "AgentCard", names: ["AgentCard"] },
-      { file: "AttachmentsPanel", title: "AttachmentsPanel", names: ["AttachmentsPanel"] },
+      {
+        file: "AttachmentsPanel",
+        title: "AttachmentsPanel",
+        names: ["AttachmentsPanel"],
+      },
       { file: "ChatSidebar", title: "ChatSidebar", names: ["ChatSidebar"] },
-      { file: "ModelSelector", title: "ModelSelector", names: ["ModelSelector"] },
+      {
+        file: "ModelSelector",
+        title: "ModelSelector",
+        names: ["ModelSelector"],
+      },
       { file: "AgentPicker", title: "AgentPicker", names: ["AgentPicker"] },
       { file: "ChatActions", title: "ChatActions", names: ["ChatActions"] },
       { file: "ChatInput", title: "ChatInput", names: ["ChatInput"] },
-      { file: "ChatEmptyState", title: "ChatEmptyState", names: ["ChatEmptyState"] },
+      {
+        file: "ChatEmptyState",
+        title: "ChatEmptyState",
+        names: ["ChatEmptyState"],
+      },
     ];
 
     const problems: string[] = [];
@@ -270,14 +295,14 @@ describe("Storybook UI workbench", () => {
   it("exports every target chat component from veryfront/chat (driver)", async () => {
     // The public API target. Fails until every component is exported under its
     // final name (renames landed + new components built). `\b` boundaries mean
-    // "Attachment" does NOT match "Attachment", "CodeBlock" not "RichCodeBlock".
+    // "Attachment" does not match "AttachmentPill", and "CodeBlock" does not
+    // match "RichCodeBlock".
     const publicBarrel = await readText("src/chat/index.ts");
     const targetExports = [
-      "Attachment",
+      "AttachmentPill",
       "Markdown",
       "Sources",
       "Reasoning",
-      "SkillTool",
       "ToolCall",
       "Message",
       "AgentCard",
@@ -394,7 +419,9 @@ describe("Storybook UI workbench", () => {
       }
     }
 
-    const tokenSource = await readText("src/react/components/ui/design-tokens.ts");
+    const tokenSource = await readText(
+      "src/react/components/ui/design-tokens.ts",
+    );
     const previewSource = await readText("storybook/.storybook/preview.css");
     const bridgeSource = await readText("src/studio/bridge/bridge-styles.ts");
     assertStringIncludes(tokenSource, "font-family:Inter");

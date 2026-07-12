@@ -4,10 +4,9 @@
  *
  * Render-or-compose: `<ChatInput … />` renders the batteries-included toolbar,
  * or compose your own from the sub-parts (`ChatInput.Field`, `ChatInput.Send`,
- * `ChatInput.Stop`, `ChatInput.Voice`, `ChatInput.Model`, `ChatInput.Attach`) —
- * each reads its state/handlers from `useComposerContext`, which `ChatInput`
- * provides. Every action sub-part takes `icon`, `className`, `asChild`, and an
- * `onClick(e, next)` wrap-signature.
+ * `ChatInput.Stop`, `ChatInput.Voice`, `ChatInput.Model`, `ChatInput.Attach`,
+ * `ChatInput.Export`): each reads its state/handlers from
+ * `useComposerContext`, which `ChatInput` provides.
  *
  * @module react/components/chat/composition/chat-composer
  */
@@ -16,6 +15,7 @@ import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
 import {
+  ArrowDownIcon,
   ArrowUpIcon,
   FileTextIcon,
   PaperclipIcon,
@@ -64,33 +64,6 @@ function MicGlyph(): React.ReactElement {
   );
 }
 
-/** Default export (download) glyph. */
-function ExportGlyph(): React.ReactElement {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-
-/** Icon overrides for the batteries-included `ChatInput` toolbar. */
-export interface ChatInputIcons {
-  send?: React.ReactNode;
-  attach?: React.ReactNode;
-  voice?: React.ReactNode;
-  stop?: React.ReactNode;
-  export?: React.ReactNode;
-}
-
 /** Wrap-signature onClick shared by the interactive `ChatInput` sub-parts. */
 type WrapClick = (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
 
@@ -135,87 +108,89 @@ export interface ChatInputActionProps {
   className?: string;
   asChild?: boolean;
   onClick?: WrapClick;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Send button — shows when there is input (and not streaming). */
-export const ChatInputSend = React.forwardRef<HTMLButtonElement, ChatInputActionProps>(
-  function ChatInputSend({ icon, className, asChild, onClick }, ref) {
-    const c = useComposerContext();
-    if (c.isLoading) return null;
-    if (!c.canSubmit && c.onVoice) return null;
-    const run = () => c.onSubmit();
-    const Comp = asChild ? Slot : Button;
-    return (
-      <Comp
-        ref={ref}
-        type="button"
-        variant="icon-primary"
-        on="card"
-        size="icon-lg"
-        aria-label="Send"
-        disabled={!c.canSubmit}
-        onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-        className={cn("shrink-0", className)}
-      >
-        {icon ?? <ArrowUpIcon />}
-      </Comp>
-    );
-  },
-);
+export function ChatInputSend(
+  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  if (c.isLoading) return null;
+  if (!c.canSubmit && c.onVoice) return null;
+  const run = () => c.onSubmit();
+  const Comp = asChild ? Slot : Button;
+  return (
+    <Comp
+      ref={ref}
+      type="button"
+      variant="icon-primary"
+      on="card"
+      size="icon-lg"
+      aria-label="Send"
+      disabled={!c.canSubmit}
+      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <ArrowUpIcon />}
+    </Comp>
+  );
+}
 ChatInputSend.displayName = "ChatInput.Send";
 
 /** Stop button — shows while streaming. */
-export const ChatInputStop = React.forwardRef<HTMLButtonElement, ChatInputActionProps>(
-  function ChatInputStop({ icon, className, asChild, onClick }, ref) {
-    const c = useComposerContext();
-    if (!c.isLoading) return null;
-    const run = () => c.onStop?.();
-    const Comp = asChild ? Slot : Button;
-    return (
-      <Comp
-        ref={ref}
-        type="button"
-        variant="icon-ghost"
-        size="icon-lg"
-        aria-label="Stop"
-        onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-        className={cn("shrink-0", className)}
-      >
-        {icon ?? <StopIcon />}
-      </Comp>
-    );
-  },
-);
+export function ChatInputStop(
+  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  if (!c.isLoading) return null;
+  const run = () => c.onStop?.();
+  const Comp = asChild ? Slot : Button;
+  return (
+    <Comp
+      ref={ref}
+      type="button"
+      variant="icon-ghost"
+      size="icon-lg"
+      aria-label="Stop"
+      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <StopIcon />}
+    </Comp>
+  );
+}
 ChatInputStop.displayName = "ChatInput.Stop";
 
 /** Voice button — shows when the field is empty and voice is available. */
-export const ChatInputVoice = React.forwardRef<HTMLButtonElement, ChatInputActionProps>(
-  function ChatInputVoice({ icon, className, asChild, onClick }, ref) {
-    const c = useComposerContext();
-    if (c.isLoading || c.canSubmit || !c.onVoice) return null;
-    const run = () => c.onVoice?.();
-    const Comp = asChild ? Slot : Button;
-    return (
-      <Comp
-        ref={ref}
-        type="button"
-        variant="icon-ghost"
-        on="card"
-        size="icon-lg"
-        aria-label="Voice input"
-        aria-pressed={c.isListening}
-        onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
-        className={cn(
-          "shrink-0",
-          c.isListening && "bg-[var(--primary)] text-[var(--secondary)]",
-          className,
-        )}
-      >
-        {icon ?? <MicGlyph />}
-      </Comp>
-    );
-  },
-);
+export function ChatInputVoice(
+  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  if (c.isLoading || c.canSubmit || !c.onVoice) return null;
+  const run = () => c.onVoice?.();
+  const Comp = asChild ? Slot : Button;
+  return (
+    <Comp
+      ref={ref}
+      type="button"
+      variant="icon-ghost"
+      on="card"
+      size="icon-lg"
+      aria-label="Voice input"
+      aria-pressed={c.isListening}
+      onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
+      className={cn(
+        "shrink-0",
+        c.isListening && "bg-[var(--primary)] text-[var(--secondary)]",
+        className,
+      )}
+    >
+      {icon ?? <MicGlyph />}
+    </Comp>
+  );
+}
 ChatInputVoice.displayName = "ChatInput.Voice";
 
 /** Model selector — shows when models are configured. */
@@ -312,6 +287,71 @@ export function ChatInputAttach(
   );
 }
 
+/** Props accepted by `<ChatInput.Export>`. */
+export interface ChatInputExportProps {
+  /** Messages included in the downloaded Markdown document. */
+  messages: ChatMessage[];
+  /** Override the download glyph. */
+  icon?: React.ReactNode;
+  className?: string;
+  /** Wrap the download action; call `next()` to continue. */
+  onClick?: WrapClick;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
+}
+
+/** Download the supplied conversation as Markdown. */
+export function ChatInputExport(
+  { messages, icon, className, onClick, ref }: ChatInputExportProps,
+): React.ReactElement | null {
+  if (messages.length === 0) return null;
+  const download = () => downloadMarkdown(messages);
+  return (
+    <IconButton
+      ref={ref}
+      type="button"
+      variant="icon-ghost"
+      size="icon-lg"
+      on="card"
+      onClick={(event) => onClick ? onClick(event, download) : download()}
+      aria-label="Export conversation"
+      tooltip="Export as Markdown"
+      tooltipSide="top"
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <ArrowDownIcon />}
+    </IconButton>
+  );
+}
+ChatInputExport.displayName = "ChatInput.Export";
+
+/** Props accepted by `<ChatInput.Toolbar>`. */
+export interface ChatInputToolbarProps {
+  className?: string;
+  children?: React.ReactNode;
+}
+
+/**
+ * `ChatInput.Toolbar` — a semantic layout slot for the composer's action row.
+ * Group/reorder the action sub-parts (`ChatInput.Attach`/`.Model`/`.Export`/
+ * `.Voice`/`.Send`) inside it without re-implementing the composer. Pure layout: the
+ * children read their own `ComposerContext`, so `<ChatInput.Toolbar>` just
+ * mirrors the default action-row wrapper classes.
+ */
+export function ChatInputToolbar(
+  { className, children }: ChatInputToolbarProps,
+): React.ReactElement {
+  return (
+    <div
+      role="toolbar"
+      className={cn("flex items-center gap-1.5 md:gap-2", className)}
+    >
+      {children}
+    </div>
+  );
+}
+ChatInputToolbar.displayName = "ChatInput.Toolbar";
+
 // ---------------------------------------------------------------------------
 // ChatInput — batteries-included composer
 // ---------------------------------------------------------------------------
@@ -355,20 +395,14 @@ export interface ChatInputProps {
   attachments?: AttachmentInfo[];
   onRemoveAttachment?: (id: string) => void;
 
-  // Export
-  showExport?: boolean;
-  messages?: ChatMessage[];
-
   // Customisation
-  /** Override the toolbar button icons. */
-  icons?: ChatInputIcons;
   /** Wrap the built-in attachment `+` click; call `next()` to run it. */
   onAttachClick?: WrapClick;
-  /** Wrap the built-in export click; call `next()` to run it. */
-  onExportClick?: WrapClick;
 
   className?: string;
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Composer state the context is built from (shared by `ChatInput` + `ChatInput.Root`). */
@@ -446,6 +480,8 @@ function useComposerValue(p: ComposerStateProps): ComposerContextValue {
 export interface ChatInputRootProps extends ComposerStateProps {
   className?: string;
   children: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -454,54 +490,50 @@ export interface ChatInputRootProps extends ComposerStateProps {
  * `ChatInput.Field` + the toolbar sub-parts yourself (like `Message.Root`). The
  * default `<ChatInput>` is exactly this Root plus the standard body.
  */
-export const ChatInputRoot = React.forwardRef<HTMLDivElement, ChatInputRootProps>(
-  function ChatInputRoot({ className, children, ...state }, ref) {
-    const ctxValue = useComposerValue(state);
-    return (
-      <ComposerContextProvider value={ctxValue}>
-        <div ref={ref} className={cn("flex-shrink-0 pb-6 pt-2", className)}>
-          <div className="mx-auto w-full max-w-[850px] px-4">{children}</div>
-        </div>
-      </ComposerContextProvider>
-    );
-  },
-);
+export function ChatInputRoot(
+  { className, children, ref, ...state }: ChatInputRootProps,
+): React.ReactElement {
+  const ctxValue = useComposerValue(state);
+  return (
+    <ComposerContextProvider value={ctxValue}>
+      <div ref={ref} className={cn("flex-shrink-0 pb-6 pt-2", className)}>
+        <div className="mx-auto w-full max-w-[850px] px-4">{children}</div>
+      </div>
+    </ComposerContextProvider>
+  );
+}
 ChatInputRoot.displayName = "ChatInput.Root";
 
 /** Render the composer. */
-const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
-  function ChatInput(
-    {
-      input,
-      onChange,
-      onSubmit,
-      isLoading = false,
-      placeholder = "Type a message...",
-      theme,
-      stop,
-      onVoice,
-      isListening = false,
-      transcript,
-      models,
-      model,
-      onModelChange,
-      toolbarStart,
-      onAttach,
-      onSelectAttachment,
-      onDrop,
-      attachAccept,
-      attachments,
-      onRemoveAttachment,
-      showExport = false,
-      messages,
-      icons,
-      onAttachClick,
-      onExportClick,
-      className,
-      children,
-    },
+function ChatInputBase(
+  {
+    input,
+    onChange,
+    onSubmit,
+    isLoading = false,
+    placeholder = "Type a message...",
+    theme,
+    stop,
+    onVoice,
+    isListening = false,
+    transcript,
+    models,
+    model,
+    onModelChange,
+    toolbarStart,
+    onAttach,
+    onSelectAttachment,
+    onDrop,
+    attachAccept,
+    attachments,
+    onRemoveAttachment,
+    onAttachClick,
+    className,
+    children,
     ref,
-  ) {
+  }: ChatInputProps,
+): React.ReactElement {
+  {
     // Return focus to the editor after attaching (menu pick or drop) so the
     // user can keep typing without clicking back into the field.
     const fieldContainerRef = React.useRef<HTMLDivElement>(null);
@@ -520,7 +552,13 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
     );
     const handleAttach = withFocus(onAttach);
 
-    const { isDragActive, dragProps } = useDropZone(withFocus(onDrop ?? onAttach));
+    const {
+      isDragActive,
+      onDragEnter,
+      onDragLeave,
+      onDragOver,
+      onDrop: onFileDrop,
+    } = useDropZone(withFocus(onDrop ?? onAttach));
     const ctxValue = useComposerValue({
       input,
       onChange,
@@ -539,10 +577,6 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
       attachments,
       onRemoveAttachment,
     });
-
-    const exportDownload = () => {
-      if (messages) downloadMarkdown(messages);
-    };
 
     return (
       <ComposerContextProvider value={ctxValue}>
@@ -572,7 +606,10 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
               }}
             >
               <div
-                {...dragProps}
+                onDragEnter={onDragEnter}
+                onDragLeave={onDragLeave}
+                onDragOver={onDragOver}
+                onDrop={onFileDrop}
                 ref={fieldContainerRef}
                 className={cn(
                   "relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 py-2 shadow-sm transition-all md:px-4 md:py-3",
@@ -588,35 +625,19 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
                 {/* Footer toolbar — left: + menu + agent selector; right: model + submit */}
                 <div className="mt-2.5 flex min-h-[44px] items-center justify-between gap-1.5 md:gap-2">
                   <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
-                    <ChatInputAttach icon={icons?.attach} onClick={onAttachClick} />
+                    <ChatInputAttach onClick={onAttachClick} />
                     {toolbarStart}
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
                     <ChatInputModel />
-                    {showExport && messages && messages.length > 0 && (
-                      <IconButton
-                        type="button"
-                        variant="icon-ghost"
-                        size="icon-lg"
-                        on="card"
-                        onClick={(e) =>
-                          onExportClick ? onExportClick(e, exportDownload) : exportDownload()}
-                        aria-label="Export conversation"
-                        tooltip="Export as Markdown"
-                        tooltipSide="top"
-                        className="shrink-0"
-                      >
-                        {icons?.export ?? <ExportGlyph />}
-                      </IconButton>
-                    )}
                     {
                       /* Streaming → Stop · empty (+voice) → Mic · value → Send
                         (Studio PromptFormActions). Each sub-part self-gates. */
                     }
-                    <ChatInputStop icon={icons?.stop} />
-                    <ChatInputVoice icon={icons?.voice} />
-                    <ChatInputSend icon={icons?.send} className={theme?.button} />
+                    <ChatInputStop />
+                    <ChatInputVoice />
+                    <ChatInputSend className={theme?.button} />
                   </div>
                 </div>
               </div>
@@ -625,13 +646,13 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
         </div>
       </ComposerContextProvider>
     );
-  },
-);
+  }
+}
 ChatInputBase.displayName = "ChatInput";
 
 /**
  * ChatInput — render `<ChatInput … />` for the default composer, or compose
- * `ChatInput.Field` + `ChatInput.Send`/`Stop`/`Voice`/`Model`/`Attach`.
+ * `ChatInput.Field` + `ChatInput.Send`/`Stop`/`Voice`/`Model`/`Attach`/`Export`.
  */
 export const ChatInput = Object.assign(ChatInputBase, {
   Root: ChatInputRoot,
@@ -641,4 +662,6 @@ export const ChatInput = Object.assign(ChatInputBase, {
   Voice: ChatInputVoice,
   Model: ChatInputModel,
   Attach: ChatInputAttach,
+  Export: ChatInputExport,
+  Toolbar: ChatInputToolbar,
 });

@@ -39,7 +39,7 @@ jobs:
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -271,8 +271,10 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Build npm packages
-        run: deno task build:npm
+      - name: Install TypeScript toolchain
+        run: npm --prefix storybook ci --ignore-scripts
+      - name: Check published package types
+        run: deno task typecheck:consumer
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 

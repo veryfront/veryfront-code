@@ -16,8 +16,7 @@ const importCode = `import { Markdown } from "veryfront/react/components/chat"`;
 
 const compositionTree =
   `Markdown  <- prose renderer; no exported sub-parts — configure it with props
-  +-- children         <- the markdown string to render (GFM, highlight, mermaid)
-  +-- enableMermaid    <- toggle client-side mermaid diagrams (default true)
+  +-- children         <- the markdown string to render (GFM + highlighting)
   +-- renderCodeBlock  <- swap the fenced-code renderer (defaults to CodeBlock)
   +-- components        <- override element renderers (anchor / table / heading / …)
   +-- remarkPlugins / rehypePlugins  <- extra plugins, appended to the built-ins
@@ -28,7 +27,7 @@ function MarkdownDocsPage() {
     <DocsPage>
       <DocsHero
         title="Markdown"
-        lead="Renders chat markdown — GitHub-flavored syntax, syntax-highlighted code, tables, and mermaid diagrams. Fenced code renders through the shiki-based `CodeBlock` primitive (UI/CodeBlock)."
+        lead="Renders chat markdown with GitHub-flavored syntax, syntax-highlighted code, and tables. Fenced code renders through the shiki-based `CodeBlock` primitive (UI/CodeBlock)."
       />
 
       <DocsSection
@@ -55,12 +54,6 @@ function MarkdownDocsPage() {
               name: "children",
               type: "string",
               description: "Markdown content to render",
-            },
-            {
-              name: "enableMermaid",
-              type: "boolean",
-              default: "true",
-              description: "Render mermaid diagrams (client-side only)",
             },
             {
               name: "renderCodeBlock",

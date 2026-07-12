@@ -165,3 +165,42 @@ describe("chat composability contract", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// The acid test (leaf-override probe). §0.1: "change any leaf X on any node Y,
+// in place, without re-implementing its parent Z." Proven here on the `Sources`
+// collection exemplar (the K0 4-tier reference): a hand-written leaf swapped for
+// `Sources.Pill` still receives the working list state from `useSources()` —
+// i.e. overriding one leaf loses no sibling behaviour. Per-component acid tests
+// live in each component's own `*.test.tsx` (E4); this is the cross-cutting
+// canary that the pattern itself holds.
+// ---------------------------------------------------------------------------
+describe("chat composability contract — acid test (leaf override)", () => {
+  it("a swapped Sources leaf still reads working context", () => {
+    const sources = [
+      { title: "Alpha", url: "https://a.example" },
+      { title: "Beta", url: "https://b.example" },
+    ];
+
+    // A bespoke leaf — nothing like the built-in Pill — reads the same context.
+    function CustomLeaf({ index }: { index: number }) {
+      const { sources } = useSources();
+      const source = sources[index];
+      return <li data-custom="">{source ? `${index}:${source.title}` : ""}</li>;
+    }
+
+    const html = renderToString(
+      <Sources.Root sources={sources}>
+        <Sources.List>
+          {sources.map((_, i) => <CustomLeaf key={i} index={i} />)}
+        </Sources.List>
+      </Sources.Root>,
+    );
+
+    // The override rendered from context (sibling state intact), and the default
+    // Pill anatomy was replaced — not duplicated.
+    assert(html.includes("0:Alpha"), "custom leaf must read context state");
+    assert(html.includes("1:Beta"), "custom leaf must read context state");
+    assert(html.includes('data-custom=""'), "custom leaf must render in place");
+  });
+});

@@ -14,8 +14,31 @@ import {
   userMessagePayload,
 } from "./use-chat.ts";
 
-const _useChatResultMatchesChatProps: ChatProps = {} as UseChatResult;
-void _useChatResultMatchesChatProps;
+const _chatPropsAcceptsWholeSession: ChatProps = { chat: {} as UseChatResult };
+type RemovedFlatChatKeys = Extract<
+  keyof ChatProps,
+  | "messages"
+  | "input"
+  | "onChange"
+  | "onSubmit"
+  | "sendMessage"
+  | "stop"
+  | "reload"
+  | "setInput"
+  | "model"
+  | "activeModel"
+  | "onModelChange"
+  | "inferenceMode"
+>;
+type RemovedSessionAliases = Extract<
+  keyof UseChatResult,
+  "onChange" | "onSubmit" | "onModelChange"
+>;
+const _flatChatKeysAreRemoved: RemovedFlatChatKeys extends never ? true : false = true;
+const _sessionAliasesAreRemoved: RemovedSessionAliases extends never ? true : false = true;
+void _chatPropsAcceptsWholeSession;
+void _flatChatKeysAreRemoved;
+void _sessionAliasesAreRemoved;
 
 describe("use-chat internal state helpers", () => {
   it("isLatestRequest only accepts matching request ids", () => {

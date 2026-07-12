@@ -12,7 +12,7 @@
  *
  * export default function Page() {
  *   const chat = useChat();
- *   return <Chat messages={chat.messages} input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />;
+ *   return <Chat chat={chat} />;
  * }
  * ```
  */
@@ -55,8 +55,8 @@ export type { MDXProviderProps } from "./components/MDXProvider.tsx";
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export { Chat, ChatComponents } from "./components/chat/chat.tsx";
-export type { ChatProps } from "./components/chat/chat.tsx";
+export { Chat } from "./components/chat/chat.tsx";
+export type { ChatAgentInfo, ChatProps } from "./components/chat/chat.tsx";
 
 // Chat — Composition building blocks
 export {
@@ -73,12 +73,16 @@ export {
 export type {
   ChatEmptyProps,
   ChatIfProps,
+  ChatInputExportProps,
   ChatInputProps,
+  ChatMessageListContentProps,
   ChatMessageListProps,
   ChatRootProps,
   ErrorBannerProps,
   MessageRootProps,
+  MessageTokensProps,
   ModelAvatarProps,
+  TokenRowProps,
 } from "./components/chat/chat.tsx";
 
 // Chat — Contexts
@@ -92,11 +96,13 @@ export {
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
+  useMessageParts,
 } from "./components/chat/chat.tsx";
 export type {
   ChatContextValue,
   ComposerContextValue,
   MessageContextValue,
+  MessagePartsData,
 } from "./components/chat/chat.tsx";
 
 // Chat — Sub-components
@@ -124,7 +130,7 @@ export {
   MessageFeedback,
   ModelSelector,
   QuickActions,
-  ReasoningCard,
+  Reasoning,
   RichCodeBlock,
   Shimmer,
   Sources,
@@ -132,18 +138,21 @@ export {
   Suggestion,
   Suggestions,
   TabSwitcher,
-  ToolCallCard,
+  ToolCall,
   ToolStatusBadge,
+  useReasoning,
+  useToolCall,
 } from "./components/chat/chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
   AttachmentsPanelProps,
+  BranchPickerActionProps,
+  BranchPickerCountProps,
   BranchPickerProps,
   ChatSidebarComponent,
   ChatSidebarEmptyProps,
   ChatSidebarGroupProps,
-  ChatSidebarIcons,
   ChatSidebarItemProps,
   ChatSidebarListProps,
   ChatSidebarNewButtonProps,
@@ -155,21 +164,32 @@ export type {
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
+  InlineCitationCardProps,
   InlineCitationProps,
+  InlineCitationTriggerProps,
+  MessageActionBarActionProps,
   MessageActionBarProps,
   MessageEditFormProps,
+  MessageFeedbackActionProps,
   MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  ModelSelectorSearchProps,
   PartGroup,
   QuickAction,
   QuickActionsProps,
+  ReasoningContextValue,
+  ReasoningProps,
+  ReasoningTriggerProps,
   Source,
   SourcesProps,
   StepIndicatorProps,
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
+  ToolCallContextValue,
+  ToolCallProps,
+  ToolCallTriggerProps,
   UploadedFile,
 } from "./components/chat/chat.tsx";
 

@@ -3,6 +3,16 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as chatModule from "./index.ts";
 import * as chatUI from "#veryfront/react/components/chat/chat.tsx";
+import * as componentsChatModule from "veryfront/components/chat";
+import * as reactComponentsChatModule from "veryfront/react/components/chat";
+import type {
+  UseConversationChatOptions as ComponentsChatOptions,
+  UseConversationChatResult as ComponentsChatResult,
+} from "veryfront/components/chat";
+import type {
+  UseConversationChatOptions as ReactComponentsChatOptions,
+  UseConversationChatResult as ReactComponentsChatResult,
+} from "veryfront/react/components/chat";
 import * as agentCardModule from "#veryfront/react/components/chat/agent-card.tsx";
 import * as errorBoundaryModule from "#veryfront/react/components/chat/error-boundary.tsx";
 import * as useChatModule from "#veryfront/agent/react/use-chat/index.ts";
@@ -12,16 +22,21 @@ import * as useCompletionModule from "#veryfront/agent/react/use-completion.ts";
 import * as useStreamingModule from "#veryfront/agent/react/use-streaming.ts";
 import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts";
 
+const _componentsChatOptions: ComponentsChatOptions = {};
+const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatOptions;
+const _componentsChatResult = null as unknown as ComponentsChatResult;
+const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
+void _reactComponentsChatOptions;
+void _reactComponentsChatResult;
+
 const expectedRuntimeExports = [
-  // Target component names (renamed public API; v1 aliases retained below).
-  "Attachment",
+  // Canonical component names.
   "AttachmentPill",
   "Reasoning",
   "ToolCall",
   "useToolCall",
   "useReasoning",
   "ChatInput",
-  "ChatComposer",
   "AgentAvatar",
   "AgentPicker",
   "ChatActions",
@@ -45,7 +60,6 @@ const expectedRuntimeExports = [
   "BranchPicker",
   "Chat",
   "ChatErrorBoundary",
-  "ChatComponents",
   "ChatContextProvider",
   "ChatEmpty",
   "ChatEmptyState",
@@ -67,14 +81,12 @@ const expectedRuntimeExports = [
   "Loader",
   "Message",
   "MessageActionBar",
-  "MessageActions",
   "MessageContextProvider",
   "MessageEditForm",
   "MessageFeedback",
   "ModelAvatar",
   "ModelSelector",
   "QuickActions",
-  "ReasoningCard",
   "RichCodeBlock",
   "Shimmer",
   "SkillBadge",
@@ -85,12 +97,8 @@ const expectedRuntimeExports = [
   "Suggestion",
   "Suggestions",
   "TabSwitcher",
-  "ToolCallCard",
   "ToolStatusBadge",
   "AttachmentsPanel",
-  "UploadsPanel",
-  "StandaloneMessage",
-  "StreamingMessage",
   "buildChatStreamChunkMessageMetadata",
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
@@ -119,6 +127,7 @@ const expectedRuntimeExports = [
   "useAgentMetadata",
   "useChat",
   "useConversation",
+  "useConversationChat",
   "useConversations",
   "useConversationsContext",
   "useConversationsContextOptional",
@@ -133,6 +142,7 @@ const expectedRuntimeExports = [
   "useComposerContextOptional",
   "useMessageContext",
   "useMessageContextOptional",
+  "useMessageParts",
   "useStreaming",
   "useUpload",
   "useUploadsRegistry",
@@ -148,7 +158,7 @@ const expectedRuntimeExports = [
 ].sort();
 
 describe("chat/index.ts exports", () => {
-  it("preserves the runtime export surface for veryfront/chat", () => {
+  it("exports the canonical runtime surface for veryfront/chat", () => {
     assertEquals(Object.keys(chatModule).sort(), expectedRuntimeExports);
   });
 
@@ -174,16 +184,30 @@ describe("chat/index.ts exports", () => {
     );
   });
 
-  it("exposes deprecated message aliases as the single render-or-compose Message", () => {
-    // `Message` is both the default component (`<Message message={…} />`) and
-    // the compound root (`<Message.Root>…`). The old standalone names stay as
-    // one-release aliases, not separate implementations.
+  it("exports conversation chat through both component chat aliases", () => {
+    assertEquals(componentsChatModule.useConversationChat, chatUI.useConversationChat);
+    assertEquals(reactComponentsChatModule.useConversationChat, chatUI.useConversationChat);
+  });
+
+  it("exposes only canonical render-or-compose component names", () => {
     assertEquals(chatModule.Message, chatUI.Message);
-    assertEquals(chatModule.StandaloneMessage, chatUI.Message);
-    assertEquals(chatModule.StreamingMessage, chatUI.Message);
-    assertEquals(chatModule.ChatComposer, chatUI.ChatInput);
-    assertEquals(chatModule.ChatComponents.Composer, chatUI.ChatInput);
-    assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "object");
+    assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "function");
+    for (
+      const removed of [
+        "Attachment",
+        "ChatComponents",
+        "ChatComposer",
+        "MessageActions",
+        "ReasoningCard",
+        "StandaloneMessage",
+        "StreamingMessage",
+        "ToolCallCard",
+        "UploadsPanel",
+      ]
+    ) {
+      assertEquals(removed in chatModule, false);
+    }
+    assertEquals("Composer" in chatModule.Chat, false);
   });
 
   it("does not widen the barrel with react-only non-chat exports", () => {

@@ -10,8 +10,6 @@ export default function DocsChat() {
       agentId="rag"
       api="/api/ag-ui"
       uploadApi="/api/uploads"
-      showSteps
-      showSources
       attachAccept={ACCEPT}
       className="flex-1 min-h-0"
       placeholder="Ask anything about your documents..."

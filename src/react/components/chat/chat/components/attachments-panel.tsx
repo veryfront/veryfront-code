@@ -86,6 +86,8 @@ export interface AttachmentsPanelProps {
   className?: string;
   /** Compose your own panel; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -93,78 +95,76 @@ export interface AttachmentsPanelProps {
  * hidden file input). No children renders the default anatomy (`Empty` when the
  * list is empty, otherwise `List`); pass children to recompose.
  */
-const AttachmentsPanelRoot = React.forwardRef<HTMLDivElement, AttachmentsPanelProps>(
-  function AttachmentsPanel(
-    {
-      uploads = [],
-      loading = false,
-      onRemoveUpload,
-      onAttach,
-      attachAccept,
-      onClose,
-      className,
-      children,
-    },
+function AttachmentsPanelRoot(
+  {
+    uploads = [],
+    loading = false,
+    onRemoveUpload,
+    onAttach,
+    attachAccept,
+    onClose,
+    className,
+    children,
     ref,
-  ) {
-    const fileInputRef = React.useRef<HTMLInputElement>(null);
-    const triggerAttach = () => fileInputRef.current?.click();
+  }: AttachmentsPanelProps,
+): React.ReactElement {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const triggerAttach = () => fileInputRef.current?.click();
 
-    const context: AttachmentsPanelContextValue = {
-      uploads,
-      loading,
-      onRemoveUpload,
-      onAttach,
-      attachAccept,
-      onClose,
-      triggerAttach,
-    };
+  const context: AttachmentsPanelContextValue = {
+    uploads,
+    loading,
+    onRemoveUpload,
+    onAttach,
+    attachAccept,
+    onClose,
+    triggerAttach,
+  };
 
-    return (
-      <AttachmentsPanelContext.Provider value={context}>
-        <ChatTokens />
-        <div ref={ref} data-vf-chat="" className={cn("flex flex-col h-full", className)}>
-          {children ?? (
-            <>
-              {onClose && <AttachmentsPanelHeader />}
-              <div className="flex-1 overflow-y-auto px-4 py-4">
-                {uploads.length > 0
-                  ? <AttachmentsPanelList />
-                  : loading
-                  ? <AttachmentsPanelLoading />
-                  : <AttachmentsPanelEmpty />}
-              </div>
-            </>
-          )}
-          {onAttach && (
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={attachAccept}
-              multiple
-              aria-label="Upload file"
-              onChange={(e) => {
-                if (e.target.files?.length) onAttach(e.target.files);
-                e.target.value = "";
-              }}
-              style={{
-                position: "absolute",
-                width: 1,
-                height: 1,
-                padding: 0,
-                margin: -1,
-                overflow: "hidden",
-                clip: "rect(0,0,0,0)",
-                whiteSpace: "nowrap",
-                border: 0,
-              }}
-            />
-          )}
-        </div>
-      </AttachmentsPanelContext.Provider>
-    );
-  },
-);
+  return (
+    <AttachmentsPanelContext.Provider value={context}>
+      <ChatTokens />
+      <div ref={ref} data-vf-chat="" className={cn("flex flex-col h-full", className)}>
+        {children ?? (
+          <>
+            {onClose && <AttachmentsPanelHeader />}
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              {uploads.length > 0
+                ? <AttachmentsPanelList />
+                : loading
+                ? <AttachmentsPanelLoading />
+                : <AttachmentsPanelEmpty />}
+            </div>
+          </>
+        )}
+        {onAttach && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={attachAccept}
+            multiple
+            aria-label="Upload file"
+            onChange={(e) => {
+              if (e.target.files?.length) onAttach(e.target.files);
+              e.target.value = "";
+            }}
+            style={{
+              position: "absolute",
+              width: 1,
+              height: 1,
+              padding: 0,
+              margin: -1,
+              overflow: "hidden",
+              clip: "rect(0,0,0,0)",
+              whiteSpace: "nowrap",
+              border: 0,
+            }}
+          />
+        )}
+      </div>
+    </AttachmentsPanelContext.Provider>
+  );
+}
 AttachmentsPanelRoot.displayName = "AttachmentsPanel.Root";
 
 /** Props for `AttachmentsPanel.Header` — the title row + close button. */

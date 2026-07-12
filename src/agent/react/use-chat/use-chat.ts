@@ -103,7 +103,24 @@ export function resolveUseChatStreamHandler(
  */
 const DEFAULT_CHAT_API = "/api/ag-ui";
 
+interface ResettableUseChatResult extends UseChatResult {
+  reset: (messages?: ChatMessage[]) => void;
+}
+
 export function useChat(options: UseChatOptions = {}): UseChatResult {
+  const { reset, ...chat } = useChatState(options);
+  void reset;
+  return chat;
+}
+
+/** @internal Chat session with the reset capability used by conversation hosts. */
+export function useChatWithSessionReset(
+  options: UseChatOptions = {},
+): ResettableUseChatResult {
+  return useChatState(options);
+}
+
+function useChatState(options: UseChatOptions): ResettableUseChatResult {
   const api = options.api ?? DEFAULT_CHAT_API;
   const [messages, setMessages] = useState<ChatMessage[]>(options.initialMessages ?? []);
   const messagesRef = useRef(messages);
@@ -125,12 +142,16 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
 
+  const invalidateActiveRequest = useCallback(() => {
+    requestIdRef.current++;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
+
   // Abort in-flight request on unmount
   useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort();
-    };
-  }, []);
+    return invalidateActiveRequest;
+  }, [invalidateActiveRequest]);
 
   /**
    * Add tool output to pending tool-call parts.
@@ -230,6 +251,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           );
         }
 
+        if (!isLatestRequest(requestIdRef.current, requestId)) return;
         options.onResponse?.(response);
 
         if (!response.body) return;
@@ -239,17 +261,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         const currentMessageIdRef = { current: streamingMessageId };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
         let serverModel: string | undefined = model;
-        setActiveModel(undefined);
+        setActiveModel((current) =>
+          isLatestRequest(requestIdRef.current, requestId) ? undefined : current
+        );
 
         const handleResponse = resolveUseChatStreamHandler(options.transport);
 
         await handleResponse(response.body, {
           onMessage: (assistantMessage) => {
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const withMeta = {
               ...assistantMessage,
               metadata: { ...assistantMessage.metadata, model: serverModel },
             };
             setMessages((prev) => {
+              if (!isLatestRequest(requestIdRef.current, requestId)) return prev;
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
               return prev.map((
                 m,
@@ -266,7 +292,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             options.onFinish?.(withMeta);
           },
           onData: (eventData) => {
-            setData(eventData);
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
+            setData((current: unknown) =>
+              isLatestRequest(requestIdRef.current, requestId) ? eventData : current
+            );
             // Detect inference mode and resolved model from server metadata
             if (
               eventData &&
@@ -275,15 +304,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             ) {
               const d = eventData as { inferenceMode: string; model?: string };
               if (d.inferenceMode === "server-local" || d.inferenceMode === "cloud") {
-                setInferenceMode(d.inferenceMode);
+                const nextInferenceMode: InferenceMode = d.inferenceMode;
+                setInferenceMode((current) =>
+                  isLatestRequest(requestIdRef.current, requestId) ? nextInferenceMode : current
+                );
               }
               if (d.model) {
                 serverModel = d.model;
-                setActiveModel(d.model);
+                setActiveModel((current) =>
+                  isLatestRequest(requestIdRef.current, requestId) ? d.model : current
+                );
               }
             }
           },
           onUpdate: (parts, messageId, messageMetadata) => {
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const id = messageId ?? streamingMessageId;
             const metadata = { ...messageMetadata, model: serverModel };
 
@@ -293,11 +328,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
               if (hasAddedStreamingMessage) {
                 setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === oldId
-                      ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
-                      : m
-                  )
+                  isLatestRequest(requestIdRef.current, requestId)
+                    ? prev.map((m) =>
+                      m.id === oldId
+                        ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
+                        : m
+                    )
+                    : prev
                 );
                 return;
               }
@@ -307,32 +344,44 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [
-                ...prev,
-                {
-                  id,
-                  role: "assistant",
-                  parts,
-                  metadata,
-                  // Stamp when the turn first appears; `onMessage` preserves it.
-                  createdAt: new Date().toISOString(),
-                },
-              ]);
+              ) =>
+                isLatestRequest(requestIdRef.current, requestId)
+                  ? [
+                    ...prev,
+                    {
+                      id,
+                      role: "assistant",
+                      parts,
+                      metadata,
+                      // Stamp when the turn first appears; `onMessage` preserves it.
+                      createdAt: new Date().toISOString(),
+                    },
+                  ]
+                  : prev
+              );
               return;
             }
 
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentMessageIdRef.current
-                  ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
-                  : m
-              )
+              isLatestRequest(requestIdRef.current, requestId)
+                ? prev.map((m) =>
+                  m.id === currentMessageIdRef.current
+                    ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
+                    : m
+                )
+                : prev
             );
           },
-          onToolCall: options.onToolCall,
+          onToolCall: options.onToolCall
+            ? (arg) =>
+              isLatestRequest(requestIdRef.current, requestId)
+                ? options.onToolCall?.(arg)
+                : undefined
+            : undefined,
         });
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
+        if (!isLatestRequest(requestIdRef.current, requestId)) return;
 
         const nextError = ensureError(error);
         setError(nextError);
@@ -371,10 +420,32 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
    * Stop generation
    */
   const stop = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+    // Abort cannot retract a chunk that was already decoded. Advancing the
+    // request id also fences callbacks and state updaters queued by that chunk.
+    invalidateActiveRequest();
     setIsLoading(false);
-  }, []);
+  }, [invalidateActiveRequest]);
+
+  /**
+   * Reset state that belongs to one conversation while preserving the hook
+   * instance. This gives conversation hosts the same isolation as remounting
+   * `useChat`, including branch metadata that cannot be inferred from messages.
+   */
+  const reset = useCallback((nextMessages: ChatMessage[] = []) => {
+    invalidateActiveRequest();
+    messagesRef.current = nextMessages;
+    branchMapRef.current.clear();
+    branchKeyByMessageIdRef.current.clear();
+    pendingToolOutputsRef.current.clear();
+    setMessages(nextMessages);
+    setInput("");
+    setIsLoading(false);
+    setError(null);
+    setData(null);
+    setModel(options.model);
+    setInferenceMode("cloud");
+    setActiveModel(undefined);
+  }, [invalidateActiveRequest, options.model]);
 
   /**
    * Edit a previous user message and resubmit.
@@ -531,14 +602,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     switchBranch,
     reload,
     stop,
+    reset,
     setMessages,
     addToolOutput,
     data,
     handleInputChange,
     handleSubmit,
-    // Aliases that match ChatProps so users can spread {...chat}
-    onChange: handleInputChange,
-    onSubmit: handleSubmit,
-    onModelChange: setModel,
   };
 }

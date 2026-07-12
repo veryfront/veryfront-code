@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
 import { AgentAvatar, AgentPicker, Chat } from "veryfront/chat";
-import type { AgentOption, AttachmentInfo, ChatMessage } from "veryfront/chat";
+import type {
+  AgentOption,
+  AttachmentInfo,
+  ChatMessage,
+  UseChatResult,
+} from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -24,18 +29,30 @@ const importCode = `import { Chat } from "veryfront/chat"`;
 
 const composeVsOverrideCode = `import { Chat } from "veryfront/chat";
 
-// Compose the structure — arrange the blocks yourself with Chat.Root.
-<Chat.Root messages={messages} input={input} onChange={onChange} onSubmit={onSubmit}>
-  <Chat.MessageList messages={messages} />
-  <Chat.Input placeholder="Ask Veryfront" />
+// Compose the structure and include only the parts your layout needs.
+<Chat.Root messages={messages} input={input} onSubmit={onSubmit}>
+  <Chat.MessageList messages={messages}>
+    <Chat.MessageList.Content>
+      {messages.map((message) => (
+        <Chat.Message.Root key={message.id} message={message}>
+          <Chat.Message.Content />
+          <Chat.Message.Sources />
+          <Chat.Message.Actions />
+        </Chat.Message.Root>
+      ))}
+    </Chat.MessageList.Content>
+  </Chat.MessageList>
+  <Chat.Input.Root input={input} onChange={onChange} onSubmit={onSubmit}>
+    <Chat.Input.Field placeholder="Ask Veryfront" />
+    <Chat.Input.Toolbar>
+      <Chat.Input.Export messages={messages} />
+      <Chat.Input.Send />
+    </Chat.Input.Toolbar>
+  </Chat.Input.Root>
 </Chat.Root>
 
-// Override how a part type renders — data-driven, applied across the whole list.
-<Chat
-  messages={messages}
-  renderTool={(tool) => <MyToolCard tool={tool} />}
-  renderMessage={(message) => <MyMessageRow message={message} />}
-/>`;
+// The preset takes one complete session object.
+<Chat chat={chat} renderMessage={(message) => <MyMessageRow message={message} />} />`;
 
 const agentOptions: AgentOption[] = [
   { id: "veryfront", name: "Veryfront Agent" },
@@ -44,9 +61,9 @@ const agentOptions: AgentOption[] = [
 ];
 
 /**
- * Real `<Chat>` usage shown in each story's Code tab — driven by `useChat`, the
+ * Real `<Chat>` usage shown in each story's Code tab, driven by `useChat`, the
  * way a consumer actually wires it. Empty / Loading / Error are backend state,
- * not code differences; `extra` only adds real config props (models, sources…).
+ * not code differences; `extra` only adds supported configuration props.
  */
 function chatCode(extra = ""): string {
   return `import { Chat, useChat } from "veryfront/chat";
@@ -55,14 +72,7 @@ function ChatPanel() {
   const chat = useChat({ agentId: "veryfront", api: "/api/ag-ui" });
 
   return (
-    <Chat
-      messages={chat.messages}
-      input={chat.input}
-      onChange={chat.onChange}
-      onSubmit={chat.onSubmit}
-      isLoading={chat.isLoading}
-      error={chat.error}${extra}
-    />
+    <Chat chat={chat}${extra} />
   );
 }`;
 }
@@ -77,7 +87,6 @@ const compositionTree =
   +-- ChatMessageList  <- the conversation transcript (messages, sources, steps)
   +-- ConversationEmptyState  <- shown when messages is empty
   +-- ErrorBanner  <- shown when error is set
-  +-- QuickActions / Suggestions  <- prompt chips above the composer
   +-- ChatInput  <- input, attachments, model selector, submit / stop`;
 
 function ChatDocsPage() {
@@ -85,19 +94,19 @@ function ChatDocsPage() {
     <DocsPage>
       <DocsHero
         title="Chat"
-        lead="The `Chat` preset — a fully wired conversation UI assembled from the chat building blocks. Drive it with messages plus the input and submit handlers."
+        lead="The `Chat` preset is a fully wired conversation UI assembled from the chat building blocks. Drive it with one `useChat()` session."
       />
 
       <DocsSection
         title="Conversation"
-        description="A populated transcript with sources and reasoning steps enabled, plus a draft message in the composer."
+        description="A populated transcript with the preset's sources, reasoning steps, message actions, scroll control, and composer."
       >
         <DocsExampleAuto of={Conversation} />
       </DocsSection>
 
       <DocsSection
         title="Compose"
-        description="Drop to `Chat.Root` + the building blocks to own the layout — arrange the transcript, empty state, and composer yourself. `Chat.Root` provides the shared context."
+        description="Use `Chat.Root` and the building blocks to own the layout. Include transcript, message, and composer parts by presence."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -125,25 +134,25 @@ function ChatDocsPage() {
 
       <DocsSection
         title="Tools and Sources"
-        description="With `showSources` and `showSteps`, tool calls and citations render inline within the transcript."
+        description="The preset renders tool calls, reasoning steps, and citations when the message parts contain them."
       >
         <DocsExampleAuto of={ToolAndSources} />
       </DocsSection>
 
       <DocsSection
         title="Models and Attachments"
-        description="Supply `models` for the in-composer selector and `attachments` to render attachment pills."
+        description="Supply models through `agent` and attachments through the preset's attachment API."
       >
         <DocsExampleAuto of={ModelsAndAttachments} />
       </DocsSection>
 
       <DocsSection
-        title="Compose vs override — two altitudes"
-        description={`Two different jobs, two different tools. **Compose the structure** — arrange the transcript, empty state, and composer — with \`Chat.Root\` + the building blocks (or, per message, \`Message.Root\` + sub-parts).
+        title="Compose vs override"
+        description={`Two different jobs use two different APIs. **Compose the structure** with \`Chat.Root\`, \`Message.Root\`, and their sub-parts.
 
-**Override how a part type renders** — swap every tool card or whole message — with \`renderTool\` / \`renderMessage\`. These take a part and return a node, the right shape for data-driven rendering across a dynamic list (the same pattern as \`Message.Content\`'s function child).
+**Override repeated data rendering** with \`renderMessage\` for whole rows or a function child on \`Message.Content\` for individual message parts.
 
-Reach for children when you're laying out fixed structure; reach for \`renderTool\` / \`renderMessage\` when you're re-rendering a repeated part.`}
+Use children for fixed structure and a render callback for repeated data.`}
       >
         <DocsCode code={composeVsOverrideCode} />
       </DocsSection>
@@ -162,119 +171,36 @@ Reach for children when you're laying out fixed structure; reach for \`renderToo
           description="Preset conversation assembly (selected props)"
           props={[
             {
-              name: "messages",
-              type: "ChatMessage[]",
-              description: "The conversation transcript",
+              name: "chat",
+              type: "UseChatResult",
+              description: "Complete session returned by useChat()",
             },
             {
-              name: "input",
+              name: "agentId",
               type: "string",
-              description: "Current composer value",
+              description: "Agent id for the self-driven preset mode",
             },
             {
-              name: "onChange",
-              type: "(e) => void",
-              description: "Input change handler",
+              name: "api",
+              type: "string",
+              default: '"/api/ag-ui"',
+              description: "AG-UI endpoint for self-driven preset mode",
             },
             {
-              name: "onSubmit",
-              type: "(e?) => void | Promise<void>",
-              description: "Called when the message is sent",
+              name: "initialMessages",
+              type: "ChatMessage[]",
+              description: "Initial transcript for self-driven preset mode",
             },
             {
-              name: "stop",
-              type: "() => void",
-              description: "Abort the in-flight response",
-            },
-            {
-              name: "reload",
-              type: "() => void",
-              description: "Regenerate the last response",
-            },
-            {
-              name: "setInput",
-              type: "(value: string) => void",
-              description: "Programmatically set the composer value",
-            },
-            {
-              name: "isLoading",
-              type: "boolean",
-              description: "Whether a response is streaming",
-            },
-            {
-              name: "error",
-              type: "Error | null",
-              description: "Renders the error banner when set",
+              name: "agent",
+              type: "ChatAgentInfo",
+              description: "Agent identity, suggestions, and model options",
             },
             {
               name: "placeholder",
               type: "string",
               default: '"Type a message..."',
               description: "Composer placeholder text",
-            },
-            {
-              name: "showSources",
-              type: "boolean",
-              default: "false",
-              description: "Render inline citations / sources",
-            },
-            {
-              name: "showSteps",
-              type: "boolean",
-              default: "false",
-              description: "Render reasoning step indicators",
-            },
-            {
-              name: "showScrollButton",
-              type: "boolean",
-              default: "false",
-              description: "Show the scroll-to-bottom button",
-            },
-            {
-              name: "showExport",
-              type: "boolean",
-              default: "false",
-              description: "Show the export-as-markdown action",
-            },
-            {
-              name: "models",
-              type: "ModelOption[]",
-              description: "Options for the in-composer model selector",
-            },
-            {
-              name: "model",
-              type: "string",
-              description: "Selected model id",
-            },
-            {
-              name: "activeModel",
-              type: "string",
-              description: "Resolved model used for avatar display",
-            },
-            {
-              name: "onModelChange",
-              type: "(model: string) => void",
-              description: "Called when the model selection changes",
-            },
-            {
-              name: "attachments",
-              type: "AttachmentInfo[]",
-              description: "Attachment pills shown in the composer",
-            },
-            {
-              name: "onRemoveAttachment",
-              type: "(id: string) => void",
-              description: "Remove a pending attachment",
-            },
-            {
-              name: "quickActions",
-              type: "QuickAction[]",
-              description: "Prompt chips offered above the composer",
-            },
-            {
-              name: "onQuickAction",
-              type: "(action: QuickAction) => void",
-              description: "Called when a quick action is chosen",
             },
             {
               name: "suggestions",
@@ -287,15 +213,14 @@ Reach for children when you're laying out fixed structure; reach for \`renderToo
               description: "Called when a suggestion is chosen",
             },
             {
-              name: "renderTool",
-              type: "(tool) => ReactNode",
-              description:
-                "Override how every tool part renders (data-driven; applies to the whole conversation)",
-            },
-            {
               name: "renderMessage",
               type: "(message) => ReactNode",
               description: "Override how every message row renders",
+            },
+            {
+              name: "uploadApi",
+              type: "string",
+              description: "Endpoint for durable attachment uploads",
             },
           ]}
         />
@@ -323,8 +248,6 @@ type ChatReviewProps = {
   isLoading?: boolean;
   initializing?: boolean;
   error?: Error | null;
-  showSources?: boolean;
-  showSteps?: boolean;
   withAttachments?: boolean;
 };
 
@@ -334,8 +257,6 @@ function ChatReview({
   isLoading = false,
   initializing = false,
   error = null,
-  showSources = true,
-  showSteps = true,
   withAttachments = false,
 }: ChatReviewProps): React.ReactElement {
   const [messages, setMessages] = React.useState<ChatMessage[]>(
@@ -348,16 +269,13 @@ function ChatReview({
     withAttachments ? attachments : [],
   );
 
-  // Drag a file onto the composer (or use the `+` menu) → it lands here and
+  // Drag a file onto the composer (or use the `+` menu). It lands here and
   // renders as a pill, so drag-to-attach is fully working inside <Chat>.
   const addFiles = (list: FileList) =>
     setFiles((current) => [...current, ...filesToAttachments(list)]);
 
-  const submitMessage = React.useCallback((event?: React.FormEvent) => {
-    event?.preventDefault();
-    const text = input.trim();
-    if (!text) return;
-
+  const appendMessage = React.useCallback((text: string) => {
+    if (!text.trim()) return;
     setMessages((current) => [
       ...current,
       {
@@ -367,32 +285,58 @@ function ChatReview({
         parts: [{ type: "text", text }],
       },
     ]);
+  }, []);
+
+  const submitMessage = React.useCallback(async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    appendMessage(text);
     setInput("");
-  }, [input]);
+  }, [appendMessage, input]);
+
+  const chat = React.useMemo<UseChatResult>(() => ({
+    messages,
+    input,
+    isLoading,
+    error,
+    model,
+    activeModel: model,
+    inferenceMode: "cloud",
+    setInput,
+    setModel,
+    sendMessage: async ({ text }) => {
+      appendMessage(text);
+      setInput("");
+    },
+    editMessage: () => Promise.resolve(),
+    getBranches: () => ({ current: 1, total: 1 }),
+    switchBranch: () => {},
+    reload: async () => setMessages(initialMessages),
+    stop: () => {},
+    setMessages,
+    addToolOutput: () => {},
+    handleInputChange: createChangeHandler(setInput),
+    handleSubmit: submitMessage,
+  }), [
+    appendMessage,
+    error,
+    initialMessages,
+    input,
+    isLoading,
+    messages,
+    model,
+    submitMessage,
+  ]);
 
   return (
     <div className="vf-story-canvas">
       <div className="vf-chat-panel">
         <Chat
-          messages={messages}
-          input={input}
-          onChange={createChangeHandler(setInput)}
-          onSubmit={submitMessage}
-          reload={() => setMessages(initialMessages)}
-          stop={() => undefined}
-          onVoice={() => undefined}
-          setInput={setInput}
-          isLoading={isLoading}
+          chat={chat}
           initializing={initializing}
-          error={error}
           placeholder="Ask Veryfront"
-          showSources={showSources}
-          showSteps={showSteps}
-          showScrollButton
-          models={modelOptions}
-          model={model}
-          activeModel={model}
-          onModelChange={setModel}
+          agent={{ models: modelOptions }}
           onAttach={addFiles}
           onDrop={addFiles}
           attachments={files}
@@ -424,7 +368,7 @@ function ChatReview({
 export const Conversation: Story = {
   tags: ["!dev"],
   render: () => <ChatReview />,
-  parameters: codeParams("\n      showSources\n      showSteps"),
+  parameters: codeParams(),
 };
 
 /** Own the layout: `Chat.Root` provides context; you place the blocks. */
@@ -452,16 +396,30 @@ function ChatComposedReview(): React.ReactElement {
         <Chat.Root
           messages={messages}
           input={input}
-          onChange={createChangeHandler(setInput)}
           onSubmit={onSubmit}
         >
-          <Chat.MessageList messages={messages} showSources showSteps />
-          <Chat.Input
+          <Chat.MessageList messages={messages}>
+            <Chat.MessageList.Content>
+              {messages.map((message) => (
+                <Chat.Message.Root key={message.id} message={message}>
+                  <Chat.Message.Content />
+                  <Chat.Message.Sources />
+                  <Chat.Message.Actions />
+                </Chat.Message.Root>
+              ))}
+            </Chat.MessageList.Content>
+          </Chat.MessageList>
+          <Chat.Input.Root
             input={input}
             onChange={createChangeHandler(setInput)}
             onSubmit={onSubmit}
-            placeholder="Ask Veryfront"
-          />
+          >
+            <Chat.Input.Field placeholder="Ask Veryfront" />
+            <Chat.Input.Toolbar>
+              <Chat.Input.Export messages={messages} />
+              <Chat.Input.Send />
+            </Chat.Input.Toolbar>
+          </Chat.Input.Root>
         </Chat.Root>
       </div>
     </div>
@@ -477,9 +435,25 @@ export const Composed: Story = {
         code: `import { Chat } from "veryfront/chat";
 
 // Chat.Root provides the shared context; you arrange the blocks yourself.
-<Chat.Root messages={messages} input={input} onChange={onChange} onSubmit={onSubmit}>
-  <Chat.MessageList messages={messages} showSources showSteps />
-  <Chat.Input input={input} onChange={onChange} onSubmit={onSubmit} placeholder="Ask Veryfront" />
+<Chat.Root messages={messages} input={input} onSubmit={onSubmit}>
+  <Chat.MessageList messages={messages}>
+    <Chat.MessageList.Content>
+      {messages.map((message) => (
+        <Chat.Message.Root key={message.id} message={message}>
+          <Chat.Message.Content />
+          <Chat.Message.Sources />
+          <Chat.Message.Actions />
+        </Chat.Message.Root>
+      ))}
+    </Chat.MessageList.Content>
+  </Chat.MessageList>
+  <Chat.Input.Root input={input} onChange={onChange} onSubmit={onSubmit}>
+    <Chat.Input.Field placeholder="Ask Veryfront" />
+    <Chat.Input.Toolbar>
+      <Chat.Input.Export messages={messages} />
+      <Chat.Input.Send />
+    </Chat.Input.Toolbar>
+  </Chat.Input.Root>
 </Chat.Root>`,
       },
     },
@@ -488,14 +462,7 @@ export const Composed: Story = {
 
 export const Empty: Story = {
   tags: ["!dev"],
-  render: () => (
-    <ChatReview
-      initialMessages={[]}
-      initialInput=""
-      showSources={false}
-      showSteps={false}
-    />
-  ),
+  render: () => <ChatReview initialMessages={[]} initialInput="" />,
   parameters: codeParams(),
 };
 
@@ -512,12 +479,18 @@ export const Skeleton: Story = {
 };
 
 // App mode (`<Chat agentId>`) derives this automatically while agent metadata
-// resolves — the skeleton shows out of the box instead of flashing the idle
+// resolves, so the skeleton shows instead of flashing the idle
 // "What can I help with?" state. Here we drive it explicitly via `initializing`.
 export const Initializing: Story = {
   name: "Initializing",
   tags: ["!dev"],
-  render: () => <ChatReview initialMessages={[]} initialInput="" initializing />,
+  render: () => (
+    <ChatReview
+      initialMessages={[]}
+      initialInput=""
+      initializing
+    />
+  ),
   parameters: codeParams("\n      initializing"),
 };
 
@@ -534,16 +507,19 @@ export const ErrorState: Story = {
 
 export const ToolAndSources: Story = {
   tags: ["!dev"],
-  render: () => <ChatReview showSources showSteps />,
-  parameters: codeParams("\n      showSources\n      showSteps"),
+  render: () => <ChatReview />,
+  parameters: codeParams(),
 };
 
 export const ModelsAndAttachments: Story = {
   tags: ["!dev"],
   render: () => (
-    <ChatReview withAttachments initialInput="Review these files" />
+    <ChatReview
+      withAttachments
+      initialInput="Review these files"
+    />
   ),
   parameters: codeParams(
-    "\n      models={models}\n      onModelChange={chat.onModelChange}\n      onAttach={handleAttach}",
+    "\n      agent={{ models }}\n      onAttach={handleAttach}",
   ),
 };

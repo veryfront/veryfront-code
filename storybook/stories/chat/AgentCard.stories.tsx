@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { AgentCard } from "veryfront/chat";
+import { AgentCard, useAgentCard } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -19,7 +19,7 @@ const compositionTree =
 AgentCard.Root  <- or compose it: context (name, status, tools, messages)
   +-- AgentCard.Header     <- avatar + name (left), Status dot + label (right)
   +-- AgentCard.Reasoning  <- thinking text (renders when set)
-  +-- AgentCard.Tools      <- one ToolCall card per entry (or renderTool)
+  +-- AgentCard.Tools      <- one ToolCall card per entry
   +-- AgentCard.Body       <- the agent's message text (rendered as Markdown)`;
 
 function AgentCardDocsPage() {
@@ -27,7 +27,7 @@ function AgentCardDocsPage() {
     <DocsPage>
       <DocsHero
         title="AgentCard"
-        lead="An agent turn rendered as a `Card` wrapping the `Message` anatomy — a header (avatar + name + status) over reasoning, tool calls, and the message text."
+        lead="An agent turn rendered as a `Card` wrapping the `Message` anatomy, with a header over reasoning, tool calls, and message text."
       />
 
       <DocsSection
@@ -53,7 +53,7 @@ function AgentCardDocsPage() {
 
       <DocsSection
         title="Compose"
-        description="Drop to `AgentCard.Root` + parts to recompose the card — reorder the sections (Body over Header), or restyle a section with `className`."
+        description="Use `AgentCard.Root` and its parts to reorder or restyle the card. A custom child can read tool data with `useAgentCard()`."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -106,11 +106,6 @@ function AgentCardDocsPage() {
               description: "Reasoning text shown in the thinking indicator",
             },
             {
-              name: "renderTool",
-              type: "(toolCall: ToolCall) => React.ReactNode",
-              description: "Custom renderer for each tool call",
-            },
-            {
               name: "className",
               type: "string",
               description: "Additional class name for the container",
@@ -134,6 +129,20 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+function CustomToolList() {
+  const { toolCalls } = useAgentCard();
+  return (
+    <ul className="space-y-1 text-sm">
+      {toolCalls.map((tool) => (
+        <li key={tool.id} className="flex items-center justify-between gap-4">
+          <span>{tool.name}</span>
+          <span className="text-[var(--faint)]">{tool.status}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export const Thinking: Story = {
   tags: ["!dev"],
@@ -202,7 +211,7 @@ export const Composed: Story = {
       >
         <AgentCard.Header className="pb-1" />
         <AgentCard.Body />
-        <AgentCard.Tools />
+        <CustomToolList />
         <AgentCard.Reasoning />
       </AgentCard.Root>
     </StoryFrame>
@@ -210,9 +219,20 @@ export const Composed: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { AgentCard } from "veryfront/chat";
+        code: `import { AgentCard, useAgentCard } from "veryfront/chat";
 
-// Recompose the card: Header (restyled), then Body, Tools, Reasoning.
+function CustomToolList() {
+  const { toolCalls } = useAgentCard();
+  return (
+    <ul>
+      {toolCalls.map((tool) => (
+        <li key={tool.id}>{tool.name}: {tool.status}</li>
+      ))}
+    </ul>
+  );
+}
+
+// Recompose the card with a custom tool list between Body and Reasoning.
 <AgentCard.Root
   name="Release Agent"
   status="completed"
@@ -222,7 +242,7 @@ export const Composed: Story = {
 >
   <AgentCard.Header className="pb-1" />
   <AgentCard.Body />
-  <AgentCard.Tools />
+  <CustomToolList />
   <AgentCard.Reasoning />
 </AgentCard.Root>`,
       },

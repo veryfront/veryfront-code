@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 // Core preset + compound
 // ---------------------------------------------------------------------------
-export { Chat, ChatComponents, type ChatProps } from "./chat/index.tsx";
+export { Chat, type ChatAgentInfo, type ChatProps } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
 // Composition building blocks
@@ -26,8 +26,10 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
+  type ChatInputExportProps,
   type ChatInputProps,
   ChatMessageList,
+  type ChatMessageListContentProps,
   type ChatMessageListProps,
   ChatRoot,
   type ChatRootProps,
@@ -36,8 +38,10 @@ export {
   Message,
   type MessageProps,
   type MessageRootProps,
+  type MessageTokensProps,
   ModelAvatar,
   type ModelAvatarProps,
+  type TokenRowProps,
 } from "./chat/index.tsx";
 export {
   type Conversation,
@@ -51,6 +55,9 @@ export {
   memoryConversationStore,
   type StorageLike,
   useConversation,
+  useConversationChat,
+  type UseConversationChatOptions,
+  type UseConversationChatResult,
   type UseConversationOptions,
   type UseConversationResult,
   useConversations,
@@ -70,12 +77,14 @@ export {
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
+  type MessagePartsData,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
+  useMessageParts,
 } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
@@ -96,6 +105,8 @@ export {
   type AttachmentsPanelLoadingProps,
   type AttachmentsPanelProps,
   BranchPicker,
+  type BranchPickerActionProps,
+  type BranchPickerCountProps,
   type BranchPickerProps,
   ChatMessagesSkeleton,
   type ChatMessagesSkeletonProps,
@@ -103,7 +114,6 @@ export {
   type ChatSidebarComponent,
   type ChatSidebarEmptyProps,
   type ChatSidebarGroupProps,
-  type ChatSidebarIcons,
   type ChatSidebarItemProps,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,
@@ -127,23 +137,26 @@ export {
   InferenceBadge,
   type InferenceBadgeProps,
   InlineCitation,
+  type InlineCitationCardProps,
   type InlineCitationProps,
+  type InlineCitationTriggerProps,
   isReasoningPart,
   isSkillToolPart,
   isToolPart,
   Loader,
   MessageActionBar,
+  type MessageActionBarActionProps,
   type MessageActionBarProps,
   MessageEditForm,
   type MessageEditFormProps,
   MessageFeedback,
+  type MessageFeedbackActionProps,
   type MessageFeedbackProps,
   type PartGroup,
   type QuickAction,
   QuickActions,
   type QuickActionsProps,
   Reasoning,
-  ReasoningCard,
   type ReasoningContextValue,
   type ReasoningProps,
   type ReasoningTriggerProps,
@@ -168,7 +181,6 @@ export {
   TabSwitcher,
   type TabSwitcherProps,
   ToolCall,
-  ToolCallCard,
   type ToolCallContextValue,
   type ToolCallProps,
   type ToolCallTriggerProps,
@@ -201,6 +213,7 @@ export {
   type ModelSelectorContextValue,
   type ModelSelectorItemProps,
   type ModelSelectorProps,
+  type ModelSelectorSearchProps,
   type ModelSelectorTriggerProps,
   useModelSelector,
 } from "./model-selector.tsx";

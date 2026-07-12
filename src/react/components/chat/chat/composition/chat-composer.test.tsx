@@ -1,5 +1,6 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -295,5 +296,58 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     } finally {
       restore();
     }
+  });
+
+  it("Send accepts a per-leaf `icon` override", () => {
+    const html = renderToString(
+      <ChatInput.Root input="hi" onChange={() => {}} onSubmit={() => {}}>
+        <ChatInput.Send icon={<svg data-testid="custom-send" />} />
+      </ChatInput.Root>,
+    );
+    assert(html.includes("custom-send"), "Expected the custom send icon to render");
+  });
+
+  describe("ChatInput.Toolbar", () => {
+    it("is a function component", () => {
+      assertEquals(typeof ChatInput.Toolbar, "function");
+    });
+
+    it("renders its children and merges the className as a layout slot", () => {
+      const html = renderToString(
+        <ChatInput.Toolbar className="vf-tb">
+          <button type="button">x</button>
+        </ChatInput.Toolbar>,
+      );
+      assert(html.includes("vf-tb"), "Expected the toolbar className to render");
+      assert(html.includes(">x</button>"), "Expected the child to render");
+      assert(html.includes('role="toolbar"'), "Expected the toolbar role to render");
+    });
+  });
+
+  describe("ChatInput.Export", () => {
+    it("renders by presence when the supplied conversation is non-empty", () => {
+      const html = renderToString(
+        <ChatInput.Root input="" onChange={() => {}}>
+          <ChatInput.Toolbar>
+            <ChatInput.Export
+              messages={[{
+                id: "message-1",
+                role: "user",
+                parts: [{ type: "text", text: "Hello" }],
+              }]}
+            />
+          </ChatInput.Toolbar>
+        </ChatInput.Root>,
+      );
+      assert(
+        html.includes('aria-label="Export conversation"'),
+        "Expected the composed export action to render",
+      );
+    });
+
+    it("renders nothing for an empty conversation", () => {
+      const html = renderToString(<ChatInput.Export messages={[]} />);
+      assertEquals(html, "");
+    });
   });
 });

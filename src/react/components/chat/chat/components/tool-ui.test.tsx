@@ -2,7 +2,7 @@ import { renderToString } from "react-dom/server";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart } from "#veryfront/agent/react";
-import { ToolCall, ToolCallCard, useToolCall } from "./tool-ui.tsx";
+import { ToolCall, useToolCall } from "./tool-ui.tsx";
 
 /** A fully-populated card tool (input + output) — the composable `card` path. */
 const cardTool: ChatDynamicToolPart = {
@@ -14,7 +14,16 @@ const cardTool: ChatDynamicToolPart = {
   output: [{ title: "Runs" }],
 };
 
-describe("ToolCallCard", () => {
+const skillTool: ChatDynamicToolPart = {
+  type: "dynamic-tool",
+  toolCallId: "tool-load-skill",
+  toolName: "load_skill",
+  state: "output-available",
+  input: { skillId: "review" },
+  output: { loaded: true },
+};
+
+describe("ToolCall", () => {
   it("renders a completed tool with null output as a compact status row", () => {
     const tool: ChatDynamicToolPart = {
       type: "dynamic-tool",
@@ -25,7 +34,7 @@ describe("ToolCallCard", () => {
       output: null,
     };
 
-    const html = renderToString(<ToolCallCard tool={tool} />);
+    const html = renderToString(<ToolCall tool={tool} />);
 
     assertStringIncludes(html, "web_search");
     assertStringIncludes(html, "Completed");
@@ -40,6 +49,22 @@ describe("ToolCallCard", () => {
 // the card, inject a slot, and restyle a part. If these fail, `ToolCall` is not
 // composable — these tests ARE the definition.
 describe("ToolCall — composability contract", () => {
+  it("replaces compact anatomy with context-aware children", () => {
+    function CustomSkill() {
+      const { tool } = useToolCall();
+      return <span>{`CUSTOM_SKILL ${tool.toolName}`}</span>;
+    }
+
+    const html = renderToString(
+      <ToolCall tool={skillTool}>
+        <CustomSkill />
+      </ToolCall>,
+    );
+
+    assertStringIncludes(html, "CUSTOM_SKILL load_skill");
+    assertEquals(html.includes("Loaded skill: review"), false);
+  });
+
   it("recomposes: a caller can reorder the body parts", () => {
     const html = renderToString(
       <ToolCall tool={cardTool} defaultExpanded>

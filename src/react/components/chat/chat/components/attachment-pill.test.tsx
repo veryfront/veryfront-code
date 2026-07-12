@@ -54,6 +54,15 @@ describe("AttachmentPill — composability contract", () => {
     );
   });
 
+  it("accepts a per-sub-component icon override on .Remove", () => {
+    const html = renderToString(
+      <AttachmentPill attachment={readyFile} onRemove={() => undefined}>
+        <AttachmentPill.Remove icon={<span data-testid="custom-remove">x</span>} />
+      </AttachmentPill>,
+    );
+    assertStringIncludes(html, "custom-remove");
+  });
+
   it("restyles: className on a sub-part is merged onto its wrapper", () => {
     const html = renderToString(
       <AttachmentPill attachment={readyFile}>

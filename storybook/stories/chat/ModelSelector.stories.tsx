@@ -19,11 +19,12 @@ const compositionTree =
   `ModelSelector             <- render-or-compose: preset with props, or compose sub-parts
   +-- ModelSelector.Trigger   <- the pill / icon combobox button
   +-- ModelSelector.Content   <- the popover surface (wraps a Command shell)
+  +-- ModelSelector.Search    <- optional search input
   +-- ModelSelector.List      <- the scrollable Command list region
   +-- ModelSelector.Item      <- a single model row (logo + label + badge + check)
 
-Preset props (no children): models, value / onChange, variant,
-renderTrigger / renderRow (back-compat), disabled, className.`;
+Preset props (no children): models, value / onChange, variant, disabled,
+className.`;
 
 const composedCode = `import { ModelSelector } from "veryfront/chat";
 
@@ -31,7 +32,8 @@ const composedCode = `import { ModelSelector } from "veryfront/chat";
 // selection + open state via useModelSelector(); className merges last.
 <ModelSelector models={models} value={value} onChange={setModel}>
   <ModelSelector.Trigger variant="pill" />
-  <ModelSelector.Content showSearch>
+  <ModelSelector.Content>
+    <ModelSelector.Search />
     <ModelSelector.List>
       {models.map((model) => (
         <ModelSelector.Item key={model.value} model={model} />
@@ -45,7 +47,7 @@ function ModelSelectorDocsPage() {
     <DocsPage>
       <DocsHero
         title="ModelSelector"
-        lead="A Popover + Command combobox for switching models — grouped by provider with real models.dev logos. The `icon` trigger (provider logo only) matches Studio's desktop picker; `pill` adds the label."
+        lead="A Popover and Command combobox for switching models, grouped by provider with models.dev logos. The `icon` trigger shows the provider logo; `pill` adds the label."
       />
 
       <DocsSection
@@ -79,7 +81,7 @@ function ModelSelectorDocsPage() {
 
       <DocsSection
         title="Compose"
-        description="Pass children to recompose the menu from `ModelSelector.Trigger` / `Content` / `List` / `Item`. Each sub-part reads the shared selection + open state via `useModelSelector()`; `className` merges last. Omit children to keep the data-driven preset."
+        description="Pass children to recompose the menu from `ModelSelector.Trigger` / `Content` / `Search` / `List` / `Item`. Each sub-part reads the shared selection + open state via `useModelSelector()`; `className` merges last. Omit children to keep the data-driven preset."
       >
         <DocsExampleAuto of={Composed} />
         <DocsCode code={composedCode} />
@@ -111,17 +113,6 @@ function ModelSelectorDocsPage() {
               default: '"pill"',
               description:
                 "Trigger style: icon (provider logo only) or pill (logo + label + chevron)",
-            },
-            {
-              name: "renderTrigger",
-              type: "(opts: { model?: ModelOption; open: boolean }) => ReactNode",
-              description: "Replace the default pill/icon trigger",
-            },
-            {
-              name: "renderRow",
-              type:
-                "(opts: { model: ModelOption; selected: boolean; onSelect: () => void }) => ReactNode",
-              description: "Replace the default row renderer",
             },
             {
               name: "disabled",
@@ -290,9 +281,14 @@ export const Composed: Story = {
     return (
       <StoryFrame maxWidth="420px">
         <ReviewSurface label="Composed">
-          <ModelSelector models={modelOptions} value={model} onChange={setModel}>
+          <ModelSelector
+            models={modelOptions}
+            value={model}
+            onChange={setModel}
+          >
             <ModelSelector.Trigger variant="pill" />
-            <ModelSelector.Content showSearch>
+            <ModelSelector.Content>
+              <ModelSelector.Search />
               <ModelSelector.List>
                 {modelOptions.map((m) => (
                   <ModelSelector.Item key={m.value} model={m} />
