@@ -174,17 +174,7 @@ export class HTMLGenerator {
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
     let html: string;
     if (isFullHTMLDocument(context.html)) {
-      let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
-      if (this.config.mode === "production" && context.options?.environment === "production") {
-        const mergedFrontmatter = mergeCollectedFrontmatter(context);
-        const htmlOptions = await profilePhase(
-          "html.build_options",
-          () => this.buildHTMLOptions(context, mergedFrontmatter),
-        );
-        projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
-      }
-
-      html = await this.handleFullHTMLDocument(context, projectCSSPromise);
+      html = await this.handleFullHTMLDocument(context);
     } else {
       html = await this.wrapHTMLFragment(context);
     }
@@ -207,9 +197,6 @@ export class HTMLGenerator {
       "html.build_options",
       () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
     );
-    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
-    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
-
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
@@ -225,13 +212,10 @@ export class HTMLGenerator {
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
       const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument(
-          {
-            ...fullContext,
-            html: reactContent,
-          },
-          projectCSSPromise,
-        ),
+        await this.handleFullHTMLDocument({
+          ...fullContext,
+          html: reactContent,
+        }),
         context.options?.nonce,
       );
 
@@ -242,6 +226,9 @@ export class HTMLGenerator {
         },
       });
     }
+
+    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
+    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
 
     const { start, end } = await profilePhase(
       "html.generate_shell_parts",
@@ -271,8 +258,13 @@ export class HTMLGenerator {
 
   private async handleFullHTMLDocument(
     context: HTMLGenerationContext,
-    projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<string> {
+    const mergedFrontmatter = mergeCollectedFrontmatter(context);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(context, mergedFrontmatter),
+    );
+    const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
