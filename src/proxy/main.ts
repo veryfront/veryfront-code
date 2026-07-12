@@ -18,6 +18,7 @@
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
+ * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
  */
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
@@ -71,6 +72,12 @@ import {
   withProxyServerTimingHeader,
 } from "./server-timing.ts";
 import { removeStickyCookieFromPublicCacheableResponse } from "./response-headers.ts";
+import {
+  closeProxyServerWithin,
+  createProxyDrainingResponse,
+  parseProxyDrainTimeoutMs,
+  ProxyRequestDrainTracker,
+} from "./request-drain.ts";
 
 type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
@@ -137,6 +144,8 @@ const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30_000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
 const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
+const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
+const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
 const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
   getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || String(DEFAULT_SERVER_REQUEST_TIMEOUT_MS),
 );
@@ -149,6 +158,12 @@ const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
 const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
   getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
 );
+const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
+  getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+  DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
+);
+const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
+let shuttingDown = false;
 
 const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
   "ext-auth-jwt",
@@ -645,49 +660,82 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
 /**
  * Main router.
  */
-function router(req: Request): Promise<Response> {
+async function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
-  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return handleWebSocketUpgrade(req, url);
+  if (url.pathname === "/_proxy/health") {
+    return Response.json({ service: "veryfront-proxy", status: "ok" });
   }
+  if (shuttingDown) return createProxyDrainingResponse();
 
-  switch (url.pathname) {
-    case "/_proxy/stats":
-      if (Object.keys(proxyHandler.localProjects).length === 0) {
-        return Promise.resolve(new Response("Forbidden", { status: 403 }));
-      }
-      return handleStats();
-    case "/_proxy/health":
-      return Promise.resolve(
-        Response.json({ service: "veryfront-proxy", status: "ok" }),
-      );
+  const requestId = crypto.randomUUID();
+  proxyRequestDrainTracker.start(requestId, req.method, url.pathname);
+
+  try {
+    let response: Response;
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      response = await handleWebSocketUpgrade(req, url);
+    } else if (url.pathname === "/_proxy/stats") {
+      response = Object.keys(proxyHandler.localProjects).length === 0
+        ? new Response("Forbidden", { status: 403 })
+        : await handleStats();
+    } else if (url.pathname.startsWith("/_vf/api/")) {
+      response = await handleApiProxy(req, url);
+    } else if (isReleaseAssetPath(url.pathname)) {
+      response = await handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }) ??
+        await forwardToServer(req, url);
+    } else {
+      response = await forwardToServer(req, url);
+    }
+
+    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, response);
+  } catch (error) {
+    proxyRequestDrainTracker.complete(requestId);
+    throw error;
   }
-
-  if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req, url);
-
-  if (isReleaseAssetPath(url.pathname)) {
-    return handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }).then((res) =>
-      res ?? forwardToServer(req, url)
-    );
-  }
-
-  return forwardToServer(req, url);
 }
 
 // Create server before signal registration so early SIGTERM/SIGINT can close it safely.
 const server = createHttpServer();
 
 // Graceful shutdown
-let shuttingDown = false;
 async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  proxyLogger.info(`Received ${signal}, shutting down`);
+  proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
+    inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
+    drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+  });
 
   try {
-    await server.close();
+    const drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    if (!drained) {
+      const now = performance.now();
+      proxyLogger.warn("Proxy drain timeout exceeded, forcing shutdown", {
+        remainingRequests: proxyRequestDrainTracker.getInFlightRequests().slice(0, 10).map(
+          ({ requestId, method, path, startTime }) => ({
+            requestId,
+            method,
+            path,
+            elapsedMs: Math.round(now - startTime),
+          }),
+        ),
+      });
+    }
+
+    const closed = await closeProxyServerWithin(
+      () => server.close(),
+      PROXY_SERVER_CLOSE_TIMEOUT_MS,
+    );
+    if (!closed) {
+      proxyLogger.warn(
+        "Proxy server close timed out; process exit will close remaining connections",
+        {
+          closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS,
+        },
+      );
+    }
     rendererRouter?.close();
     serverResolver.close();
     await proxyHandler.close();

@@ -22,6 +22,10 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
+import {
+  completeOnResponseBodySettlement,
+  isEventStreamResponse,
+} from "#veryfront/platform/compat/http/response-lifecycle.ts";
 
 interface RequestLifecycleContext {
   /** Request ID for tracking */
@@ -112,13 +116,6 @@ export function completeRequestTracking(
   requestTracker.complete(requestId, status, isTimeout, profile);
 }
 
-function isEventStreamResponse(response: Response): boolean {
-  if (!response.body) return false;
-
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  return contentType.split(";", 1)[0]?.trim() === "text/event-stream";
-}
-
 /**
  * Keep streaming responses in the shutdown drain set until their body settles.
  * Handler completion only means response headers are ready; an SSE body may
@@ -136,42 +133,8 @@ export function completeRequestTrackingOnResponseEnd(
   }
 
   requestTracker.markLongLived(requestId);
-  const reader = response.body!.getReader();
-  let completed = false;
-  const complete = (): void => {
-    if (completed) return;
-    completed = true;
+  return completeOnResponseBodySettlement(response, () => {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
-  };
-
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const result = await reader.read();
-        if (result.done) {
-          complete();
-          controller.close();
-          return;
-        }
-        controller.enqueue(result.value);
-      } catch (error) {
-        complete();
-        controller.error(error);
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        complete();
-      }
-    },
-  });
-
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
   });
 }
 
