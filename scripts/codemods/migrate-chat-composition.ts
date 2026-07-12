@@ -304,6 +304,13 @@ function addTodo(
   anchor.leadingComments = [...comments, { type: "CommentBlock", value }];
 }
 
+function addNodeTodo(node: t.Node, message: string): void {
+  const value = ` TODO(veryfront-migration): ${message} See ${MIGRATION_GUIDE}. `;
+  const comments = node.leadingComments ?? [];
+  if (comments.some((comment) => comment.value.includes(message))) return;
+  node.leadingComments = [...comments, { type: "CommentBlock", value }];
+}
+
 function walkAst(node: t.Node, visit: (node: t.Node) => void): void {
   visit(node);
   const keys = (t.VISITOR_KEYS as Record<string, readonly string[]>)[node.type] ?? [];
@@ -345,16 +352,28 @@ function rewriteFlatChatSession(
   );
   if (sessionSpread && t.isJSXSpreadAttribute(sessionSpread)) {
     const spreadSession = sessionSpread.argument as t.Identifier;
-    opening.attributes = opening.attributes.filter((attribute) => attribute !== sessionSpread);
-    changed = true;
-    if (!existingChat) {
-      session = spreadSession;
-      opening.attributes.unshift(
-        t.jsxAttribute(
-          t.jsxIdentifier("chat"),
-          t.jsxExpressionContainer(t.cloneNode(spreadSession)),
-        ),
+    if (existingChat && (!session || !sameBinding(session, spreadSession))) {
+      addTodo(
+        element,
+        "Reconcile the spread useChat session with the explicit chat prop.",
+        sessionSpread,
       );
+      warnings.push(
+        "A Chat element uses different useChat results for chat and a spread.",
+      );
+      changed = true;
+    } else {
+      opening.attributes = opening.attributes.filter((attribute) => attribute !== sessionSpread);
+      changed = true;
+      if (!existingChat) {
+        session = spreadSession;
+        opening.attributes.unshift(
+          t.jsxAttribute(
+            t.jsxIdentifier("chat"),
+            t.jsxExpressionContainer(t.cloneNode(spreadSession)),
+          ),
+        );
+      }
     }
   }
 
@@ -660,6 +679,17 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
       if (t.isIdentifier(node.id)) {
         const binding = path.scope.getBinding(node.id.name);
         if (binding) {
+          if (!binding.constant) {
+            addNodeTodo(
+              path.parentPath?.node ?? node,
+              `Review the reassigned useChat result ${node.id.name} manually.`,
+            );
+            warnings.push(
+              `A reassigned useChat result requires manual migration: ${node.id.name}.`,
+            );
+            changed = true;
+            return;
+          }
           for (const reference of binding.referencePaths) {
             chatResultReferences.add(reference.node);
             referenceBindings.set(reference.node, binding);

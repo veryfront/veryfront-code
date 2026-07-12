@@ -110,6 +110,48 @@ export function Example() {
   assertEquals(result.warnings, []);
 });
 
+Deno.test("chat composition codemod removes a duplicate spread of the explicit session", () => {
+  const source = `
+import { Chat, useChat } from "veryfront/chat";
+export function Example() {
+  const chat = useChat();
+  return <Chat chat={chat} {...chat} />;
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "<Chat chat={chat} />");
+  assert(!result.code.includes("{...chat}"));
+  assertEquals(result.warnings, []);
+});
+
+Deno.test("chat composition codemod retains a spread from a different session", () => {
+  const source = `
+import { Chat, useChat } from "veryfront/chat";
+export function Example() {
+  const primary = useChat();
+  const secondary = useChat();
+  return <Chat chat={primary} {...secondary} />;
+}
+`;
+  const result = migrateChatComposition(source);
+  const second = migrateChatComposition(result.code);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "chat={primary}");
+  assertStringIncludes(result.code, "{...secondary}");
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertEquals(result.warnings, [
+    "A Chat element uses different useChat results for chat and a spread.",
+  ]);
+  assert(second.changed);
+  assertEquals(
+    second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+    1,
+  );
+});
+
 Deno.test("chat composition codemod marks unmatched flat props beside a session", () => {
   const source = `
 import { Chat, useChat } from "veryfront/chat";
@@ -346,6 +388,33 @@ export function Example() {
   assert(result.changed);
   assertStringIncludes(result.code, "chat.handleSubmit();");
   assertStringIncludes(result.code, "chat.onSubmit();");
+});
+
+Deno.test("chat composition codemod leaves a reassigned useChat result for manual migration", () => {
+  const source = `
+import { useChat } from "veryfront/chat";
+export function Example(other: { onSubmit: () => void }) {
+  let chat = useChat();
+  chat.onSubmit();
+  chat = other;
+  chat.onSubmit();
+}
+`;
+  const result = migrateChatComposition(source);
+  const second = migrateChatComposition(result.code);
+
+  assert(result.changed);
+  assert(!result.code.includes("handleSubmit"));
+  assertEquals(result.code.match(/chat\.onSubmit\(\)/g)?.length, 2);
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertEquals(result.warnings, [
+    "A reassigned useChat result requires manual migration: chat.",
+  ]);
+  assert(second.changed);
+  assertEquals(
+    second.code.match(/TODO\(veryfront-migration\)/g)?.length,
+    1,
+  );
 });
 
 Deno.test("chat composition codemod ignores a shadowed useChat function", () => {
