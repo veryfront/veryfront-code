@@ -3,10 +3,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/index.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
 
 function createOps(
@@ -44,6 +50,7 @@ describe("VeryfrontAPIOperations", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    __resetLogRecordEmitterForTests();
   });
 
   describe("class", () => {
@@ -188,6 +195,185 @@ describe("VeryfrontAPIOperations", () => {
       await createOps().getBranchFile("project-slug", "main", "app/api/ag-ui/route.ts");
 
       assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
+    it("warn-logs normal 404s for branch file content reads", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () => createOps().getBranchFile("project-slug", "main", "app/globals.css"),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          entry.level === "warn" &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        true,
+      );
+    });
+
+    it("does not warn-log expected 404s for branch file content probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getBranchFile("project-slug", "main", "app/globals.css", {
+              expectedMissing: true,
+            }),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("does not warn-log expected 404s for environment file content probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getEnvironmentFile("project-slug", "production", "app/globals.css", {
+              expectedMissing: true,
+            }),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("does not warn-log expected 404s for release file content probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getReleaseFile("project-slug", "release-id", "app/globals.css", {
+              expectedMissing: true,
+            }),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("still warn-logs authentication failures for branch file content", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Invalid authentication token" }), {
+            status: 401,
+            statusText: "Unauthorized",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () => createOps().getBranchFile("project-slug", "main", "app/globals.css"),
+          Error,
+          "API request failed: 401 Unauthorized",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          entry.level === "warn" &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        true,
+      );
     });
 
     it("requests release file lists with server functions for runtime route discovery", async () => {
