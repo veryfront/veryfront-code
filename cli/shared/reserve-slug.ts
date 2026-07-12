@@ -26,7 +26,7 @@ export interface ReserveProjectSlugOptions {
 }
 
 export class ProjectSlugConflictError extends Error {
-  constructor(public readonly slug: string) {
+  constructor(readonly slug: string) {
     super(`Project slug "${slug}" is already in use.`);
     this.name = "ProjectSlugConflictError";
   }
