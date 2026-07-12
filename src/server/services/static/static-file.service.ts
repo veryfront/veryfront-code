@@ -29,6 +29,15 @@ import { getContentType as getContentTypeFromExt } from "../../handlers/utils/co
 
 const logger = serverLogger.component("static-file-service");
 
+function isExpectedCandidateMiss(error: unknown): boolean {
+  if (isNotFoundError(error)) return true;
+
+  const maybeVeryfrontError = error as { name?: unknown; slug?: unknown };
+  return error instanceof Error &&
+    maybeVeryfrontError.name === "VeryfrontError" &&
+    maybeVeryfrontError.slug === "security-violation";
+}
+
 /**
  * Result of resolving a static file
  */
@@ -132,11 +141,20 @@ export class StaticFileService {
     const fs = this.getFileSystem(options);
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
     const candidates = await this.buildCandidates(normalizedPath, options, fs);
+    const unexpectedErrors: unknown[] = [];
 
     for (const candidate of candidates) {
-      const result = await this.tryResolveCandidate(candidate, requestPath, options, fs);
+      const result = await this.tryResolveCandidate(
+        candidate,
+        requestPath,
+        options,
+        fs,
+        unexpectedErrors,
+      );
       if (result) return result;
     }
+
+    if (unexpectedErrors.length > 0) throw unexpectedErrors[0];
 
     return null;
   }
@@ -179,6 +197,7 @@ export class StaticFileService {
     requestPath: string,
     options: StaticFileOptions,
     fs: FileSystemLike,
+    unexpectedErrors: unknown[],
   ): Promise<StaticFileResult | null> {
     try {
       const info = await fs.stat(candidate.path);
@@ -201,12 +220,13 @@ export class StaticFileService {
       // candidate the security layer rejects (outside the allowed roots), just
       // means "this candidate does not apply" — resolveFile() must still try the
       // remaining candidates, so we fall through to null rather than throwing.
-      // Genuinely unexpected errors are logged for diagnosability but must not
-      // fail resolution of a sibling candidate that would have matched.
-      // NOTE: distinguishing a transient I/O failure (which should surface as a
-      // 500 rather than a CDN-cacheable 404) from an ordinary probe miss needs
-      // to happen a layer up, not here — tracked as a follow-up.
-      if (!isNotFoundError(error)) {
+      // Genuinely unexpected errors are logged and recorded for diagnosability,
+      // but must not fail resolution of a sibling candidate that would have
+      // matched. resolveFile() rethrows the first recorded error only after all
+      // candidates miss, so transient I/O failures surface as 5xx instead of
+      // cacheable 404s without breaking candidate probing.
+      if (!isExpectedCandidateMiss(error)) {
+        unexpectedErrors.push(error);
         logger.debug("Static file candidate did not resolve", {
           path: candidate.path,
           error: error instanceof Error ? error.message : String(error),
