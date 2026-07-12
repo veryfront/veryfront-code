@@ -1,5 +1,12 @@
-import { createFileSystem, env, getEnv, runCommand } from "veryfront/platform";
-import { isNotFoundError, lstat, realPath } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  env,
+  getEnv,
+  isNotFoundError,
+  lstat,
+  realPath,
+  runCommand,
+} from "veryfront/platform";
 import { join, relative } from "veryfront/platform/path";
 import type { ApiClient } from "./config.ts";
 

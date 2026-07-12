@@ -14,6 +14,37 @@ export const CONTROL_PLANE_RUNS_PATH_PREFIX = "/api/control-plane/runs/";
 /** Shared control plane run stream path value. */
 export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/stream";
 
+const CONTROL_PLANE_RUN_ID_PATH_SEGMENT = "[^/]+";
+const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAll("/", "\\/");
+
+/**
+ * True for control-plane run surfaces that can dispatch without project config.
+ *
+ * Stream/resume/cancel use signed request payload/session state and must not be
+ * blocked by stale release config bootstraps. Execute deliberately remains
+ * strict because it can consume project config for React/CSS build inputs.
+ */
+export function isConfigOptionalControlPlaneRunRequest(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  const normalizedMethod = method.toUpperCase();
+  const requestPath = pathname ?? "";
+
+  if (normalizedMethod === "DELETE") {
+    return new RegExp(`^${CONTROL_PLANE_RUNS_REGEX_PREFIX}${CONTROL_PLANE_RUN_ID_PATH_SEGMENT}$`)
+      .test(requestPath);
+  }
+
+  if (normalizedMethod !== "POST") {
+    return false;
+  }
+
+  return new RegExp(
+    `^${CONTROL_PLANE_RUNS_REGEX_PREFIX}${CONTROL_PLANE_RUN_ID_PATH_SEGMENT}\\/(?:stream|resume)$`,
+  ).test(requestPath);
+}
+
 const getCompactJwsHeaderSchema = defineSchema((v) =>
   v.object({
     alg: v.literal("EdDSA"),
