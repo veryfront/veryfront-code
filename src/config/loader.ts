@@ -325,12 +325,53 @@ async function loadConfigFromTempFile(
   const tempFile = join(tempDir, `config${extension}`);
 
   try {
-    await fs.writeTextFile(tempFile, processedSource);
+    await fs.writeTextFile(tempFile, rewriteBareVeryfrontConfigImports(processedSource));
     const configModule = await import(loadUrl(tempFile));
     return configModule.default || configModule;
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
+}
+
+/**
+ * Inline stand-in for the bare `veryfront` specifier in user config files.
+ *
+ * Config modules loaded through {@link loadConfigFromTempFile} execute from a
+ * temp file, where bare specifiers have no resolver: Node has no node_modules
+ * relative to the temp dir, and compiled Deno binaries have no import map for
+ * external dynamic imports. Every config helper the framework entrypoint
+ * exposes is a thin pure function, so a data: URL module is a faithful
+ * stand-in. Written with double quotes only — encodeURIComponent escapes
+ * them, keeping the URL safe inside either quote style of the rewritten
+ * import statement.
+ */
+const VERYFRONT_CONFIG_SHIM = [
+  "export const defineConfig = (config) => config;",
+  "export const defineConfigWithEnv = (factory, envConfig) =>",
+  '  factory(envConfig?.nodeEnv ?? globalThis.Deno?.env?.get?.("NODE_ENV") ??',
+  '    globalThis.process?.env?.NODE_ENV ?? "production");',
+  "export const mergeConfigs = (...configs) => Object.assign({}, ...configs);",
+].join("\n");
+
+const VERYFRONT_CONFIG_SHIM_URL = `data:text/javascript,${
+  encodeURIComponent(VERYFRONT_CONFIG_SHIM)
+}`;
+
+/**
+ * Rewrite bare `veryfront` import specifiers to the inline config shim so
+ * temp-file config modules can load. Static imports only (`import ... from
+ * "veryfront"` and side-effect `import "veryfront"`); subpaths like
+ * `veryfront/head` are left untouched and will fail loudly, which is correct —
+ * they have no meaning in a config file.
+ *
+ * @internal exported for tests
+ */
+export function rewriteBareVeryfrontConfigImports(source: string): string {
+  return source.replace(
+    /(\bfrom\s*|\bimport\s+)(["'])veryfront\2/g,
+    (_match, prefix: string, quote: string) =>
+      `${prefix}${quote}${VERYFRONT_CONFIG_SHIM_URL}${quote}`,
+  );
 }
 
 /** @internal */

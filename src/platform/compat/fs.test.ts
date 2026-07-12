@@ -255,6 +255,14 @@ describe("Filesystem Compat", () => {
       assertEquals(isNotFoundError(error), true);
     });
 
+    it("should return true when not-found is wrapped in an Error cause chain", () => {
+      const cause = new Error("ENOENT") as Error & { code: string };
+      cause.code = "ENOENT";
+      const wrapped = new Error("wrapper", { cause });
+
+      assertEquals(isNotFoundError(wrapped), true);
+    });
+
     it("should return false for generic errors", () => {
       assertEquals(isNotFoundError(new Error("generic")), false);
     });

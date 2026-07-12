@@ -22,6 +22,13 @@ import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./const
 
 const logger = serverLogger.component("bundle-manifest");
 
+class UnsupportedBundleManifestStoreError extends Error {
+  constructor(storeType: string) {
+    super(`Bundle manifest store type "${storeType}" is configured but is not implemented`);
+    this.name = "UnsupportedBundleManifestStoreError";
+  }
+}
+
 export async function initializeBundleManifest(
   config: BundleManifestConfig,
   mode: "development" | "production",
@@ -52,6 +59,8 @@ export async function initializeBundleManifest(
       logger.debug("Failed to get stats", { error });
     }
   } catch (error) {
+    if (error instanceof UnsupportedBundleManifestStoreError) throw error;
+
     logger.error("Failed to initialize store, using in-memory fallback", {
       error,
     });
@@ -61,46 +70,15 @@ export async function initializeBundleManifest(
 
 async function createStore(
   storeType: string,
-  cacheConfig: BundleManifestConfig["cache"],
-  adapter?: RuntimeAdapter,
+  _cacheConfig: BundleManifestConfig["cache"],
+  _adapter?: RuntimeAdapter,
 ): Promise<BundleManifestStore> {
-  const bundleManifest = cacheConfig?.bundleManifest;
-
   if (storeType === "redis") {
-    const { RedisBundleManifestStore } = await import("./bundle-manifest-redis.ts");
-    const redisUrl = bundleManifest?.redisUrl ??
-      adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_REDIS_URL");
-
-    const store = new RedisBundleManifestStore(
-      {
-        url: redisUrl,
-        keyPrefix: bundleManifest?.keyPrefix,
-      },
-      adapter,
-    );
-
-    if (!(await store.isAvailable())) {
-      logger.warn("Redis not available, falling back to in-memory");
-      return new InMemoryBundleManifestStore();
-    }
-
-    logger.debug("Redis store initialized");
-    return store;
+    throw new UnsupportedBundleManifestStoreError(storeType);
   }
 
   if (storeType === "kv") {
-    const { KVBundleManifestStore } = await import("./bundle-manifest-kv.ts");
-    const store = new KVBundleManifestStore({
-      keyPrefix: bundleManifest?.keyPrefix,
-    });
-
-    if (!(await store.isAvailable())) {
-      logger.warn("KV not available, falling back to in-memory");
-      return new InMemoryBundleManifestStore();
-    }
-
-    logger.debug("KV store initialized");
-    return store;
+    throw new UnsupportedBundleManifestStoreError(storeType);
   }
 
   logger.debug("In-memory store initialized");
