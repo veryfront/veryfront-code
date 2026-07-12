@@ -60,6 +60,19 @@ export class DependencyGraph {
     return Array.from(visited);
   }
 
+  removeModule(filePath: string): void {
+    const previousDeps = this.dependencies.get(filePath);
+    if (previousDeps) {
+      for (const dep of previousDeps) {
+        const dependents = this.dependents.get(dep);
+        dependents?.delete(filePath);
+        if (dependents?.size === 0) this.dependents.delete(dep);
+      }
+    }
+
+    this.dependencies.delete(filePath);
+  }
+
   wouldCreateCycle(from: string, to: string): boolean {
     return this.hasTransitiveDependency(to, from, new Set(), new Set());
   }
@@ -146,6 +159,29 @@ export function createDependencyHashCache(): DependencyHashCache {
     inProgressModules: new Map<string, Promise<void>>(),
     buildQueue: Promise.resolve(),
   };
+}
+
+export function invalidateDependencyHashCache(
+  cache: DependencyHashCache,
+  changedPaths: Iterable<string>,
+): number {
+  const modulesToInvalidate = new Set<string>();
+
+  for (const changedPath of changedPaths) {
+    modulesToInvalidate.add(changedPath);
+    for (const dependent of cache.graph.getDependents(changedPath)) {
+      modulesToInvalidate.add(dependent);
+    }
+  }
+
+  for (const filePath of modulesToInvalidate) {
+    cache.completedModules.delete(filePath);
+    cache.contentHashes.delete(filePath);
+    cache.inProgressModules.delete(filePath);
+    cache.graph.removeModule(filePath);
+  }
+
+  return modulesToInvalidate.size;
 }
 
 export async function extractImports(code: string): Promise<string[]> {

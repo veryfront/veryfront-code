@@ -919,15 +919,25 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   // set their flag synchronously before the first `await` below, so concurrent
   // dual consumption is detected and teed correctly).
   const hasStarted: Record<"full" | "text", boolean> = { full: false, text: false };
+  let rawBranch: "full" | "text" | null = null;
   let teed: Promise<[ReadableStream<unknown>, ReadableStream<unknown>]> | null = null;
 
   const acquire = async (branch: "full" | "text"): Promise<ReadableStream<unknown>> => {
     const other = branch === "full" ? "text" : "full";
     const { stream } = await directResultPromise;
 
+    if (rawBranch !== null && rawBranch !== branch) {
+      throw new Error(
+        "Consume fullStream and textStream concurrently, or consume only one branch",
+      );
+    }
+
     // Only one branch consumed (the common case): hand it the raw stream so it
     // reads with full backpressure and nothing is buffered.
-    if (!hasStarted[other] && teed === null) return stream;
+    if (!hasStarted[other] && teed === null) {
+      rawBranch = branch;
+      return stream;
+    }
 
     // Both branches are consumed: tee once (memoized) so each sees every chunk.
     if (teed === null) teed = Promise.resolve(stream.tee());

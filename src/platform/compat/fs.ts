@@ -413,7 +413,10 @@ type DenoGlobal = typeof globalThis & {
 };
 
 /** Error shape for is not found. */
-export function isNotFoundError(error: unknown): boolean {
+export function isNotFoundError(error: unknown, seen: Set<unknown> = new Set()): boolean {
+  if (seen.has(error)) return false;
+  seen.add(error);
+
   const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
   if (isDeno && NotFound && error instanceof NotFound) return true;
   if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
@@ -423,6 +426,11 @@ export function isNotFoundError(error: unknown): boolean {
   ) {
     return true;
   }
+
+  if (error instanceof Error && "cause" in error) {
+    return isNotFoundError(error.cause, seen);
+  }
+
   return false;
 }
 
