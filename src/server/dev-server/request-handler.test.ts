@@ -29,7 +29,11 @@ describe("server/dev-server/request-handler", () => {
 
   it("invalidates the project RSC handler during file-change invalidation", () => {
     __injectCacheForTests(createHandlerCache());
-    const before = getRSCHandler("/project/a", "project-a", { mode: "development" });
+    const handlerOptions = {
+      mode: "development" as const,
+      config: { react: { version: "19.1.1" } },
+    };
+    const before = getRSCHandler("/project/a", "project-a", handlerOptions);
     const requestHandler = new RequestHandler(
       "/project/a",
       {} as RuntimeAdapter,
@@ -42,7 +46,7 @@ describe("server/dev-server/request-handler", () => {
 
     requestHandler.invalidateRuntimeHandler();
 
-    const after = getRSCHandler("/project/a", "project-a", { mode: "development" });
+    const after = getRSCHandler("/project/a", "project-a", handlerOptions);
     assertEquals(after !== before, true);
   });
 });
