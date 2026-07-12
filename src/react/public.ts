@@ -130,6 +130,7 @@ export {
   MessageFeedback,
   ModelSelector,
   QuickActions,
+  Reasoning,
   RichCodeBlock,
   Shimmer,
   Sources,
@@ -137,7 +138,10 @@ export {
   Suggestion,
   Suggestions,
   TabSwitcher,
+  ToolCall,
   ToolStatusBadge,
+  useReasoning,
+  useToolCall,
 } from "./components/chat/chat.tsx";
 export type {
   AttachmentInfo,
@@ -174,12 +178,18 @@ export type {
   PartGroup,
   QuickAction,
   QuickActionsProps,
+  ReasoningContextValue,
+  ReasoningProps,
+  ReasoningTriggerProps,
   Source,
   SourcesProps,
   StepIndicatorProps,
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
+  ToolCallContextValue,
+  ToolCallProps,
+  ToolCallTriggerProps,
   UploadedFile,
 } from "./components/chat/chat.tsx";
 

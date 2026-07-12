@@ -25,7 +25,7 @@ import { DropdownMenuItem } from "veryfront/ui";
     {/* Built-ins keep working, unchanged: */}
     <ChatSidebar.Item.Rename />
     <ChatSidebar.Item.Delete />
-    {/* ...plus your own entry — no row re-implementation: */}
+    {/* ...plus your own entry, with no row re-implementation: */}
     <DropdownMenuItem onSelect={() => archive(conversation.id)}>
       Archive
     </DropdownMenuItem>
@@ -67,7 +67,7 @@ const compositionCode = `import { ChatSidebar } from "veryfront/chat";
 
 const customGroupsCode = `import { ChatSidebar } from "veryfront/chat";
 
-// Group conversations however you like — Item pulls select/rename/delete from Root.
+// Group conversations however you like. Item pulls select/rename/delete from Root.
 <ChatSidebar.Root {...ctx}>
   <ChatSidebar.NewButton />
   <ChatSidebar.List>
@@ -85,7 +85,7 @@ function ChatSidebarDocsPage() {
     <DocsPage>
       <DocsHero
         title="ChatSidebar"
-        lead="A conversation rail — lists conversations grouped by recency, with select, rename, delete, and new-conversation actions. Inside a `ConversationsProvider` it needs no props."
+        lead="A conversation rail that lists conversations grouped by recency, with select, rename, delete, and new-conversation actions. Inside a `ConversationsProvider` it needs no props."
       />
 
       <DocsSection
@@ -104,14 +104,14 @@ function ChatSidebarDocsPage() {
 
       <DocsSection
         title="Loading"
-        description="Pass `loading` to show a skeleton in place of the list — e.g. while threads are being fetched. The auto `List` also shows this on its own until the client mounts, so threads loading from `localStorage` never flash the empty state."
+        description="Pass `loading` to show a skeleton in place of the list, for example while threads are being fetched. The auto `List` also shows this on its own until the client mounts, so threads loading from `localStorage` never flash the empty state."
       >
         <DocsExampleAuto of={Loading} />
       </DocsSection>
 
       <DocsSection
         title="Composition"
-        description="`ChatSidebar` is also a compound. `ChatSidebar.Root` holds the shared state; the parts (`NewButton`, `List`, `Group`, `Item`, `Empty`) read it from context — so you can reorder, restyle, or swap any piece without a render prop."
+        description="`ChatSidebar` is also a compound. `ChatSidebar.Root` holds the shared state; the parts (`NewButton`, `List`, `Group`, `Item`, `Empty`) read it from context, so you can reorder, restyle, or swap any piece without a render prop."
       >
         <DocsExampleAuto of={Composed} />
         <DocsCode code={compositionCode} />
@@ -128,7 +128,7 @@ function ChatSidebarDocsPage() {
 
       <DocsSection
         title="Custom row menu"
-        description="The row's `…` menu is itself a compound — `ChatSidebar.Item.Menu` with `.Rename` / `.Delete` leaves. Compose your own entries alongside the built-ins and they keep working, no row re-implementation (the acid test). Each leaf also takes an `icon` prop."
+        description="The row's `…` menu is itself a compound: `ChatSidebar.Item.Menu` with `.Rename` / `.Delete` leaves. Compose your own entries alongside the built-ins and they keep working, with no row re-implementation (the acid test). Each leaf also takes an `icon` prop."
       >
         <DocsExampleAuto of={CustomRowMenu} />
         <DocsCode code={customMenuCode} />
@@ -141,7 +141,7 @@ function ChatSidebarDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="ChatSidebar"
-          description="Conversation list rail. All props are optional — inside a ConversationsProvider they default from context."
+          description="Conversation list rail. All props are optional. Inside a ConversationsProvider they default from context."
           props={[
             {
               name: "conversations",
@@ -437,7 +437,7 @@ export const Loading: Story = {
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="240px">
-      <ReviewSurface label="Loading state — `<ChatSidebar loading />` (auto until the client mounts)">
+      <ReviewSurface label="Loading state: `<ChatSidebar loading />` (auto until the client mounts)">
         <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
           <ChatSidebar
             fill
@@ -469,7 +469,7 @@ export const CustomRowMenu: Story = {
 
     return (
       <StoryFrame maxWidth="240px">
-        <ReviewSurface label="Open a row's `…` menu — Rename/Delete plus a custom Archive">
+        <ReviewSurface label="Open a row's `…` menu: Rename/Delete plus a custom Archive">
           <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
             <ChatSidebar.Root
               fill

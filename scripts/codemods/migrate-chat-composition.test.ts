@@ -328,3 +328,112 @@ export const Example = ({ renderToken }) => (
   assert(!result.code.includes("renderRow"));
   assertEquals(result.warnings, []);
 });
+
+Deno.test("chat composition codemod does not rewrite a shadowed chat binding", () => {
+  const source = `
+import { useChat } from "veryfront/chat";
+export function Example() {
+  const chat = useChat();
+  function unrelated(chat: { onSubmit: () => void }) {
+    chat.onSubmit();
+  }
+  chat.onSubmit();
+  return unrelated;
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "chat.handleSubmit();");
+  assertStringIncludes(result.code, "chat.onSubmit();");
+});
+
+Deno.test("chat composition codemod ignores a shadowed useChat function", () => {
+  const source = `
+import { useChat } from "veryfront/chat";
+export function Example(useChat: () => { onSubmit: () => void }) {
+  const chat = useChat();
+  chat.onSubmit();
+}
+`;
+
+  assertEquals(migrateChatComposition(source), {
+    code: source,
+    changed: false,
+    warnings: [],
+  });
+});
+
+Deno.test("chat composition codemod ignores a shadowed Chat component", () => {
+  const source = `
+import { Chat } from "veryfront/chat";
+export function Example({ Chat }: { Chat: (props: object) => unknown }) {
+  return <Chat showScrollButton={false} />;
+}
+`;
+
+  assertEquals(migrateChatComposition(source), {
+    code: source,
+    changed: false,
+    warnings: [],
+  });
+});
+
+Deno.test("chat composition codemod keeps aliased import bindings supported", () => {
+  const source = `
+import { Chat as ChatSurface, useChat as useSession } from "veryfront/chat";
+export function Example() {
+  const session = useSession();
+  return <ChatSurface {...session} />;
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "<ChatSurface chat={session} />");
+});
+
+Deno.test("chat composition codemod rewrites destructured aliases and defaults", () => {
+  const source = `
+import { useChat as useSession } from "veryfront/chat";
+export function Example() {
+  const { onSubmit: submit = () => {}, onChange } = useSession();
+  return { submit, onChange };
+}
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "handleSubmit: submit = () => {}");
+  assertStringIncludes(result.code, "handleInputChange: onChange");
+});
+
+Deno.test("chat composition codemod keeps removed leaf props visible in check mode", () => {
+  const source = `
+import { AgentPicker, ChatInput, ModelSelector } from "veryfront/chat";
+export const Example = ({ messages, onExport }) => (
+  <>
+    <ChatInput
+      input=""
+      onChange={() => {}}
+      showExport={false}
+      messages={messages}
+      onExportClick={onExport}
+    />
+    <AgentPicker.Content showSearch={false} searchPlaceholder="Find an agent" />
+    <ModelSelector.Content showSearch={false} searchPlaceholder="Find a model" />
+  </>
+);
+`;
+  const first = migrateChatComposition(source);
+  const second = migrateChatComposition(first.code);
+
+  assert(first.changed);
+  assert(second.changed);
+  assertStringIncludes(second.code, "messages={messages}");
+  assertStringIncludes(second.code, "onExportClick={onExport}");
+  assertStringIncludes(second.code, 'searchPlaceholder="Find an agent"');
+  assertStringIncludes(second.code, 'searchPlaceholder="Find a model"');
+  assertStringIncludes(second.code, "TODO(veryfront-migration)");
+  assert(second.warnings.length >= 3);
+});

@@ -30,26 +30,26 @@ function MessageDocsPage() {
     <DocsPage>
       <DocsHero
         title="Message"
-        lead="A single chat turn. Render `<Message message={msg} />` for the default anatomy, or compose `Message.Root` + `Message.*` parts for a custom layout — like the `Chat` preset, userland decides."
+        lead="A single chat turn. Render `<Message message={msg} />` for the default anatomy, or compose `Message.Root` + `Message.*` parts for a custom layout. Like the `Chat` preset, userland decides."
       />
 
       <DocsSection
         title="Render"
-        description="`<Message message={msg} />` renders the full turn — header, content, reasoning, tools, actions — no composition required."
+        description="`<Message message={msg} />` renders the full turn: header, content, reasoning, tools, and actions. No composition required."
       >
         <DocsExampleAuto of={RenderPair} />
       </DocsSection>
 
       <DocsSection
-        title="Compose — Assistant"
+        title="Compose: Assistant"
         description="Drop to `Message.Root` + parts to recompose the layout: content with sources and steps, actions, tokens."
       >
         <DocsExampleAuto of={CompoundAssistant} />
       </DocsSection>
 
       <DocsSection
-        title="Compose — User"
-        description="A minimal user turn — just content and actions."
+        title="Compose: User"
+        description="A minimal user turn with just content and actions."
       >
         <DocsExampleAuto of={CompoundUser} />
       </DocsSection>
@@ -71,7 +71,7 @@ function MessageDocsPage() {
 
       <DocsSection
         title="Headless parts"
-        description="Read the message's grouped parts as data with `useMessageParts()` (the 4th access point — alongside `Message.Part` and `Message.Content`) to build a fully custom body without reimplementing part grouping."
+        description="Read the message's grouped parts as data with `useMessageParts()` (the 4th access point, alongside `Message.Part` and `Message.Content`) to build a fully custom body without reimplementing part grouping."
       >
         <DocsExampleAuto of={HeadlessParts} />
         <DocsCode code={headlessPartsCode} />
@@ -102,7 +102,7 @@ function MessageDocsPage() {
             {
               name: "onReload",
               type: "() => void",
-              description: "Regenerate handler — surfaces the retry action",
+              description: "Regenerate handler that surfaces the retry action",
             },
           ]}
         />
@@ -266,7 +266,7 @@ export const Streaming: Story = {
 };
 
 // The 4th, headless access point to a message's parts: read them as data and
-// render your own UI — no part grouping to reimplement.
+// render your own UI with no part grouping to reimplement.
 const headlessPartsCode = `import { Message, useMessageParts } from "veryfront/chat";
 
 function PartsSummary() {

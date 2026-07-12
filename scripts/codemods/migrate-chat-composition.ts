@@ -2,7 +2,25 @@
 
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
+import process from "node:process";
+import type traverseDefault from "npm:@babel/traverse@7.29.0";
+import type { NodePath } from "npm:@babel/traverse@7.29.0";
 import * as t from "npm:@babel/types@7.29.0";
+
+// @babel/traverse loads `debug`, which enumerates process.env at module load.
+// Keep the codemod's env permission limited to Babel's compatibility flag.
+const traverseModule = await (async () => {
+  const originalEnv = process.env;
+  const babelTypes8Breaking = originalEnv.BABEL_TYPES_8_BREAKING;
+  process.env = babelTypes8Breaking === undefined
+    ? {}
+    : { BABEL_TYPES_8_BREAKING: babelTypes8Breaking };
+  try {
+    return await import("npm:@babel/traverse@7.29.0");
+  } finally {
+    process.env = originalEnv;
+  }
+})();
 
 const CHAT_COMPONENT_IMPORTS = new Set([
   "veryfront/chat",
@@ -84,6 +102,19 @@ const REMOVED_RENDER_TOOL_COMPONENTS = new Set([
   "AgentCard",
 ]);
 
+const REMOVED_PROP_MIGRATIONS: Record<string, Record<string, string>> = {
+  ChatInput: {
+    messages: "Move messages to ChatInput.Export.messages.",
+    onExportClick: "Move onExportClick to ChatInput.Export.onClick.",
+  },
+  AgentPickerContent: {
+    searchPlaceholder: "Move searchPlaceholder to AgentPicker.Search.placeholder.",
+  },
+  ModelSelectorContent: {
+    searchPlaceholder: "Move searchPlaceholder to ModelSelector.Search.placeholder.",
+  },
+};
+
 const DEFAULT_TOGGLES: Record<string, Record<string, boolean>> = {
   Chat: {
     showScrollButton: true,
@@ -153,6 +184,7 @@ function resolveDefaultExport<T>(module: unknown): T {
 }
 
 const generate = resolveDefaultExport<GenerateFunction>(generateModule);
+const traverse = resolveDefaultExport<typeof traverseDefault>(traverseModule);
 
 export interface ChatCodemodResult {
   code: string;
@@ -173,6 +205,14 @@ function jsxName(
     return jsxName(name.object) + "." + jsxName(name.property);
   }
   return name.namespace.name + ":" + name.name.name;
+}
+
+function jsxRootIdentifier(
+  name: t.JSXIdentifier | t.JSXMemberExpression | t.JSXNamespacedName,
+): t.JSXIdentifier | undefined {
+  if (t.isJSXIdentifier(name)) return name;
+  if (t.isJSXMemberExpression(name)) return jsxRootIdentifier(name.object);
+  return undefined;
 }
 
 function canonicalElementName(fullName: string, canonicalBase: string): string {
@@ -219,7 +259,7 @@ function expressionValue(attribute: t.JSXAttribute): t.Expression | undefined {
 function memberBaseForAttribute(
   attribute: t.JSXAttribute,
   expectedProperty: string | readonly string[],
-): string | undefined {
+): t.Identifier | undefined {
   const expression = expressionValue(attribute);
   if (!expression || !t.isMemberExpression(expression) || expression.computed) {
     return undefined;
@@ -228,7 +268,18 @@ function memberBaseForAttribute(
     !t.isIdentifier(expression.object) || !t.isIdentifier(expression.property)
   ) return undefined;
   const expected = typeof expectedProperty === "string" ? [expectedProperty] : expectedProperty;
-  return expected.includes(expression.property.name) ? expression.object.name : undefined;
+  return expected.includes(expression.property.name) ? expression.object : undefined;
+}
+
+function identifiersShareBinding(
+  left: t.Identifier,
+  right: t.Identifier,
+  bindings: WeakMap<t.Node, object>,
+): boolean {
+  const leftBinding = bindings.get(left);
+  const rightBinding = bindings.get(right);
+  if (leftBinding || rightBinding) return leftBinding !== undefined && leftBinding === rightBinding;
+  return left.name === right.name;
 }
 
 function hasAttribute(opening: t.JSXOpeningElement, name: string): boolean {
@@ -274,7 +325,8 @@ function walkAst(node: t.Node, visit: (node: t.Node) => void): void {
 function rewriteFlatChatSession(
   element: t.JSXElement,
   warnings: string[],
-  chatResultNames: ReadonlySet<string>,
+  isChatResultReference: (node: t.Identifier) => boolean,
+  sameBinding: (left: t.Identifier, right: t.Identifier) => boolean,
 ): boolean {
   const opening = element.openingElement;
   let changed = false;
@@ -284,15 +336,15 @@ function rewriteFlatChatSession(
   const existingChatExpression = existingChat && t.isJSXAttribute(existingChat)
     ? expressionValue(existingChat)
     : undefined;
-  let session = t.isIdentifier(existingChatExpression) ? existingChatExpression.name : undefined;
+  let session = t.isIdentifier(existingChatExpression) ? existingChatExpression : undefined;
 
   const sessionSpread = opening.attributes.find((attribute) =>
     t.isJSXSpreadAttribute(attribute) &&
     t.isIdentifier(attribute.argument) &&
-    chatResultNames.has(attribute.argument.name)
+    isChatResultReference(attribute.argument)
   );
   if (sessionSpread && t.isJSXSpreadAttribute(sessionSpread)) {
-    const spreadSession = (sessionSpread.argument as t.Identifier).name;
+    const spreadSession = sessionSpread.argument as t.Identifier;
     opening.attributes = opening.attributes.filter((attribute) => attribute !== sessionSpread);
     changed = true;
     if (!existingChat) {
@@ -300,7 +352,7 @@ function rewriteFlatChatSession(
       opening.attributes.unshift(
         t.jsxAttribute(
           t.jsxIdentifier("chat"),
-          t.jsxExpressionContainer(t.identifier(spreadSession)),
+          t.jsxExpressionContainer(t.cloneNode(spreadSession)),
         ),
       );
     }
@@ -313,12 +365,13 @@ function rewriteFlatChatSession(
     const inferredSession = messages && input
       ? memberBaseForAttribute(messages, "messages")
       : undefined;
-    if (inferredSession && memberBaseForAttribute(input!, "input") === inferredSession) {
+    const inputSession = input ? memberBaseForAttribute(input, "input") : undefined;
+    if (inferredSession && inputSession && sameBinding(inferredSession, inputSession)) {
       session = inferredSession;
       opening.attributes.unshift(
         t.jsxAttribute(
           t.jsxIdentifier("chat"),
-          t.jsxExpressionContainer(t.identifier(inferredSession)),
+          t.jsxExpressionContainer(t.cloneNode(inferredSession)),
         ),
       );
       changed = true;
@@ -331,7 +384,8 @@ function rewriteFlatChatSession(
       const name = attributeName(attribute);
       if (!name || !FLAT_CHAT_PROPS.has(name)) return true;
       const memberNames = FLAT_CHAT_MEMBER_NAMES.get(name) ?? name;
-      if (!session || memberBaseForAttribute(attribute, memberNames) !== session) return true;
+      const memberBase = memberBaseForAttribute(attribute, memberNames);
+      if (!session || !memberBase || !sameBinding(memberBase, session)) return true;
       changed = true;
       return false;
     });
@@ -433,6 +487,34 @@ function rewriteRemovedSlots(
   return true;
 }
 
+function rewriteRemovedProps(
+  element: t.JSXElement,
+  canonicalElement: string,
+  warnings: string[],
+): boolean {
+  const migrations = REMOVED_PROP_MIGRATIONS[canonicalElement];
+  if (!migrations) return false;
+
+  const removed = element.openingElement.attributes.filter(
+    (attribute): attribute is t.JSXAttribute =>
+      t.isJSXAttribute(attribute) &&
+      (attributeName(attribute) ?? "") in migrations,
+  );
+  if (removed.length === 0) return false;
+
+  const instructions = removed.flatMap((attribute) => {
+    const name = attributeName(attribute);
+    return name ? [migrations[name]] : [];
+  });
+  addTodo(element, instructions.join(" "), removed[0]);
+  warnings.push(
+    `Removed ${canonicalElement} props require compound-leaf migration: ${
+      removed.map((attribute) => attributeName(attribute)).join(", ")
+    }.`,
+  );
+  return true;
+}
+
 function renderItemAdapter(
   expression: t.Expression,
   includeIndex: boolean,
@@ -507,8 +589,8 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
   });
-  const localToCanonical = new Map<string, string>();
-  const useChatNames = new Set<string>();
+  const componentImports: Array<{ localName: string; canonicalName: string }> = [];
+  const useChatImportNames: string[] = [];
   let changed = false;
   const warnings: string[] = [];
 
@@ -523,7 +605,7 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
       const imported = importedName(specifier);
       if (!imported) continue;
       if (hasUseChat && imported === "useChat") {
-        useChatNames.add(specifier.local.name);
+        useChatImportNames.push(specifier.local.name);
       }
       if (!hasChatComponents) continue;
       const replacement = IMPORT_RENAMES.get(imported);
@@ -531,37 +613,83 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
         specifier.imported = t.identifier(replacement);
         changed = true;
       }
-      localToCanonical.set(specifier.local.name, replacement ?? imported);
+      componentImports.push({
+        localName: specifier.local.name,
+        canonicalName: replacement ?? imported,
+      });
     }
   }
 
-  const chatResultNames = new Set<string>();
-  walkAst(ast.program as unknown as t.Node, (node) => {
-    if (!t.isVariableDeclarator(node) || !t.isCallExpression(node.init)) return;
-    if (!t.isIdentifier(node.init.callee) || !useChatNames.has(node.init.callee.name)) return;
-    if (t.isIdentifier(node.id)) {
-      chatResultNames.add(node.id.name);
-      return;
-    }
-    if (!t.isObjectPattern(node.id)) return;
-    for (const property of node.id.properties) {
-      if (!t.isObjectProperty(property) || property.computed || !t.isIdentifier(property.key)) {
-        continue;
-      }
-      const replacement = USE_CHAT_MEMBER_RENAMES.get(property.key.name);
-      if (!replacement) continue;
-      property.key = t.identifier(replacement);
-      property.shorthand = false;
-      changed = true;
-    }
+  let rootPath: NodePath<t.Program> | undefined;
+  const referenceBindings = new WeakMap<t.Node, object>();
+  traverse(ast, {
+    Program(path: NodePath<t.Program>) {
+      rootPath = path;
+    },
+    Identifier(path: NodePath<t.Identifier>) {
+      if (!path.isReferencedIdentifier()) return;
+      const binding = path.scope.getBinding(path.node.name);
+      if (binding) referenceBindings.set(path.node, binding);
+    },
   });
+  if (!rootPath) throw new Error("Unable to resolve the parsed module scope.");
+
+  const componentCanonicalByReference = new WeakMap<t.Node, string>();
+  for (const componentImport of componentImports) {
+    const binding = rootPath.scope.getBinding(componentImport.localName);
+    if (!binding) continue;
+    for (const reference of binding.referencePaths) {
+      componentCanonicalByReference.set(reference.node, componentImport.canonicalName);
+      referenceBindings.set(reference.node, binding);
+    }
+  }
+
+  const useChatReferences = new WeakSet<t.Node>();
+  for (const localName of useChatImportNames) {
+    const binding = rootPath.scope.getBinding(localName);
+    if (!binding) continue;
+    for (const reference of binding.referencePaths) useChatReferences.add(reference.node);
+  }
+
+  const chatResultReferences = new WeakSet<t.Node>();
+  traverse(ast, {
+    VariableDeclarator(path: NodePath<t.VariableDeclarator>) {
+      const node = path.node;
+      if (!t.isVariableDeclarator(node) || !t.isCallExpression(node.init)) return;
+      if (!t.isIdentifier(node.init.callee) || !useChatReferences.has(node.init.callee)) return;
+      if (t.isIdentifier(node.id)) {
+        const binding = path.scope.getBinding(node.id.name);
+        if (binding) {
+          for (const reference of binding.referencePaths) {
+            chatResultReferences.add(reference.node);
+            referenceBindings.set(reference.node, binding);
+          }
+        }
+        return;
+      }
+      if (!t.isObjectPattern(node.id)) return;
+      for (const property of node.id.properties) {
+        if (!t.isObjectProperty(property) || property.computed || !t.isIdentifier(property.key)) {
+          continue;
+        }
+        const replacement = USE_CHAT_MEMBER_RENAMES.get(property.key.name);
+        if (!replacement) continue;
+        property.key = t.identifier(replacement);
+        property.shorthand = false;
+        changed = true;
+      }
+    },
+  });
+
+  const sameBinding = (left: t.Identifier, right: t.Identifier) =>
+    identifiersShareBinding(left, right, referenceBindings);
 
   walkAst(ast.program as unknown as t.Node, (node) => {
     if (
       t.isMemberExpression(node) &&
       !node.computed &&
       t.isIdentifier(node.object) &&
-      chatResultNames.has(node.object.name) &&
+      chatResultReferences.has(node.object) &&
       t.isIdentifier(node.property)
     ) {
       const replacement = USE_CHAT_MEMBER_RENAMES.get(node.property.name);
@@ -575,7 +703,7 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
       t.isJSXMemberExpression(node) &&
       t.isJSXIdentifier(node.object) &&
       t.isJSXIdentifier(node.property) &&
-      localToCanonical.get(node.object.name) === "Chat" &&
+      componentCanonicalByReference.get(node.object) === "Chat" &&
       node.property.name === "Composer"
     ) {
       node.property.name = "Input";
@@ -584,14 +712,22 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
     }
     if (!t.isJSXElement(node)) return;
     const fullName = jsxName(node.openingElement.name);
-    const localName = fullName.split(".")[0];
-    const canonicalBase = localToCanonical.get(localName);
+    const rootIdentifier = jsxRootIdentifier(node.openingElement.name);
+    const canonicalBase = rootIdentifier
+      ? componentCanonicalByReference.get(rootIdentifier)
+      : undefined;
     if (!canonicalBase) return;
     const canonical = canonicalElementName(fullName, canonicalBase);
     if (canonical === "Chat" && !fullName.includes(".")) {
-      changed = rewriteFlatChatSession(node, warnings, chatResultNames) || changed;
+      changed = rewriteFlatChatSession(
+        node,
+        warnings,
+        (identifier) => chatResultReferences.has(identifier),
+        sameBinding,
+      ) || changed;
     }
     changed = rewriteToggles(node, canonical, warnings) || changed;
+    changed = rewriteRemovedProps(node, canonical, warnings) || changed;
     changed = rewriteRemovedSlots(node, warnings) || changed;
     changed = rewriteLegacyRenderProps(node, canonical, warnings) || changed;
     if (

@@ -53,7 +53,6 @@ level parts when you need a different arrangement.
 | `enableVoice`                 | Include or omit `<ChatInput.Voice />`.                                                              |
 | `showSearch`                  | Include or omit `<AgentPicker.Search />` or `<ModelSelector.Search />`.                             |
 | `enableMermaid`               | Pass a Mermaid-capable `renderCodeBlock` to `Markdown` or `codeBlock` to `Message.Content`.         |
-| `showRemove`                  | Include or omit `<AttachmentPill.Remove />`.                                                        |
 
 The tab-only preset props `activeTab`, `onTabChange`, `uploads`, and
 `onRemoveUpload`, plus the preset `onVoice` callback, are also removed. Pass
@@ -82,6 +81,10 @@ the tab and upload values directly to composed `TabSwitcher` and
 | `MessageActionBar icons={{...}}`               | Set `icon` on `MessageActionBar.Copy`, `.Copied`, `.Regenerate`, and `.Edit`.       |
 | `BranchPicker icons={{...}}`                   | Set `icon` on `BranchPicker.Previous` and `.Next`.                                  |
 | `MessageFeedback icons={{...}}`                | Set `icon` on `MessageFeedback.Positive` and `.Negative`.                           |
+| `ChatInput messages`                           | Set `messages` on `<ChatInput.Export>`.                                             |
+| `ChatInput onExportClick`                      | Set `onClick` on `<ChatInput.Export>`.                                              |
+| `AgentPicker.Content searchPlaceholder`        | Set `placeholder` on `<AgentPicker.Search>`.                                        |
+| `ModelSelector.Content searchPlaceholder`      | Set `placeholder` on `<ModelSelector.Search>`.                                      |
 | `Message.Content contentClassName`             | Set `className` on `<ChatMessageList.Content>` or the specific `Message` leaf.      |
 | `InlineCitation cardClassName`                 | Set `className` on `<InlineCitation.Card>`.                                         |
 | `useDropZone().dragProps`                      | Use the returned `onDragEnter`, `onDragLeave`, `onDragOver`, and `onDrop` handlers. |
@@ -129,9 +132,10 @@ For a custom tool row, use a `Message.Content` function child and render
 </Message.Root>;
 ```
 
-The redundant `renderTool` callbacks on `Message`, `ChatMessageList`, and
-`AgentCard` are removed. Use `renderMessage` for a whole transcript row or
-compound children for leaf-level control.
+The redundant `renderTool` callbacks on `Chat`, `ChatMessageList`,
+`Message.Content`, `Message.Part`, and `AgentCard` are removed. Use
+`renderMessage` for a whole transcript row or compound children for leaf-level
+control.
 
 ## Replace compatibility component names
 
