@@ -514,7 +514,6 @@ type SourceContextFsWrapper = {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
-      tokenTrust?: "verified-control-plane";
     },
   ) => Promise<R>;
 };
@@ -524,27 +523,23 @@ function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
   releaseId?: string | null;
   branch?: string | null;
   environmentName?: string | null;
-  tokenTrust: "verified-control-plane";
 } {
   switch (sourceContext.type) {
     case "branch":
       return {
         productionMode: false,
         branch: sourceContext.branch,
-        tokenTrust: "verified-control-plane",
       };
     case "environment":
       return {
         productionMode: true,
         environmentName: sourceContext.environmentName,
         releaseId: sourceContext.releaseId ?? null,
-        tokenTrust: "verified-control-plane",
       };
     case "release":
       return {
         productionMode: true,
         releaseId: sourceContext.releaseId,
-        tokenTrust: "verified-control-plane",
       };
   }
 }
@@ -656,7 +651,7 @@ export class AgentStreamHandler extends BaseHandler {
       if (!pathRunId || pathRunId !== payload.runId) {
         return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
       }
-      await verifyControlPlaneRequest(req, ctx, rawBody, {
+      const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
@@ -786,7 +781,7 @@ export class AgentStreamHandler extends BaseHandler {
               : response;
             return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
           },
-        ), { tokenTrust: "verified-control-plane" });
+        ), { verifiedControlPlaneClaims: verifiedClaims });
     } catch (error) {
       if (error instanceof InternalAgentRequestBodyTooLargeError) {
         return this.respond(builder.json({ error: error.message }, error.status));
