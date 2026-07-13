@@ -192,11 +192,6 @@ export class HTMLGenerator {
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
     const fullContext = context as HTMLGenerationContext;
-    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
-    const htmlOptions = await profilePhase(
-      "html.build_options",
-      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
-    );
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
@@ -227,6 +222,11 @@ export class HTMLGenerator {
       });
     }
 
+    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+    );
     const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
     startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
 
