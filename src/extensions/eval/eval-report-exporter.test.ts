@@ -43,6 +43,18 @@ function createReport(): EvalReport {
         output: { text: "The plan changed." },
         reference: { text: "Plan update" },
         metadata: { topic: "planning", tenantId: "tenant-secret" },
+        retrievedContext: [{
+          source: "internal-doc-1",
+          title: "Private roadmap",
+          content: "secret roadmap passage",
+          metadata: { tenantId: "tenant-secret" },
+        }],
+        citations: [{
+          source: "internal-doc-1",
+          text: "[1]",
+          quote: "secret roadmap passage",
+          metadata: { tenantId: "tenant-secret" },
+        }],
         trace: {
           events: [{ type: "message", content: "private model output" }],
           toolCalls: [{
@@ -118,6 +130,8 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(exportedRecord.input, "[redacted]");
     assertEquals(exportedRecord.output, "[redacted]");
     assertEquals(exportedRecord.reference, "[redacted]");
+    assertEquals(exportedRecord.retrievedContext, []);
+    assertEquals(exportedRecord.citations, []);
     assertEquals(exportedRecord.metadata, { topic: "planning" });
     assertEquals(exportedRecord.trace, { events: [], toolCalls: [] });
     assertEquals(exportedRecord.metrics?.[0]?.explanation, undefined);
@@ -156,6 +170,8 @@ describe("EvalReportExporterRegistry", () => {
       includeOutputs: true,
       includeReferences: true,
       includeTraces: true,
+      includeRetrievedContext: true,
+      includeCitations: true,
       includeMetricEvidence: true,
       includeMetricExplanations: true,
       metadataAllowlist: ["topic", "tenantId"],
@@ -169,6 +185,18 @@ describe("EvalReportExporterRegistry", () => {
     });
     assertEquals(record.output, { text: "The plan changed." });
     assertEquals(record.reference, { text: "Plan update" });
+    assertEquals(record.retrievedContext, [{
+      source: "internal-doc-1",
+      title: "Private roadmap",
+      content: "secret roadmap passage",
+      metadata: { tenantId: "tenant-secret" },
+    }]);
+    assertEquals(record.citations, [{
+      source: "internal-doc-1",
+      text: "[1]",
+      quote: "secret roadmap passage",
+      metadata: { tenantId: "tenant-secret" },
+    }]);
     assertEquals(record.metadata, { topic: "planning", tenantId: "tenant-secret" });
     assertEquals(record.trace.events.length, 1);
     assertEquals(record.trace.toolCalls.length, 1);

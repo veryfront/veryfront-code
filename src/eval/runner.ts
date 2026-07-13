@@ -192,6 +192,7 @@ async function exportWithSelectedExporter(
   };
 }
 
+/** Export an eval report through the configured eval report exporter registry. */
 export async function exportEvalReport(
   report: ReturnType<typeof createEvalReport>,
   config?: EvalReportExportConfig,
