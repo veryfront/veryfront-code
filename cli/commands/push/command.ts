@@ -1,8 +1,8 @@
 /**
- * Push command - Upload local project files to a new Veryfront branch
+ * Push command - Upload local project files to a Veryfront branch
  *
  * Scans local files and uploads them to the API using relative paths.
- * Creates a new branch for the changes which can be merged in Studio.
+ * Creates a branch when the requested branch does not already exist.
  *
  * @module cli/commands/push
  */
@@ -28,6 +28,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { isNotFoundError, lstat } from "veryfront/fs";
 import {
   areSourceFilesTracked,
   clearPushReceipt,
@@ -79,7 +80,7 @@ export interface PushOptions {
   projectDir?: string;
   /** Branch name to create (auto-generated if not provided) */
   branch?: string;
-  /** Force push without confirmation */
+  /** Skip confirmation without changing push semantics */
   force?: boolean;
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
@@ -214,15 +215,38 @@ function projectSlugConflictError(
   return new Error(`${error.message} ${action}, then run veryfront push again.`);
 }
 
+async function sourceFilesForGitTracking(
+  projectDir: string,
+  files: readonly UploadOp[],
+): Promise<readonly UploadOp[]> {
+  const ignorePath = join(projectDir, ".vfignore");
+  let ignoreInfo;
+  try {
+    ignoreInfo = await lstat(ignorePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return files;
+    throw error;
+  }
+
+  if (ignoreInfo.isSymlink || !ignoreInfo.isFile) {
+    throw new Error(
+      ".vfignore must be a regular file inside the project and cannot be a symbolic link.",
+    );
+  }
+
+  return [...files, { path: ".vfignore", content: "" }];
+}
+
 export async function capturePushSourceSnapshot(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
   const files = await scanLocalFiles(projectDir, ignoreChecker);
+  const trackedSourceFiles = await sourceFilesForGitTracking(projectDir, files);
   const [sourceDigest, filesTracked] = await Promise.all([
     computeSourceDigest(files),
-    areSourceFilesTracked(projectDir, files),
+    areSourceFilesTracked(projectDir, trackedSourceFiles),
   ]);
   const gitSource = await resolveGitSource(projectDir);
 
@@ -627,15 +651,27 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         uploadResult = await uploadFiles(client, config.projectSlug, branchId, ops, false);
       }
 
+      if (uploadResult.failed > 0) {
+        spinner.stop();
+        throw new Error(
+          `Push failed for ${uploadResult.failed} file${
+            uploadResult.failed === 1 ? "" : "s"
+          }. Remote files were not deleted.`,
+        );
+      }
+
       if (toDelete.length > 0) {
         spinner.update("Deleting removed files...");
         deleteResult = await deleteFiles(client, config.projectSlug, branchId, toDelete, false);
       }
 
-      const failedTotal = uploadResult.failed + deleteResult.failed;
-      if (failedTotal > 0) {
+      if (deleteResult.failed > 0) {
         spinner.stop();
-        throw new Error(`Push failed for ${failedTotal} file${failedTotal === 1 ? "" : "s"}`);
+        throw new Error(
+          `Push failed for ${deleteResult.failed} file${
+            deleteResult.failed === 1 ? "" : "s"
+          } during deletion`,
+        );
       }
 
       spinner.update("Verifying push target...");

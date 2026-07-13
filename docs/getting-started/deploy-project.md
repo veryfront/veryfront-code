@@ -37,15 +37,16 @@ endpoints work.
 
 ## Deploy to Veryfront Cloud
 
-```bash
-veryfront deploy
-```
-
-For a preview deployment per branch:
+Push the current checkout to Veryfront `main`, then create and deploy its
+release:
 
 ```bash
-veryfront deploy --branch feature-x
+veryfront push --branch main --yes
+veryfront deploy --branch main --env production --yes
 ```
+
+Run both commands from the same checkout. Deploy verifies the Push receipt,
+Git commit, and source digest before it creates the release.
 
 ## Deploy somewhere else
 
@@ -54,10 +55,13 @@ For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
 
 ## Verify it worked
 
-After `veryfront deploy`, run:
+After Deploy completes, run:
 
 ```bash
 veryfront open
 ```
 
 The deployed page and API routes respond.
+
+For an automated production workflow, see
+[Deploy from CI](../guides/deploy-from-ci.md).

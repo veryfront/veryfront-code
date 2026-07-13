@@ -52,7 +52,11 @@ import {
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
+import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
+import { parsePullArgs } from "../../cli/commands/pull/command.ts";
+import { parsePushArgs } from "../../cli/commands/push/command.ts";
+import { parseCliArgs } from "../../cli/shared/args.ts";
 import { getTemplate } from "../../cli/templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
@@ -79,6 +83,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
   "create-agent.md",
+  "deploy-from-ci.md",
   "deploying.md",
   "evals.md",
   "extension-authoring.md",
@@ -91,6 +96,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
+  "move-studio-changes-to-git.md",
   "pages-and-routing.md",
   "project-structure.md",
   "project-metrics.md",
@@ -413,13 +419,70 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "veryfront deploy",
+        "veryfront push --branch main --yes",
+        "veryfront deploy --branch main --env production --yes",
         "veryfront open",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: deploy-from-ci.md", () => {
+  it("uses supported Push and Deploy arguments in the required order", async () => {
+    const guide = await readGuide("deploy-from-ci.md");
+    const pushCommand = "veryfront push --branch main --yes";
+    const deployCommand = "veryfront deploy --branch main --env production --yes";
+
+    const pushArgs = parseCliArgs(["push", "--branch", "main", "--yes"]);
+    const parsedPush = parsePushArgs(pushArgs);
+    assert(parsedPush.success);
+    assertEquals(parsedPush.data.branch, "main");
+    assertEquals(pushArgs.yes, true);
+
+    const deployArgs = parseCliArgs([
+      "deploy",
+      "--branch",
+      "main",
+      "--env",
+      "production",
+      "--yes",
+    ]);
+    const parsedDeploy = parseDeployArgs(deployArgs);
+    assert(parsedDeploy.success);
+    assertEquals(parsedDeploy.data.branch, "main");
+    assertEquals(parsedDeploy.data.env, "production");
+    assertEquals(deployArgs.yes, true);
+
+    assert(guide.indexOf(pushCommand) < guide.indexOf(deployCommand));
+    assertStringIncludes(guide, "cancel-in-progress: false");
+    assertStringIncludes(guide, "RUNNER_TEMP");
+  });
+});
+
+describe("Guide: move-studio-changes-to-git.md", () => {
+  it("uses the immutable release and pruning Pull arguments", async () => {
+    const guide = await readGuide("move-studio-changes-to-git.md");
+    const pullArgs = parseCliArgs([
+      "pull",
+      "--release",
+      "0.0.42",
+      "--prune",
+      "--yes",
+    ]);
+    const parsedPull = parsePullArgs(pullArgs);
+
+    assert(parsedPull.success);
+    assertEquals(parsedPull.data.release, "0.0.42");
+    assertEquals(parsedPull.data.prune, true);
+    assertEquals(pullArgs.yes, true);
+    assertStringIncludes(
+      guide,
+      'veryfront pull --release "$VERYFRONT_RELEASE" --prune --yes',
+    );
+    assertStringIncludes(guide, "git merge origin/main");
   });
 });
 
@@ -786,7 +849,8 @@ describe("Guide: deploy-project.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
-        "veryfront deploy",
+        "veryfront push --branch main --yes",
+        "veryfront deploy --branch main --env production --yes",
         "veryfront open",
       ]
     ) {

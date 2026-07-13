@@ -24,8 +24,12 @@ import {
   type UploadOp,
 } from "./command.ts";
 import { type ApiClient, resolveConfig } from "#cli/shared/config";
-import { createDefaultIgnoreChecker } from "../../sync/ignore.ts";
-import { readPushReceipt } from "../../shared/deployment-provenance.ts";
+import {
+  createDefaultIgnoreChecker,
+  createIgnoreChecker,
+  loadIgnorePatterns,
+} from "../../sync/ignore.ts";
+import { readPushReceipt, writePushReceipt } from "../../shared/deployment-provenance.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -477,6 +481,34 @@ describe("push receipt source snapshot", () => {
     });
   });
 
+  it("keeps a tracked .vfignore in the clean Git provenance", async () => {
+    await withGitProject(async ({ projectDir, runGit }) => {
+      await Deno.writeTextFile(`${projectDir}/.vfignore`, "generated.ts\n");
+      await runGit("add", ".vfignore");
+      await runGit("commit", "--quiet", "-m", "add Veryfront ignore rules");
+      const checker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
+
+      const snapshot = await capturePushSourceSnapshot(projectDir, checker);
+
+      assertEquals(snapshot.gitSource.clean, true);
+    });
+  });
+
+  it("marks a Git-ignored .vfignore as unclean", async () => {
+    await withGitProject(async ({ projectDir, runGit }) => {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".vfignore\n");
+      await runGit("add", ".gitignore");
+      await runGit("commit", "--quiet", "-m", "ignore Veryfront rules");
+      await Deno.writeTextFile(`${projectDir}/.vfignore`, "generated.ts\n");
+      assertEquals(await runGit("status", "--porcelain=v1", "--untracked-files=all"), "");
+      const checker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
+
+      const snapshot = await capturePushSourceSnapshot(projectDir, checker);
+
+      assertEquals(snapshot.gitSource.clean, false);
+    });
+  });
+
   it("recognizes tracked source paths containing newlines", async () => {
     if (Deno.build.os === "windows") return;
 
@@ -826,5 +858,85 @@ describe("uploadFiles", () => {
 
     assertEquals(result.uploaded, 0);
     assertEquals(result.failed, 0);
+  });
+});
+
+describe("push failure ordering", () => {
+  it("does not delete remote files after an upload fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/second.ts`, "export const second = true;\n");
+        await runGit("add", "second.ts");
+        await runGit("commit", "--quiet", "-m", "add second source file");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-old",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha: await runGit("rev-parse", "HEAD"),
+          sourceDigest: `sha256:${"0".repeat(64)}`,
+          clean: true,
+          pushedAt: new Date().toISOString(),
+        });
+        assertExists(await readPushReceipt(projectDir));
+
+        const requests: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requests.push(`${request.method} ${url.pathname}`);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{
+                path: "stale.ts",
+                size: 8,
+                type: "file",
+                created_at: "",
+                updated_at: "",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT" && url.pathname.endsWith("/files/app.ts")) {
+            return Response.json({ error: "upload failed" }, { status: 500 });
+          }
+          if (request.method === "PUT" && url.pathname.endsWith("/files/second.ts")) {
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () =>
+            pushCommand({
+              projectDir,
+              branch: "main",
+              force: true,
+              quiet: true,
+            }),
+          Error,
+          "Remote files were not deleted",
+        );
+
+        assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
+        assertEquals(await readPushReceipt(projectDir), null);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
   });
 });

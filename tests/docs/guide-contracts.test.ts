@@ -212,6 +212,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "guides/deploying.md": {
     references: [
       "../api-reference/veryfront/index.md",
+      "../api-reference/veryfront/cli.md",
       "../api-reference/veryfront/server.md",
       "../api-reference/veryfront/observability.md",
       "../api-reference/veryfront/utils.md",
@@ -220,8 +221,25 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Pick one production path",
       "veryfront build",
       "veryfront serve",
-      "veryfront deploy",
+      "veryfront push --branch main --yes",
+      "veryfront deploy --branch main --env production --yes",
       "veryfront open",
+    ],
+  },
+  "guides/deploy-from-ci.md": {
+    references: [
+      "../api-reference/veryfront/cli.md",
+      "./configuration.md",
+      "./deploying.md",
+    ],
+    snippets: [
+      "veryfront push --branch main --yes",
+      "veryfront deploy --branch main --env production --yes",
+      ".veryfront/push-receipt.json",
+      "cancel-in-progress: false",
+      "RUNNER_TEMP",
+      "NDJSON records",
+      "git revert",
     ],
   },
   "guides/extension-authoring.md": {
@@ -304,6 +322,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Workflows",
       "Extensions",
       "Build and deploy",
+      "Deploy from CI",
+      "Move Studio changes into Git",
     ],
   },
   "concepts/index.md": {
@@ -616,8 +636,25 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "veryfront build",
       "veryfront serve",
-      "veryfront deploy",
+      "veryfront push --branch main --yes",
+      "veryfront deploy --branch main --env production --yes",
       "veryfront open",
+    ],
+  },
+  "guides/move-studio-changes-to-git.md": {
+    references: [
+      "../api-reference/veryfront/cli.md",
+      "./configuration.md",
+      "./deploy-from-ci.md",
+    ],
+    snippets: [
+      "immutable release",
+      "veryfront pull --release",
+      "--prune --dry-run",
+      "git switch --create",
+      "git merge origin/main",
+      "Resolve conflicts in Git",
+      "git push --set-upstream origin HEAD",
     ],
   },
   "guides/sandbox.md": {
