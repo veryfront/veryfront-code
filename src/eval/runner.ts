@@ -1,5 +1,5 @@
 import { createEvalCheckContext } from "./expect.ts";
-import { createEvalReport } from "./report.ts";
+import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import {
@@ -331,6 +331,7 @@ export async function runEval(
   const startedAt = options.now?.() ?? new Date();
   const baseDir = options.baseDir ?? Deno.cwd();
   const examples = await definition.dataset.load({ baseDir });
+  const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
   const records: EvalRecord[] = [];
 
   for (const example of examples) {
@@ -346,6 +347,7 @@ export async function runEval(
     runId: options.runId ?? createEvalRunId(startedAt),
     startedAt,
     endedAt,
+    dataset,
     metadata: options.metadata,
   });
   emitEvalRuntimeMetrics(report);

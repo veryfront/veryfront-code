@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentResponse } from "veryfront/agent";
-import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
+import {
+  compareEvalReports,
+  type DiscoveredEval,
+  EVAL_REPORT_SCHEMA_VERSION,
+  type EvalReport,
+} from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
 import { saveToken } from "../../auth/token-store.ts";
@@ -71,10 +76,16 @@ function restoreEnv(): void {
 function createReport(): EvalReport {
   return {
     kind: "eval-report",
+    schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
     runId: "evalrun_test",
     definitionId: "eval:answers",
     targetKind: "agent",
     target: "agent:assistant",
+    dataset: {
+      kind: "inline",
+      examples: 2,
+      hash: "sha256:fixture-dataset",
+    },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: "2026-01-01T00:00:01.000Z",
     summary: {
@@ -448,10 +459,12 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(createSummaryArtifact(report, baseline), {
       kind: "eval-summary",
+      schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
       runId: "evalrun_test",
       definitionId: "eval:answers",
       targetKind: "agent",
       target: "agent:assistant",
+      dataset: report.dataset,
       startedAt: "2026-01-01T00:00:00.000Z",
       endedAt: "2026-01-01T00:00:01.000Z",
       summary: report.summary,
@@ -803,12 +816,20 @@ describe("eval CLI command helpers", () => {
 
       const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
         kind: string;
+        schemaVersion?: number;
+        dataset?: { kind: string; examples: number; hash: string };
         summary: { records: number };
       };
       const results = (await Deno.readTextFile(paths.results)).trimEnd().split("\n");
       const markdown = await Deno.readTextFile(paths.reportMarkdown);
 
       assertEquals(summary.kind, "eval-summary");
+      assertEquals(summary.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
+      assertEquals(summary.dataset, {
+        kind: "inline",
+        examples: 2,
+        hash: "sha256:fixture-dataset",
+      });
       assertEquals(summary.summary.records, 2);
       assertEquals(results.length, 2);
       assertStringIncludes(markdown, "# Eval report: eval:answers");

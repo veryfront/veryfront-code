@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { EvalRecord } from "veryfront/eval";
-import { summarizeEvalRecords } from "./report.ts";
+import type { EvalDataset, EvalRecord } from "veryfront/eval";
+import { datasets } from "./datasets.ts";
+import { createEvalDatasetMetadata, summarizeEvalRecords } from "./report.ts";
 
 function createRecord(overrides: Partial<EvalRecord> = {}): EvalRecord {
   return {
@@ -38,6 +39,70 @@ function createRecord(overrides: Partial<EvalRecord> = {}): EvalRecord {
 }
 
 describe("eval/report", () => {
+  it("creates deterministic dataset metadata fingerprints", async () => {
+    const dataset = datasets.inline([
+      {
+        id: "q1",
+        input: { b: 2, a: 1 },
+        reference: { z: "last", a: "first" },
+        metadata: { source: "fixture", order: { second: 2, first: 1 } },
+      },
+    ]);
+    const reorderedDataset = datasets.inline([
+      {
+        id: "q1",
+        input: { a: 1, b: 2 },
+        reference: { a: "first", z: "last" },
+        metadata: { order: { first: 1, second: 2 }, source: "fixture" },
+      },
+    ]);
+    const changedDataset = datasets.inline([
+      {
+        id: "q1",
+        input: { a: 1, b: 3 },
+        reference: { a: "first", z: "last" },
+        metadata: { order: { first: 1, second: 2 }, source: "fixture" },
+      },
+    ]);
+
+    const metadata = await createEvalDatasetMetadata(
+      dataset,
+      await dataset.load({ baseDir: Deno.cwd() }),
+    );
+    const reorderedMetadata = await createEvalDatasetMetadata(
+      reorderedDataset,
+      await reorderedDataset.load({ baseDir: Deno.cwd() }),
+    );
+    const changedMetadata = await createEvalDatasetMetadata(
+      changedDataset,
+      await changedDataset.load({ baseDir: Deno.cwd() }),
+    );
+    const fileExamples = await dataset.load({ baseDir: Deno.cwd() });
+    const pathDataset = {
+      kind: "json",
+      path: "datasets/support.json",
+      load: async () => fileExamples,
+    } satisfies EvalDataset;
+    const aliasPathDataset = {
+      kind: "json",
+      path: "./datasets/support.json",
+      load: async () => fileExamples,
+    } satisfies EvalDataset;
+    const pathMetadata = await createEvalDatasetMetadata(pathDataset, fileExamples);
+    const aliasPathMetadata = await createEvalDatasetMetadata(aliasPathDataset, fileExamples);
+
+    assertEquals(metadata, {
+      kind: "inline",
+      examples: 1,
+      hash: "sha256:e586281e549c9084ec91a67336e45870504d21b921309be808583b7b4091497e",
+    });
+    assertEquals(reorderedMetadata.hash, metadata.hash);
+    assertNotEquals(changedMetadata.hash, metadata.hash);
+    assertEquals(pathMetadata.path, "datasets/support.json");
+    assertEquals(aliasPathMetadata.path, "./datasets/support.json");
+    assertEquals(aliasPathMetadata.hash, pathMetadata.hash);
+  });
+
   it("summarizes duration, usage, failures, and flaky examples", () => {
     const summary = summarizeEvalRecords([
       createRecord({

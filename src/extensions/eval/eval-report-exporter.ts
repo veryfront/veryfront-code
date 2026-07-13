@@ -36,6 +36,8 @@ export interface EvalReportExportRedaction {
   includeMetricExplanations?: boolean;
   /** Include metric/check evidence payloads. Defaults to false. */
   includeMetricEvidence?: boolean;
+  /** Include dataset source paths. Defaults to false. */
+  includeDatasetPath?: boolean;
   /** Record and export context metadata keys that can be exported. Defaults to none. */
   metadataAllowlist?: string[];
 }
@@ -178,6 +180,18 @@ function cloneRedaction(
   };
 }
 
+function redactDatasetMetadata(
+  dataset: EvalReport["dataset"],
+  redaction: EvalReportExportRedaction,
+): EvalReport["dataset"] {
+  if (!dataset || redaction.includeDatasetPath || !Object.hasOwn(dataset, "path")) {
+    return dataset;
+  }
+  const redactedDataset = { ...dataset };
+  delete redactedDataset.path;
+  return redactedDataset;
+}
+
 function redactEvalReportExportContext(
   context: EvalReportExportContext,
   redaction: EvalReportExportRedaction,
@@ -207,6 +221,7 @@ export function redactEvalReportForExport(
   const cloned = structuredClone(report) as EvalReport;
   return {
     ...cloned,
+    ...(cloned.dataset ? { dataset: redactDatasetMetadata(cloned.dataset, redaction) } : {}),
     records: cloned.records.map((record) => redactRecord(record, redaction)),
   };
 }
