@@ -28,8 +28,13 @@ export function getInitTemplates(): string {
 
 export function getPostBuildTips(): string {
   return `\n  ${dim("Next steps:")}\n` +
-    `    ${dim("•")} ${cyan("veryfront serve")}     Preview locally\n` +
-    `    ${dim("•")} ${cyan("veryfront deploy")}    Deploy to production\n`;
+    `    ${dim("•")} ${
+      cyan("veryfront serve")
+    }                                  Preview locally\n` +
+    `    ${dim("•")} ${cyan("veryfront push --branch main")}                     Upload source\n` +
+    `    ${dim("•")} ${
+      cyan("veryfront deploy --branch main --env production")
+    } Create a release and deploy\n`;
 }
 
 export function getPostDeployTips(): string {

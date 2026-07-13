@@ -32,11 +32,19 @@ export const pullHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Force overwrite without confirmation",
+      description: "Skip confirmation for compatibility (prefer global --yes)",
     },
     {
       flag: "--dry-run",
-      description: "Show what would be written without writing",
+      description: "Show what would be written or deleted without changing files",
+    },
+    {
+      flag: "--prune",
+      description: "Delete managed local files missing from the selected source",
+    },
+    {
+      flag: "-q, --quiet",
+      description: "Suppress progress and summary output",
     },
   ],
   examples: [
@@ -49,8 +57,10 @@ export const pullHelp: CommandHelp = {
     "veryfront pull --release v1.2.0",
     "veryfront pull --projects project-a,project-b,project-c",
     "veryfront pull --projects my-app --dir ./apps",
+    "veryfront pull --branch studio-change --prune --dry-run",
+    "veryfront pull --branch studio-change --prune --yes",
     "veryfront pull --dry-run",
-    "veryfront pull --force",
+    "veryfront pull --yes",
   ],
   notes: [
     "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
@@ -58,5 +68,7 @@ export const pullHelp: CommandHelp = {
     "With --projects, each project is pulled into a subdirectory named after the slug",
     'Projects list can also be specified in veryfront.json: { "projects": ["slug1", "slug2"] }',
     "Priority order: --env > --release > --branch > main",
+    "--prune requires a clean Git worktree; --prune --dry-run can preview anywhere",
+    "--prune never removes ignored or unsupported files",
   ],
 };

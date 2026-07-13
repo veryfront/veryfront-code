@@ -20,11 +20,15 @@ export const deployHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Deploy without confirmation",
+      description: "Skip confirmation for compatibility (prefer global --yes)",
     },
     {
       flag: "--dry-run",
       description: "Preview without executing",
+    },
+    {
+      flag: "-q, --quiet",
+      description: "Suppress progress and summary output",
     },
   ],
   examples: [
@@ -32,6 +36,7 @@ export const deployHelp: CommandHelp = {
     "veryfront deploy --env staging",
     "veryfront deploy --branch feature-x --env preview",
     "veryfront deploy --release-name v1.2.0",
+    "veryfront deploy --branch main --env production --yes",
     "veryfront deploy --dry-run",
   ],
   notes: [

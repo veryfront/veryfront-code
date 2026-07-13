@@ -3,7 +3,7 @@ import type { CommandHelp } from "../../help/types.ts";
 export const pushHelp: CommandHelp = {
   name: "push",
   category: "deploy",
-  description: "Create a branch and upload local files to Veryfront",
+  description: "Upload local source files to a Veryfront branch",
   usage: "veryfront push [options]",
   options: [
     {
@@ -20,11 +20,15 @@ export const pushHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Push without confirmation",
+      description: "Skip confirmation for compatibility (prefer global --yes)",
     },
     {
       flag: "--dry-run",
       description: "Show what would be uploaded without uploading",
+    },
+    {
+      flag: "-q, --quiet",
+      description: "Suppress progress and summary output",
     },
   ],
   examples: [
@@ -33,12 +37,14 @@ export const pushHelp: CommandHelp = {
     "veryfront push --dir ./my-project",
     "veryfront push --branch feature-header",
     "veryfront push --branch main             # Push directly to main",
+    "veryfront push --branch main --yes       # Non-interactive CI push",
     "veryfront push --dry-run",
   ],
   notes: [
     "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
-    "Creates a new branch for each push - merge in Studio",
-    "Use --branch=main to push directly without creating a branch",
-    "Uploads all files using their relative paths",
+    "Without --branch, creates a timestamped branch that you can review in Studio",
+    "Use --branch main to update the existing Veryfront main branch",
+    "Uploads supported text source files using their relative paths",
+    ".vfignore controls which supported files are excluded",
   ],
 };

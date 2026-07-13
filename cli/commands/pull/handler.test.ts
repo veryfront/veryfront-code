@@ -39,6 +39,7 @@ describe("Pull Handler", () => {
       assertEquals(result.data.release, undefined);
       assertEquals(result.data.force, false);
       assertEquals(result.data.dryRun, false);
+      assertEquals(result.data.prune, false);
       assertEquals(result.data.quiet, false);
     });
 
@@ -96,6 +97,12 @@ describe("Pull Handler", () => {
       assertEquals(result.data.dryRun, true);
     });
 
+    it("should parse --prune flag", () => {
+      const result = parsePullArgs(createArgs({ prune: true }));
+      assertSuccess(result);
+      assertEquals(result.data.prune, true);
+    });
+
     it("should parse --quiet flag", () => {
       const result = parsePullArgs(createArgs({ quiet: true }));
       assertSuccess(result);
@@ -144,6 +151,7 @@ describe("Pull Handler", () => {
         env: "preview",
         force: true,
         "dry-run": true,
+        prune: true,
         quiet: true,
       }));
       assertSuccess(result);
@@ -151,6 +159,7 @@ describe("Pull Handler", () => {
       assertEquals(result.data.env, "preview");
       assertEquals(result.data.force, true);
       assertEquals(result.data.dryRun, true);
+      assertEquals(result.data.prune, true);
       assertEquals(result.data.quiet, true);
     });
 

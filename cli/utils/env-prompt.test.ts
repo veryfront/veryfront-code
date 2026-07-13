@@ -30,11 +30,19 @@ describe("env-prompt", () => {
       assertStringIncludes(result, "# IDE");
     });
 
-    it("returns existing content unchanged if .env already present", () => {
-      const existing = "# My gitignore\n.env\nnode_modules/";
+    it("returns existing content unchanged when every required entry is present", () => {
+      const existing = "# My gitignore\n.env\n.env.local\n.env.*.local\n.veryfront/\nnode_modules/";
       const result = generateGitignoreContent(existing);
 
       assertEquals(result, existing);
+    });
+
+    it("adds .veryfront when existing content already ignores environment files", () => {
+      const existing = "# My gitignore\n.env\n.env.local\n.env.*.local\nnode_modules/";
+      const result = generateGitignoreContent(existing);
+
+      assertStringIncludes(result, ".veryfront/");
+      assertEquals(result.match(/^\.env$/gm)?.length, 1);
     });
 
     it("appends env entries to existing content without .env", () => {
