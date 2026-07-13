@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import { datasets, EVAL_REPORT_SCHEMA_VERSION, evalAgent, metrics, runEval } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import {
   _resetShimForTests,
@@ -36,8 +36,12 @@ describe("eval/runner", () => {
     });
 
     assertEquals(report.kind, "eval-report");
+    assertEquals(report.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
     assertEquals(report.definitionId, "eval:capital-answer");
     assertEquals(report.target, "agent:researcher");
+    assertEquals(report.dataset?.kind, "inline");
+    assertEquals(report.dataset?.examples, 2);
+    assertEquals(report.dataset?.hash.startsWith("sha256:"), true);
     assertEquals(report.summary.records, 2);
     assertEquals(report.summary.passed, 2);
     assertEquals(report.summary.failed, 0);

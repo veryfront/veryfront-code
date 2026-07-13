@@ -27,6 +27,7 @@ import {
   createEvalModelComparisonMarkdown,
   createEvalRunId,
   discoverEvals,
+  EVAL_REPORT_SCHEMA_VERSION,
   exportEvalReport,
   resolveEvalRunProvenance,
   runEval,
@@ -80,10 +81,12 @@ type EvalModelComparisonArtifactPaths = {
 
 type EvalSummaryArtifact = {
   kind: "eval-summary";
+  schemaVersion: number;
   runId: string;
   definitionId: string;
   targetKind: EvalReport["targetKind"];
   target: string;
+  dataset?: EvalReport["dataset"];
   startedAt: string;
   endedAt: string;
   summary: EvalReport["summary"];
@@ -291,10 +294,12 @@ export function createSummaryArtifact(
 ): EvalSummaryArtifact {
   return {
     kind: "eval-summary",
+    schemaVersion: report.schemaVersion ?? EVAL_REPORT_SCHEMA_VERSION,
     runId: report.runId,
     definitionId: report.definitionId,
     targetKind: report.targetKind,
     target: report.target,
+    ...(report.dataset ? { dataset: report.dataset } : {}),
     startedAt: report.startedAt,
     endedAt: report.endedAt,
     summary: report.summary,
