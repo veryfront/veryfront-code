@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, EVAL_REPORT_SCHEMA_VERSION, evalAgent, metrics, runEval } from "veryfront/eval";
+import {
+  datasets,
+  EVAL_REPORT_SCHEMA_VERSION,
+  evalAgent,
+  evalTool,
+  metrics,
+  runEval,
+} from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import {
   _resetShimForTests,
@@ -269,6 +276,55 @@ describe("eval/runner", () => {
       "answer.groundedness",
       "expect.completed",
       "expect.outputContains",
+    ]);
+  });
+
+  it("runs a tool eval and records the direct tool call trace", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([
+        {
+          id: "order-1",
+          input: { orderId: "A1049", prompt: "Find order A1049" },
+          reference: { status: "shipped" },
+        },
+      ]),
+      input: (example) => ({ orderId: (example.input as { orderId: string }).orderId }),
+      metrics: [
+        metrics.agent.calledTool("lookup_order", {
+          input: { orderId: "A1049" },
+          match: "partial",
+        }).gate(),
+        metrics.answer.jsonMatch({ expected: { status: "shipped" } }).gate(),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async ({ input }) => ({
+          output: { status: input === undefined ? "missing" : "shipped" },
+          durationMs: 12,
+          usage: { totalTokens: 0, costUsd: 0 },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(report.targetKind, "tool");
+    assertEquals(report.target, "tool:lookup_order");
+    assertEquals(report.summary.records, 1);
+    assertEquals(report.summary.passed, 1);
+    assertEquals(record.output, { status: "shipped" });
+    assertEquals(record.trace.toolCalls, [
+      {
+        name: "lookup_order",
+        status: "ok",
+        input: { orderId: "A1049" },
+        output: { status: "shipped" },
+        metadata: { durationMs: 12 },
+      },
     ]);
   });
 

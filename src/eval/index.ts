@@ -44,7 +44,7 @@
  */
 
 export { datasets } from "./datasets.ts";
-export { evalAgent, isEvalDefinition } from "./factory.ts";
+export { evalAgent, evalTool, isEvalDefinition } from "./factory.ts";
 export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
 export {
@@ -67,6 +67,7 @@ export {
   getEvalSourcePatchSchema,
   getEvalSourceReferenceSchema,
   getEvalStudioCapabilitySchema,
+  getEvalTargetKindSchema,
 } from "./studio.ts";
 
 export type { DiscoveredEval, EvalDiscoveryOptions, EvalDiscoveryResult } from "./discovery.ts";
@@ -124,10 +125,14 @@ export type {
   EvalSeverity,
   EvalSource,
   EvalTargetKind,
+  EvalToolAdapter,
+  EvalToolAdapterContext,
+  EvalToolAdapterResult,
   EvalToolCall,
   EvalToolCallCountOptions,
   EvalToolCallMatchOptions,
   EvalToolCallStatus,
+  EvalToolInput,
   EvalToolInputMatchMode,
   EvalTrace,
   EvalUsage,

@@ -18,6 +18,8 @@ import type {
   EvalMetricResult,
   EvalRecord,
   EvalReportExportConfig,
+  EvalToolAdapterResult,
+  EvalToolCall,
   EvalTrace,
   EvalUsage,
   RunEvalOptions,
@@ -43,6 +45,66 @@ function normalizeOutput(result: EvalAgentAdapterResult): unknown {
   if (Object.hasOwn(result, "json")) return { json: result.json };
   if (Object.hasOwn(result, "text")) return { text: result.text };
   return result;
+}
+
+function normalizeToolTargetName(target: string): string {
+  return target.startsWith("tool:") ? target.slice("tool:".length) : target;
+}
+
+function createDirectToolTraceCall(
+  definition: EvalDefinition,
+  input: unknown,
+  result: EvalToolAdapterResult,
+): EvalToolCall {
+  return {
+    name: normalizeToolTargetName(definition.target),
+    status: result.error || result.completed === false ? "error" : "ok",
+    input,
+    output: result.output,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.durationMs !== undefined ? { metadata: { durationMs: result.durationMs } } : {}),
+  };
+}
+
+function normalizeToolTrace(
+  definition: EvalDefinition,
+  input: unknown,
+  result: EvalToolAdapterResult,
+): EvalTrace {
+  const trace = normalizeTrace(result.trace);
+  if (trace.toolCalls.length > 0) return trace;
+  return {
+    ...trace,
+    toolCalls: [createDirectToolTraceCall(definition, input, result)],
+  };
+}
+
+async function runAgentTarget(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+): Promise<EvalAgentAdapterResult> {
+  const adapter = options.adapters.agent;
+  if (!adapter) {
+    throw new Error(`No agent adapter configured for eval target "${definition.target}".`);
+  }
+  return normalizeAdapterResult(await adapter({ definition, example, repetition }));
+}
+
+async function runToolTarget(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+): Promise<{ input: unknown; result: EvalToolAdapterResult }> {
+  const adapter = options.adapters.tool;
+  if (!adapter) {
+    throw new Error(`No tool adapter configured for eval target "${definition.target}".`);
+  }
+  const input = definition.input ? await definition.input(example) : example.input;
+  const result = await adapter({ definition, example, repetition, input });
+  return { input, result };
 }
 
 function isBlockingFailure(record: EvalRecord): boolean {
@@ -265,21 +327,31 @@ async function runRecord(
   repetition: number,
 ): Promise<EvalRecord> {
   const started = Date.now();
-  let result: EvalAgentAdapterResult;
+  let result: EvalAgentAdapterResult | EvalToolAdapterResult;
+  let toolInput: unknown;
 
   try {
-    result = normalizeAdapterResult(
-      await options.adapters.agent({ definition, example, repetition }),
-    );
+    if (definition.targetKind === "tool") {
+      const toolRun = await runToolTarget(definition, options, example, repetition);
+      result = toolRun.result;
+      toolInput = toolRun.input;
+    } else {
+      result = await runAgentTarget(definition, options, example, repetition);
+    }
   } catch (error) {
     result = {
-      text: "",
+      ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 
-  const output = normalizeOutput(result);
+  const output = definition.targetKind === "tool"
+    ? (result as EvalToolAdapterResult).output
+    : normalizeOutput(result as EvalAgentAdapterResult);
+  const agentResult = definition.targetKind === "agent"
+    ? result as EvalAgentAdapterResult
+    : undefined;
   const record: EvalRecord = {
     id: `${example.id}:${repetition}`,
     evalId: definition.id,
@@ -289,9 +361,11 @@ async function runRecord(
     output,
     ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
     metadata: example.metadata ?? {},
-    ...(result.retrievedContext ? { retrievedContext: result.retrievedContext } : {}),
-    ...(result.citations ? { citations: result.citations } : {}),
-    trace: normalizeTrace(result.trace),
+    ...(agentResult?.retrievedContext ? { retrievedContext: agentResult.retrievedContext } : {}),
+    ...(agentResult?.citations ? { citations: agentResult.citations } : {}),
+    trace: definition.targetKind === "tool"
+      ? normalizeToolTrace(definition, toolInput ?? example.input, result as EvalToolAdapterResult)
+      : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,
     completed: result.completed ?? !result.error,
