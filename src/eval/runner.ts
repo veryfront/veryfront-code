@@ -136,11 +136,42 @@ function createMissingExporterResult(exporterId: string): EvalReportExportResult
   };
 }
 
+function exportErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createExporterFailureResult(
+  exporterId: string,
+  error: unknown,
+): EvalReportExportResult {
+  return {
+    exporterId,
+    ok: false,
+    error: exportErrorMessage(error),
+  };
+}
+
+function createExporterFailureResults(
+  exporterIds: string[],
+  error: unknown,
+): EvalReportExportResult[] {
+  const ids = exporterIds.length > 0 ? exporterIds : [EvalReportExporterRegistryName];
+  return ids.map((exporterId) => createExporterFailureResult(exporterId, error));
+}
+
 function resolveExporterRegistry(
   config: EvalReportExportConfig,
 ): EvalReportExporterRegistry | undefined {
   return config.registry ??
     tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
+}
+
+function listRegisteredExporterIds(registry: EvalReportExporterRegistry): string[] {
+  try {
+    return registry.list().map((exporter) => exporter.id).filter((id) => id.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 function isEmptyTraceId(value: string | undefined): boolean {
@@ -179,17 +210,21 @@ async function exportWithSelectedExporter(
   config: EvalReportExportConfig,
   exporterId: string,
 ): Promise<EvalReportExportResult> {
-  const exporter = registry.get(exporterId);
-  if (!exporter) return createMissingExporterResult(exporterId);
+  try {
+    const exporter = registry.get(exporterId);
+    if (!exporter) return createMissingExporterResult(exporterId);
 
-  const selectedRegistry = createEvalReportExporterRegistry();
-  selectedRegistry.register(exporter);
-  const [result] = await selectedRegistry.export(report, withActiveTraceContext(config.context));
-  return result ?? {
-    exporterId,
-    ok: false,
-    error: `EvalReportExporter "${exporterId}" did not return an export result.`,
-  };
+    const selectedRegistry = createEvalReportExporterRegistry();
+    selectedRegistry.register(exporter);
+    const [result] = await selectedRegistry.export(report, withActiveTraceContext(config.context));
+    return result ?? {
+      exporterId,
+      ok: false,
+      error: `EvalReportExporter "${exporterId}" did not return an export result.`,
+    };
+  } catch (error) {
+    return createExporterFailureResult(exporterId, error);
+  }
 }
 
 export async function exportEvalReport(
@@ -199,11 +234,20 @@ export async function exportEvalReport(
   if (!config) return undefined;
 
   const exporterIds = config.exporterIds?.filter((id) => id.length > 0) ?? [];
-  const registry = resolveExporterRegistry(config);
+  let registry: EvalReportExporterRegistry | undefined;
+  try {
+    registry = resolveExporterRegistry(config);
+  } catch (error) {
+    return createExporterFailureResults(exporterIds, error);
+  }
   if (!registry) return createMissingRegistryResults(exporterIds);
 
   if (exporterIds.length === 0) {
-    return registry.export(report, withActiveTraceContext(config.context));
+    try {
+      return await registry.export(report, withActiveTraceContext(config.context));
+    } catch (error) {
+      return createExporterFailureResults(listRegisteredExporterIds(registry), error);
+    }
   }
 
   const results: EvalReportExportResult[] = [];
