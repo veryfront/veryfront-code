@@ -14,6 +14,12 @@ function createReport(): EvalReport {
     definitionId: "eval:deep-research",
     targetKind: "agent",
     target: "agent:researcher",
+    dataset: {
+      kind: "json",
+      path: "private/evals/deep-research.json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: "2026-01-01T00:00:02.000Z",
     summary: {
@@ -136,6 +142,11 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(exportedRecord.trace, { events: [], toolCalls: [] });
     assertEquals(exportedRecord.metrics?.[0]?.explanation, undefined);
     assertEquals(exportedRecord.metrics?.[0]?.evidence, undefined);
+    assertEquals(exportedReport.dataset, {
+      kind: "json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    });
   });
 
   it("continues exporting when one exporter fails", async () => {
@@ -252,6 +263,7 @@ describe("EvalReportExporterRegistry", () => {
       includeCitations: true,
       includeMetricEvidence: true,
       includeMetricExplanations: true,
+      includeDatasetPath: true,
       metadataAllowlist: ["topic", "tenantId"],
     });
     const record = redacted.records[0];
@@ -290,6 +302,12 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(record.metrics?.[0]?.evidence, {
       output: "The plan changed.",
       reference: "Plan update",
+    });
+    assertEquals(redacted.dataset, {
+      kind: "json",
+      path: "private/evals/deep-research.json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
     });
   });
 });

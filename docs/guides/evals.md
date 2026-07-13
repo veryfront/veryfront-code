@@ -62,7 +62,9 @@ raw report in one JSON file.
 
 The report and summary artifacts include `schemaVersion`. New reports also
 include dataset metadata with the dataset kind, optional path, example count,
-and a stable SHA-256 hash when examples were loaded. The summary artifact
+and a stable SHA-256 hash when examples were loaded. The hash is based on the
+loaded examples and dataset kind; the path is provenance and is not part of the
+fingerprint. The summary artifact
 includes pass/fail counts, metric aggregates, skipped metric or check results,
 gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
@@ -518,6 +520,7 @@ const report = await runEval(definition, {
         includeTraces: false,
         includeMetricEvidence: false,
         includeMetricExplanations: false,
+        includeDatasetPath: false,
         metadataAllowlist: ["dataset"],
       },
     },
@@ -526,11 +529,13 @@ const report = await runEval(definition, {
 ```
 
 The registry redacts inputs, outputs, references, traces, tool-call input and
-output, metric evidence, metric explanations, record metadata, and export
-context metadata unless the export context explicitly allows each field. Use
-`metadataAllowlist` only for metadata keys the destination is allowed to
-receive. Runtime monitoring remains separate: use
-`veryfront/extensions/observability` and the OpenTelemetry extension for spans,
+output, metric evidence, metric explanations, dataset paths, record metadata,
+and export context metadata unless the export context explicitly allows each
+field. Dataset kind, example count, and content hash stay available so
+exporters can group runs without seeing source paths. Use `metadataAllowlist`
+only for metadata keys the destination is allowed to receive. Runtime monitoring
+remains separate: use `veryfront/extensions/observability` and the OpenTelemetry
+extension for spans,
 traces, metrics, and service monitoring. When OpenTelemetry is active, `runEval`
 adds the active `traceId` and `spanId` to export context unless you pass
 `context.trace` explicitly.

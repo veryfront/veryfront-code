@@ -63,7 +63,6 @@ async function sha256Hex(value: string): Promise<string> {
 function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
   return {
     kind: dataset.kind,
-    ...(dataset.path ? { path: dataset.path } : {}),
     examples: examples.map((example) => ({
       id: example.id,
       input: example.input,

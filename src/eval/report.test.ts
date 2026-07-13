@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { EvalRecord } from "veryfront/eval";
+import type { EvalDataset, EvalRecord } from "veryfront/eval";
 import { datasets } from "./datasets.ts";
 import { createEvalDatasetMetadata, summarizeEvalRecords } from "./report.ts";
 
@@ -77,6 +77,19 @@ describe("eval/report", () => {
       changedDataset,
       await changedDataset.load({ baseDir: Deno.cwd() }),
     );
+    const fileExamples = await dataset.load({ baseDir: Deno.cwd() });
+    const pathDataset = {
+      kind: "json",
+      path: "datasets/support.json",
+      load: async () => fileExamples,
+    } satisfies EvalDataset;
+    const aliasPathDataset = {
+      kind: "json",
+      path: "./datasets/support.json",
+      load: async () => fileExamples,
+    } satisfies EvalDataset;
+    const pathMetadata = await createEvalDatasetMetadata(pathDataset, fileExamples);
+    const aliasPathMetadata = await createEvalDatasetMetadata(aliasPathDataset, fileExamples);
 
     assertEquals(metadata, {
       kind: "inline",
@@ -85,6 +98,9 @@ describe("eval/report", () => {
     });
     assertEquals(reorderedMetadata.hash, metadata.hash);
     assertNotEquals(changedMetadata.hash, metadata.hash);
+    assertEquals(pathMetadata.path, "datasets/support.json");
+    assertEquals(aliasPathMetadata.path, "./datasets/support.json");
+    assertEquals(aliasPathMetadata.hash, pathMetadata.hash);
   });
 
   it("summarizes duration, usage, failures, and flaky examples", () => {
