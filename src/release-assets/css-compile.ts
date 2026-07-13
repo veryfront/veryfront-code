@@ -39,7 +39,12 @@ export interface CompileProjectCssResult {
 export interface CompileProjectCssOptions {
   /** Project scope (slug or id) — isolates the compiler cache per project. */
   projectScope: string;
-  /** Resolved project config, used to derive the style-scope profile. */
+  /** Fallback project config, used when the executor cannot provide release config. */
+  config?: VeryfrontConfig;
+}
+
+export interface CompileProjectCssRuntimeOptions {
+  /** Project config resolved from the materialized release file set. */
   config?: VeryfrontConfig;
 }
 
@@ -47,7 +52,7 @@ export interface CompileProjectCssOptions {
  * Build a `compileProjectCss` function bound to a specific release build.
  *
  * The returned function matches the build executor's injected client signature:
- * `(candidates, stylesheet) => Promise<{ css, styleProfileHash } | null>`. It
+ * `(candidates, stylesheet, options) => Promise<{ css, styleProfileHash } | null>`. It
  * NEVER throws — any failure resolves to `null` so the executor records a CSS
  * gap and proceeds.
  */
@@ -56,10 +61,12 @@ export function createCompileProjectCss(
 ): (
   candidates: Set<string>,
   stylesheet: string | undefined,
+  runtimeOptions?: CompileProjectCssRuntimeOptions,
 ) => Promise<CompileProjectCssResult | null> {
   return async (
     candidates: Set<string>,
     stylesheet: string | undefined,
+    runtimeOptions?: CompileProjectCssRuntimeOptions,
   ): Promise<CompileProjectCssResult | null> => {
     try {
       // A stylesheet can emit base/custom CSS without any utility candidates
@@ -72,7 +79,7 @@ export function createCompileProjectCss(
         return null;
       }
 
-      const styleProfile = createStyleScopeProfile(options.config);
+      const styleProfile = createStyleScopeProfile(runtimeOptions?.config ?? options.config);
 
       const result = await generateTailwindCSS(stylesheet, candidates, {
         minify: true,
