@@ -65,7 +65,7 @@ const report = await runEval(definition, {
 | Name | Description | Source |
 |------|-------------|--------|
 | `compareEvalModelReports` | Compare eval reports from multiple models using conservative promotion rules. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L434) |
-| `compareEvalReports` | Compare a current eval report against a saved baseline report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/baseline.ts#L87) |
+| `compareEvalReports` | Compare a current eval report against a saved baseline report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/baseline.ts#L190) |
 | `createEvalModelComparisonMarkdown` | Render a human-reviewable markdown summary for a model comparison report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L473) |
 | `createEvalReport` | Create a JSON-serializable eval report from executed records. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L219) |
 | `createEvalRunProvenance` | Build stable provenance metadata from explicit git/cloud inputs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L130) |
@@ -90,6 +90,7 @@ const report = await runEval(definition, {
 | `EvalAgentAdapterResult` | Agent adapter result normalized into an eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L269) |
 | `EvalAgentInput` | Input accepted by `evalAgent`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L248) |
 | `EvalAnswerGroundednessMetricOptions` | Options for judge-backed answer grounding checks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L117) |
+| `EvalBudgetDeltaSummary` | Numeric budget delta between a current eval report and a baseline report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L422) |
 | `EvalCheckContext` | Context passed to an eval definition's `check` callback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L216) |
 | `EvalDataset` | Dataset loader used by an eval definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L52) |
 | `EvalDatasetLoadContext` | Context passed to dataset loaders. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L47) |
@@ -126,7 +127,8 @@ const report = await runEval(definition, {
 | `EvalModelReportSummary` | Per-model row in an eval model comparison report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L424) |
 | `EvalRecord` | One executed example and repetition inside an eval report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L149) |
 | `EvalReport` | JSON-serializable report produced by `runEval`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L532) |
-| `EvalReportComparison` | Baseline comparison for a current eval report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L378) |
+| `EvalReportComparison` | Baseline comparison for a current eval report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L443) |
+| `EvalReportComparisonPolicy` | Regression policy for comparing a current eval report to a saved baseline. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L434) |
 | `EvalReportExportConfig` | Export configuration for a completed eval report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L298) |
 | `EvalReportMetadata` | Additional report metadata that should not affect pass/fail semantics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L418) |
 | `EvalReportSummary` | Aggregate pass/fail summary for one eval report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L511) |
