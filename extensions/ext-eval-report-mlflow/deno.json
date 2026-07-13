@@ -5,10 +5,17 @@
   "veryfront": {
     "extension": true,
     "contracts": {
-      "requires": ["EvalReportExporterRegistry"]
+      "requires": [
+        "EvalReportExporterRegistry"
+      ]
     },
     "capabilities": [
-      { "type": "net:outbound", "hosts": ["*"] },
+      {
+        "type": "net:outbound",
+        "hosts": [
+          "*"
+        ]
+      },
       {
         "type": "env:read",
         "keys": [
@@ -21,7 +28,10 @@
           "MLFLOW_TRACKING_USERNAME"
         ]
       }
-    ]
+    ],
+    "npm": {
+      "publish": false
+    }
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1.0.19",
