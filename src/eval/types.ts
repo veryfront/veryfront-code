@@ -418,6 +418,27 @@ export interface EvalMetricDeltaSummary {
   regressed: boolean;
 }
 
+/** Numeric budget delta between a current eval report and a baseline report. */
+export interface EvalBudgetDeltaSummary {
+  name: string;
+  family: "usage" | "latency";
+  baselineValue: number;
+  currentValue: number;
+  delta: number;
+  percentDelta: number | null;
+  threshold: number | null;
+  regressed: boolean;
+}
+
+/** Regression policy for comparing a current eval report to a saved baseline. */
+export interface EvalReportComparisonPolicy {
+  passRateDropThreshold?: number;
+  metricPassRateDropThreshold?: number;
+  failedDeltaThreshold?: number;
+  usageIncreaseThreshold?: number;
+  latencyIncreaseThreshold?: number;
+}
+
 /** Baseline comparison for a current eval report. */
 export interface EvalReportComparison {
   kind: "eval-report-comparison";
@@ -427,6 +448,7 @@ export interface EvalReportComparison {
   passedDelta: number;
   failedDelta: number;
   metricDeltas: EvalMetricDeltaSummary[];
+  budgetDeltas: EvalBudgetDeltaSummary[];
   newFailedExamples: string[];
   fixedExamples: string[];
   regressed: boolean;

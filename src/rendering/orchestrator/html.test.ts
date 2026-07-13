@@ -13,6 +13,7 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
@@ -66,6 +67,7 @@ describe("HTMLGenerator helpers", () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
+    clearCSSCache();
   });
 
   describe("buildHeadElements", () => {
@@ -827,6 +829,50 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
       assertEquals(html.includes("/_veryfront/hydration-runtime.js"), false);
       assertEquals(html.includes("/_veryfront/hydrate.js"), false);
+    });
+
+    it("rebuilds streamed full-document CSS after an initial empty import snapshot", async () => {
+      const mockAdapter = createMockAdapter(async (path: string) => {
+        if (path === "/project/globals.css") return '@import "tailwindcss";';
+        if (path === "/project/components/hero.css") {
+          return ".hero-banner { color: rgb(12 34 56); }";
+        }
+        return "";
+      });
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: mockAdapter as any,
+        config: {} as any,
+        mode: "production",
+      });
+      const context = createHTMLContext({
+        options: {
+          environment: "production",
+          projectSlug: "streamed-full-doc-css-import-test",
+        },
+      });
+      let cssImportReads = 0;
+      Object.defineProperty(context, "cssImports", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          cssImportReads += 1;
+          return cssImportReads === 1 ? undefined : ["/project/components/hero.css"];
+        },
+      });
+      const stream = createSingleChunkStream(
+        '<!DOCTYPE html><html><head><title>Imported CSS</title></head><body><div class="hero-banner">Hero</div></body></html>',
+      );
+
+      const responseStream = await generator.generateHTMLStream(stream, context);
+      const html = await new Response(responseStream).text();
+
+      const cssHash = html.match(/\/_vf\/css\/([^"/]+)\.css/)?.[1];
+      assertExists(cssHash);
+      const css = getCSSByHash(cssHash);
+      assertExists(css);
+      assertStringIncludes(css, ".hero-banner");
+      assertStringIncludes(css, "rgb(12 34 56)");
     });
   });
 
