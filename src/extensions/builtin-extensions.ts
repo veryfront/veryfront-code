@@ -32,6 +32,7 @@ export type OptionalBuiltinExtensionDefinition = {
   origin: string;
   sourceDirectory: string;
   contracts?: ExtensionContractMetadata;
+  evalExporterId?: string;
   capabilities: Capability[];
 };
 
@@ -53,7 +54,7 @@ const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
   },
 ];
 
-const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] = [
+export const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] = [
   {
     name: "ext-auth-jwt",
     origin: "veryfront/ext-auth-jwt",
@@ -159,6 +160,28 @@ const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] = [
     contracts: { provides: ["SandboxShellToolsProvider"] },
     capabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
   },
+  {
+    name: "ext-eval-report-mlflow",
+    origin: "veryfront/ext-eval-report-mlflow",
+    sourceDirectory: "ext-eval-report-mlflow",
+    contracts: { requires: ["EvalReportExporterRegistry"] },
+    evalExporterId: "mlflow",
+    capabilities: [
+      { type: "net:outbound", hosts: ["*"] },
+      {
+        type: "env:read",
+        keys: [
+          "MLFLOW_ARTIFACTS_URI",
+          "MLFLOW_EXPERIMENT_NAME",
+          "MLFLOW_RUN_NAME",
+          "MLFLOW_TRACKING_PASSWORD",
+          "MLFLOW_TRACKING_TOKEN",
+          "MLFLOW_TRACKING_URI",
+          "MLFLOW_TRACKING_USERNAME",
+        ],
+      },
+    ],
+  },
 ];
 
 function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
@@ -171,7 +194,9 @@ function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
 }
 
 export function ensureBuiltinEvalReportExporterRegistry(): EvalReportExporterRegistry {
-  const existing = tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
+  const existing = tryResolve<EvalReportExporterRegistry>(
+    EvalReportExporterRegistryName,
+  );
   if (existing) return existing;
 
   const registry = createEvalReportExporterRegistry();
@@ -219,15 +244,21 @@ function createBuiltinLLMProviderExtension(
       },
       capabilities: [],
       setup(ctx) {
-        const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
+        const registry = ctx.require<LLMProviderRegistry>(
+          LLMProviderRegistryName,
+        );
         didRegister = registerBuiltinLLMProvider(registry, provider);
         if (didRegister) {
-          ctx.logger.info(`[${definition.extensionName}] ${provider.id} provider registered`);
+          ctx.logger.info(
+            `[${definition.extensionName}] ${provider.id} provider registered`,
+          );
         }
       },
       teardown() {
         if (didRegister) {
-          const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
+          const registry = tryResolve<LLMProviderRegistry>(
+            LLMProviderRegistryName,
+          );
           registry?.unregister(provider.id);
           didRegister = false;
         }
@@ -254,7 +285,9 @@ export function createOptionalBuiltinExtension(
         if (!extension) return;
 
         loaded = extension;
-        for (const [contract, impl] of Object.entries(extension.provides ?? {})) {
+        for (
+          const [contract, impl] of Object.entries(extension.provides ?? {})
+        ) {
           ctx.provide(contract, impl);
         }
         await extension.setup?.(ctx);
@@ -298,7 +331,9 @@ async function importOptionalBuiltinFactory(
     default?: unknown;
   }>(sourceDirectory, packageName);
   if (typeof mod.default !== "function") {
-    throw new Error(`Builtin extension "${sourceDirectory}" has no default factory export`);
+    throw new Error(
+      `Builtin extension "${sourceDirectory}" has no default factory export`,
+    );
   }
   return mod.default as ExtensionFactory;
 }
@@ -313,7 +348,9 @@ function isMissingOptionalBuiltinImplementation(
   ]);
 }
 
-function getFirstPartyExtensionPackageName(definition: OptionalBuiltinExtensionDefinition): string {
+function getFirstPartyExtensionPackageName(
+  definition: OptionalBuiltinExtensionDefinition,
+): string {
   return definition.origin.replace("veryfront/", "@veryfront/");
 }
 
@@ -328,6 +365,27 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
       extension: extZod(),
     },
     ...OPTIONAL_BUILTIN_EXTENSIONS.map(createOptionalBuiltinExtension),
+    ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
+  ];
+}
+
+export function createEvalCliBuiltinExtensions(
+  selectedExporterIds: string[] = [],
+): ResolvedExtension[] {
+  const selected = new Set(selectedExporterIds);
+  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) =>
+    definition.contracts?.requires?.includes(EvalReportExporterRegistryName) &&
+    definition.evalExporterId !== undefined &&
+    selected.has(definition.evalExporterId)
+  );
+
+  return [
+    {
+      source: "builtin",
+      origin: "veryfront/ext-schema-zod",
+      extension: extZod(),
+    },
+    ...exporterExtensions.map(createOptionalBuiltinExtension),
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];
 }

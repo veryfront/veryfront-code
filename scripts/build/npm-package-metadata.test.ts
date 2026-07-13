@@ -508,6 +508,7 @@ describe("npm supply-chain policy", () => {
       "ext-css-tailwind",
       "ext-db-sqlite",
       "ext-document-kreuzberg",
+      "ext-eval-report-mlflow",
       "ext-observability-opentelemetry",
       "ext-parser-babel",
       "ext-sandbox-shell-tools",
