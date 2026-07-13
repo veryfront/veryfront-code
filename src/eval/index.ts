@@ -47,7 +47,12 @@ export { datasets } from "./datasets.ts";
 export { evalAgent, isEvalDefinition } from "./factory.ts";
 export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
-export { createEvalReport, summarizeEvalRecords } from "./report.ts";
+export {
+  createEvalDatasetMetadata,
+  createEvalReport,
+  EVAL_REPORT_SCHEMA_VERSION,
+  summarizeEvalRecords,
+} from "./report.ts";
 export { compareEvalReports } from "./baseline.ts";
 export { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
 export { createEvalRunProvenance, resolveEvalRunProvenance } from "./provenance.ts";
@@ -110,6 +115,7 @@ export type {
   EvalReport,
   EvalReportComparison,
   EvalReportComparisonPolicy,
+  EvalReportDatasetMetadata,
   EvalReportExportConfig,
   EvalReportMetadata,
   EvalReportSummary,

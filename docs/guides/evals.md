@@ -60,11 +60,13 @@ Each run writes `summary.json` and `results.jsonl` to the report directory. If
 `.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
 raw report in one JSON file.
 
-The summary artifact includes pass/fail counts, metric aggregates, skipped
-metric or check results, gate failures, failed examples, flake classification
-for repeated examples, duration aggregates, and usage totals. Use
-`results.jsonl` when you need the full input, output, trace, and per-record
-metric evidence.
+The report and summary artifacts include `schemaVersion`. New reports also
+include dataset metadata with the dataset kind, optional path, example count,
+and a stable SHA-256 hash when examples were loaded. The summary artifact
+includes pass/fail counts, metric aggregates, skipped metric or check results,
+gate failures, failed examples, flake classification for repeated examples,
+duration aggregates, and usage totals. Use `results.jsonl` when you need the
+full input, output, trace, and per-record metric evidence.
 
 Use JSON mode for automation:
 
