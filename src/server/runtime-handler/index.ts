@@ -121,6 +121,7 @@ import {
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
+import { projectMiddlewareRuntime } from "./project-middleware.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -666,7 +667,13 @@ export function createVeryfrontHandler(
 
           await incrementRequestMetrics();
 
-          const executeRoute = () => registry.execute(req, ctx);
+          const executeRoute = () =>
+            projectMiddlewareRuntime.execute({
+              request: req,
+              handlerContext: ctx,
+              isSharedProxy: isProxyMode,
+              next: async () => (await registry.execute(req, ctx)) ?? undefined,
+            });
           // Only activate env isolation in proxy mode (multi-tenant).
           // reqCtx.token indicates the request came through the proxy with auth.
           // Without it (standalone / test), host env must remain accessible.
