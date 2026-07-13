@@ -164,6 +164,84 @@ describe("EvalReportExporterRegistry", () => {
     ]);
   });
 
+  it("redacts export context metadata unless keys are explicitly allowed", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "capture",
+      export(_report, context) {
+        exportedContexts.push(context);
+      },
+    });
+
+    await registry.export(createReport(), {
+      metadata: {
+        release: "2026-01-01",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["release"] },
+    });
+
+    assertEquals(exportedContexts, [
+      {
+        metadata: { release: "2026-01-01" },
+        redaction: { metadataAllowlist: ["release"] },
+      },
+    ]);
+  });
+
+  it("isolates exporter context mutations from later redaction decisions", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "mutator",
+      export(_report, context) {
+        context.redaction ??= {};
+        context.redaction.includeInputs = true;
+        context.redaction.metadataAllowlist?.push("tenantId");
+        context.metadata = { tenantId: "mutated" };
+      },
+    });
+    registry.register({
+      id: "capture",
+      export(report, context) {
+        exportedReports.push(report);
+        exportedContexts.push(context);
+      },
+    });
+
+    const context = {
+      metadata: {
+        topic: "planning",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["topic"] },
+    };
+
+    await registry.export(createReport(), context);
+
+    const exportedRecord = exportedReports[0]?.records[0];
+    assert(exportedRecord);
+    assertEquals(exportedRecord.input, "[redacted]");
+    assertEquals(exportedRecord.metadata, { topic: "planning" });
+    assertEquals(exportedContexts, [
+      {
+        metadata: { topic: "planning" },
+        redaction: { metadataAllowlist: ["topic"] },
+      },
+    ]);
+    assertEquals(context, {
+      metadata: {
+        topic: "planning",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["topic"] },
+    });
+  });
+
   it("keeps full record fields only when export redaction explicitly allows them", () => {
     const redacted = redactEvalReportForExport(createReport(), {
       includeInputs: true,

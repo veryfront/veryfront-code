@@ -524,8 +524,10 @@ const report = await runEval(definition, {
 ```
 
 The registry redacts inputs, outputs, references, traces, tool-call input and
-output, metric evidence, metric explanations, and metadata unless the export
-context explicitly allows each field. Runtime monitoring remains separate: use
+output, metric evidence, metric explanations, record metadata, and export
+context metadata unless the export context explicitly allows each field. Use
+`metadataAllowlist` only for metadata keys the destination is allowed to
+receive. Runtime monitoring remains separate: use
 `veryfront/extensions/observability` and the OpenTelemetry extension for spans,
 traces, metrics, and service monitoring. When OpenTelemetry is active, `runEval`
 adds the active `traceId` and `spanId` to export context unless you pass
@@ -566,6 +568,23 @@ export default defineConfig({
   ],
 });
 ```
+
+### Gateway mapping strategy
+
+Keep vendor-specific SDKs and schemas behind your HTTP gateway. Veryfront sends
+one redacted payload shape, `{ report, context }`, and the gateway maps that
+payload to the destination API:
+
+| Destination      | Gateway mapping                                                                                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Braintrust       | Map `report.runId`, `definitionId`, `target`, summary scores, and each redacted record to an experiment run or span row. Put `context.trace.traceId` and `context.trace.spanId` in metadata for correlation. |
+| Langfuse         | Map each record to a trace observation or score event. Use the redacted input/output fields only when the export policy allows them, and attach receipts from the Langfuse response to `report.exports`.     |
+| LangSmith        | Map the report to a dataset run and records to examples or feedback rows. Keep references, evidence, explanations, and metadata omitted unless the allowlist permits them.                                   |
+| Internal gateway | Store the full redacted Veryfront report shape, then fan out to vendor adapters asynchronously. Return a receipt with `externalRunId`, `url`, or sanitized metadata.                                         |
+
+Gateways should treat `context.trace` as correlation metadata. It is not span
+export, does not include logs or metric streams, and does not replace ambient
+OpenTelemetry export.
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
