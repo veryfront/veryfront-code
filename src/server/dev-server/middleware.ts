@@ -14,7 +14,7 @@ import {
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 
-type MiddlewareFunction = (
+export type MiddlewareFunction = (
   c: { req: Request; var: Record<string, unknown> },
   next: () => Promise<Response | undefined> | Response,
 ) => Promise<Response | undefined> | Response | undefined;
@@ -99,7 +99,7 @@ function createRequestLoggerMiddleware(): MiddlewareFunction {
   };
 }
 
-async function loadMiddlewareFile(
+export async function loadMiddlewareFile(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<MiddlewareFunction[]> {

@@ -419,6 +419,60 @@ describe(
     );
 
     describe(
+      "Production Server - Project middleware",
+      () => {
+        it("applies root middleware.ts to requests", async () => {
+          await withTestContext("prod-project-middleware", async (context) => {
+            await writeTextFile(
+              join(context.projectDir, "public", "open.txt"),
+              "open content",
+            );
+            await writeTextFile(
+              join(context.projectDir, "middleware.ts"),
+              `export default async function gate(
+                c: { req: Request },
+                next: () => Promise<Response | undefined>,
+              ): Promise<Response | undefined> {
+                if (c.req.headers.get("x-gate") !== "open") {
+                  return new Response("blocked", { status: 401 });
+                }
+                const response = await next();
+                response?.headers.set("x-gate-passed", "1");
+                return response;
+              }
+              `,
+            );
+
+            const server = await context.createProductionServer();
+
+            const blocked = await fetch(`http://127.0.0.1:${server.port}/open.txt`);
+            assertEquals(
+              blocked.status,
+              401,
+              "Middleware must reject requests without the expected header",
+            );
+            assertEquals(await blocked.text(), "blocked");
+
+            const allowed = await fetch(`http://127.0.0.1:${server.port}/open.txt`, {
+              headers: { "x-gate": "open" },
+            });
+            assertEquals(
+              allowed.status,
+              200,
+              "Middleware must pass matching requests through to the handler",
+            );
+            assertEquals(await allowed.text(), "open content");
+            assertEquals(
+              allowed.headers.get("x-gate-passed"),
+              "1",
+              "Middleware must run around the handler response",
+            );
+          });
+        });
+      },
+    );
+
+    describe(
       "Production Server - Error Handling",
       { sanitizeResources: false, sanitizeOps: false },
       () => {
