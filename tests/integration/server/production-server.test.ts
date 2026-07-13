@@ -17,6 +17,12 @@ import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 
 import { restoreLogs } from "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";
+import { createMockAdapter } from "../../../src/platform/adapters/mock.ts";
+import { FSAdapterWrapper } from "../../../src/platform/adapters/fs/wrapper.ts";
+import { MultiProjectFSAdapter } from "../../../src/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import type { RuntimeAdapter } from "../../../src/platform/adapters/base.ts";
+import type { BootstrapResult } from "../../../src/server/bootstrap.ts";
+import { startProductionServer } from "../../../src/server/production-server.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
@@ -421,6 +427,64 @@ describe(
     describe(
       "Production Server - Project middleware",
       () => {
+        it("does not read project middleware before proxy request context exists", async () => {
+          const multiProjectFs = new MultiProjectFSAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              proxyMode: true,
+              cache: { enabled: false },
+            },
+          });
+          const mockAdapter = createMockAdapter();
+          let serveCalled = false;
+
+          const proxyAdapter: RuntimeAdapter = {
+            ...mockAdapter,
+            fs: new FSAdapterWrapper(multiProjectFs),
+            serve: (_handler, options) => {
+              serveCalled = true;
+              const hostname = options.hostname ?? "127.0.0.1";
+              const port = options.port ?? 0;
+              options.onListen?.({ hostname, port });
+              return Promise.resolve({
+                stop: () => Promise.resolve(),
+                addr: { hostname, port },
+              });
+            },
+          };
+
+          let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          try {
+            server = await startProductionServer({
+              projectDir: "/app",
+              port: 0,
+              bindAddress: "127.0.0.1",
+              adapter: proxyAdapter,
+              bootstrapResult: {
+                adapter: proxyAdapter,
+                config: {
+                  fs: {
+                    type: "veryfront",
+                    veryfront: {
+                      apiBaseUrl: "https://api.example.com",
+                      proxyMode: true,
+                    },
+                  },
+                },
+                usingFSAdapter: true,
+                fsAdapterType: "MultiProjectFSAdapter",
+                extensionLoader: {} as BootstrapResult["extensionLoader"],
+              },
+            });
+            await server.ready;
+
+            assert(serveCalled, "Proxy production server must reach its listening state");
+          } finally {
+            await server?.stop();
+            multiProjectFs.dispose();
+          }
+        });
+
         it("applies root middleware.ts to requests", async () => {
           await withTestContext("prod-project-middleware", async (context) => {
             await writeTextFile(
