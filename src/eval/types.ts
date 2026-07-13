@@ -10,8 +10,8 @@ import type {
   EvalReportExportResult,
 } from "#veryfront/extensions/eval";
 
-/** Primitive kind an eval can execute. V1 supports agent targets. */
-export type EvalTargetKind = "agent";
+/** Primitive kind an eval can execute. */
+export type EvalTargetKind = "agent" | "tool";
 
 /** How a metric result affects the final eval result. */
 export type EvalSeverity = "gate" | "soft" | "budget";
@@ -212,6 +212,7 @@ export interface EvalRecord {
   exampleId: string;
   repetition: number;
   input: unknown;
+  executionInput?: unknown;
   output: unknown;
   reference?: unknown;
   metadata: Record<string, unknown>;
@@ -303,6 +304,7 @@ export interface EvalDefinition {
   tags: string[];
   metadata: Record<string, unknown>;
   source?: EvalSource;
+  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 
@@ -313,6 +315,25 @@ export interface EvalAgentInput {
   description?: string;
   target: string;
   dataset: EvalDataset | EvalExampleInput[];
+  metrics?: EvalMetric[];
+  repetitions?: number;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
+}
+
+/** Input accepted by `evalTool`. */
+export interface EvalToolInput {
+  id?: string;
+  name?: string;
+  description?: string;
+  target: string;
+  dataset: EvalDataset | EvalExampleInput[];
+  /**
+   * Optional mapper from dataset example to tool input. When omitted, the
+   * dataset example's `input` value is passed to the tool adapter unchanged.
+   */
+  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
   metrics?: EvalMetric[];
   repetitions?: number;
   tags?: string[];
@@ -346,10 +367,36 @@ export type EvalAgentAdapter = (
   context: EvalAgentAdapterContext,
 ) => EvalMaybePromise<string | EvalAgentAdapterResult>;
 
+/** Context passed to a tool adapter when `runEval` executes an example. */
+export interface EvalToolAdapterContext {
+  definition: EvalDefinition;
+  example: EvalExample;
+  repetition: number;
+  runId: string;
+  input: unknown;
+}
+
+/** Tool adapter result normalized into an eval record. */
+export interface EvalToolAdapterResult {
+  output: unknown;
+  toolCallId?: string;
+  trace?: Partial<EvalTrace>;
+  usage?: EvalUsage;
+  durationMs?: number;
+  completed?: boolean;
+  error?: string;
+}
+
+/** Adapter used by `runEval` to execute tool targets. */
+export type EvalToolAdapter = (
+  context: EvalToolAdapterContext,
+) => EvalMaybePromise<EvalToolAdapterResult>;
+
 /** Options for running an eval locally. */
 export interface RunEvalOptions {
   adapters: {
-    agent: EvalAgentAdapter;
+    agent?: EvalAgentAdapter;
+    tool?: EvalToolAdapter;
   };
   baseDir?: string;
   runId?: string;

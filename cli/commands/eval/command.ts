@@ -5,6 +5,7 @@
 import { dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
+import { isErroredToolExecutionResult, type Tool, type ToolExecutionContext } from "veryfront/tool";
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
@@ -17,6 +18,7 @@ import type {
   EvalReportComparison,
   EvalReportComparisonPolicy,
   EvalReportExportConfig,
+  EvalToolAdapterContext,
   EvalToolCall,
   EvalUsage,
 } from "veryfront/eval";
@@ -926,6 +928,10 @@ function resolveAgentTargetId(target: string): string {
   return target.startsWith("agent:") ? target.slice("agent:".length) : target;
 }
 
+export function resolveToolTargetId(target: string): string {
+  return target.startsWith("tool:") ? target.slice("tool:".length) : target;
+}
+
 type EvalRuntimeAuthConfig = Pick<VeryfrontConfig, "projectSlug" | "fs"> & {
   projectSlug?: string;
 };
@@ -944,6 +950,17 @@ export async function hydrateEvalRuntimeAuth(
     projectDir,
     projectSlug: resolveEvalRuntimeProjectSlug(config),
   });
+}
+
+function createEvalToolExecutionContext(
+  config: EvalRuntimeAuthConfig | null | undefined,
+): ToolExecutionContext {
+  const projectSlug = resolveEvalRuntimeProjectSlug(config);
+  const authToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  return {
+    ...(projectSlug ? { projectSlug } : {}),
+    ...(authToken ? { authToken } : {}),
+  };
 }
 
 export function normalizeUsage(response: AgentResponse) {
@@ -1020,6 +1037,19 @@ export function normalizeToolCalls(response: AgentResponse): EvalToolCall[] {
   }));
 }
 
+function getToolExecutionErrorMessage(output: unknown): string | undefined {
+  if (!isErroredToolExecutionResult(output)) return undefined;
+  if (isRecord(output) && typeof output.error === "string") return output.error;
+  if (isRecord(output) && isRecord(output.output) && typeof output.output.error === "string") {
+    return output.output.error;
+  }
+  return "Tool execution returned an error result.";
+}
+
+function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): string {
+  return `eval-${toolId}-${context.example.id}-${context.repetition}-${crypto.randomUUID()}`;
+}
+
 function createAgentAdapter(agent: Agent, options: EvalOptions) {
   return async ({ example }: EvalAgentAdapterContext) => {
     const started = Date.now();
@@ -1038,6 +1068,26 @@ function createAgentAdapter(agent: Agent, options: EvalOptions) {
       durationMs: Date.now() - started,
       completed: response.status === "completed",
       ...(response.status === "error" ? { error: response.text } : {}),
+    };
+  };
+}
+
+export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext = {}) {
+  return async (context: EvalToolAdapterContext) => {
+    const started = Date.now();
+    const toolCallId = createEvalToolCallId(tool.id, context);
+    const output = await tool.execute(context.input, {
+      ...baseContext,
+      runId: context.runId,
+      toolCallId,
+    });
+    const error = getToolExecutionErrorMessage(output);
+    return {
+      output,
+      toolCallId,
+      durationMs: Date.now() - started,
+      completed: !error,
+      ...(error ? { error } : {}),
     };
   };
 }
@@ -1300,6 +1350,19 @@ async function outputAgentNotFound(agentId: string): Promise<void> {
   exitProcess(1);
 }
 
+async function outputToolNotFound(toolId: string): Promise<void> {
+  if (isJsonMode()) {
+    await outputJson(createErrorEnvelope("eval", {
+      code: "NOT_FOUND",
+      slug: "eval-tool-not-found",
+      message: `Tool "${toolId}" not found`,
+    }));
+  } else {
+    cliLogger.error(`Tool "${toolId}" not found for eval target.`);
+  }
+  exitProcess(1);
+}
+
 async function outputEvalUsageError(message: string): Promise<void> {
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("eval", {
@@ -1375,6 +1438,19 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       return;
     }
 
+    if (evalItem.definition.targetKind !== "agent") {
+      if (modelComparisonConfig) {
+        await outputEvalUsageError("Model comparison flags are only supported for agent evals.");
+        return;
+      }
+      if (options.model || options.maxOutputTokens) {
+        await outputEvalUsageError(
+          "--model and --max-output-tokens are only supported for agent evals.",
+        );
+        return;
+      }
+    }
+
     const discoveryConfig = createProjectDiscoveryConfig({
       projectDir,
       config,
@@ -1382,17 +1458,28 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       verbose: options.debug,
     });
     const projectDiscovery = await discoverAll(discoveryConfig);
-    const agentId = resolveAgentTargetId(evalItem.definition.target);
-    const agent = projectDiscovery.agents.get(agentId);
-    if (!agent) {
+    const agentId = evalItem.definition.targetKind === "agent"
+      ? resolveAgentTargetId(evalItem.definition.target)
+      : undefined;
+    const toolId = evalItem.definition.targetKind === "tool"
+      ? resolveToolTargetId(evalItem.definition.target)
+      : undefined;
+    const agent = agentId ? projectDiscovery.agents.get(agentId) : undefined;
+    const tool = toolId ? projectDiscovery.tools.get(toolId) : undefined;
+
+    if (agentId && !agent) {
       await outputAgentNotFound(agentId);
+      return;
+    }
+    if (toolId && !tool) {
+      await outputToolNotFound(toolId);
       return;
     }
 
     if (modelComparisonConfig) {
       await runEvalModelComparison({
         evalItem,
-        agent,
+        agent: agent!,
         options,
         projectDir,
         config: modelComparisonConfig.config,
@@ -1419,9 +1506,9 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
         runEval(evalItem.definition, {
           baseDir: options.datasetBase ?? projectDir,
           runId,
-          adapters: {
-            agent: createAgentAdapter(agent, options),
-          },
+          adapters: evalItem.definition.targetKind === "tool"
+            ? { tool: createToolAdapter(tool!, createEvalToolExecutionContext(config)) }
+            : { agent: createAgentAdapter(agent!, options) },
           metadata: {
             provenance,
             ...(options.model ? { model: options.model } : {}),

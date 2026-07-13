@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, evalAgent, isEvalDefinition, metrics } from "veryfront/eval";
+import { datasets, evalAgent, evalTool, isEvalDefinition, metrics } from "veryfront/eval";
 
 describe("eval/factory", () => {
   it("creates a first-class agent eval definition", async () => {
@@ -45,7 +45,46 @@ describe("eval/factory", () => {
     ]);
   });
 
-  it("keeps V1 scoped to evalAgent instead of exporting unfinished target factories", async () => {
+  it("creates a first-class tool eval definition", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool",
+      name: "Lookup tool eval",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([
+        {
+          id: "order-1",
+          input: { prompt: "Check A1049" },
+          reference: { status: "shipped" },
+        },
+      ]),
+      input: (example) => ({ orderId: (example.input as { prompt: string }).prompt.slice(-5) }),
+      metrics: [metrics.agent.calledTool("lookup_order").gate()],
+      repetitions: 2,
+      tags: ["tool"],
+      metadata: { owner: "support" },
+    });
+
+    assertEquals(isEvalDefinition(definition), true);
+    assertEquals(definition.kind, "eval");
+    assertEquals(definition.targetKind, "tool");
+    assertEquals(definition.id, "eval:lookup-tool");
+    assertEquals(definition.name, "Lookup tool eval");
+    assertEquals(definition.target, "tool:lookup_order");
+    assertEquals(definition.repetitions, 2);
+    assertEquals(definition.tags, ["tool"]);
+    assertEquals(definition.metadata, { owner: "support" });
+    assertEquals(definition.metrics.map((metric) => metric.name), ["agent.calledTool"]);
+    assertEquals(
+      await definition.input?.({
+        id: "order-1",
+        input: { prompt: "Check A1049" },
+        reference: { status: "shipped" },
+      }),
+      { orderId: "A1049" },
+    );
+  });
+
+  it("does not export unfinished target factories", async () => {
     const mod = await import("veryfront/eval") as Record<string, unknown>;
 
     assertEquals("evalTask" in mod, false);

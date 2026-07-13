@@ -70,6 +70,42 @@ gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
 full input, output, trace, and per-record metric evidence.
 
+## Tool evals
+
+Use `evalTool` when the target is one tool and the eval should avoid agent
+routing noise:
+
+```ts
+// evals/support-classifier.eval.ts
+import { datasets, evalTool, metrics } from "veryfront/eval";
+
+export default evalTool({
+  name: "Support classifier quality",
+  target: "tool:classify_support_case",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund",
+      input: {
+        subject: "Refund for duplicate charge",
+        body: "I was charged twice for the same invoice.",
+      },
+      reference: { queue: "billing" },
+    },
+  ]),
+  input: (example) => example.input,
+  metrics: [
+    metrics.agent.calledTool("classify_support_case").gate(),
+    metrics.answer.jsonMatch().gate(),
+  ],
+});
+```
+
+When an `input` mapper is present, reports keep the original dataset example in
+`record.input` and write the actual tool input to `record.executionInput`.
+Direct tool execution is also recorded as a normalized entry in
+`record.trace.toolCalls`, including the tool-call ID, input, output, status, and
+duration metadata when available.
+
 Use JSON mode for automation:
 
 ```bash
@@ -622,8 +658,8 @@ Set `ai.evals.discovery.paths` in project config to use a different directory.
 
 Studio can list eval definitions, show source location, and expose form fields
 for stable parts of the definition: name, target, dataset source, repetitions,
-tags, metadata, and metrics. If code is dynamic, Studio should fall back to
-source editing for the same file.
+tags, metadata, and metrics. If code is dynamic, including a tool eval `input`
+mapper, Studio should fall back to source editing for the same file.
 
 Use `createEvalSourceDocument(discoveredEval)` to normalize a discovered eval
 for Studio panels. The document exposes `editableFields`, `dynamicFields`,

@@ -7,6 +7,7 @@ import {
   type DiscoveredEval,
   evalAgent,
   type EvalRun,
+  evalTool,
   getEvalRunSchema,
   getEvalSourceDocumentSchema,
   metrics,
@@ -186,6 +187,57 @@ describe("eval/studio", () => {
       createdAt: "2026-06-20T08:00:00.000Z",
       startedAt: "2026-06-20T08:00:01.000Z",
       completedAt: "2026-06-20T08:00:05.000Z",
+    };
+
+    assertEquals(getEvalRunSchema().parse(run), run);
+  });
+
+  it("accepts tool eval source documents and run projections", () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool",
+      name: "Lookup tool quality",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([{ id: "order-1", input: { orderId: "A1049" } }]),
+      input: (example) => example.input,
+      metrics: [metrics.agent.calledTool("lookup_order").gate()],
+    });
+    const discovered: DiscoveredEval = {
+      id: "eval:lookup-tool",
+      name: definition.name,
+      filePath: "evals/lookup-tool.eval.ts",
+      exportName: "default",
+      definition,
+    };
+
+    const document = createEvalSourceDocument(discovered);
+    assertEquals(getEvalSourceDocumentSchema().parse(document), document);
+    assertEquals(document.targetKind, "tool");
+    assertEquals(document.target, "tool:lookup_order");
+    assertEquals(document.dynamicFields, ["input"]);
+
+    const run: EvalRun = {
+      kind: "eval-run",
+      runId: "evalrun_tool",
+      evalId: "eval:lookup-tool",
+      status: "completed",
+      targetKind: "tool",
+      target: "tool:lookup_order",
+      source: {
+        filePath: "evals/lookup-tool.eval.ts",
+        exportName: "default",
+      },
+      summary: {
+        records: 1,
+        passed: 1,
+        failed: 0,
+        passRate: 1,
+      },
+      reportPath: ".veryfront/evals/lookup-tool.json",
+      error: null,
+      metadata: {},
+      createdAt: "2026-06-20T08:00:00.000Z",
+      startedAt: "2026-06-20T08:00:01.000Z",
+      completedAt: "2026-06-20T08:00:02.000Z",
     };
 
     assertEquals(getEvalRunSchema().parse(run), run);

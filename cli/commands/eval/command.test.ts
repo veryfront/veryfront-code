@@ -10,6 +10,7 @@ import {
 } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
+import type { Tool } from "veryfront/tool";
 import { saveToken } from "../../auth/token-store.ts";
 import {
   applyGatewayBillingGroupFinalization,
@@ -24,6 +25,7 @@ import {
   createResolvedEvalModelComparisonConfig,
   createResultsJsonl,
   createSummaryArtifact,
+  createToolAdapter,
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
@@ -33,6 +35,7 @@ import {
   normalizeEvalInputForAgent,
   normalizeToolCalls,
   normalizeUsage,
+  resolveToolTargetId,
   runEvalWithGatewayBillingGroup,
   summarizeReportForCli,
   writeEvalArtifacts,
@@ -242,6 +245,11 @@ describe("eval CLI command helpers", () => {
     assertEquals(findEvalForCliId(evals, "eval:custom-capital")?.id, "custom-capital");
   });
 
+  it("normalizes tool target ids", () => {
+    assertEquals(resolveToolTargetId("lookup_order"), "lookup_order");
+    assertEquals(resolveToolTargetId("tool:lookup_order"), "lookup_order");
+  });
+
   it("normalizes structured eval inputs into agent prompts", () => {
     assertEquals(normalizeEvalInputForAgent("hello"), "hello");
     assertEquals(normalizeEvalInputForAgent({ prompt: "Write a summary" }), "Write a summary");
@@ -361,6 +369,108 @@ describe("eval CLI command helpers", () => {
         error: "File not found",
       },
     ]);
+  });
+
+  it("creates a CLI tool adapter for direct tool evals", async () => {
+    const contexts: Array<Parameters<Tool["execute"]>[1]> = [];
+    const tool = {
+      id: "lookup_order",
+      type: "function",
+      description: "Lookup an order.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: async (input: unknown, context?: Parameters<Tool["execute"]>[1]) => {
+        contexts.push(context);
+        return {
+          input,
+          toolCallId: context?.toolCallId,
+          runId: context?.runId,
+          projectSlug: context?.projectSlug,
+        };
+      },
+    } as Tool;
+
+    const adapter = createToolAdapter(tool, { projectSlug: "support-app" });
+    const result = await adapter({
+      definition: {
+        kind: "eval",
+        targetKind: "tool",
+        id: "eval:lookup-tool",
+        name: "Lookup tool",
+        target: "tool:lookup_order",
+        dataset: {} as never,
+        metrics: [],
+        repetitions: 1,
+        tags: [],
+        metadata: {},
+      },
+      example: { id: "order-1", input: { orderId: "A1049" } },
+      repetition: 1,
+      runId: "evalrun_lookup",
+      input: { orderId: "A1049" },
+    });
+    const nextResult = await adapter({
+      definition: {
+        kind: "eval",
+        targetKind: "tool",
+        id: "eval:lookup-tool",
+        name: "Lookup tool",
+        target: "tool:lookup_order",
+        dataset: {} as never,
+        metrics: [],
+        repetitions: 1,
+        tags: [],
+        metadata: {},
+      },
+      example: { id: "order-1", input: { orderId: "A1049" } },
+      repetition: 2,
+      runId: "evalrun_lookup",
+      input: { orderId: "A1049" },
+    });
+
+    assertEquals(result.completed, true);
+    assertEquals(result.toolCallId, contexts[0]?.toolCallId);
+    assertStringIncludes(result.toolCallId ?? "", "eval-lookup_order-order-1-1-");
+    assertStringIncludes(nextResult.toolCallId ?? "", "eval-lookup_order-order-1-2-");
+    assertEquals(result.toolCallId === nextResult.toolCallId, false);
+    assertEquals(result.output, {
+      input: { orderId: "A1049" },
+      toolCallId: result.toolCallId,
+      runId: "evalrun_lookup",
+      projectSlug: "support-app",
+    });
+  });
+
+  it("marks CLI tool adapter error-marker outputs as failed", async () => {
+    const tool = {
+      id: "lookup_order",
+      type: "function",
+      description: "Lookup an order.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: async () => ({ error: "Rate limited" }),
+    } as Tool;
+
+    const result = await createToolAdapter(tool)({
+      definition: {
+        kind: "eval",
+        targetKind: "tool",
+        id: "eval:lookup-tool",
+        name: "Lookup tool",
+        target: "tool:lookup_order",
+        dataset: {} as never,
+        metrics: [],
+        repetitions: 1,
+        tags: [],
+        metadata: {},
+      },
+      example: { id: "order-1", input: { orderId: "A1049" } },
+      repetition: 1,
+      runId: "evalrun_lookup",
+      input: { orderId: "A1049" },
+    });
+
+    assertEquals(result.completed, false);
+    assertEquals(result.error, "Rate limited");
+    assertEquals(result.output, { error: "Rate limited" });
   });
 
   it("hydrates runtime auth from the stored login token and eval project config", async () => {

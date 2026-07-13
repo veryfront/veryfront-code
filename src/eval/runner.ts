@@ -18,10 +18,14 @@ import type {
   EvalMetricResult,
   EvalRecord,
   EvalReportExportConfig,
+  EvalToolAdapterResult,
+  EvalToolCall,
   EvalTrace,
   EvalUsage,
   RunEvalOptions,
 } from "./types.ts";
+
+const UNMAPPED_TOOL_INPUT = Symbol("unmapped-tool-input");
 
 function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
   return {
@@ -43,6 +47,70 @@ function normalizeOutput(result: EvalAgentAdapterResult): unknown {
   if (Object.hasOwn(result, "json")) return { json: result.json };
   if (Object.hasOwn(result, "text")) return { text: result.text };
   return result;
+}
+
+function normalizeToolTargetName(target: string): string {
+  return target.startsWith("tool:") ? target.slice("tool:".length) : target;
+}
+
+function createDirectToolTraceCall(
+  definition: EvalDefinition,
+  input: unknown,
+  result: EvalToolAdapterResult,
+): EvalToolCall {
+  return {
+    ...(result.toolCallId ? { id: result.toolCallId } : {}),
+    name: normalizeToolTargetName(definition.target),
+    status: result.error || result.completed === false ? "error" : "ok",
+    input,
+    output: result.output,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.durationMs !== undefined ? { metadata: { durationMs: result.durationMs } } : {}),
+  };
+}
+
+function normalizeToolTrace(
+  definition: EvalDefinition,
+  input: unknown,
+  result: EvalToolAdapterResult,
+): EvalTrace {
+  const trace = normalizeTrace(result.trace);
+  if (trace.toolCalls.length > 0) return trace;
+  return {
+    ...trace,
+    toolCalls: [createDirectToolTraceCall(definition, input, result)],
+  };
+}
+
+async function runAgentTarget(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+): Promise<EvalAgentAdapterResult> {
+  const adapter = options.adapters.agent;
+  if (!adapter) {
+    throw new Error(`No agent adapter configured for eval target "${definition.target}".`);
+  }
+  return normalizeAdapterResult(await adapter({ definition, example, repetition }));
+}
+
+async function runToolTarget(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+  runId: string,
+  markInvoked?: () => void,
+): Promise<{ input: unknown; result: EvalToolAdapterResult }> {
+  const adapter = options.adapters.tool;
+  if (!adapter) {
+    throw new Error(`No tool adapter configured for eval target "${definition.target}".`);
+  }
+  const input = definition.input ? await definition.input(example) : example.input;
+  markInvoked?.();
+  const result = await adapter({ definition, example, repetition, runId, input });
+  return { input, result };
 }
 
 function isBlockingFailure(record: EvalRecord): boolean {
@@ -263,35 +331,60 @@ async function runRecord(
   options: RunEvalOptions,
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
+  runId: string,
 ): Promise<EvalRecord> {
   const started = Date.now();
-  let result: EvalAgentAdapterResult;
+  let result: EvalAgentAdapterResult | EvalToolAdapterResult;
+  let toolInput: unknown = UNMAPPED_TOOL_INPUT;
+  let toolInvoked = false;
 
   try {
-    result = normalizeAdapterResult(
-      await options.adapters.agent({ definition, example, repetition }),
-    );
+    if (definition.targetKind === "tool") {
+      const toolRun = await runToolTarget(definition, options, example, repetition, runId, () => {
+        toolInvoked = true;
+      });
+      result = toolRun.result;
+      toolInput = toolRun.input;
+    } else {
+      result = await runAgentTarget(definition, options, example, repetition);
+    }
   } catch (error) {
     result = {
-      text: "",
+      ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 
-  const output = normalizeOutput(result);
+  const output = definition.targetKind === "tool"
+    ? (result as EvalToolAdapterResult).output
+    : normalizeOutput(result as EvalAgentAdapterResult);
+  const agentResult = definition.targetKind === "agent"
+    ? result as EvalAgentAdapterResult
+    : undefined;
   const record: EvalRecord = {
     id: `${example.id}:${repetition}`,
     evalId: definition.id,
     exampleId: example.id,
     repetition,
     input: example.input,
+    ...(definition.targetKind === "tool" && toolInvoked
+      ? { executionInput: toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput }
+      : {}),
     output,
     ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
     metadata: example.metadata ?? {},
-    ...(result.retrievedContext ? { retrievedContext: result.retrievedContext } : {}),
-    ...(result.citations ? { citations: result.citations } : {}),
-    trace: normalizeTrace(result.trace),
+    ...(agentResult?.retrievedContext ? { retrievedContext: agentResult.retrievedContext } : {}),
+    ...(agentResult?.citations ? { citations: agentResult.citations } : {}),
+    trace: definition.targetKind === "tool"
+      ? (toolInvoked
+        ? normalizeToolTrace(
+          definition,
+          toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput,
+          result as EvalToolAdapterResult,
+        )
+        : normalizeTrace((result as EvalToolAdapterResult).trace))
+      : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,
     completed: result.completed ?? !result.error,
@@ -329,6 +422,7 @@ export async function runEval(
   options: RunEvalOptions,
 ) {
   const startedAt = options.now?.() ?? new Date();
+  const runId = options.runId ?? createEvalRunId(startedAt);
   const baseDir = options.baseDir ?? Deno.cwd();
   const examples = await definition.dataset.load({ baseDir });
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
@@ -336,7 +430,7 @@ export async function runEval(
 
   for (const example of examples) {
     for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
-      records.push(await runRecord(definition, options, example, repetition));
+      records.push(await runRecord(definition, options, example, repetition, runId));
     }
   }
 
@@ -344,7 +438,7 @@ export async function runEval(
   const report = createEvalReport({
     definition,
     records,
-    runId: options.runId ?? createEvalRunId(startedAt),
+    runId,
     startedAt,
     endedAt,
     dataset,

@@ -134,6 +134,11 @@ function redactRecord(
   const redacted: EvalRecord = {
     ...record,
     input: redaction.includeInputs ? record.input : EvalReportRedactedValue,
+    ...(Object.hasOwn(record, "executionInput")
+      ? {
+        executionInput: redaction.includeInputs ? record.executionInput : EvalReportRedactedValue,
+      }
+      : {}),
     output: redaction.includeOutputs ? record.output : EvalReportRedactedValue,
     metadata: filterMetadata(record.metadata, redaction.metadataAllowlist),
     trace: redaction.includeTraces ? record.trace : { events: [], toolCalls: [] },

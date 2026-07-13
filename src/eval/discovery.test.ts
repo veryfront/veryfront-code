@@ -9,6 +9,7 @@ import {
   deriveEvalId,
   discoverEvals,
   evalAgent,
+  evalTool,
   findEvalById,
   metrics,
 } from "veryfront/eval";
@@ -203,5 +204,30 @@ describe("eval/discovery", () => {
       filePath,
       exportName: "default",
     });
+  });
+
+  it("discovers tool eval definitions", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/order-tool.eval.ts": "",
+    });
+
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async () => ({
+        default: evalTool({
+          id: "eval:order-tool",
+          name: "Order tool eval",
+          target: "tool:lookup_order",
+          dataset: datasets.inline([{ id: "q1", input: { orderId: "A1049" } }]),
+          metrics: [metrics.agent.calledTool("lookup_order").gate()],
+        }),
+      }),
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.evals[0]?.definition.targetKind, "tool");
+    assertEquals(result.evals[0]?.definition.target, "tool:lookup_order");
   });
 });
