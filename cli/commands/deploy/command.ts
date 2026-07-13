@@ -12,7 +12,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
+import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
@@ -103,12 +103,19 @@ interface DeploymentResponse {
   environment_id?: string;
   release?: string | { id: string };
   environment?: string | { id: string };
+  routing_convergence?: DeploymentRoutingConvergence;
 }
 
-interface Deployment {
+export type DeploymentRoutingConvergence =
+  | { status: "converged"; acknowledged: number; recipients: number }
+  | { status: "pending" }
+  | { status: "skipped" };
+
+export interface Deployment {
   id: string;
   release_id: string;
   environment_id: string;
+  routing_convergence?: DeploymentRoutingConvergence;
 }
 
 export interface DeploymentVerification {
@@ -205,7 +212,25 @@ function normalizeDeployment(deployment: DeploymentResponse): Deployment {
     id: deployment.id,
     release_id: releaseId,
     environment_id: environmentId,
+    routing_convergence: deployment.routing_convergence,
   };
+}
+
+export function getDeploymentRoutingConvergenceWarning(
+  deployment: Deployment,
+): string | null {
+  const convergence = deployment.routing_convergence;
+  if (!convergence) return null;
+
+  if (
+    convergence.status === "converged" &&
+    convergence.recipients > 0 &&
+    convergence.acknowledged >= convergence.recipients
+  ) {
+    return null;
+  }
+
+  return `Deployment ${deployment.id} committed, but data-plane routing convergence was not confirmed; bounded cache expiry remains the recovery path`;
 }
 
 export function assertProjectOwnership(
@@ -620,6 +645,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     `  Release: ${release.name} (${verification.releaseVersion}, ${verification.releaseId})`,
   );
   logInfo(`  Deployment: ${verification.deploymentId}`);
+  if (deployment.routing_convergence?.status === "converged") {
+    logInfo(
+      `  Data plane: ${deployment.routing_convergence.acknowledged}/${deployment.routing_convergence.recipients} proxy replicas converged`,
+    );
+  }
+  const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
+  if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
   logInfo(`  Commit: ${verification.commitSha}`);
   logInfo(`  Source digest: ${verification.sourceDigest}`);
   logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
@@ -737,6 +769,15 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }, { verifiedRelease });
     streamJsonLine({ type: "step", name: "verify-deployment", status: "completed" });
 
+    const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
+    if (routingConvergenceWarning) {
+      streamJsonLine({
+        type: "warning",
+        code: "routing-convergence-unconfirmed",
+        message: routingConvergenceWarning,
+      });
+    }
+
     streamJsonLine({
       type: "result",
       success: true,
@@ -751,6 +792,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
         environment: env,
         environmentId: verification.environmentId,
         deploymentId: verification.deploymentId,
+        routingConvergence: deployment.routing_convergence ?? null,
         commitSha: verification.commitSha,
         sourceDigest: verification.sourceDigest,
         controlPlane: normalizeControlPlane(config.apiUrl),

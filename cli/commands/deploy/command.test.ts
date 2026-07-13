@@ -12,6 +12,7 @@ import {
   createRelease,
   DeployArgsSchema,
   getDeployment,
+  getDeploymentRoutingConvergenceWarning,
   getEnvironmentByName,
   getProject,
   getRelease,
@@ -326,6 +327,7 @@ describe("createDeployment", () => {
           id: "deploy-123",
           release_id: "rel-456",
           environment_id: "env-789",
+          routing_convergence: { status: "converged", acknowledged: 2, recipients: 2 },
         });
       },
     });
@@ -334,6 +336,11 @@ describe("createDeployment", () => {
     assertEquals(capturedUrl, "/projects/my-project/deployments");
     assertEquals(capturedBody, { release_id: "rel-456", environment_id: "env-789" });
     assertEquals(deployment.id, "deploy-123");
+    assertEquals(deployment.routing_convergence, {
+      status: "converged",
+      acknowledged: 2,
+      recipients: 2,
+    });
   });
 
   it("normalizes legacy nested release and environment references", async () => {
@@ -349,6 +356,44 @@ describe("createDeployment", () => {
     const deployment = await createDeployment(mockClient, "my-project", "rel-456", "env-789");
     assertEquals(deployment.release_id, "rel-456");
     assertEquals(deployment.environment_id, "env-789");
+  });
+});
+
+describe("deployment routing convergence", () => {
+  it("accepts an acknowledgement from every routing recipient", () => {
+    const warning = getDeploymentRoutingConvergenceWarning({
+      id: "deploy-123",
+      release_id: "rel-456",
+      environment_id: "env-789",
+      routing_convergence: { status: "converged", acknowledged: 2, recipients: 2 },
+    });
+
+    assertEquals(warning, null);
+  });
+
+  it("distinguishes a committed deployment from unconfirmed data-plane convergence", () => {
+    const deployment = {
+      id: "deploy-123",
+      release_id: "rel-456",
+      environment_id: "env-789",
+      routing_convergence: { status: "pending" as const },
+    };
+
+    assertEquals(
+      getDeploymentRoutingConvergenceWarning(deployment),
+      "Deployment deploy-123 committed, but data-plane routing convergence was not confirmed; bounded cache expiry remains the recovery path",
+    );
+  });
+
+  it("keeps compatibility with API versions that omit routing convergence", () => {
+    assertEquals(
+      getDeploymentRoutingConvergenceWarning({
+        id: "deploy-123",
+        release_id: "rel-456",
+        environment_id: "env-789",
+      }),
+      null,
+    );
   });
 });
 

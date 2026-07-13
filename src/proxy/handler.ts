@@ -81,8 +81,14 @@ interface ProjectRoutingCacheEntry {
   expiresAt: number;
 }
 
+interface ProjectRoutingInflightEntry {
+  generation: number;
+  promise: Promise<ProjectRoutingLookupResult | null>;
+}
+
 const DEFAULT_PROXY_ROUTING_CACHE_TTL_MS = 60_000;
 const DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES = 1_000;
+const MAX_ROUTING_LOOKUP_INVALIDATION_RETRIES = 2;
 
 function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const raw = getEnv(name);
@@ -104,6 +110,13 @@ class ProxyLookupAuthError extends Error {
   ) {
     super(`Proxy ${lookupType} lookup rejected service token: ${status}`);
     this.name = "ProxyLookupAuthError";
+  }
+}
+
+class ProxyRoutingInvalidationRaceError extends Error {
+  constructor() {
+    super("Project routing changed during request; retry");
+    this.name = "ProxyRoutingInvalidationRaceError";
   }
 }
 
@@ -366,6 +379,22 @@ export interface ProxyRequestOptions {
   timing?: ProxyServerTiming;
 }
 
+export interface ProxyRoutingInvalidation {
+  projectId: string;
+  projectSlug?: string;
+  deploymentId?: string;
+  environmentId?: string;
+  environmentName?: string;
+  releaseId?: string;
+}
+
+export interface ConfirmedProxyRoutingInvalidation extends ProxyRoutingInvalidation {
+  projectSlug: string;
+  environmentId: string;
+  environmentName: string;
+  releaseId: string;
+}
+
 function getRequestHost(req: Request, url: URL): string {
   return req.headers.get("host") ?? url.host;
 }
@@ -410,7 +439,15 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES,
   );
   const routingLookupCache = new Map<string, ProjectRoutingCacheEntry>();
-  const routingLookupInflight = new Map<string, Promise<ProjectRoutingLookupResult | null>>();
+  const routingLookupInflight = new Map<string, ProjectRoutingInflightEntry>();
+  const projectInvalidationGenerations = new Map<string, number>();
+  const lookupKeyInvalidationGenerations = new Map<string, number>();
+  const activeRoutingLookupGenerations = new Map<number, number>();
+  const maxTrackedInvalidationGenerations = Math.max(
+    routingCacheMaxEntries,
+    DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES,
+  );
+  let routingLookupGeneration = 0;
 
   async function resolveProjectLookup(
     lookupKey: string,
@@ -463,6 +500,94 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     });
   }
 
+  function pruneInvalidationGenerations(generations: Map<string, number>): void {
+    const oldestActiveGeneration = activeRoutingLookupGenerations.size > 0
+      ? Math.min(...activeRoutingLookupGenerations.keys())
+      : Number.POSITIVE_INFINITY;
+
+    while (generations.size > maxTrackedInvalidationGenerations) {
+      const oldestEntry = generations.entries().next().value as [string, number] | undefined;
+      if (!oldestEntry || oldestEntry[1] > oldestActiveGeneration) break;
+      generations.delete(oldestEntry[0]);
+    }
+  }
+
+  function rememberInvalidationGeneration(
+    generations: Map<string, number>,
+    key: string,
+    generation: number,
+  ): void {
+    generations.delete(key);
+    generations.set(key, generation);
+    pruneInvalidationGenerations(generations);
+  }
+
+  function beginRoutingLookup(generation: number): void {
+    activeRoutingLookupGenerations.set(
+      generation,
+      (activeRoutingLookupGenerations.get(generation) ?? 0) + 1,
+    );
+  }
+
+  function endRoutingLookup(generation: number): void {
+    const activeCount = activeRoutingLookupGenerations.get(generation) ?? 0;
+    if (activeCount <= 1) activeRoutingLookupGenerations.delete(generation);
+    else activeRoutingLookupGenerations.set(generation, activeCount - 1);
+    pruneInvalidationGenerations(projectInvalidationGenerations);
+    pruneInvalidationGenerations(lookupKeyInvalidationGenerations);
+  }
+
+  function wasRoutingLookupInvalidated(
+    cacheKey: string,
+    result: ProjectRoutingLookupResult | null,
+    startedAtGeneration: number,
+  ): boolean {
+    const keyGeneration = lookupKeyInvalidationGenerations.get(cacheKey) ?? 0;
+    if (keyGeneration > startedAtGeneration) return true;
+    if (!result) return false;
+    return (projectInvalidationGenerations.get(result.id) ?? 0) > startedAtGeneration;
+  }
+
+  function invalidateRoutingLookup(input: ProxyRoutingInvalidation): {
+    evictedEntries: number;
+    generation: number;
+  } {
+    const generation = ++routingLookupGeneration;
+    rememberInvalidationGeneration(projectInvalidationGenerations, input.projectId, generation);
+
+    const normalizedProjectSlug = input.projectSlug
+      ? normalizeProjectLookupKey(input.projectSlug)
+      : undefined;
+    if (normalizedProjectSlug) {
+      rememberInvalidationGeneration(
+        lookupKeyInvalidationGenerations,
+        normalizedProjectSlug,
+        generation,
+      );
+    }
+
+    let evictedEntries = 0;
+    for (const [cacheKey, entry] of routingLookupCache) {
+      if (entry.value.id !== input.projectId && cacheKey !== normalizedProjectSlug) continue;
+      routingLookupCache.delete(cacheKey);
+      rememberInvalidationGeneration(lookupKeyInvalidationGenerations, cacheKey, generation);
+      evictedEntries++;
+    }
+
+    logger?.info("Proxy routing metadata invalidated after deployment activation", {
+      projectId: input.projectId,
+      projectSlug: input.projectSlug,
+      deploymentId: input.deploymentId,
+      environmentId: input.environmentId,
+      environmentName: input.environmentName,
+      releaseId: input.releaseId,
+      generation,
+      evictedEntries,
+    });
+
+    return { evictedEntries, generation };
+  }
+
   async function resolveProjectRoutingLookup(
     lookupKey: string,
     token: string,
@@ -480,28 +605,64 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
 
         const existingLookup = routingLookupInflight.get(cacheKey);
-        if (existingLookup) {
+        if (existingLookup?.generation === routingLookupGeneration) {
           logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
-          return await existingLookup;
+          return await existingLookup.promise;
         }
 
-        const lookupPromise = lookupProjectRoutingMetadata(
-          lookupKey,
-          config.apiBaseUrl,
-          token,
-          logger,
-        )
-          .then((result) => {
-            if (result) {
-              setCachedRoutingLookup(cacheKey, result);
+        const lookupPromise = (async () => {
+          for (let attempt = 0; attempt <= MAX_ROUTING_LOOKUP_INVALIDATION_RETRIES; attempt++) {
+            const startedAtGeneration = routingLookupGeneration;
+            beginRoutingLookup(startedAtGeneration);
+            try {
+              const result = await lookupProjectRoutingMetadata(
+                lookupKey,
+                config.apiBaseUrl,
+                token,
+                logger,
+              );
+
+              if (!wasRoutingLookupInvalidated(cacheKey, result, startedAtGeneration)) {
+                if (result) setCachedRoutingLookup(cacheKey, result);
+                return result;
+              }
+
+              logger?.info("Retrying proxy routing metadata lookup after invalidation race", {
+                lookupKey,
+                attempt: attempt + 1,
+                generation: routingLookupGeneration,
+              });
+
+              if (attempt === MAX_ROUTING_LOOKUP_INVALIDATION_RETRIES) {
+                logger?.warn(
+                  "Proxy routing metadata changed repeatedly during lookup; failing request closed",
+                  {
+                    lookupKey,
+                    attempts: attempt + 1,
+                  },
+                );
+                throw new ProxyRoutingInvalidationRaceError();
+              }
+            } finally {
+              endRoutingLookup(startedAtGeneration);
             }
-            return result;
-          })
-          .finally(() => {
+          }
+
+          return null;
+        })();
+        const inflightEntry: ProjectRoutingInflightEntry = {
+          generation: routingLookupGeneration,
+          promise: lookupPromise,
+        };
+        routingLookupInflight.set(cacheKey, inflightEntry);
+
+        try {
+          return await lookupPromise;
+        } finally {
+          if (routingLookupInflight.get(cacheKey) === inflightEntry) {
             routingLookupInflight.delete(cacheKey);
-          });
-        routingLookupInflight.set(cacheKey, lookupPromise);
-        return await lookupPromise;
+          }
+        }
       },
     );
   }
@@ -517,6 +678,47 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       "proxy.access_lookup",
       () => lookupProjectAccessMetadata(lookupKey, config.apiBaseUrl, token, includeUsers, logger),
     );
+  }
+
+  async function invalidateAndConfirmRoutingLookup(
+    input: ConfirmedProxyRoutingInvalidation,
+  ): Promise<void> {
+    invalidateRoutingLookup(input);
+
+    const scope = getScope(input.environmentName.toLowerCase());
+    const resolveWithToken = async (token: string) => {
+      const result = await resolveProjectRoutingLookup(input.projectSlug, token);
+      const environment = result?.environments?.find((candidate) =>
+        candidate.id === input.environmentId
+      );
+      if (
+        result?.id !== input.projectId ||
+        environment?.active_release_id !== input.releaseId
+      ) {
+        throw new Error(
+          `Proxy routing metadata did not converge for project ${input.projectId} environment ${input.environmentId}`,
+        );
+      }
+    };
+
+    let token = await tokenManager.getToken(scope, input.projectSlug);
+    try {
+      await resolveWithToken(token);
+    } catch (error) {
+      if (!isProxyLookupAuthError(error)) throw error;
+      await tokenManager.invalidateToken(scope, input.projectSlug);
+      token = await tokenManager.getToken(scope, input.projectSlug);
+      await resolveWithToken(token);
+    }
+
+    logger?.info("Proxy routing metadata converged after deployment activation", {
+      projectId: input.projectId,
+      projectSlug: input.projectSlug,
+      deploymentId: input.deploymentId,
+      environmentId: input.environmentId,
+      environmentName: input.environmentName,
+      releaseId: input.releaseId,
+    });
   }
 
   function validateConfig(): string[] {
@@ -724,6 +926,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       try {
         return await resolveWithCurrentToken();
       } catch (error) {
+        if (error instanceof ProxyRoutingInvalidationRaceError) {
+          return { error: { status: 503, message: error.message } };
+        }
         if (!isProxyLookupAuthError(error)) throw error;
 
         const projectKey = tokenIdentity.projectSlug ?? tokenIdentity.customDomain;
@@ -767,6 +972,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         try {
           return await resolveWithCurrentToken();
         } catch (retryError) {
+          if (retryError instanceof ProxyRoutingInvalidationRaceError) {
+            return { error: { status: 503, message: retryError.message } };
+          }
           if (!isProxyLookupAuthError(retryError)) throw retryError;
 
           logger?.error("Proxy API token rejected after refresh", retryError, {
@@ -1067,6 +1275,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     getStats,
     close,
     validateConfig,
+    invalidateRoutingLookup,
+    invalidateAndConfirmRoutingLookup,
     localProjects,
   };
 }
