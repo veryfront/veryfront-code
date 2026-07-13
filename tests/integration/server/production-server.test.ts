@@ -420,7 +420,6 @@ describe(
 
     describe(
       "Production Server - Project middleware",
-      { sanitizeResources: false, sanitizeOps: false },
       () => {
         it("applies root middleware.ts to requests", async () => {
           await withTestContext("prod-project-middleware", async (context) => {
