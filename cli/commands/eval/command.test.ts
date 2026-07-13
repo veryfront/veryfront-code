@@ -685,6 +685,61 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("keeps local eval artifacts writable when selected exporters fail unexpectedly", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      const report = createReport();
+      const exported = await exportEvalReportForCli(report, {
+        exporterIds: ["braintrust", "langfuse"],
+        registry: {
+          register() {},
+          unregister() {},
+          get() {
+            throw new Error("gateway registry crashed");
+          },
+          require() {
+            throw new Error("not implemented");
+          },
+          list() {
+            return [];
+          },
+          has() {
+            return false;
+          },
+          export() {
+            throw new Error("not implemented");
+          },
+        },
+      });
+      const paths = createEvalArtifactPaths(`${tempDir}/eval-report`);
+
+      await writeEvalArtifacts(exported, paths);
+      await Deno.writeTextFile(`${tempDir}/junit.xml`, createJunitXml(exported));
+
+      const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
+        exports?: Array<{ exporterId: string; ok: boolean; error?: string }>;
+      };
+      const junit = await Deno.readTextFile(`${tempDir}/junit.xml`);
+
+      assertEquals(exported.exports, [
+        {
+          exporterId: "braintrust",
+          ok: false,
+          error: "gateway registry crashed",
+        },
+        {
+          exporterId: "langfuse",
+          ok: false,
+          error: "gateway registry crashed",
+        },
+      ]);
+      assertEquals(summary.exports, exported.exports);
+      assertStringIncludes(junit, '<testsuite name="eval:answers"');
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("renders a markdown eval report", () => {
     const markdown = createEvalMarkdownReport(createReport());
 

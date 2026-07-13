@@ -150,6 +150,33 @@ describe("EvalReportExporterRegistry", () => {
     ]);
   });
 
+  it("redacts export context metadata unless keys are explicitly allowed", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "capture",
+      export(_report, context) {
+        exportedContexts.push(context);
+      },
+    });
+
+    await registry.export(createReport(), {
+      metadata: {
+        release: "2026-01-01",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["release"] },
+    });
+
+    assertEquals(exportedContexts, [
+      {
+        metadata: { release: "2026-01-01" },
+        redaction: { metadataAllowlist: ["release"] },
+      },
+    ]);
+  });
+
   it("keeps full record fields only when export redaction explicitly allows them", () => {
     const redacted = redactEvalReportForExport(createReport(), {
       includeInputs: true,

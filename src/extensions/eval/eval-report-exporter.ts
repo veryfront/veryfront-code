@@ -32,7 +32,7 @@ export interface EvalReportExportRedaction {
   includeMetricExplanations?: boolean;
   /** Include metric/check evidence payloads. Defaults to false. */
   includeMetricEvidence?: boolean;
-  /** Record metadata keys that can be exported. Defaults to none. */
+  /** Record and export context metadata keys that can be exported. Defaults to none. */
   metadataAllowlist?: string[];
 }
 
@@ -158,6 +158,16 @@ function redactMetricResults(
   });
 }
 
+function redactEvalReportExportContext(
+  context: EvalReportExportContext,
+): EvalReportExportContext {
+  if (!context.metadata) return context;
+  return {
+    ...context,
+    metadata: filterMetadata(context.metadata, context.redaction?.metadataAllowlist),
+  };
+}
+
 /** Create an eval report copy with external-export redaction applied. */
 export function redactEvalReportForExport(
   report: EvalReport,
@@ -214,11 +224,12 @@ class EvalReportExporterRegistryImpl implements EvalReportExporterRegistry {
     context: EvalReportExportContext = {},
   ): Promise<EvalReportExportResult[]> {
     const results: EvalReportExportResult[] = [];
+    const exportContext = redactEvalReportExportContext(context);
 
     for (const exporter of this.exporters.values()) {
       try {
-        const sanitizedReport = redactEvalReportForExport(report, context.redaction);
-        const receipt = await exporter.export(sanitizedReport, context);
+        const sanitizedReport = redactEvalReportForExport(report, exportContext.redaction);
+        const receipt = await exporter.export(sanitizedReport, exportContext);
         const result: EvalReportExportSuccess = { exporterId: exporter.id, ok: true };
         if (receipt !== undefined) result.receipt = receipt;
         results.push(result);
