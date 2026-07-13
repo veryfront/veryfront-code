@@ -7,6 +7,11 @@ import {
   mergeConfigs,
   validateConfig,
 } from "./define-config.ts";
+import {
+  defineConfig as publicDefineConfig,
+  defineConfigWithEnv as publicDefineConfigWithEnv,
+  mergeConfigs as publicMergeConfigs,
+} from "veryfront";
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { createTestEnvironmentConfig } from "./environment-config.ts";
 
@@ -37,6 +42,23 @@ describe("define-config", () => {
       expect(result.dev?.port).toBe(3003);
       expect(result.dev?.open).toBe(true);
       expect(result.build?.outDir).toBe("dist");
+    });
+  });
+
+  describe("public root exports", () => {
+    it("exports the same config helpers used by release config loading", () => {
+      const env = createTestEnvironmentConfig({ nodeEnv: "production" });
+      const shared = publicDefineConfig({ title: "Release" });
+
+      expect(publicDefineConfig).toBe(defineConfig);
+      expect(publicDefineConfigWithEnv).toBe(defineConfigWithEnv);
+      expect(publicMergeConfigs).toBe(mergeConfigs);
+      expect(
+        publicDefineConfigWithEnv(
+          (nodeEnv) => publicMergeConfigs(shared, { react: { version: nodeEnv } }),
+          env,
+        ),
+      ).toEqual({ title: "Release", react: { version: "production" } });
     });
   });
 

@@ -7,6 +7,7 @@ export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
   return config;
 }
 
+/** Define a Veryfront project configuration from the current environment name. */
 export function defineConfigWithEnv(
   factory: (env: string) => VeryfrontConfig,
   envConfig: EnvironmentConfig = getEnvironmentConfig(),
@@ -14,6 +15,7 @@ export function defineConfigWithEnv(
   return factory(envConfig.nodeEnv);
 }
 
+/** Merge multiple partial Veryfront configuration objects into one config object. */
 export function mergeConfigs(...configs: Partial<VeryfrontConfig>[]): VeryfrontConfig {
   return Object.assign({}, ...configs) as VeryfrontConfig;
 }

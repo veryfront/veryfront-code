@@ -15,11 +15,18 @@
  * @module release-assets/build-executor
  */
 
+import {
+  findUnknownTopLevelKeys,
+  validateVeryfrontConfig,
+  type VeryfrontConfig,
+} from "#veryfront/config";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
+import { mergeConfigs } from "#veryfront/config/loader.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
+import { dirname, join, normalize, toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
@@ -30,8 +37,15 @@ import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { cacheHttpImportsToLocal, normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
-import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  getReactUrls,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
+import { ensureDefaultBundlerContracts } from "../extensions/bundler/defaults.ts";
+import { register, tryResolve } from "../extensions/contracts.ts";
+import type { Plugin } from "veryfront/extensions/bundler";
+import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
 import {
   collectCssImportPaths,
@@ -88,9 +102,9 @@ export interface ReleaseAssetBuildInput {
   /** React version for transforms. */
   reactVersion?: string;
   /**
-   * Configured Tailwind stylesheet path (relative to the project root), used to
-   * resolve the project stylesheet from the materialized file set for CSS
-   * compilation. When absent, conventional defaults are tried (globals.css).
+   * Fallback Tailwind stylesheet path (relative to the project root). The
+   * release's own veryfront.config.* from the materialized file set is
+   * preferred; when absent, this path and then conventional defaults are tried.
    */
   stylesheetPath?: string;
   /** Authenticated, project-scoped API client. */
@@ -178,6 +192,7 @@ export interface ReleaseAssetBuildClient {
   compileProjectCss?(
     candidates: Set<string>,
     stylesheet: string | undefined,
+    options?: { config?: VeryfrontConfig },
   ): Promise<{ css: string; styleProfileHash: string | null } | null>;
 }
 
@@ -1433,6 +1448,28 @@ export async function runReleaseAssetBuild(
   }
 }
 
+async function resolveReleaseReactVersion(
+  sourceByPath: Map<string, string>,
+  releaseConfig: VeryfrontConfig,
+  fallbackReactVersion: string | undefined,
+  tempDir: string,
+): Promise<string | undefined> {
+  const hasReleaseReactConfig = !!releaseConfig.react?.version ||
+    (releaseConfig.client?.cdn?.versions !== undefined &&
+      releaseConfig.client.cdn.versions !== "auto");
+  const hasReleasePackageJson = sourceByPath.has("package.json");
+  const releaseReactVersion = await resolveProjectReactVersion({
+    projectDir: tempDir,
+    config: releaseConfig,
+  });
+
+  if (hasReleaseReactConfig || hasReleasePackageJson || fallbackReactVersion === undefined) {
+    return releaseReactVersion;
+  }
+
+  return fallbackReactVersion;
+}
+
 async function runBuildInner(
   input: ReleaseAssetBuildInput,
   tempDir: string,
@@ -1467,6 +1504,13 @@ async function runBuildInner(
   const knownPaths = new Set(sourceByPath.keys());
   const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
   const vendorDependencies = isDependencyImportMapEnabled();
+  const releaseConfig = await resolveReleaseConfigFromSourceFiles(sourceByPath, input, tempDir);
+  const releaseReactVersion = await resolveReleaseReactVersion(
+    sourceByPath,
+    releaseConfig,
+    input.reactVersion,
+    tempDir,
+  );
   const transformingModules = new Set<string>();
 
   async function transformProjectModule(
@@ -1490,7 +1534,7 @@ async function runBuildInner(
           projectId: input.projectId,
           dev: false,
           ssr: false,
-          reactVersion: input.reactVersion,
+          reactVersion: releaseReactVersion,
         });
       } catch (error) {
         const sanitized = sanitizeError(error);
@@ -1507,7 +1551,7 @@ async function runBuildInner(
         try {
           const vendored = await vendorHttpImports(code, {
             tempDir,
-            reactVersion: input.reactVersion,
+            reactVersion: releaseReactVersion,
           });
           code = vendored.code;
           for (const dependency of vendored.dependencies) {
@@ -1559,7 +1603,7 @@ async function runBuildInner(
   if (vendorDependencies) {
     try {
       await collectReactImportMapDependencyModules(
-        input,
+        { ...input, reactVersion: releaseReactVersion },
         tempDir,
         vendorHttpImports,
         dependencyModules,
@@ -1603,7 +1647,7 @@ async function runBuildInner(
     dependencyUrls.set(specifier, url);
   }
   const frameworkDependencies = await buildFrameworkDependencies(
-    input,
+    { ...input, reactVersion: releaseReactVersion },
     tempDir,
     transform,
     dependencyUrls,
@@ -1639,9 +1683,12 @@ async function runBuildInner(
   if (client.compileProjectCss) {
     try {
       const candidates = collectClassCandidates(sourceByPath);
-      const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, input.stylesheetPath);
+      const stylesheetPath = releaseConfig.tailwind?.stylesheet ?? input.stylesheetPath;
+      const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, stylesheetPath);
       const stylesheet = mergeModuleCssImports(sourceByPath, resolvedStylesheet);
-      const compiled = await client.compileProjectCss(candidates, stylesheet);
+      const compiled = await client.compileProjectCss(candidates, stylesheet, {
+        config: releaseConfig,
+      });
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
         const contentHash = await sha256HexBytes(bytes);
@@ -1779,6 +1826,149 @@ async function runBuildInner(
     routeCount: Object.keys(routes).length,
     gaps,
   };
+}
+
+function validateAndMergeReleaseConfig(userConfig: unknown): VeryfrontConfig {
+  if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) {
+    throw new Error(`Expected object from veryfront.config, received ${typeof userConfig}`);
+  }
+
+  validateVeryfrontConfig(userConfig);
+  const unknownKeys = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `Unknown config keys: ${unknownKeys.join(", ")}. Check for typos in veryfront.config.`,
+    );
+  }
+
+  return mergeConfigs(userConfig as Partial<VeryfrontConfig>);
+}
+
+const VERYFRONT_CONFIG_SHIM_MODULE = `
+export const defineConfig = (config) => config;
+export const defineConfigWithEnv = (factory, envConfig) =>
+  factory(envConfig?.nodeEnv ?? globalThis.Deno?.env?.get?.("NODE_ENV") ??
+    globalThis.process?.env?.NODE_ENV ?? "production");
+export const mergeConfigs = (...configs) => Object.assign({}, ...configs);
+export default { defineConfig, defineConfigWithEnv, mergeConfigs };
+`;
+
+const RELEASE_CONFIG_SHIM_NAMESPACE = "veryfront-release-config-shim";
+
+const releaseConfigVeryfrontPlugin: Plugin = {
+  name: "veryfront-release-config-shim",
+  setup(build) {
+    build.onResolve({ filter: /^veryfront$/ }, () => ({
+      path: "veryfront-config-shim",
+      namespace: RELEASE_CONFIG_SHIM_NAMESPACE,
+    }));
+    build.onLoad({ filter: /.*/, namespace: RELEASE_CONFIG_SHIM_NAMESPACE }, () => ({
+      contents: VERYFRONT_CONFIG_SHIM_MODULE,
+      loader: "js",
+    }));
+  },
+};
+
+async function ensureReleaseConfigBundlerContracts(): Promise<void> {
+  await ensureDefaultBundlerContracts();
+  if (tryResolve("Bundler") && tryResolve("ModuleLexer")) return;
+
+  const { EsbuildBundler, EsModuleLexer } = await import(
+    "../../extensions/ext-bundler-esbuild/src/index.ts"
+  );
+  if (!tryResolve("Bundler")) register("Bundler", new EsbuildBundler());
+  if (!tryResolve("ModuleLexer")) register("ModuleLexer", new EsModuleLexer());
+}
+
+async function bundleReleaseConfigForImport(
+  tempDir: string,
+  configFile: string,
+  source: string,
+): Promise<string> {
+  await ensureReleaseConfigBundlerContracts();
+  const { build } = await import("veryfront/extensions/bundler");
+  const result = await build({
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    packages: "external",
+    external: ["node:*"],
+    plugins: [releaseConfigVeryfrontPlugin],
+    stdin: {
+      contents: source,
+      loader: getEsbuildLoader(configFile),
+      resolveDir: tempDir,
+      sourcefile: configFile,
+    },
+  });
+
+  if (result.errors.length > 0) {
+    throw new Error(
+      `Failed to bundle veryfront.config: ${result.errors[0]?.text ?? "unknown error"}`,
+    );
+  }
+
+  const output = result.outputFiles?.[0]?.text;
+  if (!output) throw new Error("Failed to bundle veryfront.config: no output emitted");
+  return output;
+}
+
+async function loadReleaseConfigModule(
+  tempDir: string,
+  configFile: string,
+  source: string,
+): Promise<unknown> {
+  const fs = createFileSystem();
+  const bundledConfigPath = join(tempDir, `.veryfront-release-${crypto.randomUUID()}.mjs`);
+  await fs.writeTextFile(
+    bundledConfigPath,
+    await bundleReleaseConfigForImport(tempDir, configFile, source),
+  );
+
+  try {
+    const moduleUrl = toFileUrl(bundledConfigPath);
+    moduleUrl.searchParams.set("t", `${Date.now()}-${crypto.randomUUID()}`);
+    const configModule = await import(moduleUrl.href);
+    return configModule.default || configModule;
+  } finally {
+    await fs.remove(bundledConfigPath).catch(() => undefined);
+  }
+}
+
+async function releaseFileSetSignature(sourceByPath: Map<string, string>): Promise<string> {
+  const separator = "::veryfront-release-file::";
+  const serialized = [...sourceByPath.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([path, content]) => `${path}${separator}${content}`)
+    .join(separator);
+  return await sha256HexBytes(new TextEncoder().encode(serialized) as Uint8Array<ArrayBuffer>);
+}
+
+async function resolveReleaseConfigFromSourceFiles(
+  sourceByPath: Map<string, string>,
+  input: ReleaseAssetBuildInput,
+  tempDir: string,
+): Promise<VeryfrontConfig> {
+  const releaseSignature = await releaseFileSetSignature(sourceByPath);
+  const configFile = VERYFRONT_CONFIG_FILES.find((candidate) =>
+    typeof sourceByPath.get(candidate) === "string"
+  );
+  const source = configFile ? sourceByPath.get(configFile) : undefined;
+
+  logger.debug("Loading release config from materialized release files", {
+    releaseId: input.releaseId,
+    releaseVersionRef: input.releaseVersionRef,
+    releaseSignature,
+    hasConfigFile: !!configFile,
+  });
+
+  if (!configFile || typeof source !== "string") return mergeConfigs({});
+
+  const userConfig = await loadReleaseConfigModule(tempDir, configFile, source);
+  return validateAndMergeReleaseConfig(userConfig);
 }
 
 /**

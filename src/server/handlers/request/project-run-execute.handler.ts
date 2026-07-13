@@ -1055,9 +1055,6 @@ async function executeReleaseAssetBuildRun(input: {
     const { VeryfrontApiClient } = await import(
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
-    const { resolveProjectReactVersion } = await import(
-      "#veryfront/transforms/esm/package-registry.ts"
-    );
     const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
     const { createCompileProjectCss } = await import(
       "#veryfront/release-assets/css-compile.ts"
@@ -1076,11 +1073,6 @@ async function executeReleaseAssetBuildRun(input: {
     });
     apiClient.setProjectSlug(projectReference);
 
-    const reactVersion = await resolveProjectReactVersion({
-      projectDir: input.ctx.projectDir,
-      config: input.ctx.config,
-    });
-
     const releaseVersionRef = releaseId;
 
     // Production CSS compiler: compiles the project's Tailwind CSS in-runtime
@@ -1098,8 +1090,6 @@ async function executeReleaseAssetBuildRun(input: {
       releaseId,
       releaseVersion,
       releaseVersionRef,
-      reactVersion,
-      stylesheetPath: input.ctx.config?.tailwind?.stylesheet,
       adapter: input.ctx.adapter,
       client: {
         beginReleaseAssetManifestBuild: (version) =>
