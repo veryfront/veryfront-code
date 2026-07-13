@@ -181,6 +181,11 @@ describe("eval CLI command helpers", () => {
       junit: "reports/eval.xml",
       baseline: "reports/baseline.json",
       "write-baseline": "reports/next-baseline.json",
+      "baseline-pass-rate-drop-threshold": 0.02,
+      "baseline-metric-pass-rate-drop-threshold": 0.03,
+      "baseline-failed-delta-threshold": 1,
+      "baseline-usage-increase-threshold": 0.15,
+      "baseline-latency-increase-threshold": 0.2,
       export: "braintrust,langfuse",
       debug: true,
       "baseline-model": "anthropic/claude-opus-4-6",
@@ -197,6 +202,11 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.junit, "reports/eval.xml");
       assertEquals(parsed.data.baseline, "reports/baseline.json");
       assertEquals(parsed.data.writeBaseline, "reports/next-baseline.json");
+      assertEquals(parsed.data.baselinePassRateDropThreshold, 0.02);
+      assertEquals(parsed.data.baselineMetricPassRateDropThreshold, 0.03);
+      assertEquals(parsed.data.baselineFailedDeltaThreshold, 1);
+      assertEquals(parsed.data.baselineUsageIncreaseThreshold, 0.15);
+      assertEquals(parsed.data.baselineLatencyIncreaseThreshold, 0.2);
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
       assertEquals(parsed.data.debug, true);
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
