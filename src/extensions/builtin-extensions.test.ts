@@ -6,9 +6,11 @@ import { EvalReportExporterRegistryName } from "./eval/index.ts";
 import type { SchemaValidator } from "./schema/index.ts";
 import {
   createBuiltinExtensions,
+  createEvalCliBuiltinExtensions,
   createOptionalBuiltinExtension,
   ensureBuiltinEvalReportExporterRegistry,
   ensureBuiltinSchemaValidator,
+  OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
@@ -147,5 +149,29 @@ describe("createBuiltinExtensions", () => {
     });
 
     assertEquals(logs.some((message) => message.includes("ext-missing")), true);
+  });
+
+  it("declares explicit eval exporter ids for optional exporter builtins", () => {
+    const mlflow = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-mlflow"
+    );
+
+    assertEquals(mlflow?.evalExporterId, "mlflow");
+  });
+
+  it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
+    const names = createEvalCliBuiltinExtensions(["mlflow"]).map((entry) => entry.extension.name);
+
+    assertEquals(names.includes("ext-schema-zod"), true);
+    assertEquals(names.includes("ext-eval-report-mlflow"), true);
+    assertEquals(names.includes("ext-auth-jwt"), false);
+    assertEquals(names.includes("ext-observability-opentelemetry"), false);
+  });
+
+  it("does not load optional eval exporter builtins when no exporters are selected", () => {
+    const names = createEvalCliBuiltinExtensions([]).map((entry) => entry.extension.name);
+
+    assertEquals(names.includes("ext-eval-report-mlflow"), false);
+    assertEquals(names.includes("ext-auth-jwt"), false);
   });
 });

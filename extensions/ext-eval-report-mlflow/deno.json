@@ -1,0 +1,36 @@
+{
+  "name": "@veryfront/ext-eval-report-mlflow",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "contracts": {
+      "requires": ["EvalReportExporterRegistry"]
+    },
+    "capabilities": [
+      { "type": "net:outbound", "hosts": ["*"] },
+      {
+        "type": "env:read",
+        "keys": [
+          "MLFLOW_ARTIFACTS_URI",
+          "MLFLOW_EXPERIMENT_NAME",
+          "MLFLOW_RUN_NAME",
+          "MLFLOW_TRACKING_PASSWORD",
+          "MLFLOW_TRACKING_TOKEN",
+          "MLFLOW_TRACKING_URI",
+          "MLFLOW_TRACKING_USERNAME"
+        ]
+      }
+    ]
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "veryfront/eval": "../../src/eval/index.ts",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/extensions/eval": "../../src/extensions/eval/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --no-check --allow-all src/"
+  }
+}
