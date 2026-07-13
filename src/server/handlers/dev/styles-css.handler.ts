@@ -389,7 +389,7 @@ body::before {
   ): Promise<{ css: string; hash: string } | undefined> {
     if (!projectScope) return undefined;
 
-    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
     if (!selector) return undefined;
 
     const client = this.getVeryfrontApiClient(ctx);
@@ -447,7 +447,7 @@ body::before {
     contentContext: ResolvedContentContext | null,
     cssHash: string,
   ): Promise<void> {
-    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
     if (!selector) return;
 
     const client = this.getVeryfrontApiClient(ctx);
@@ -466,6 +466,19 @@ body::before {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private resolveRemoteStyleArtifactSelector(
+    contentContext: ResolvedContentContext | null,
+    ctx: HandlerContext,
+  ): StyleArtifactSelectorContext | null {
+    // Branch content changes in-place, but the remote style-artifact selector
+    // has no content-version dimension. Treat any branch context as a terminal
+    // remote-artifact opt-out so a stale branch artifact cannot be reused after
+    // a push or registered for later consumers.
+    if (contentContext?.sourceType === "branch" || ctx.parsedDomain?.branch) return null;
+
+    return this.resolveStyleArtifactSelector(contentContext, ctx);
   }
 
   private shouldEnsureRemoteStyleArtifactBuild(selector: StyleArtifactSelectorContext): boolean {
