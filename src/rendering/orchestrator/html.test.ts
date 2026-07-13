@@ -831,7 +831,11 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("/_veryfront/hydrate.js"), false);
     });
 
-    it("rebuilds streamed full-document CSS after an initial empty import snapshot", async () => {
+    it("builds streamed full-document CSS after component imports are collected", async () => {
+      let cssImportReads = 0;
+      let importsReady = false;
+      const streamHtml =
+        '<!DOCTYPE html><html><head><title>Imported CSS</title></head><body><div class="hero-banner">Hero</div></body></html>';
       const mockAdapter = createMockAdapter(async (path: string) => {
         if (path === "/project/globals.css") return '@import "tailwindcss";';
         if (path === "/project/components/hero.css") {
@@ -851,22 +855,26 @@ describe("HTMLGenerator helpers", () => {
           projectSlug: "streamed-full-doc-css-import-test",
         },
       });
-      let cssImportReads = 0;
       Object.defineProperty(context, "cssImports", {
         configurable: true,
         enumerable: true,
         get() {
           cssImportReads += 1;
-          return cssImportReads === 1 ? undefined : ["/project/components/hero.css"];
+          return importsReady ? ["/project/components/hero.css"] : undefined;
         },
       });
-      const stream = createSingleChunkStream(
-        '<!DOCTYPE html><html><head><title>Imported CSS</title></head><body><div class="hero-banner">Hero</div></body></html>',
-      );
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          importsReady = true;
+          controller.enqueue(new TextEncoder().encode(streamHtml));
+          controller.close();
+        },
+      });
 
       const responseStream = await generator.generateHTMLStream(stream, context);
       const html = await new Response(responseStream).text();
 
+      assertEquals(cssImportReads, 1);
       const cssHash = html.match(/\/_vf\/css\/([^"/]+)\.css/)?.[1];
       assertExists(cssHash);
       const css = getCSSByHash(cssHash);
