@@ -268,7 +268,9 @@ export function startProductionServer(
         // startup cannot discover a root middleware file. Standalone runtimes
         // load project middleware with the same semantics as the dev server.
         const isProxyMode = bootstrap.config.fs?.veryfront?.proxyMode === true;
-        const projectMiddleware = isProxyMode ? [] : await loadMiddlewareFile(projectDir, adapter);
+        const projectMiddleware = isProxyMode
+          ? []
+          : await loadMiddlewareFile(projectDir, adapter, { throwOnError: true });
         let coreHandler = baseHandler;
         if (projectMiddleware.length > 0) {
           const pipeline = new MiddlewarePipeline();
