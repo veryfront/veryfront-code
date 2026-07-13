@@ -212,6 +212,7 @@ export interface EvalRecord {
   exampleId: string;
   repetition: number;
   input: unknown;
+  executionInput?: unknown;
   output: unknown;
   reference?: unknown;
   metadata: Record<string, unknown>;
@@ -371,12 +372,14 @@ export interface EvalToolAdapterContext {
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;
+  runId: string;
   input: unknown;
 }
 
 /** Tool adapter result normalized into an eval record. */
 export interface EvalToolAdapterResult {
   output: unknown;
+  toolCallId?: string;
   trace?: Partial<EvalTrace>;
   usage?: EvalUsage;
   durationMs?: number;

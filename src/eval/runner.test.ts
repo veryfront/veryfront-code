@@ -304,6 +304,7 @@ describe("eval/runner", () => {
       adapters: {
         tool: async ({ input }) => ({
           output: { status: input === undefined ? "missing" : "shipped" },
+          toolCallId: "eval-lookup-tool-order-1",
           durationMs: 12,
           usage: { totalTokens: 0, costUsd: 0 },
         }),
@@ -316,9 +317,12 @@ describe("eval/runner", () => {
     assertEquals(report.target, "tool:lookup_order");
     assertEquals(report.summary.records, 1);
     assertEquals(report.summary.passed, 1);
+    assertEquals(record.input, { orderId: "A1049", prompt: "Find order A1049" });
+    assertEquals(record.executionInput, { orderId: "A1049" });
     assertEquals(record.output, { status: "shipped" });
     assertEquals(record.trace.toolCalls, [
       {
+        id: "eval-lookup-tool-order-1",
         name: "lookup_order",
         status: "ok",
         input: { orderId: "A1049" },
@@ -326,6 +330,69 @@ describe("eval/runner", () => {
         metadata: { durationMs: 12 },
       },
     ]);
+  });
+
+  it("preserves mapped undefined tool input in direct tool traces", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool-empty-input",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([
+        {
+          id: "order-1",
+          input: { orderId: "A1049" },
+        },
+      ]),
+      input: () => undefined,
+      metrics: [
+        metrics.agent.calledTool("lookup_order", {
+          input: undefined,
+          match: "exact",
+        }).gate(),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async ({ input }) => ({
+          output: { sawUndefinedInput: input === undefined },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(report.summary.passed, 1);
+    assertEquals(record.output, { sawUndefinedInput: true });
+    assertEquals(Object.hasOwn(record, "executionInput"), true);
+    assertEquals(record.executionInput, undefined);
+    assertEquals(record.trace.toolCalls[0]?.input, undefined);
+  });
+
+  it("does not synthesize a direct tool call when tool input mapping fails", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool-input-error",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([{ id: "order-1", input: { orderId: "A1049" } }]),
+      input: () => {
+        throw new Error("Invalid order fixture");
+      },
+      metrics: [metrics.agent.calledTool("lookup_order").gate()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async () => ({
+          output: { status: "should-not-run" },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(report.summary.passed, 0);
+    assertEquals(record.completed, false);
+    assertEquals(record.error, "Invalid order fixture");
+    assertEquals(record.trace.toolCalls, []);
   });
 
   it("counts adapter errors as failed records even without metrics", async () => {

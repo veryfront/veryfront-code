@@ -23,6 +23,7 @@ export const getEvalEditableFieldSchema = defineSchema((v) =>
       "tags",
       "metadata",
       "metrics",
+      "input",
       "check",
     ] as const,
   )
@@ -313,7 +314,10 @@ export function createEvalSourceDocument(
   options: CreateEvalSourceDocumentOptions = {},
 ): EvalSourceDocument {
   const { definition } = discovered;
-  const dynamicFields: EvalEditableField[] = definition.check ? ["check"] : [];
+  const dynamicFields: EvalEditableField[] = [
+    ...(definition.input ? ["input" as const] : []),
+    ...(definition.check ? ["check" as const] : []),
+  ];
 
   return getEvalSourceDocumentSchema().parse({
     kind: "eval-source-document",

@@ -198,6 +198,7 @@ describe("eval/studio", () => {
       name: "Lookup tool quality",
       target: "tool:lookup_order",
       dataset: datasets.inline([{ id: "order-1", input: { orderId: "A1049" } }]),
+      input: (example) => example.input,
       metrics: [metrics.agent.calledTool("lookup_order").gate()],
     });
     const discovered: DiscoveredEval = {
@@ -212,6 +213,7 @@ describe("eval/studio", () => {
     assertEquals(getEvalSourceDocumentSchema().parse(document), document);
     assertEquals(document.targetKind, "tool");
     assertEquals(document.target, "tool:lookup_order");
+    assertEquals(document.dynamicFields, ["input"]);
 
     const run: EvalRun = {
       kind: "eval-run",

@@ -25,6 +25,8 @@ import type {
   RunEvalOptions,
 } from "./types.ts";
 
+const UNMAPPED_TOOL_INPUT = Symbol("unmapped-tool-input");
+
 function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
   return {
     events: trace?.events ?? [],
@@ -57,6 +59,7 @@ function createDirectToolTraceCall(
   result: EvalToolAdapterResult,
 ): EvalToolCall {
   return {
+    ...(result.toolCallId ? { id: result.toolCallId } : {}),
     name: normalizeToolTargetName(definition.target),
     status: result.error || result.completed === false ? "error" : "ok",
     input,
@@ -97,13 +100,16 @@ async function runToolTarget(
   options: RunEvalOptions,
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
+  runId: string,
+  markInvoked?: () => void,
 ): Promise<{ input: unknown; result: EvalToolAdapterResult }> {
   const adapter = options.adapters.tool;
   if (!adapter) {
     throw new Error(`No tool adapter configured for eval target "${definition.target}".`);
   }
   const input = definition.input ? await definition.input(example) : example.input;
-  const result = await adapter({ definition, example, repetition, input });
+  markInvoked?.();
+  const result = await adapter({ definition, example, repetition, runId, input });
   return { input, result };
 }
 
@@ -325,14 +331,18 @@ async function runRecord(
   options: RunEvalOptions,
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
+  runId: string,
 ): Promise<EvalRecord> {
   const started = Date.now();
   let result: EvalAgentAdapterResult | EvalToolAdapterResult;
-  let toolInput: unknown;
+  let toolInput: unknown = UNMAPPED_TOOL_INPUT;
+  let toolInvoked = false;
 
   try {
     if (definition.targetKind === "tool") {
-      const toolRun = await runToolTarget(definition, options, example, repetition);
+      const toolRun = await runToolTarget(definition, options, example, repetition, runId, () => {
+        toolInvoked = true;
+      });
       result = toolRun.result;
       toolInput = toolRun.input;
     } else {
@@ -358,13 +368,22 @@ async function runRecord(
     exampleId: example.id,
     repetition,
     input: example.input,
+    ...(definition.targetKind === "tool" && toolInvoked
+      ? { executionInput: toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput }
+      : {}),
     output,
     ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
     metadata: example.metadata ?? {},
     ...(agentResult?.retrievedContext ? { retrievedContext: agentResult.retrievedContext } : {}),
     ...(agentResult?.citations ? { citations: agentResult.citations } : {}),
     trace: definition.targetKind === "tool"
-      ? normalizeToolTrace(definition, toolInput ?? example.input, result as EvalToolAdapterResult)
+      ? (toolInvoked
+        ? normalizeToolTrace(
+          definition,
+          toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput,
+          result as EvalToolAdapterResult,
+        )
+        : normalizeTrace((result as EvalToolAdapterResult).trace))
       : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,
@@ -403,6 +422,7 @@ export async function runEval(
   options: RunEvalOptions,
 ) {
   const startedAt = options.now?.() ?? new Date();
+  const runId = options.runId ?? createEvalRunId(startedAt);
   const baseDir = options.baseDir ?? Deno.cwd();
   const examples = await definition.dataset.load({ baseDir });
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
@@ -410,7 +430,7 @@ export async function runEval(
 
   for (const example of examples) {
     for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
-      records.push(await runRecord(definition, options, example, repetition));
+      records.push(await runRecord(definition, options, example, repetition, runId));
     }
   }
 
@@ -418,7 +438,7 @@ export async function runEval(
   const report = createEvalReport({
     definition,
     records,
-    runId: options.runId ?? createEvalRunId(startedAt),
+    runId,
     startedAt,
     endedAt,
     dataset,

@@ -46,6 +46,7 @@ function createReport(): EvalReport {
         exampleId: "q1",
         repetition: 1,
         input: { question: "What changed?", privateContext: "secret" },
+        executionInput: { query: "private docs" },
         output: { text: "The plan changed." },
         reference: { text: "Plan update" },
         metadata: { topic: "planning", tenantId: "tenant-secret" },
@@ -134,6 +135,7 @@ describe("EvalReportExporterRegistry", () => {
     const exportedRecord = exportedReport.records[0];
     assert(exportedRecord);
     assertEquals(exportedRecord.input, "[redacted]");
+    assertEquals(exportedRecord.executionInput, "[redacted]");
     assertEquals(exportedRecord.output, "[redacted]");
     assertEquals(exportedRecord.reference, "[redacted]");
     assertEquals(exportedRecord.retrievedContext, []);
@@ -273,6 +275,7 @@ describe("EvalReportExporterRegistry", () => {
       question: "What changed?",
       privateContext: "secret",
     });
+    assertEquals(record.executionInput, { query: "private docs" });
     assertEquals(record.output, { text: "The plan changed." });
     assertEquals(record.reference, { text: "Plan update" });
     assertEquals(record.retrievedContext, [{

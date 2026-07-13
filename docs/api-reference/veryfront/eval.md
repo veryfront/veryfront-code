@@ -14,6 +14,8 @@ import {
   createEvalModelComparisonMarkdown,
   createEvalReport,
   createEvalRunId,
+  evalTool,
+  runEval,
 } from "veryfront/eval";
 ```
 
@@ -31,6 +33,23 @@ export default evalAgent({
     metrics.answer.contains({ text: "Paris" }).gate(),
     metrics.agent.calledTool("search_docs").gate(),
     metrics.agent.noFailedTools().gate(),
+  ],
+});
+```
+
+### Direct tool eval
+
+```ts
+import { datasets, evalTool, metrics } from "veryfront/eval";
+
+export default evalTool({
+  target: "tool:classify_support_case",
+  dataset: datasets.inline([
+    { id: "billing-refund", input: { subject: "Duplicate charge" } },
+  ]),
+  input: (example) => example.input,
+  metrics: [
+    metrics.agent.calledTool("classify_support_case").gate(),
   ],
 });
 ```
@@ -81,6 +100,7 @@ const report = await runEval(definition, {
 | `deriveEvalId` | Derive the stable `eval:<path>` ID for an eval file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/discovery.ts#L78) |
 | `discoverEvals` | Discover eval definitions from a project eval directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/discovery.ts#L153) |
 | `evalAgent` | Define a V1 eval that targets a Veryfront agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/factory.ts#L27) |
+| `evalTool` | Define an eval that targets a Veryfront tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/factory.ts#L64) |
 | `exportEvalReport` | Export an eval report through the configured eval report exporter registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/runner.ts#L231) |
 | `findEvalById` | Discover and return one eval definition by ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/discovery.ts#L196) |
 | `isEvalDefinition` | Check whether a value is a normalized eval definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/factory.ts#L49) |
@@ -98,6 +118,7 @@ const report = await runEval(definition, {
 | `EvalAgentAdapterContext` | Context passed to an agent adapter when `runEval` executes an example. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L324) |
 | `EvalAgentAdapterResult` | Agent adapter result normalized into an eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L331) |
 | `EvalAgentInput` | Input accepted by `evalAgent`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L310) |
+| `EvalToolInput` | Input accepted by `evalTool`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L326) |
 | `EvalAnswerGroundednessMetricOptions` | Options for judge-backed answer grounding checks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L153) |
 | `EvalBudgetDeltaSummary` | Numeric budget delta between a current eval report and a baseline report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L459) |
 | `EvalCheckContext` | Context passed to an eval definition's `check` callback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L278) |
@@ -153,7 +174,10 @@ const report = await runEval(definition, {
 | `EvalSourcePatch` | Eval source patch submitted by Studio forms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L243) |
 | `EvalSourceReference` | Source location for an Eval definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L239) |
 | `EvalStudioCapability` | Capability string Studio uses for Eval source and run actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L235) |
-| `EvalTargetKind` | Primitive kind an eval can execute. V1 supports agent targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L14) |
+| `EvalTargetKind` | Primitive kind an eval can execute. V1 supports agent and tool targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L14) |
+| `EvalToolAdapter` | Adapter used by `runEval` to execute tool targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L391) |
+| `EvalToolAdapterContext` | Context passed to a tool adapter when `runEval` executes an example. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L371) |
+| `EvalToolAdapterResult` | Tool adapter result normalized into an eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L380) |
 | `EvalToolCall` | Tool call metadata captured during one eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L192) |
 | `EvalToolCallCountOptions` | Options for checking how often a tool was called. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L107) |
 | `EvalToolCallMatchOptions` | Options for matching a required tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L101) |

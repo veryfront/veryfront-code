@@ -5,7 +5,7 @@
 import { dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
-import type { Tool } from "veryfront/tool";
+import { isErroredToolExecutionResult, type Tool, type ToolExecutionContext } from "veryfront/tool";
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
@@ -952,6 +952,17 @@ export async function hydrateEvalRuntimeAuth(
   });
 }
 
+function createEvalToolExecutionContext(
+  config: EvalRuntimeAuthConfig | null | undefined,
+): ToolExecutionContext {
+  const projectSlug = resolveEvalRuntimeProjectSlug(config);
+  const authToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  return {
+    ...(projectSlug ? { projectSlug } : {}),
+    ...(authToken ? { authToken } : {}),
+  };
+}
+
 export function normalizeUsage(response: AgentResponse) {
   return response.usage
     ? {
@@ -1026,6 +1037,19 @@ export function normalizeToolCalls(response: AgentResponse): EvalToolCall[] {
   }));
 }
 
+function getToolExecutionErrorMessage(output: unknown): string | undefined {
+  if (!isErroredToolExecutionResult(output)) return undefined;
+  if (isRecord(output) && typeof output.error === "string") return output.error;
+  if (isRecord(output) && isRecord(output.output) && typeof output.output.error === "string") {
+    return output.output.error;
+  }
+  return "Tool execution returned an error result.";
+}
+
+function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): string {
+  return `eval-${toolId}-${context.example.id}-${context.repetition}-${crypto.randomUUID()}`;
+}
+
 function createAgentAdapter(agent: Agent, options: EvalOptions) {
   return async ({ example }: EvalAgentAdapterContext) => {
     const started = Date.now();
@@ -1048,16 +1072,22 @@ function createAgentAdapter(agent: Agent, options: EvalOptions) {
   };
 }
 
-export function createToolAdapter(tool: Tool) {
-  return async ({ input }: EvalToolAdapterContext) => {
+export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext = {}) {
+  return async (context: EvalToolAdapterContext) => {
     const started = Date.now();
-    const output = await tool.execute(input, {
-      toolCallId: `eval-${tool.id}`,
+    const toolCallId = createEvalToolCallId(tool.id, context);
+    const output = await tool.execute(context.input, {
+      ...baseContext,
+      runId: context.runId,
+      toolCallId,
     });
+    const error = getToolExecutionErrorMessage(output);
     return {
       output,
+      toolCallId,
       durationMs: Date.now() - started,
-      completed: true,
+      completed: !error,
+      ...(error ? { error } : {}),
     };
   };
 }
@@ -1477,7 +1507,7 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
           baseDir: options.datasetBase ?? projectDir,
           runId,
           adapters: evalItem.definition.targetKind === "tool"
-            ? { tool: createToolAdapter(tool!) }
+            ? { tool: createToolAdapter(tool!, createEvalToolExecutionContext(config)) }
             : { agent: createAgentAdapter(agent!, options) },
           metadata: {
             provenance,
