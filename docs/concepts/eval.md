@@ -17,7 +17,7 @@ with one deterministic unit test.
 - An eval targets an agent in V1.
 - An eval loads examples from inline data, JSON, or JSONL.
 - An eval records `input`, optional `reference`, and optional `metadata` for each example.
-- An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, latency, tokens, cost, and rubric judges.
+- An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, retrieval recall, citation precision and recall, latency, tokens, cost, and rubric judges.
 - An eval produces `summary.json` and `results.jsonl` artifacts, with optional raw JSON and JUnit XML output.
 
 ## Boundary

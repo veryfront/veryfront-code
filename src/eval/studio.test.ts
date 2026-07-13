@@ -40,6 +40,8 @@ describe("eval/studio", () => {
           k: 3,
           expected: ["knowledge/login-troubleshooting.md"],
         }).gate(),
+        metrics.knowledge.citationPrecision().gate({ min: 0.9 }),
+        metrics.knowledge.citationRecall().gate({ min: 0.8 }),
         metrics.answer.groundedness({
           judge: async () => ({ score: 1, pass: true }),
         }).gate(),
@@ -89,6 +91,8 @@ describe("eval/studio", () => {
         { name: "agent.notCalledTool", editable: true, dynamic: false },
         { name: "agent.toolCallCount", editable: true, dynamic: false },
         { name: "knowledge.recallAtK", editable: true, dynamic: false },
+        { name: "knowledge.citationPrecision", editable: true, dynamic: false },
+        { name: "knowledge.citationRecall", editable: true, dynamic: false },
         { name: "answer.groundedness", editable: true, dynamic: true },
         { name: "judge.rubric", editable: true, dynamic: true },
       ],

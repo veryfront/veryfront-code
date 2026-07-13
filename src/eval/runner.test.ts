@@ -125,6 +125,149 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passed, 1);
   });
 
+  it("runs a realistic RAG eval with retrieval, groundedness, citations, and report summaries", async () => {
+    const definition = evalAgent({
+      id: "eval:support-rag",
+      name: "Support RAG answer quality",
+      target: "agent:support",
+      dataset: datasets.inline([
+        {
+          id: "billing-credit-expiry",
+          input: {
+            question:
+              "A customer says their credits disappeared after the billing cycle. What should support check first?",
+          },
+          reference:
+            "Check the billing ledger, credit grant, expiration policy, and recent usage before changing the account.",
+          metadata: {
+            expectedKnowledge: [
+              "knowledge/billing/credits.md",
+              "knowledge/support/playbooks/billing-ledger.md",
+            ],
+          },
+        },
+      ]),
+      metrics: [
+        metrics.agent.calledTool("search_knowledge").gate(),
+        metrics.agent.noFailedTools().gate(),
+        metrics.knowledge.recallAtK({ k: 3 }).gate({ min: 1 }),
+        metrics.knowledge.precisionAtK({ k: 3 }).soft({ min: 0.6 }),
+        metrics.knowledge.citationPrecision().gate({ min: 1 }),
+        metrics.knowledge.citationRecall().gate({ min: 1 }),
+        metrics.answer.groundedness({
+          judge: async ({ evidence, output, sources }) => {
+            const joinedEvidence = evidence.join("\n");
+            const pass = String(output.text).includes("billing ledger") &&
+              joinedEvidence.includes("expiration policy") &&
+              sources.includes("knowledge/billing/credits.md");
+            return {
+              score: pass ? 0.92 : 0.1,
+              pass,
+              explanation: "The answer is supported by retrieved billing knowledge.",
+            };
+          },
+        }).gate({ min: 0.8 }),
+      ],
+      check(ctx) {
+        ctx.expect.completed().gate();
+        ctx.expect.outputContains("billing ledger").gate();
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({
+          text:
+            "Check the billing ledger, credit grant, expiration policy, and recent usage before changing the account. [credits] [ledger]",
+          retrievedContext: [
+            {
+              source: "knowledge/billing/credits.md",
+              content:
+                "Credit grants can expire by expiration policy and should be checked against the usage ledger.",
+            },
+            {
+              source: "knowledge/support/playbooks/billing-ledger.md",
+              content: "Support must review the billing ledger before changing a customer account.",
+            },
+            {
+              source: "knowledge/unrelated.md",
+              content: "General account settings.",
+            },
+          ],
+          citations: [
+            { source: "knowledge/billing/credits.md", text: "[credits]" },
+            { source: "knowledge/support/playbooks/billing-ledger.md", text: "[ledger]" },
+          ],
+          trace: {
+            toolCalls: [
+              {
+                name: "search_knowledge",
+                status: "ok",
+                input: { query: "billing credit expiry ledger" },
+                output: {
+                  data: [
+                    {
+                      path: "knowledge/billing/credits.md",
+                      content:
+                        "Credit grants can expire by expiration policy and should be checked against the usage ledger.",
+                    },
+                    {
+                      path: "knowledge/support/playbooks/billing-ledger.md",
+                      content:
+                        "Support must review the billing ledger before changing a customer account.",
+                    },
+                    {
+                      path: "knowledge/unrelated.md",
+                      content: "General account settings.",
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          usage: { inputTokens: 800, outputTokens: 120, totalTokens: 920 },
+          durationMs: 840,
+        }),
+      },
+    });
+
+    assertEquals(report.summary.records, 1);
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.summary.failed, 0);
+    assertEquals(report.records[0]?.retrievedContext?.length, 3);
+    assertEquals(report.records[0]?.citations?.map((citation) => citation.source), [
+      "knowledge/billing/credits.md",
+      "knowledge/support/playbooks/billing-ledger.md",
+    ]);
+    assertEquals(
+      report.records[0]?.metrics?.map((metric) => ({
+        name: metric.name,
+        score: metric.score,
+        pass: metric.pass,
+      })),
+      [
+        { name: "agent.calledTool", score: 1, pass: true },
+        { name: "agent.noFailedTools", score: 1, pass: true },
+        { name: "knowledge.recallAtK", score: 1, pass: true },
+        { name: "knowledge.precisionAtK", score: 2 / 3, pass: true },
+        { name: "knowledge.citationPrecision", score: 1, pass: true },
+        { name: "knowledge.citationRecall", score: 1, pass: true },
+        { name: "answer.groundedness", score: 0.92, pass: true },
+      ],
+    );
+    assertEquals(report.summary.metrics.map((metric) => metric.name), [
+      "agent.calledTool",
+      "agent.noFailedTools",
+      "knowledge.recallAtK",
+      "knowledge.precisionAtK",
+      "knowledge.citationPrecision",
+      "knowledge.citationRecall",
+      "answer.groundedness",
+      "expect.completed",
+      "expect.outputContains",
+    ]);
+  });
+
   it("counts adapter errors as failed records even without metrics", async () => {
     const definition = evalAgent({
       id: "eval:adapter-error",

@@ -140,6 +140,15 @@ export interface EvalKnowledgeMrrMetricOptions {
   tool?: string;
 }
 
+/** Options for citation precision and recall over retrieved knowledge. */
+export interface EvalKnowledgeCitationMetricOptions {
+  expected?: EvalKnowledgeExpectedSource[];
+  expectedFrom?: string;
+  k?: number;
+  tool?: string;
+  citationsFrom?: string;
+}
+
 /** Options for judge-backed answer grounding checks. */
 export interface EvalAnswerGroundednessMetricOptions {
   tool?: string;
@@ -153,6 +162,30 @@ export interface EvalAnswerGroundednessMetricOptions {
     evidence: string[];
     sources: string[];
   }) => EvalMaybePromise<{ score: number; pass?: boolean; explanation?: string }>;
+}
+
+/** Retrieved context item captured for deterministic RAG metrics. */
+export interface EvalRetrievedContext {
+  /** Stable source id, path, URL, or document key for this retrieved item. */
+  source: string;
+  /** Optional retrieved passage text used by groundedness and content matching. */
+  content?: string;
+  /** Optional display title for the source. */
+  title?: string;
+  /** Optional adapter-specific metadata. */
+  metadata?: Record<string, unknown>;
+}
+
+/** Citation emitted by an answer and matched against retrieved or expected sources. */
+export interface EvalCitation {
+  /** Stable source id, path, URL, or document key being cited. */
+  source: string;
+  /** Optional answer citation marker or label, such as "[1]". */
+  text?: string;
+  /** Optional quoted passage attached to the citation. */
+  quote?: string;
+  /** Optional adapter-specific metadata. */
+  metadata?: Record<string, unknown>;
 }
 
 /** Tool call metadata captured during one eval record. */
@@ -182,6 +215,8 @@ export interface EvalRecord {
   output: unknown;
   reference?: unknown;
   metadata: Record<string, unknown>;
+  retrievedContext?: EvalRetrievedContext[];
+  citations?: EvalCitation[];
   trace: EvalTrace;
   usage: EvalUsage;
   durationMs: number;
@@ -297,6 +332,8 @@ export interface EvalAgentAdapterResult {
   text?: string;
   json?: unknown;
   output?: unknown;
+  retrievedContext?: EvalRetrievedContext[];
+  citations?: EvalCitation[];
   trace?: Partial<EvalTrace>;
   usage?: EvalUsage;
   durationMs?: number;

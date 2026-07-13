@@ -1,5 +1,6 @@
 import type {
   EvalAnswerGroundednessMetricOptions,
+  EvalKnowledgeCitationMetricOptions,
   EvalKnowledgeExpectedSource,
   EvalKnowledgeMrrMetricOptions,
   EvalKnowledgeRetrievalMetricOptions,
@@ -29,6 +30,18 @@ type KnowledgeEntry = {
   evidenceCandidates: string[];
 };
 
+type CitationEntry = {
+  source: string;
+  sourceCandidates: string[];
+  textCandidates: string[];
+};
+
+type CitationReferenceSet = {
+  expected?: EvalKnowledgeExpectedSource[];
+  expectedFrom?: string;
+  retrieved: KnowledgeEntry[];
+};
+
 type JudgeRubricInput = {
   rubric: string;
   judge?: (input: {
@@ -45,6 +58,7 @@ const DEFAULT_EXPECTED_KNOWLEDGE_PATH = "metadata.expectedKnowledge";
 const DEFAULT_GROUNDEDNESS_RUBRIC =
   "Rate whether the answer is grounded in the retrieved evidence and avoids unsupported claims.";
 const KNOWLEDGE_COLLECTION_KEYS = ["data", "matches", "results", "items", "chunks", "documents"];
+const CITATION_COLLECTION_KEYS = ["citations", "sources", "references"];
 const KNOWLEDGE_SOURCE_KEYS = [
   "path",
   "source",
@@ -56,6 +70,7 @@ const KNOWLEDGE_SOURCE_KEYS = [
   "url",
   "href",
 ];
+const CITATION_TEXT_KEYS = ["text", "quote", "marker", "label", "content", "snippet", "excerpt"];
 const KNOWLEDGE_CONTENT_KEYS = [
   "content",
   "text",
@@ -260,11 +275,74 @@ function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
 }
 
 function getKnowledgeEntries(record: EvalRecord, tool = DEFAULT_KNOWLEDGE_TOOL): KnowledgeEntry[] {
+  const explicitEntries = (record.retrievedContext ?? [])
+    .map(createKnowledgeEntry)
+    .filter((entry): entry is KnowledgeEntry => entry !== null);
+  if (explicitEntries.length > 0) return explicitEntries;
+
   return findEvalToolCalls(record, tool)
     .filter((call) => !isEvalToolFailed(call))
     .flatMap((call) => extractKnowledgeItems(call.output))
     .map(createKnowledgeEntry)
     .filter((entry): entry is KnowledgeEntry => entry !== null);
+}
+
+function extractCitationItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return [];
+
+  for (const key of CITATION_COLLECTION_KEYS) {
+    const citations = value[key];
+    if (Array.isArray(citations)) return citations;
+  }
+
+  return KNOWLEDGE_SOURCE_KEYS.some((key) => typeof value[key] === "string") ? [value] : [];
+}
+
+function createCitationEntry(item: unknown): CitationEntry | null {
+  if (!isRecord(item)) {
+    if (typeof item === "string" && item.trim()) {
+      return {
+        source: item,
+        sourceCandidates: [item],
+        textCandidates: [item],
+      };
+    }
+    return null;
+  }
+
+  const sourceCandidates = uniqueStrings(
+    KNOWLEDGE_SOURCE_KEYS.flatMap((key) => collectStringField(item, key)),
+  );
+  const textCandidates = uniqueStrings(
+    CITATION_TEXT_KEYS.flatMap((key) => collectStringField(item, key)),
+  );
+  const source = sourceCandidates[0] ?? textCandidates[0] ?? stableStringify(item);
+  return {
+    source,
+    sourceCandidates: sourceCandidates.length === 0 ? [source] : sourceCandidates,
+    textCandidates,
+  };
+}
+
+function getCitationEntries(
+  record: EvalRecord,
+  options: EvalKnowledgeCitationMetricOptions,
+): CitationEntry[] {
+  if (options.citationsFrom) {
+    return extractCitationItems(getPathValue(record, options.citationsFrom))
+      .map(createCitationEntry)
+      .filter((entry): entry is CitationEntry => entry !== null);
+  }
+
+  const explicitCitations = (record.citations ?? [])
+    .map(createCitationEntry)
+    .filter((entry): entry is CitationEntry => entry !== null);
+  if (explicitCitations.length > 0) return explicitCitations;
+
+  return extractCitationItems(record.output)
+    .map(createCitationEntry)
+    .filter((entry): entry is CitationEntry => entry !== null);
 }
 
 function expectedSourceLabel(expected: EvalKnowledgeExpectedSource): string {
@@ -300,13 +378,136 @@ function resolveExpectedKnowledgeSources(
 }
 
 function createKnowledgeMetricConfig(
-  options: EvalKnowledgeRetrievalMetricOptions | EvalKnowledgeMrrMetricOptions,
+  options:
+    | EvalKnowledgeRetrievalMetricOptions
+    | EvalKnowledgeMrrMetricOptions
+    | EvalKnowledgeCitationMetricOptions,
 ): Record<string, unknown> {
   return {
     ...options,
     ...(!options.expected
       ? { expectedFrom: options.expectedFrom ?? DEFAULT_EXPECTED_KNOWLEDGE_PATH }
       : {}),
+  };
+}
+
+function resolveCitationReferenceSet(
+  record: EvalRecord,
+  options: EvalKnowledgeCitationMetricOptions,
+): CitationReferenceSet {
+  const expectedResult = resolveExpectedKnowledgeSources(record, options);
+  if (expectedResult.expected.length > 0) {
+    return {
+      expected: expectedResult.expected,
+      ...(expectedResult.expectedFrom ? { expectedFrom: expectedResult.expectedFrom } : {}),
+      retrieved: [],
+    };
+  }
+
+  const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+  const allEntries = getKnowledgeEntries(record, tool);
+  const retrieved = options.k === undefined ? allEntries : allEntries.slice(0, options.k);
+  return { retrieved };
+}
+
+function citationLabels(citations: CitationEntry[]): string[] {
+  return citations.map((citation) => citation.source);
+}
+
+function citationMatchesExpected(
+  expected: EvalKnowledgeExpectedSource,
+  citation: CitationEntry,
+): boolean {
+  if (typeof expected === "string") {
+    return matchesStringCandidate(expected, citation.sourceCandidates);
+  }
+
+  const sourceExpectations = [
+    expected.path,
+    expected.source,
+    expected.id,
+    expected.title,
+    expected.documentCode,
+    expected.document_code,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (sourceExpectations.length > 0) {
+    return sourceExpectations.some((value) =>
+      matchesStringCandidate(value, citation.sourceCandidates)
+    );
+  }
+
+  const contentExpectations = [
+    expected.contentMatch,
+    expected.verificationQuote,
+    expected.content,
+    expected.text,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return contentExpectations.some((value) => matchesContent(value, citation.textCandidates));
+}
+
+function citationMatchesKnowledgeEntry(citation: CitationEntry, entry: KnowledgeEntry): boolean {
+  return citation.sourceCandidates.some((candidate) =>
+    matchesStringCandidate(candidate, entry.sourceCandidates)
+  );
+}
+
+function citationIsSupported(
+  citation: CitationEntry,
+  references: CitationReferenceSet,
+): boolean {
+  if (references.expected && references.expected.length > 0) {
+    return references.expected.some((expected) => citationMatchesExpected(expected, citation));
+  }
+  return references.retrieved.some((entry) => citationMatchesKnowledgeEntry(citation, entry));
+}
+
+function referenceLabels(references: CitationReferenceSet): string[] {
+  if (references.expected && references.expected.length > 0) {
+    return references.expected.map(expectedSourceLabel);
+  }
+  return retrievedSources(references.retrieved);
+}
+
+function missingCitationReferencesResult(
+  name: string,
+  tool: string,
+  citations: CitationEntry[],
+): EvalMetricResult {
+  return {
+    name,
+    family: "knowledge",
+    severity: "gate",
+    skipped: true,
+    explanation: "No expected or retrieved knowledge sources were available for citation scoring.",
+    evidence: {
+      tool,
+      citations: citationLabels(citations),
+    },
+  };
+}
+
+function missingCitationResult(
+  name: string,
+  tool: string,
+  references: CitationReferenceSet,
+): EvalMetricResult {
+  return {
+    name,
+    family: "knowledge",
+    severity: "gate",
+    score: 0,
+    pass: false,
+    explanation: "No structured citations were found on the eval record.",
+    evidence: {
+      tool,
+      citations: [],
+      ...(references.expected && references.expected.length > 0
+        ? {
+          expected: references.expected.map(expectedSourceLabel),
+          ...(references.expectedFrom ? { expectedFrom: references.expectedFrom } : {}),
+        }
+        : { retrieved: retrievedSources(references.retrieved) }),
+    },
   };
 }
 
@@ -748,6 +949,101 @@ export const metrics = {
               rank,
               match: entries[index]?.source,
             }),
+          },
+        };
+      }, createKnowledgeMetricConfig(options));
+    },
+
+    citationPrecision(options: EvalKnowledgeCitationMetricOptions = {}): EvalMetric {
+      return createKnowledgeMetric("knowledge.citationPrecision", (record) => {
+        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const citations = getCitationEntries(record, options);
+        const references = resolveCitationReferenceSet(record, options);
+        const labels = referenceLabels(references);
+        if (labels.length === 0) {
+          return missingCitationReferencesResult("knowledge.citationPrecision", tool, citations);
+        }
+        if (citations.length === 0) {
+          return missingCitationResult("knowledge.citationPrecision", tool, references);
+        }
+
+        const supportedCitations = citations.filter((citation) =>
+          citationIsSupported(citation, references)
+        );
+        const unsupportedCitations = citations.filter((citation) =>
+          !citationIsSupported(citation, references)
+        );
+        return {
+          name: "knowledge.citationPrecision",
+          family: "knowledge",
+          severity: "gate",
+          score: supportedCitations.length / citations.length,
+          evidence: {
+            tool,
+            citations: citationLabels(citations),
+            ...(references.expected && references.expected.length > 0
+              ? {
+                expected: references.expected.map(expectedSourceLabel),
+                ...(references.expectedFrom ? { expectedFrom: references.expectedFrom } : {}),
+              }
+              : { retrieved: retrievedSources(references.retrieved) }),
+            supported: citationLabels(supportedCitations),
+            unsupported: citationLabels(unsupportedCitations),
+            supportedCount: supportedCitations.length,
+            citationCount: citations.length,
+          },
+        };
+      }, createKnowledgeMetricConfig(options));
+    },
+
+    citationRecall(options: EvalKnowledgeCitationMetricOptions = {}): EvalMetric {
+      return createKnowledgeMetric("knowledge.citationRecall", (record) => {
+        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const citations = getCitationEntries(record, options);
+        const references = resolveCitationReferenceSet(record, options);
+        const labels = referenceLabels(references);
+        if (labels.length === 0) {
+          return missingCitationReferencesResult("knowledge.citationRecall", tool, citations);
+        }
+        if (citations.length === 0) {
+          return missingCitationResult("knowledge.citationRecall", tool, references);
+        }
+
+        const cited = references.expected && references.expected.length > 0
+          ? references.expected
+            .filter((expected) =>
+              citations.some((citation) => citationMatchesExpected(expected, citation))
+            )
+            .map(expectedSourceLabel)
+          : references.retrieved
+            .filter((entry) =>
+              citations.some((citation) => citationMatchesKnowledgeEntry(citation, entry))
+            )
+            .map((entry) => entry.source);
+        const missing = labels.filter((label) =>
+          !cited.some((citedLabel) =>
+            normalizeComparable(citedLabel) === normalizeComparable(label)
+          )
+        );
+
+        return {
+          name: "knowledge.citationRecall",
+          family: "knowledge",
+          severity: "gate",
+          score: cited.length / labels.length,
+          evidence: {
+            tool,
+            citations: citationLabels(citations),
+            ...(references.expected && references.expected.length > 0
+              ? {
+                expected: references.expected.map(expectedSourceLabel),
+                ...(references.expectedFrom ? { expectedFrom: references.expectedFrom } : {}),
+              }
+              : { retrieved: retrievedSources(references.retrieved) }),
+            cited,
+            missing,
+            citedCount: cited.length,
+            expectedCount: labels.length,
           },
         };
       }, createKnowledgeMetricConfig(options));

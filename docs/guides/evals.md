@@ -291,6 +291,9 @@ metrics.knowledge.precisionAtK({
 metrics.knowledge.mrr({
   expected: ["knowledge/login-troubleshooting.md"],
 }).gate({ min: 0.5 });
+
+metrics.knowledge.citationPrecision().gate({ min: 0.9 });
+metrics.knowledge.citationRecall().gate({ min: 0.8 });
 ```
 
 Pass `expectedFrom: "metadata.yourField"` when examples store expected sources
@@ -298,7 +301,42 @@ under a different path. Pass `tool: "your_tool_name"` when the project exposes
 knowledge through a custom retrieval tool. `recallAtK` measures how many
 expected sources appeared in the top `k`, `precisionAtK` measures how many
 retrieved top-`k` items were expected, and `mrr` measures the rank of the first
-expected hit.
+expected hit. `citationPrecision` measures whether answer citations point to
+expected or retrieved sources. `citationRecall` measures whether expected or
+retrieved sources are cited.
+
+Adapters can expose structured RAG evidence directly on the record. Use
+`retrievedContext` for the retrieved passages and `citations` for the answer
+citations:
+
+```ts
+const adapters = {
+  agent: async () => ({
+    text: "Check the billing ledger before changing the account. [ledger]",
+    retrievedContext: [
+      {
+        source: "knowledge/support/playbooks/billing-ledger.md",
+        content: "Support must review the billing ledger before changing a customer account.",
+      },
+    ],
+    citations: [
+      {
+        source: "knowledge/support/playbooks/billing-ledger.md",
+        text: "[ledger]",
+      },
+    ],
+  }),
+};
+```
+
+Each `retrievedContext` item must include a stable `source` such as a path, URL,
+document id, or document key. Add `content` when groundedness judges or passage
+matching should inspect the retrieved text. Each `citations` item must include
+the cited `source`; add `text` or `quote` when reports should show the answer
+marker or cited passage. When `retrievedContext` is absent, retrieval metrics
+fall back to the configured knowledge tool trace. When `citations` is absent,
+citation metrics read structured `output.citations`, `output.sources`, or
+`output.references`.
 
 Use rubric judges for semantic quality. Inject the judge function from your
 project so the eval definition stays portable:
