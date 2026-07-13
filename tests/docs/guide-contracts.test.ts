@@ -252,6 +252,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "datasets.inline",
       "metrics.answer.contains",
       "metrics.agent.noFailedTools",
+      "metrics.knowledge.citationPrecision",
       "createEvalSourceDocument",
       "veryfront eval deep-research",
       "--junit",

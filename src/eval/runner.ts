@@ -227,6 +227,7 @@ async function exportWithSelectedExporter(
   }
 }
 
+/** Export an eval report through the configured eval report exporter registry. */
 export async function exportEvalReport(
   report: ReturnType<typeof createEvalReport>,
   config?: EvalReportExportConfig,
@@ -288,6 +289,8 @@ async function runRecord(
     output,
     ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
     metadata: example.metadata ?? {},
+    ...(result.retrievedContext ? { retrievedContext: result.retrievedContext } : {}),
+    ...(result.citations ? { citations: result.citations } : {}),
     trace: normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,

@@ -28,6 +28,10 @@ export interface EvalReportExportRedaction {
   includeReferences?: boolean;
   /** Include trace events and tool-call metadata. Defaults to false. */
   includeTraces?: boolean;
+  /** Include retrieved RAG context passages. Defaults to false. */
+  includeRetrievedContext?: boolean;
+  /** Include answer citation payloads. Defaults to false. */
+  includeCitations?: boolean;
   /** Include metric/check explanations. Defaults to false. */
   includeMetricExplanations?: boolean;
   /** Include metric/check evidence payloads. Defaults to false. */
@@ -137,6 +141,12 @@ function redactRecord(
 
   if (Object.hasOwn(record, "reference")) {
     redacted.reference = redaction.includeReferences ? record.reference : EvalReportRedactedValue;
+  }
+  if (Object.hasOwn(record, "retrievedContext")) {
+    redacted.retrievedContext = redaction.includeRetrievedContext ? record.retrievedContext : [];
+  }
+  if (Object.hasOwn(record, "citations")) {
+    redacted.citations = redaction.includeCitations ? record.citations : [];
   }
 
   return redacted;
