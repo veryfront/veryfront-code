@@ -204,4 +204,34 @@ describe("proxy routing invalidation ingress", () => {
 
     assertEquals(response.status, 503);
   });
+
+  it("cancels an oversized streaming body without a content-length header", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(encoder.encode("x".repeat(8 * 1024 + 1)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body,
+      }),
+      {
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 413);
+    assertEquals(cancelled, true);
+    assertEquals(pulls < 10, true);
+  });
 });

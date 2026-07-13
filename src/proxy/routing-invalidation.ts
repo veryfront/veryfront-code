@@ -53,6 +53,43 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+async function readBoundedRequestBody(
+  req: Request,
+): Promise<{ body: string } | { error: "too-large" | "unreadable" }> {
+  if (!req.body) return { body: "" };
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+        await reader.cancel("Request body is too large").catch(() => undefined);
+        return { error: "too-large" };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { error: "unreadable" };
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { body: new TextDecoder().decode(bytes) };
+}
+
 export function parseProxyRoutingInvalidationRequest(
   body: string,
 ): ProxyRoutingInvalidationRequest | null {
@@ -106,10 +143,14 @@ export async function handleProxyRoutingInvalidationRequest(
     return jsonResponse(413, { error: "Request body is too large" });
   }
 
-  const body = await req.text();
-  if (new TextEncoder().encode(body).byteLength > MAX_REQUEST_BODY_BYTES) {
+  const bodyResult = await readBoundedRequestBody(req);
+  if ("error" in bodyResult && bodyResult.error === "too-large") {
     return jsonResponse(413, { error: "Request body is too large" });
   }
+  if ("error" in bodyResult) {
+    return jsonResponse(400, { error: "Invalid routing invalidation request" });
+  }
+  const { body } = bodyResult;
 
   const input = parseProxyRoutingInvalidationRequest(body);
   if (!input) return jsonResponse(400, { error: "Invalid routing invalidation request" });
