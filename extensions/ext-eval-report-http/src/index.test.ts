@@ -4,7 +4,7 @@
  * @module extensions/ext-eval-report-http/test
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { ExtensionContext } from "veryfront/extensions";
 import {
@@ -151,6 +151,55 @@ describe("ext-eval-report-http", () => {
         trace: { traceId: "trace-1", spanId: "span-1" },
       },
     });
+  });
+
+  it("reports HTTP failures without throwing from registry export", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+
+    const extension = factory({
+      exporters: [
+        {
+          id: "langsmith-proxy",
+          url: "https://evals.example.test/langsmith",
+        },
+      ],
+      fetch: (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input), init: init ?? {} });
+        return Promise.resolve(new Response("gateway unavailable", { status: 503 }));
+      },
+    });
+
+    await extension.setup?.(createContext(registry));
+
+    const results = await registry.export(
+      {
+        kind: "eval-report",
+        definitionId: "eval:smoke",
+        targetKind: "agent",
+        target: "agent:researcher",
+        runId: "evalrun_1",
+        startedAt: "2026-06-21T00:00:00.000Z",
+        endedAt: "2026-06-21T00:00:01.000Z",
+        records: [],
+        summary: {
+          records: 0,
+          passed: 0,
+          failed: 0,
+          passRate: 1,
+          metrics: [],
+        },
+      },
+      { redaction: {} },
+    );
+
+    assertEquals(requests.length, 1);
+    assertEquals(results[0]?.exporterId, "langsmith-proxy");
+    assertEquals(results[0]?.ok, false);
+    if (results[0]?.ok === false) {
+      assertStringIncludes(results[0].error, "HTTP 503");
+      assertStringIncludes(results[0].error, "gateway unavailable");
+    }
   });
 
   it("unregisters exporters during teardown", async () => {
