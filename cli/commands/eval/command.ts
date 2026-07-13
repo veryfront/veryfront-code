@@ -15,6 +15,7 @@ import type {
   EvalRecord,
   EvalReport,
   EvalReportComparison,
+  EvalReportComparisonPolicy,
   EvalReportExportConfig,
   EvalToolCall,
   EvalUsage,
@@ -300,6 +301,26 @@ export function createSummaryArtifact(
     ...(report.metadata ? { metadata: report.metadata } : {}),
     ...(report.exports ? { exports: report.exports } : {}),
     ...(baseline ? { baseline } : {}),
+  };
+}
+
+function createEvalBaselineComparisonPolicy(options: EvalOptions): EvalReportComparisonPolicy {
+  return {
+    ...(options.baselinePassRateDropThreshold !== undefined
+      ? { passRateDropThreshold: options.baselinePassRateDropThreshold }
+      : {}),
+    ...(options.baselineMetricPassRateDropThreshold !== undefined
+      ? { metricPassRateDropThreshold: options.baselineMetricPassRateDropThreshold }
+      : {}),
+    ...(options.baselineFailedDeltaThreshold !== undefined
+      ? { failedDeltaThreshold: options.baselineFailedDeltaThreshold }
+      : {}),
+    ...(options.baselineUsageIncreaseThreshold !== undefined
+      ? { usageIncreaseThreshold: options.baselineUsageIncreaseThreshold }
+      : {}),
+    ...(options.baselineLatencyIncreaseThreshold !== undefined
+      ? { latencyIncreaseThreshold: options.baselineLatencyIncreaseThreshold }
+      : {}),
   };
 }
 
@@ -1405,7 +1426,11 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
     const report = await exportEvalReportForCli(finalizedReport, exportConfig);
 
     const baseline = options.baseline
-      ? compareEvalReports(report, await readEvalReport(options.baseline))
+      ? compareEvalReports(
+        report,
+        await readEvalReport(options.baseline),
+        createEvalBaselineComparisonPolicy(options),
+      )
       : undefined;
 
     await writeEvalArtifacts(report, artifactPaths, baseline);
