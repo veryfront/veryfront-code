@@ -181,6 +181,93 @@ Deno.test("npm publish orders extensions before the root package", async () => {
   }
 });
 
+Deno.test("npm publish skips extension packages marked publish false", async () => {
+  const packageRoot = await Deno.makeTempDir();
+
+  try {
+    await Deno.mkdir(`${packageRoot}/extensions/ext-alpha`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/extensions/ext-private`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-alpha`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-private`, {
+      recursive: true,
+    });
+
+    await Deno.writeTextFile(
+      `${packageRoot}/deno.json`,
+      JSON.stringify({
+        workspace: [
+          "./extensions/ext-alpha",
+          "./extensions/ext-private",
+        ],
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/extensions/ext-alpha/deno.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-alpha",
+        veryfront: { extension: true },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/extensions/ext-private/deno.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-private",
+        veryfront: { extension: true, npm: { publish: false } },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/npm/extensions/ext-alpha/package.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-alpha",
+        veryfront: { extension: true },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/npm/extensions/ext-private/package.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-private",
+        veryfront: { extension: true, npm: { publish: false } },
+      }),
+    );
+
+    const output = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        'source "$SCRIPT_PATH"\npackage_names_from_workspace\npackage_dirs',
+      ],
+      cwd: packageRoot,
+      env: {
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    assertEquals(
+      new TextDecoder().decode(output.stdout).trim().split("\n"),
+      [
+        "veryfront",
+        "@veryfront/ext-alpha",
+        "npm/extensions/ext-alpha",
+        "npm",
+      ],
+    );
+    assertStringIncludes(
+      new TextDecoder().decode(output.stderr),
+      "@veryfront/ext-private is marked veryfront.npm.publish=false",
+    );
+  } finally {
+    await Deno.remove(packageRoot, { recursive: true });
+  }
+});
+
 // Extensions whose implementations are statically imported by
 // src/extensions/builtin-extensions.ts and therefore ship inside the root
 // npm package. Their dependencies must stay in root; every other workspace
@@ -190,6 +277,7 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-llm-openai",
   "ext-llm-anthropic",
   "ext-llm-google",
+  "ext-eval-report-mlflow",
 ]);
 
 Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {

@@ -18,6 +18,7 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.
 import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
+import extEvalReportMlflow from "../../extensions/ext-eval-report-mlflow/src/index.ts";
 import extZod from "../../extensions/ext-schema-zod/src/index.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
@@ -34,6 +35,7 @@ export type OptionalBuiltinExtensionDefinition = {
   contracts?: ExtensionContractMetadata;
   evalExporterId?: string;
   capabilities: Capability[];
+  factory?: ExtensionFactory;
 };
 
 const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
@@ -166,6 +168,7 @@ export const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] =
     sourceDirectory: "ext-eval-report-mlflow",
     contracts: { requires: ["EvalReportExporterRegistry"] },
     evalExporterId: "mlflow",
+    factory: extEvalReportMlflow,
     capabilities: [
       { type: "net:outbound", hosts: ["*"] },
       {
@@ -305,7 +308,7 @@ async function loadOptionalBuiltinExtension(
   ctx: ExtensionContext,
 ): Promise<Extension | undefined> {
   try {
-    const factory = await importOptionalBuiltinFactory(
+    const factory = definition.factory ?? await importOptionalBuiltinFactory(
       definition.sourceDirectory,
       getFirstPartyExtensionPackageName(definition),
     );

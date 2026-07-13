@@ -7,6 +7,12 @@ Registers the `mlflow` eval report exporter. The exporter id is fixed to
 Use this extension when completed Veryfront `EvalReport` payloads should be
 written to MLflow Tracking as one run per eval execution.
 
+> **npm packaging note:** CLI usage is bundled into the root `veryfront`
+> package, so `veryfront eval --export mlflow` works without installing a
+> separate package. The standalone `@veryfront/ext-eval-report-mlflow` package
+> is intentionally not published until npm trusted publishing is configured for
+> that new package.
+
 The exporter is generic. It logs Veryfront report data such as pass/fail counts,
 metric pass rates, duration summaries, usage/tokens/cost fields, and redacted
 report artifacts. Project-specific extraction, such as reading a domain label
