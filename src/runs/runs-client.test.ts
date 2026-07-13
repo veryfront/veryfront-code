@@ -101,6 +101,29 @@ function makeRun(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeEvalRunProjection(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "eval-run",
+    runId: "run_eval_1",
+    evalId: "eval:deep-research",
+    status: "running",
+    targetKind: "agent",
+    target: "agent:researcher",
+    source: {
+      filePath: "evals/deep-research.eval.ts",
+      exportName: "default",
+    },
+    summary: null,
+    reportPath: null,
+    error: null,
+    metadata: { owner: "quality" },
+    createdAt: "2026-06-20T12:00:00.000Z",
+    startedAt: "2026-06-20T12:00:01.000Z",
+    completedAt: null,
+    ...overrides,
+  };
+}
+
 const RUNS_ENV_KEYS = [
   "VERYFRONT_API_URL",
   "VERYFRONT_API_TOKEN",
@@ -251,6 +274,103 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("manages eval run lifecycle through eval projection routes", async () => {
+    const summary = {
+      records: 1,
+      passed: 1,
+      failed: 0,
+      passRate: 1,
+      metrics: [],
+    };
+    mockFetch([
+      jsonResponse(makeEvalRunProjection({ status: "pending", startedAt: null })),
+      jsonResponse(makeEvalRunProjection()),
+      jsonResponse(makeEvalRunProjection()),
+      jsonResponse(makeEvalRunProjection({
+        status: "completed",
+        summary,
+        reportPath: "evals/reports/deep-research/run_eval_1.json",
+        completedAt: "2026-06-20T12:00:05.000Z",
+      })),
+      jsonResponse(makeEvalRunProjection({
+        status: "failed",
+        error: { message: "Provider rejected the request", code: "PROVIDER_REJECTED" },
+        completedAt: "2026-06-20T12:00:05.000Z",
+      })),
+      jsonResponse(makeEvalRunProjection({
+        status: "cancelled",
+        completedAt: "2026-06-20T12:00:05.000Z",
+      })),
+    ]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.createProjectEvalRun({
+      evalId: "eval:deep-research",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "44444444-4444-4444-8444-444444444444",
+      input: { dataset: "smoke" },
+      config: { repetitions: 2 },
+    });
+    await client.getProjectEvalRun({ evalId: "eval:deep-research", runId: "run_eval_1" });
+    await client.startProjectEvalRun({ evalId: "eval:deep-research", runId: "run_eval_1" });
+    await client.completeProjectEvalRun({
+      evalId: "eval:deep-research",
+      runId: "run_eval_1",
+      summary,
+      reportPath: "evals/reports/deep-research/run_eval_1.json",
+    });
+    await client.failProjectEvalRun({
+      evalId: "eval:deep-research",
+      runId: "run_eval_1",
+      error: { message: "Provider rejected the request", code: "PROVIDER_REJECTED" },
+    });
+    await client.cancelProjectEvalRun({ evalId: "eval:deep-research", runId: "run_eval_1" });
+
+    assertStringIncludes(
+      call(0).url,
+      "/projects/dreamy-haven/evals/eval%3Adeep-research/runs?runtime_target_kind=environment&target_environment_id=44444444-4444-4444-8444-444444444444",
+    );
+    assertEquals(call(0).init?.method, "POST");
+    assertEquals(jsonBody(0), {
+      input: { dataset: "smoke" },
+      config: { repetitions: 2 },
+    });
+    assertStringIncludes(
+      call(1).url,
+      "/projects/dreamy-haven/evals/eval%3Adeep-research/runs/run_eval_1",
+    );
+    assertStringIncludes(
+      call(2).url,
+      "/projects/dreamy-haven/evals/eval%3Adeep-research/runs/run_eval_1/start",
+    );
+    assertEquals(call(2).init?.method, "POST");
+    assertStringIncludes(
+      call(3).url,
+      "/projects/dreamy-haven/evals/eval%3Adeep-research/runs/run_eval_1/complete",
+    );
+    assertEquals(jsonBody(3), {
+      summary,
+      report_path: "evals/reports/deep-research/run_eval_1.json",
+    });
+    assertStringIncludes(
+      call(4).url,
+      "/projects/dreamy-haven/evals/eval%3Adeep-research/runs/run_eval_1/fail",
+    );
+    assertEquals(jsonBody(4), {
+      error: { message: "Provider rejected the request", code: "PROVIDER_REJECTED" },
+    });
+    assertStringIncludes(
+      call(5).url,
+      "/projects/dreamy-haven/evals/eval%3Adeep-research/runs/run_eval_1/cancel",
+    );
+    assertEquals(call(5).init?.method, "POST");
+  });
+
   it("creates knowledge ingest task runs", async () => {
     mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
 
@@ -353,6 +473,7 @@ describe("VeryfrontRunsClient", () => {
   it("fails fast when auth is missing", async () => {
     const client = new VeryfrontRunsClient({
       apiUrl: "https://api.test.com",
+      authToken: "",
       projectReference: "dreamy-haven",
     });
 
@@ -367,6 +488,7 @@ describe("VeryfrontRunsClient", () => {
     const client = new VeryfrontRunsClient({
       apiUrl: "https://api.test.com",
       authToken: "test-token",
+      projectReference: "",
     });
 
     await assertRejects(

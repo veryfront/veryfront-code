@@ -23,15 +23,20 @@
  */
 
 export {
+  type CompleteProjectEvalRunInput,
   type CreateEvalRunInput,
+  type CreateProjectEvalRunInput,
   createRunsClient,
   type CreateTaskRunInput,
   type CreateWorkflowRunInput,
+  type EvalRunSourceTargetKind,
+  type FailProjectEvalRunInput,
   type KnowledgeIngestByUploadIdsInput,
   type KnowledgeIngestByUploadPathsInput,
   type KnowledgeIngestByUploadPrefixInput,
   type ListRunEventsOptions,
   type ListRunsOptions,
+  type ProjectEvalRunRouteOptions,
   type ProjectScopedOptions,
   type RunRuntimeTargetKind,
   type RunRuntimeTargetOptions,

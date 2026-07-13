@@ -4,6 +4,7 @@ import {
   type RetryConfig,
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
+import { type EvalRun, getEvalRunSchema } from "#veryfront/eval";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   type CancelRunResponse,
@@ -76,6 +77,44 @@ export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTarget
   startMode?: string;
 }
 
+/** Source target for eval source lookup before a run starts. */
+export type EvalRunSourceTargetKind = "project" | "preview_branch";
+
+/** Shared project eval run route options. */
+export interface ProjectEvalRunRouteOptions extends ProjectScopedOptions {
+  evalId: string;
+  runId: string;
+}
+
+/** Input payload for creating a project eval run and returning the Studio projection. */
+export interface CreateProjectEvalRunInput extends ProjectScopedOptions, RunRuntimeTargetOptions {
+  evalId: string;
+  sourceTargetKind?: EvalRunSourceTargetKind;
+  input?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+}
+
+type EvalRunTerminalSummary = NonNullable<EvalRun["summary"]>;
+
+/** Completion payload for a project eval run projection route. */
+export interface CompleteProjectEvalRunInput extends ProjectEvalRunRouteOptions {
+  summary?: EvalRunTerminalSummary;
+  reportPath?: string | null;
+  output?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  artifacts?: unknown[];
+  logs?: string | null;
+  durationMs?: number | null;
+}
+
+/** Failure payload for a project eval run projection route. */
+export interface FailProjectEvalRunInput extends CompleteProjectEvalRunInput {
+  error: {
+    message: string;
+    code?: string;
+  };
+}
+
 /** Input payload for knowledge ingest by upload IDs. */
 export interface KnowledgeIngestByUploadIdsInput
   extends Omit<CreateTaskRunInput, "target" | "config"> {
@@ -126,6 +165,27 @@ function runtimeTargetBody(input: RunRuntimeTargetOptions): Record<string, unkno
     runtime_target_kind: input.runtimeTargetKind,
     runtime_target_environment_id: input.runtimeTargetEnvironmentId,
     runtime_target_branch_id: input.runtimeTargetBranchId,
+  };
+}
+
+function evalRunQueryParams(input: CreateProjectEvalRunInput): URLSearchParams {
+  return toQueryParams({
+    source_target_kind: input.sourceTargetKind,
+    runtime_target_kind: input.runtimeTargetKind,
+    target_environment_id: input.runtimeTargetEnvironmentId ?? undefined,
+    target_branch_id: input.runtimeTargetBranchId ?? undefined,
+  });
+}
+
+function evalRunLifecycleBody(input: CompleteProjectEvalRunInput): Record<string, unknown> {
+  return {
+    ...(input.summary !== undefined ? { summary: input.summary } : {}),
+    ...(input.reportPath !== undefined ? { report_path: input.reportPath } : {}),
+    ...(input.output !== undefined ? { output: input.output } : {}),
+    ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+    ...(input.artifacts !== undefined ? { artifacts: input.artifacts } : {}),
+    ...(input.logs !== undefined ? { logs: input.logs } : {}),
+    ...(input.durationMs !== undefined ? { duration_ms: input.durationMs } : {}),
   };
 }
 
@@ -263,6 +323,83 @@ export class VeryfrontRunsClient {
         },
       },
     });
+  }
+
+  createProjectEvalRun(input: CreateProjectEvalRunInput): Promise<EvalRun> {
+    return this.requestJson(
+      withQuery(
+        `/projects/${
+          encodeURIComponent(this.resolveProjectReference(input.projectReference))
+        }/evals/${encodeURIComponent(input.evalId)}/runs`,
+        evalRunQueryParams(input),
+      ),
+      getEvalRunSchema(),
+      {
+        method: "POST",
+        body: {
+          input: input.input,
+          config: input.config,
+        },
+      },
+    );
+  }
+
+  getProjectEvalRun(input: ProjectEvalRunRouteOptions): Promise<EvalRun> {
+    return this.requestJson(
+      `/projects/${
+        encodeURIComponent(this.resolveProjectReference(input.projectReference))
+      }/evals/${encodeURIComponent(input.evalId)}/runs/${encodeURIComponent(input.runId)}`,
+      getEvalRunSchema(),
+    );
+  }
+
+  startProjectEvalRun(input: ProjectEvalRunRouteOptions): Promise<EvalRun> {
+    return this.requestJson(
+      `/projects/${
+        encodeURIComponent(this.resolveProjectReference(input.projectReference))
+      }/evals/${encodeURIComponent(input.evalId)}/runs/${encodeURIComponent(input.runId)}/start`,
+      getEvalRunSchema(),
+      { method: "POST" },
+    );
+  }
+
+  completeProjectEvalRun(input: CompleteProjectEvalRunInput): Promise<EvalRun> {
+    return this.requestJson(
+      `/projects/${
+        encodeURIComponent(this.resolveProjectReference(input.projectReference))
+      }/evals/${encodeURIComponent(input.evalId)}/runs/${encodeURIComponent(input.runId)}/complete`,
+      getEvalRunSchema(),
+      {
+        method: "POST",
+        body: evalRunLifecycleBody(input),
+      },
+    );
+  }
+
+  failProjectEvalRun(input: FailProjectEvalRunInput): Promise<EvalRun> {
+    return this.requestJson(
+      `/projects/${
+        encodeURIComponent(this.resolveProjectReference(input.projectReference))
+      }/evals/${encodeURIComponent(input.evalId)}/runs/${encodeURIComponent(input.runId)}/fail`,
+      getEvalRunSchema(),
+      {
+        method: "POST",
+        body: {
+          ...evalRunLifecycleBody(input),
+          error: input.error,
+        },
+      },
+    );
+  }
+
+  cancelProjectEvalRun(input: ProjectEvalRunRouteOptions): Promise<EvalRun> {
+    return this.requestJson(
+      `/projects/${
+        encodeURIComponent(this.resolveProjectReference(input.projectReference))
+      }/evals/${encodeURIComponent(input.evalId)}/runs/${encodeURIComponent(input.runId)}/cancel`,
+      getEvalRunSchema(),
+      { method: "POST" },
+    );
   }
 
   async list(options: ListRunsOptions = {}): Promise<RunList> {
