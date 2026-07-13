@@ -2,6 +2,7 @@ import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/e
 import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
   getDirectory,
   isWithinDirectory,
@@ -126,71 +127,78 @@ export function createRelativeFsPlugin(
   return {
     name: "veryfront-rel-fs",
     setup(build: PluginBuild) {
-      build.onResolve({ filter: /^(\.?\.?\/|\/)\/*/ }, async (args: OnResolveArgs) => {
-        // VULN-FS-6: NUL bytes are never legitimate in module paths.
-        if (args.path.includes("\0")) {
-          return {
-            errors: [{ text: `Import path contains NUL byte: ${args.path}`, location: null }],
-          };
-        }
+      // esbuild invokes plugin callbacks from its child-process message pump,
+      // which does not inherit the caller's AsyncLocalStorage store. Re-enter
+      // the request context captured at plugin setup so context-scoped
+      // adapters (MultiProjectFSAdapter) can resolve the project.
+      build.onResolve(
+        { filter: /^(\.?\.?\/|\/)\/*/ },
+        wrapWithCurrentContext(async (args: OnResolveArgs) => {
+          // VULN-FS-6: NUL bytes are never legitimate in module paths.
+          if (args.path.includes("\0")) {
+            return {
+              errors: [{ text: `Import path contains NUL byte: ${args.path}`, location: null }],
+            };
+          }
 
-        const basedir = args.resolveDir ||
-          (args.importer ? getDirectory(args.importer) : projectDir);
-        // normalizePath collapses `./` and `foo/../` segments produced by
-        // `joinPath` so downstream `adapter.fs.stat` lookups match the file
-        // system's canonical key. Still inside the containment check below.
-        const candidate = normalizePath(
-          args.path.startsWith("/")
-            ? joinPath(projectDir, args.path)
-            : joinPath(basedir, args.path),
-        );
+          const basedir = args.resolveDir ||
+            (args.importer ? getDirectory(args.importer) : projectDir);
+          // normalizePath collapses `./` and `foo/../` segments produced by
+          // `joinPath` so downstream `adapter.fs.stat` lookups match the file
+          // system's canonical key. Still inside the containment check below.
+          const candidate = normalizePath(
+            args.path.startsWith("/")
+              ? joinPath(projectDir, args.path)
+              : joinPath(basedir, args.path),
+          );
 
-        // VULN-FS-6: refuse anything that, after joining, escapes the project
-        // root. esbuild plugins fire per-import; an entry file with
-        // `import "../../../../etc/hostname"` would otherwise embed the file.
-        if (!isWithinDirectory(projectDir, candidate)) {
-          return {
-            errors: [{
-              text: `Import escapes project directory: ${args.path}`,
-              location: null,
-            }],
-          };
-        }
+          // VULN-FS-6: refuse anything that, after joining, escapes the project
+          // root. esbuild plugins fire per-import; an entry file with
+          // `import "../../../../etc/hostname"` would otherwise embed the file.
+          if (!isWithinDirectory(projectDir, candidate)) {
+            return {
+              errors: [{
+                text: `Import escapes project directory: ${args.path}`,
+                location: null,
+              }],
+            };
+          }
 
-        const candidates: string[] = [candidate];
-        for (const ext of SCRIPT_EXTENSIONS) candidates.push(candidate + ext);
-        for (const ext of SCRIPT_EXTENSIONS) {
-          candidates.push(joinPath(candidate, `index${ext}`));
-        }
+          const candidates: string[] = [candidate];
+          for (const ext of SCRIPT_EXTENSIONS) candidates.push(candidate + ext);
+          for (const ext of SCRIPT_EXTENSIONS) {
+            candidates.push(joinPath(candidate, `index${ext}`));
+          }
 
-        for (const f of candidates) {
-          // Defence in depth: each extension probe must also stay inside.
-          if (!isWithinDirectory(projectDir, f)) continue;
-          try {
-            const st = await adapter.fs.stat(f);
-            if (st.isFile) {
-              if (options.enforceBrowserBoundaries) {
-                const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
-                if (pathStatus !== "trusted") {
+          for (const f of candidates) {
+            // Defence in depth: each extension probe must also stay inside.
+            if (!isWithinDirectory(projectDir, f)) continue;
+            try {
+              const st = await adapter.fs.stat(f);
+              if (st.isFile) {
+                if (options.enforceBrowserBoundaries) {
+                  const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
+                  if (pathStatus !== "trusted") {
+                    return {
+                      errors: [{ text: dependencyPathError(pathStatus), location: null }],
+                    };
+                  }
                   return {
-                    errors: [{ text: dependencyPathError(pathStatus), location: null }],
+                    path: getProjectModuleIdentity(projectDir, f),
+                    namespace: PROJECT_FS_NAMESPACE,
+                    pluginData: { absolutePath: f } satisfies ProjectFsPluginData,
                   };
                 }
-                return {
-                  path: getProjectModuleIdentity(projectDir, f),
-                  namespace: PROJECT_FS_NAMESPACE,
-                  pluginData: { absolutePath: f } satisfies ProjectFsPluginData,
-                };
+                return { path: f };
               }
-              return { path: f };
+            } catch (_) {
+              // expected: candidate path doesn't exist, try next
             }
-          } catch (_) {
-            // expected: candidate path doesn't exist, try next
           }
-        }
 
-        return undefined;
-      });
+          return undefined;
+        }),
+      );
 
       async function loadModule(
         filePath: string,
@@ -265,13 +273,16 @@ export function createRelativeFsPlugin(
         }
       }
 
-      build.onLoad({ filter: SCRIPT_PATH_PATTERN, namespace: "file" }, (args: OnLoadArgs) => {
-        return loadModule(args.path, false);
-      });
+      build.onLoad(
+        { filter: SCRIPT_PATH_PATTERN, namespace: "file" },
+        wrapWithCurrentContext((args: OnLoadArgs) => {
+          return loadModule(args.path, false);
+        }),
+      );
 
       build.onLoad(
         { filter: SCRIPT_PATH_PATTERN, namespace: PROJECT_FS_NAMESPACE },
-        (args: OnLoadArgs) => {
+        wrapWithCurrentContext((args: OnLoadArgs) => {
           const absolutePath = getProjectFsPluginPath(args);
           if (!absolutePath) {
             return {
@@ -279,7 +290,7 @@ export function createRelativeFsPlugin(
             };
           }
           return loadModule(absolutePath, true);
-        },
+        }),
       );
     },
   };

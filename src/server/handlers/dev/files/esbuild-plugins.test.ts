@@ -3,6 +3,7 @@ import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   createBareExternalPlugin,
   createHttpExternalPlugin,
@@ -393,6 +394,66 @@ describe(
         assertEquals(errors.some(({ text }) => text.includes("symbolic link")), true);
         assertEquals(output.includes(marker), false);
       }
+    });
+
+    it("resolves project files when esbuild callbacks fire outside the request context", async () => {
+      const esbuild = await import("veryfront/extensions/bundler");
+      // Root the esbuild service's message pump OUTSIDE any request context,
+      // as on a warm server pod whose first build served another request.
+      // Plugin callbacks of later builds run on this contextless pump, so an
+      // AsyncLocalStorage-dependent adapter loses its store unless the plugin
+      // re-enters it (the documented contract of wrapWithCurrentContext).
+      await esbuild.build({
+        bundle: false,
+        write: false,
+        stdin: { contents: "1;", loader: "js" },
+      });
+
+      const files: Record<string, string> = {
+        "/project/app/dep.js": "export const value = 42;",
+      };
+      // Like MultiProjectFSAdapter, refuse to operate without the store.
+      const contextBoundAdapter = {
+        fs: {
+          stat: (path: string) => {
+            if (!asyncLocalStorage.getStore()) {
+              return Promise.reject(new Error("No request context available"));
+            }
+            return files[path]
+              ? Promise.resolve({ isFile: true, isDirectory: false, isSymlink: false })
+              : Promise.reject(new Error("not found"));
+          },
+          readFile: (path: string) => {
+            if (!asyncLocalStorage.getStore()) {
+              return Promise.reject(new Error("No request context available"));
+            }
+            return files[path] !== undefined
+              ? Promise.resolve(files[path])
+              : Promise.reject(new Error("not found"));
+          },
+        },
+      } as unknown as ReturnType<typeof createMockAdapter>;
+
+      const result = await asyncLocalStorage.run(
+        {} as NonNullable<ReturnType<typeof asyncLocalStorage.getStore>>,
+        () =>
+          esbuild.build({
+            bundle: true,
+            write: false,
+            format: "esm",
+            platform: "browser",
+            target: "es2020",
+            stdin: {
+              contents: 'import { value } from "./dep.js"; console.log(value);',
+              loader: "js",
+              sourcefile: "/project/app/page.js",
+              resolveDir: "/project/app",
+            },
+            plugins: [createRelativeFsPlugin("/project", contextBoundAdapter)],
+          }),
+      );
+
+      assertEquals(result.outputFiles?.[0]?.text.includes("42"), true);
     });
   },
 );
