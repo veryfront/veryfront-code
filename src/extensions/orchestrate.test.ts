@@ -130,14 +130,18 @@ describe("orchestrateExtensions()", () => {
         mergeExtensions,
       },
       loadFactory: (path: string, source: ExtensionSource) => {
-        const map: Record<ExtensionSource, Extension> = {
+        const map: Partial<Record<ExtensionSource, Extension>> = {
           "config": cfg,
           "package": pkg,
           "project": proj,
           "local-file": local,
         };
+        const extension = map[source];
+        if (!extension) {
+          throw new Error(`unexpected extension source: ${source}`);
+        }
         return Promise.resolve<ResolvedExtension>({
-          extension: map[source],
+          extension,
           source,
           origin: path,
         });
@@ -371,6 +375,9 @@ describe("orchestrateExtensions()", () => {
   });
 
   it("lets higher-priority provider extensions override builtin provider ids", async () => {
+    const builtinLlmExtensions = createBuiltinExtensions().filter((entry) =>
+      entry.extension.name.startsWith("ext-llm-")
+    );
     const customProvider: LLMProvider = {
       id: "anthropic",
       createModel(modelId: string) {
@@ -397,7 +404,7 @@ describe("orchestrateExtensions()", () => {
       logger: noopLogger,
       discovery: emptyDiscovery(),
       primeContracts: { [LLMProviderRegistryName]: registry },
-      builtinExtensions: createBuiltinExtensions(),
+      builtinExtensions: builtinLlmExtensions,
     });
 
     assertEquals(registry.get("anthropic"), customProvider);
