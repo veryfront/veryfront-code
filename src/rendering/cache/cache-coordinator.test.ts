@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { delay } from "#std/async.ts";
-import { assertEquals, assertObjectMatch } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
@@ -15,6 +14,10 @@ function makeResult(html: string): RenderResult {
     stream: null,
     ssrHash: "hash",
   };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
@@ -55,7 +58,7 @@ describe("CacheCoordinator", () => {
     await coordinator.persistResult(makeResult("<html>hello</html>"), slug);
 
     const lookupHit = await coordinator.checkCache(slug);
-    assertObjectMatch(lookupHit.cachedResult ?? {}, { html: "<html>hello</html>" });
+    assertEquals(lookupHit.cachedResult?.html, "<html>hello</html>");
     assertEquals(lookupHit.cacheStatus, "hit");
     assertEquals(typeof lookupHit.lookupDurationMs, "number");
 
@@ -63,7 +66,7 @@ describe("CacheCoordinator", () => {
   });
 
   it("respects TTL", async () => {
-    const coordinator = new CacheCoordinator({ ttlMs: scaleMs(50) });
+    const coordinator = new CacheCoordinator({ ttlMs: scaleMs(50), staleMs: 0 });
     const slug = "ttl-test";
 
     await coordinator.persistResult(makeResult("first"), slug);
@@ -76,10 +79,27 @@ describe("CacheCoordinator", () => {
 
     await coordinator.destroy();
   });
+  it("serves recently expired entries as stale while refresh can run", async () => {
+    const coordinator = new CacheCoordinator({
+      ttlMs: scaleMs(20),
+      staleMs: scaleMs(500),
+    });
+    const slug = "stale-test";
+
+    await coordinator.persistResult(makeResult("first"), slug);
+    await delay(40);
+
+    const lookup = await coordinator.checkCache(slug);
+    assertEquals(lookup.cachedResult?.html, "first");
+    assertEquals(lookup.cacheStatus, "stale");
+    assertEquals(typeof lookup.lookupDurationMs, "number");
+
+    await coordinator.destroy();
+  });
 
   it("reports expired when the memory store TTL path is enabled", async () => {
     await withStoreTtlEnabled(async () => {
-      const coordinator = new CacheCoordinator({ ttlMs: scaleMs(20) });
+      const coordinator = new CacheCoordinator({ ttlMs: scaleMs(20), staleMs: 0 });
       const slug = "store-ttl-test";
 
       await coordinator.persistResult(makeResult("first"), slug);
@@ -114,8 +134,8 @@ describe("CacheCoordinator", () => {
     const lookupA = await projectA.checkCache(slug);
     const lookupB = await projectB.checkCache(slug);
 
-    assertObjectMatch(lookupA.cachedResult ?? {}, { html: "<html>Project A</html>" });
-    assertObjectMatch(lookupB.cachedResult ?? {}, { html: "<html>Project B</html>" });
+    assertEquals(lookupA.cachedResult?.html, "<html>Project A</html>");
+    assertEquals(lookupB.cachedResult?.html, "<html>Project B</html>");
 
     await projectA.destroy();
     await projectB.destroy();
@@ -163,7 +183,7 @@ describe("CacheCoordinator", () => {
     const lookupB = await projectB.checkCache(slug);
 
     assertEquals(lookupA.cachedResult, undefined);
-    assertObjectMatch(lookupB.cachedResult ?? {}, { html: "<html>Project B</html>" });
+    assertEquals(lookupB.cachedResult?.html, "<html>Project B</html>");
 
     await projectA.destroy();
     await projectB.destroy();

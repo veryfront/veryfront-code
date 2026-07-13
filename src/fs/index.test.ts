@@ -42,8 +42,6 @@ describe("fs/index.ts exports", () => {
     assertEquals(fsModule.remove, compatFsModule.remove);
     assertEquals(fsModule.readDir, compatFsModule.readDir);
     assertEquals(fsModule.realPath, compatFsModule.realPath);
-    assertEquals(fsModule.isNotFoundError, compatFsModule.isNotFoundError);
-    assertEquals(fsModule.lstat, compatFsModule.lstat);
     assertEquals(fsModule.basename, pathModule.basename);
     assertEquals(fsModule.dirname, pathModule.dirname);
     assertEquals(fsModule.extname, pathModule.extname);

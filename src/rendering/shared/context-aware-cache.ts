@@ -14,6 +14,8 @@ const logger = rendererLogger.component("context-aware-cache");
 
 /** Default TTL for context-aware cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+/** Default stale window for expired public render entries (30 minutes). */
+const DEFAULT_CACHE_STALE_MS = 30 * 60 * 1_000;
 /** Default max entries for the in-memory cache store */
 const DEFAULT_MAX_ENTRIES = 500;
 
@@ -21,12 +23,14 @@ export interface ContextAwareCacheOptions {
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
   ttlMs?: number;
+  staleMs?: number;
 }
 
 interface CachePayload {
   result: RenderResult;
   storedAt: number;
   expiresAt?: number;
+  staleUntil?: number;
   /** Optional serialized form of result.nodeMap for JSON-based stores */
   nodeMapEntries?: Array<[number, unknown]>;
 }
@@ -42,10 +46,12 @@ export interface ContextAwareCacheLookupResult {
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
+  private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
+    this.staleMs = options.staleMs ?? DEFAULT_CACHE_STALE_MS;
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
@@ -82,6 +88,26 @@ export class ContextAwareCacheCoordinator {
         }
 
         if (this.isExpired(cached)) {
+          if (this.isStaleUsable(cached, ctx)) {
+            const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+            recordCacheLookup("stale", lookupDurationMs);
+            logger.debug("Cache stale hit", {
+              slug,
+              cacheKey,
+              projectId: ctx.projectId,
+              environment: ctx.environment,
+              lookupDurationMs,
+            });
+
+            return {
+              cachedResult: this.cloneResult(cached.result, cached.nodeMapEntries),
+              cacheKey,
+              hit: true,
+              status: "stale",
+              lookupDurationMs,
+            };
+          }
+
           await this.store.delete(cacheKey);
 
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -141,6 +167,9 @@ export class ContextAwareCacheCoordinator {
       nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
       storedAt: now,
       expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
+      staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
+        ? now + this.ttlMs + this.staleMs
+        : undefined,
     });
 
     logger.debug("Cached result", {
@@ -260,6 +289,16 @@ export class ContextAwareCacheCoordinator {
     return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
   }
 
+  private isStaleUsable(entry: CachePayload, ctx: RenderContext): boolean {
+    return this.shouldServeStale(ctx) &&
+      typeof entry.staleUntil === "number" &&
+      Date.now() <= entry.staleUntil;
+  }
+
+  private shouldServeStale(ctx: RenderContext): boolean {
+    return ctx.environment === "production" && ctx.mode === "production";
+  }
+
   private cloneResult(
     result: RenderResult,
     nodeMapEntries?: Array<[number, unknown]>,
@@ -303,5 +342,5 @@ function roundDurationMs(value: number): number {
 function recordCacheLookup(status: CacheLookupStatus, durationMs: number): void {
   markRequestProfilePhase("render.cache_lookup", durationMs);
   markRequestProfilePhase(`render.cache_${status}`);
-  metrics.recordCacheGet(status === "hit");
+  metrics.recordCacheGet(status === "hit" || status === "stale");
 }
