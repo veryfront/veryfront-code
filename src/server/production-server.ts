@@ -264,11 +264,13 @@ export function startProductionServer(
           localProjects,
         });
 
-        // Project middleware (root middleware.ts) runs in production with the
-        // same semantics as in dev: middleware executes before routing and can
-        // short-circuit by returning a Response. Requests keep their identity
-        // when middleware calls next(), so WebSocket upgrades stay intact.
-        const projectMiddleware = await loadMiddlewareFile(projectDir, adapter);
+        // Shared proxy filesystems need tenant context from the request, so
+        // startup cannot discover a root middleware file. Standalone runtimes
+        // load project middleware with the same semantics as the dev server.
+        const isProxyMode = bootstrap.config.fs?.veryfront?.proxyMode === true;
+        const projectMiddleware = isProxyMode
+          ? []
+          : await loadMiddlewareFile(projectDir, adapter, { throwOnError: true });
         let coreHandler = baseHandler;
         if (projectMiddleware.length > 0) {
           const pipeline = new MiddlewarePipeline();
