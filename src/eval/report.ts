@@ -16,6 +16,7 @@ import type {
   EvalUsageSummary,
 } from "./types.ts";
 
+/** Additive eval report contract version written by new reports and summary artifacts. */
 export const EVAL_REPORT_SCHEMA_VERSION = 2;
 
 const USAGE_NUMERIC_KEYS = [

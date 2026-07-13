@@ -64,7 +64,7 @@ const report = await runEval(definition, {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `EVAL_REPORT_SCHEMA_VERSION` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L19) |
+| `EVAL_REPORT_SCHEMA_VERSION` | Additive eval report contract version written by new reports and summary artifacts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L20) |
 
 ### Functions
 
@@ -72,9 +72,9 @@ const report = await runEval(definition, {
 |------|-------------|--------|
 | `compareEvalModelReports` | Compare eval reports from multiple models using conservative promotion rules. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L612) |
 | `compareEvalReports` | Compare a current eval report against a saved baseline report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/baseline.ts#L190) |
-| `createEvalDatasetMetadata` | Create stable dataset metadata for report consumers and CI artifacts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L76) |
+| `createEvalDatasetMetadata` | Create stable dataset metadata for report consumers and CI artifacts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L77) |
 | `createEvalModelComparisonMarkdown` | Render a human-reviewable markdown summary for a model comparison report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/model-comparison.ts#L663) |
-| `createEvalReport` | Create a JSON-serializable eval report from executed records. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L331) |
+| `createEvalReport` | Create a JSON-serializable eval report from executed records. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L332) |
 | `createEvalRunId` | Create a timestamp-sortable eval run id with a collision-resistant suffix. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/run-id.ts#L8) |
 | `createEvalRunProvenance` | Build stable provenance metadata from explicit git/cloud inputs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L131) |
 | `createEvalSourceDocument` | Create the normalized Eval document Studio can list, inspect, and edit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L308) |
@@ -86,7 +86,7 @@ const report = await runEval(definition, {
 | `isEvalDefinition` | Check whether a value is a normalized eval definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/factory.ts#L49) |
 | `resolveEvalRunProvenance` | Resolve local or Cloud provenance for an eval run without failing the eval if git metadata is unavailable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/provenance.ts#L259) |
 | `runEval` | Execute an eval locally with injected target adapters. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/runner.ts#L327) |
-| `summarizeEvalRecords` | Summarize eval records into pass/fail and metric aggregates. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L308) |
+| `summarizeEvalRecords` | Summarize eval records into pass/fail and metric aggregates. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/report.ts#L309) |
 
 ### Types
 
