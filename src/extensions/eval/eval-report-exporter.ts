@@ -158,14 +158,35 @@ function redactMetricResults(
   });
 }
 
+function cloneRedaction(
+  redaction: EvalReportExportRedaction | undefined,
+): EvalReportExportRedaction | undefined {
+  if (!redaction) return undefined;
+  return {
+    ...redaction,
+    ...(redaction.metadataAllowlist ? { metadataAllowlist: [...redaction.metadataAllowlist] } : {}),
+  };
+}
+
 function redactEvalReportExportContext(
   context: EvalReportExportContext,
+  redaction: EvalReportExportRedaction,
 ): EvalReportExportContext {
-  if (!context.metadata) return context;
-  return {
+  const exportContext: EvalReportExportContext = {
     ...context,
-    metadata: filterMetadata(context.metadata, context.redaction?.metadataAllowlist),
+    ...(context.tags ? { tags: [...context.tags] } : {}),
+    ...(context.trace ? { trace: { ...context.trace } } : {}),
+    ...(context.metadata
+      ? { metadata: filterMetadata(context.metadata, redaction.metadataAllowlist) }
+      : {}),
   };
+  const redactionCopy = cloneRedaction(redaction);
+  if (context.redaction && redactionCopy) {
+    exportContext.redaction = redactionCopy;
+  } else {
+    delete exportContext.redaction;
+  }
+  return exportContext;
 }
 
 /** Create an eval report copy with external-export redaction applied. */
@@ -224,11 +245,12 @@ class EvalReportExporterRegistryImpl implements EvalReportExporterRegistry {
     context: EvalReportExportContext = {},
   ): Promise<EvalReportExportResult[]> {
     const results: EvalReportExportResult[] = [];
-    const exportContext = redactEvalReportExportContext(context);
+    const redaction = cloneRedaction(context.redaction) ?? {};
 
     for (const exporter of this.exporters.values()) {
       try {
-        const sanitizedReport = redactEvalReportForExport(report, exportContext.redaction);
+        const sanitizedReport = redactEvalReportForExport(report, redaction);
+        const exportContext = redactEvalReportExportContext(context, redaction);
         const receipt = await exporter.export(sanitizedReport, exportContext);
         const result: EvalReportExportSuccess = { exporterId: exporter.id, ok: true };
         if (receipt !== undefined) result.receipt = receipt;
