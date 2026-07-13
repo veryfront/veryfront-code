@@ -10,6 +10,11 @@ import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 function createHandlerContext(
   projectDir: string,
@@ -282,6 +287,61 @@ describe(
 
       assertEquals(discovery.tools.has("relative_tool"), true);
       assertEquals(toolRegistry.has("relative_tool"), true);
+    });
+
+    it("warns with safe diagnostics when primitive discovery succeeds partially", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/partial-discovery-project",
+        "partial-discovery-project",
+        "preview",
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/healthy-tool.ts`,
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          '  id: "healthy_tool",',
+          '  description: "Returns a healthy result",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ ok: true }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/broken-tool.ts`,
+        'throw new Error("broken discovery fixture");\n',
+      );
+
+      const logEntries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => logEntries.push(entry));
+
+      try {
+        const discovery = await ensureProjectDiscovery(ctx);
+        assertEquals(discovery.tools.has("healthy_tool"), true);
+        assertEquals(discovery.errors.length, 1);
+      } finally {
+        __resetLogRecordEmitterForTests();
+      }
+
+      const partialWarning = logEntries.find((entry) =>
+        entry.message === "Primitive discovery completed with errors"
+      );
+      assertExists(partialWarning);
+      assertEquals(partialWarning.level, "warn");
+      assertEquals(partialWarning.context?.failures, [{
+        file: "tools/broken-tool.ts",
+        sourceKind: "tool",
+        message: "broken discovery fixture",
+      }]);
+      assertEquals(JSON.stringify(partialWarning).includes(ctx.projectDir), false);
     });
 
     it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {
