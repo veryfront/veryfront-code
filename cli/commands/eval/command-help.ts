@@ -35,6 +35,26 @@ export const evalHelp: CommandHelp = {
       description: "Write the eval report JSON as the next baseline",
     },
     {
+      flag: "--baseline-pass-rate-drop-threshold <fraction>",
+      description: "Allow this aggregate pass-rate drop before a baseline regression fails",
+    },
+    {
+      flag: "--baseline-metric-pass-rate-drop-threshold <fraction>",
+      description: "Allow this per-metric pass-rate drop before a baseline regression fails",
+    },
+    {
+      flag: "--baseline-failed-delta-threshold <count>",
+      description: "Allow this failed-result count increase before a baseline regression fails",
+    },
+    {
+      flag: "--baseline-usage-increase-threshold <fraction>",
+      description: "Fail when reported usage or cost increases beyond this baseline fraction",
+    },
+    {
+      flag: "--baseline-latency-increase-threshold <fraction>",
+      description: "Fail when p95 latency increases beyond this baseline fraction",
+    },
+    {
       flag: "--export <ids>",
       description: "Export the report through registered eval exporters",
     },

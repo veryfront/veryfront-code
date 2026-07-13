@@ -82,6 +82,24 @@ veryfront eval deep-research \
   --json
 ```
 
+By default, `--baseline` fails on any aggregate pass-rate drop, failed-count
+increase, metric pass-rate regression, or newly failing example. Use threshold
+flags only for intentional tolerance:
+
+```bash
+veryfront eval deep-research \
+  --baseline .veryfront/evals/baseline.json \
+  --baseline-pass-rate-drop-threshold 0.02 \
+  --baseline-metric-pass-rate-drop-threshold 0.02 \
+  --baseline-usage-increase-threshold 0.15 \
+  --baseline-latency-increase-threshold 0.2 \
+  --json
+```
+
+Usage and p95 latency deltas are reported in `summary.json` whenever both the
+current report and baseline include those values. They fail the run only when
+the matching threshold flag is set.
+
 Update the baseline explicitly after reviewing the current report:
 
 ```bash

@@ -110,6 +110,7 @@ describe("eval/baseline", () => {
           regressed: true,
         },
       ],
+      budgetDeltas: [],
       newFailedExamples: ["q2"],
       fixedExamples: [],
       regressed: true,
@@ -160,9 +161,166 @@ describe("eval/baseline", () => {
           regressed: false,
         },
       ],
+      budgetDeltas: [],
       newFailedExamples: [],
       fixedExamples: ["q2"],
       regressed: false,
     });
+  });
+
+  it("applies pass-rate regression thresholds without hiding reported deltas", () => {
+    const baseline = createReport({
+      runId: "evalrun_baseline",
+      summary: {
+        records: 100,
+        passed: 100,
+        failed: 0,
+        passRate: 1,
+        metrics: [
+          {
+            name: "answer.contains",
+            family: "answer",
+            severity: "gate",
+            passed: 100,
+            failed: 0,
+            skipped: 0,
+            passRate: 1,
+          },
+        ],
+        failedExamples: [],
+      },
+    });
+    const current = createReport({
+      summary: {
+        records: 100,
+        passed: 99,
+        failed: 1,
+        passRate: 0.99,
+        metrics: [
+          {
+            name: "answer.contains",
+            family: "answer",
+            severity: "gate",
+            passed: 99,
+            failed: 1,
+            skipped: 0,
+            passRate: 0.99,
+          },
+        ],
+        failedExamples: [],
+      },
+    });
+
+    assertEquals(compareEvalReports(current, baseline).regressed, true);
+    assertEquals(
+      compareEvalReports(current, baseline, {
+        passRateDropThreshold: 0.02,
+        metricPassRateDropThreshold: 0.02,
+        failedDeltaThreshold: 1,
+      }).regressed,
+      false,
+    );
+  });
+
+  it("reports usage and latency budget deltas and gates them only when thresholds are configured", () => {
+    const baseline = createReport({
+      runId: "evalrun_baseline",
+      summary: {
+        records: 2,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        metrics: [],
+        failedExamples: [],
+        usage: {
+          totalTokens: 1000,
+          costUsd: 0.1,
+          costCredits: 1,
+        },
+        duration: {
+          totalMs: 2000,
+          minMs: 800,
+          maxMs: 1200,
+          meanMs: 1000,
+          p50Ms: 950,
+          p95Ms: 1100,
+        },
+      },
+    });
+    const current = createReport({
+      summary: {
+        records: 2,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        metrics: [],
+        failedExamples: [],
+        usage: {
+          totalTokens: 1200,
+          costUsd: 0.11,
+          costCredits: 1.1,
+        },
+        duration: {
+          totalMs: 2400,
+          minMs: 900,
+          maxMs: 1500,
+          meanMs: 1200,
+          p50Ms: 1000,
+          p95Ms: 1400,
+        },
+      },
+    });
+
+    const comparison = compareEvalReports(current, baseline);
+    assertEquals(comparison.regressed, false);
+    assertEquals(comparison.budgetDeltas, [
+      {
+        name: "totalTokens",
+        family: "usage",
+        baselineValue: 1000,
+        currentValue: 1200,
+        delta: 200,
+        percentDelta: 0.2,
+        threshold: null,
+        regressed: false,
+      },
+      {
+        name: "costUsd",
+        family: "usage",
+        baselineValue: 0.1,
+        currentValue: 0.11,
+        delta: 0.009999999999999995,
+        percentDelta: 0.09999999999999995,
+        threshold: null,
+        regressed: false,
+      },
+      {
+        name: "costCredits",
+        family: "usage",
+        baselineValue: 1,
+        currentValue: 1.1,
+        delta: 0.10000000000000009,
+        percentDelta: 0.10000000000000009,
+        threshold: null,
+        regressed: false,
+      },
+      {
+        name: "p95Ms",
+        family: "latency",
+        baselineValue: 1100,
+        currentValue: 1400,
+        delta: 300,
+        percentDelta: 0.2727272727272727,
+        threshold: null,
+        regressed: false,
+      },
+    ]);
+
+    const gated = compareEvalReports(current, baseline, {
+      usageIncreaseThreshold: 0.15,
+      latencyIncreaseThreshold: 0.2,
+    });
+    assertEquals(gated.regressed, true);
+    assertEquals(gated.budgetDeltas.map((delta) => delta.regressed), [true, false, false, true]);
   });
 });
