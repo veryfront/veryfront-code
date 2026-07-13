@@ -2,6 +2,8 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
+import { loadMiddlewareFile } from "./dev-server/middleware.ts";
+import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -262,6 +264,27 @@ export function startProductionServer(
           localProjects,
         });
 
+        // Project middleware (root middleware.ts) runs in production with the
+        // same semantics as in dev: middleware executes before routing and can
+        // short-circuit by returning a Response. Requests keep their identity
+        // when middleware calls next(), so WebSocket upgrades stay intact.
+        const projectMiddleware = await loadMiddlewareFile(projectDir, adapter);
+        let coreHandler = baseHandler;
+        if (projectMiddleware.length > 0) {
+          const pipeline = new MiddlewarePipeline();
+          for (const middleware of projectMiddleware) {
+            pipeline.use(middleware);
+          }
+          pipeline.use((c) => baseHandler(c.req));
+          coreHandler = Object.assign(
+            (req: Request) => pipeline.execute(req, adapter.env.toObject()),
+            { ready: baseHandler.ready },
+          );
+          logger.info("Registered project middleware", {
+            count: projectMiddleware.length,
+          });
+        }
+
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
         // creates a new Request object, which breaks Deno.upgradeWebSocket()
@@ -269,12 +292,12 @@ export function startProductionServer(
           ? Object.assign(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-              if (isWebSocketUpgrade) return baseHandler(req);
-              return baseHandler(await requestInterceptor(req));
+              if (isWebSocketUpgrade) return coreHandler(req);
+              return coreHandler(await requestInterceptor(req));
             },
-            { ready: baseHandler.ready },
+            { ready: coreHandler.ready },
           )
-          : baseHandler;
+          : coreHandler;
 
         let resolveListenReady: (() => void) | undefined;
         const listenReady = new Promise<void>((resolve) => {

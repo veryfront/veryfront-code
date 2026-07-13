@@ -523,6 +523,14 @@ export interface EvalReportMetadata {
   provenance?: EvalRunProvenance;
 }
 
+/** Stable dataset identity attached to new eval reports when examples are available. */
+export interface EvalReportDatasetMetadata {
+  kind: EvalDataset["kind"];
+  path?: string;
+  examples: number;
+  hash: string;
+}
+
 /** Per-model row in an eval model comparison report. */
 export interface EvalModelReportSummary {
   model: string;
@@ -661,10 +669,13 @@ export interface EvalReportSummary {
 /** JSON-serializable report produced by `runEval`. */
 export interface EvalReport {
   kind: "eval-report";
+  /** Additive report contract version. Missing means legacy V1 report. */
+  schemaVersion?: number;
   runId: string;
   definitionId: string;
   targetKind: EvalTargetKind;
   target: string;
+  dataset?: EvalReportDatasetMetadata;
   startedAt: string;
   endedAt: string;
   summary: EvalReportSummary;
