@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
@@ -347,6 +347,383 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(result.html, "<html>fresh manifest render</html>");
     assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
     assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
+  });
+
+  it("serves stale HTML immediately and refreshes that route in the background", async () => {
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const cacheKey = `${ctx.cachePrefix}:page:/stale`;
+    store.data.set(cacheKey, {
+      result: {
+        html: "<html>stale render</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    let renderCount = 0;
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve([]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          renderCount++;
+          assertEquals(slug, "/stale");
+          assertEquals(options?.skipCacheCheck, true);
+          return Promise.resolve({
+            html: "<html>fresh render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/stale", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+    });
+
+    assertEquals(result.html, "<html>stale render</html>");
+    assertEquals(renderCount, 0);
+
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(renderCount, 1);
+    assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh render</html>");
+  });
+
+  it("preserves the original request while refreshing stale HTML", async () => {
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const url = new URL("https://example.com/data?filter=recent");
+    const request = new Request(url, { headers: { "accept-language": "en" } });
+    const requestCacheKey = "/data?filter=recent";
+    const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
+    store.data.set(cacheKey, {
+      result: {
+        html: "<html>stale data render</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale-data",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              request?: Request;
+              url?: URL;
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve([]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              request?: Request;
+              url?: URL;
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(options?.skipCacheCheck, true);
+          assertEquals(options?.request, request);
+          assertEquals(options?.url, url);
+          return Promise.resolve({
+            html: "<html>fresh data render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/data", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      cacheKey: requestCacheKey,
+      request,
+      url,
+    });
+
+    assertEquals(result.html, "<html>stale data render</html>");
+
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh data render</html>");
+  });
+
+  it("refreshes stale HTML when sibling route prewarming is disabled", async () => {
+    const originalPrewarmLimit = getHostEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES");
+    setEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES", "0");
+
+    try {
+      const { Renderer: RendererWithPrewarmDisabled } = await import(
+        `./renderer.ts?prewarm-disabled-${Date.now()}`
+      );
+      const store = createInMemoryStore();
+      const ctx = {
+        ...makeRenderContext(),
+        adapter: { fs: { exists: async () => true } },
+      } as unknown as RenderContext;
+      const cacheKey = `${ctx.cachePrefix}:page:/prewarm-disabled`;
+      store.data.set(cacheKey, {
+        result: {
+          html: "<html>stale render with prewarm disabled</html>",
+          frontmatter: {},
+          headings: [],
+          stream: null,
+          ssrHash: "stale-prewarm-disabled",
+        },
+        storedAt: Date.now() - 10_000,
+        expiresAt: Date.now() - 1,
+        staleUntil: Date.now() + 60_000,
+      });
+
+      let renderCount = 0;
+      const renderer = new RendererWithPrewarmDisabled({ cache: { store } });
+      (renderer as unknown as { initialized: boolean }).initialized = true;
+      (renderer as unknown as {
+        getAllPages: () => Promise<string[]>;
+        pageExists: () => Promise<boolean>;
+        createServicesForContext: () => {
+          pipeline: {
+            renderPage: (slug: string, options?: { skipCacheCheck?: boolean }) => Promise<{
+              html: string;
+              frontmatter: Record<string, unknown>;
+              headings: never[];
+              stream: null;
+            }>;
+          };
+        };
+      }).getAllPages = () => Promise.resolve(["/should-not-prewarm"]);
+      (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+        Promise.resolve(true);
+      (renderer as unknown as {
+        createServicesForContext: () => {
+          pipeline: {
+            renderPage: (slug: string, options?: { skipCacheCheck?: boolean }) => Promise<{
+              html: string;
+              frontmatter: Record<string, unknown>;
+              headings: never[];
+              stream: null;
+            }>;
+          };
+        };
+      }).createServicesForContext = () => ({
+        pipeline: {
+          renderPage: (slug, options) => {
+            renderCount++;
+            assertEquals(slug, "/prewarm-disabled");
+            assertEquals(options?.skipCacheCheck, true);
+            return Promise.resolve({
+              html: "<html>fresh render with prewarm disabled</html>",
+              frontmatter: {},
+              headings: [],
+              stream: null,
+            });
+          },
+        },
+      });
+
+      const result = await renderer.renderPage("/prewarm-disabled", ctx, {
+        environment: "production",
+        releaseId: "rel-1",
+      });
+
+      assertEquals(result.html, "<html>stale render with prewarm disabled</html>");
+
+      await waitForProductionPrewarm(renderer as unknown as Renderer);
+
+      assertEquals(renderCount, 1);
+      assertEquals(
+        store.data.get(cacheKey)?.result.html,
+        "<html>fresh render with prewarm disabled</html>",
+      );
+      assertEquals(store.data.has(`${ctx.cachePrefix}:page:/should-not-prewarm`), false);
+    } finally {
+      setEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES", originalPrewarmLimit ?? "");
+    }
+  });
+
+  it("refreshes stale theme variants under the original variant key", async () => {
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const themedCacheKey = `${ctx.cachePrefix}:page:/stale-themed:theme-dark`;
+    const unthemedCacheKey = `${ctx.cachePrefix}:page:/stale-themed`;
+    store.data.set(themedCacheKey, {
+      result: {
+        html: "<html>stale dark render</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale-dark",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              colorScheme?: "light" | "dark";
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve([]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              colorScheme?: "light" | "dark";
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(options?.skipCacheCheck, true);
+          assertEquals(options?.colorScheme, "dark");
+          return Promise.resolve({
+            html: "<html>fresh dark render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/stale-themed", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      colorScheme: "dark",
+    });
+
+    assertEquals(result.html, "<html>stale dark render</html>");
+
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(store.data.get(themedCacheKey)?.result.html, "<html>fresh dark render</html>");
+    assertEquals(store.data.has(unthemedCacheKey), false);
   });
 
   it("prewarms sibling production routes after a cacheable render", async () => {
