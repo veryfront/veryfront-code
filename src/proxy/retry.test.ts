@@ -5,6 +5,7 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import {
   getReplayableRequestBodies,
   getUpstreamRetryCount,
+  isConnectionRefusedError,
   isRetryableConnectionError,
   shouldRetryUpstreamRequest,
 } from "./retry.ts";
@@ -52,7 +53,7 @@ describe("isRetryableConnectionError", () => {
     assertEquals(isRetryableConnectionError(new Error("os error 111")), true);
   });
 
-  it("returns false for timeout errors", () => {
+  it("does not infer retryability from generic timeout messages", () => {
     assertEquals(isRetryableConnectionError(new Error("Request timeout")), false);
     assertEquals(isRetryableConnectionError(new Error("Gateway timeout")), false);
   });
@@ -91,6 +92,25 @@ describe("isRetryableConnectionError", () => {
       ),
       true,
     );
+  });
+
+  it("recognizes retryable codes in nested fetch causes", () => {
+    const cause = Object.assign(new Error("read failed"), { code: "ECONNRESET" });
+    const error = new TypeError("fetch failed", { cause });
+    const timeout = Object.assign(new Error("request failed"), { code: "ETIMEDOUT" });
+    const refused = Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
+
+    assertEquals(isRetryableConnectionError(error), true);
+    assertEquals(isRetryableConnectionError(timeout), true);
+    assertEquals(isConnectionRefusedError(new TypeError("fetch failed", { cause: refused })), true);
+  });
+
+  it("handles cyclic cause chains", () => {
+    const error = new Error("fetch failed");
+    Object.defineProperty(error, "cause", { value: error });
+
+    assertEquals(isRetryableConnectionError(error), false);
+    assertEquals(isConnectionRefusedError(error), false);
   });
 });
 

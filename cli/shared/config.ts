@@ -15,7 +15,7 @@ import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { resolveCliApiUrl } from "./constants.ts";
-import { isRetryableConnectionError } from "../../src/proxy/retry.ts";
+import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
 const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
@@ -24,13 +24,6 @@ const API_MAX_RETRIES = 3;
 /** Returns true for HTTP status codes that indicate a transient gateway failure. */
 function isTransientStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
-}
-
-/** Returns true when the connection error is a refused connection (request never reached server). */
-function isConnectionRefused(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  return msg.includes("connection refused") || msg.includes("os error 111");
 }
 
 /** Sleep for `ms` milliseconds plus a random jitter up to 20% of `ms`. */
@@ -392,7 +385,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
   /** Returns true for request methods that are safe to retry on any transient failure. */
   function isIdempotent(method: string): boolean {
-    return method === "GET" || method === "HEAD";
+    return method === "GET" || method === "HEAD" || method === "PUT";
   }
 
   async function request<T>(
@@ -420,7 +413,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         const isTransient = status !== undefined
           ? isTransientStatus(status)
           : isRetryableConnectionError(error);
-        const isRefused = isConnectionRefused(error);
+        const isRefused = isConnectionRefusedError(error);
 
         // Idempotent: retry on transient HTTP status or any retryable connection error.
         // Non-idempotent: retry only on connection-refused (request never reached server).

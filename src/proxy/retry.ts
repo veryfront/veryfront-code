@@ -5,29 +5,67 @@
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 const CONTROL_PLANE_RUN_STREAM_PATH = /^\/api\/control-plane\/runs\/[^/]+\/stream$/;
+const MAX_ERROR_CAUSE_DEPTH = 8;
+const RETRYABLE_CONNECTION_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT"]);
+const CONNECTION_REFUSED_CODES = new Set(["ECONNREFUSED"]);
 
 type RequestBodyReplayKind = "bodyless" | "bounded" | "unsupported";
+
+interface ErrorDetails {
+  message?: unknown;
+  code?: unknown;
+  cause?: unknown;
+}
+
+function errorChainMatches(
+  error: unknown,
+  predicate: (message: string, code: string) => boolean,
+): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const seen = new Set<object>();
+  let current: unknown = error;
+
+  for (let depth = 0; depth < MAX_ERROR_CAUSE_DEPTH; depth++) {
+    if (typeof current !== "object" || current === null || seen.has(current)) return false;
+    seen.add(current);
+
+    const details = current as ErrorDetails;
+    const message = typeof details.message === "string" ? details.message.toLowerCase() : "";
+    const code = typeof details.code === "string" ? details.code.toUpperCase() : "";
+    if (predicate(message, code)) return true;
+
+    current = details.cause;
+  }
+
+  return false;
+}
 
 /**
  * Check if a fetch error is a transient connection error worth retrying.
  * These occur when renderer pods are being recycled or temporarily unavailable.
  */
 export function isRetryableConnectionError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  return (
-    msg.includes("connection reset") ||
-    msg.includes("connection closed") ||
-    msg.includes("connection refused") ||
-    msg.includes("os error 104") || // ECONNRESET
-    msg.includes("os error 111") // ECONNREFUSED
+  return errorChainMatches(
+    error,
+    (message, code) =>
+      RETRYABLE_CONNECTION_CODES.has(code) ||
+      message.includes("connection reset") ||
+      message.includes("connection closed") ||
+      message.includes("connection refused") ||
+      message.includes("os error 104") || // ECONNRESET
+      message.includes("os error 111"), // ECONNREFUSED
   );
 }
 
-function isConnectionRefusedError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const message = error.message.toLowerCase();
-  return message.includes("connection refused") || message.includes("os error 111");
+export function isConnectionRefusedError(error: unknown): boolean {
+  return errorChainMatches(
+    error,
+    (message, code) =>
+      CONNECTION_REFUSED_CODES.has(code) ||
+      message.includes("connection refused") ||
+      message.includes("os error 111"),
+  );
 }
 
 function isIdempotentMethod(method: string): boolean {
