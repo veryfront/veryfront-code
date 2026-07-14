@@ -6,7 +6,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { deployCommand } from "./command.ts";
+import { deployCommand, type DeploymentRoutingConvergence } from "./command.ts";
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
@@ -76,6 +76,11 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     Deno.chdir(projectDir);
 
     let releaseSourceContent = "export const value = 1;\n";
+    let routingConvergence: DeploymentRoutingConvergence = {
+      status: "converged",
+      acknowledged: 2,
+      recipients: 2,
+    };
     const handleRequest = async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
@@ -112,6 +117,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
           id: DEPLOYMENT_ID,
           release_id: RELEASE_ID,
           environment_id: ENVIRONMENT_ID,
+          routing_convergence: routingConvergence,
         }, { status: 201 });
       }
       if (request.method === "GET" && url.pathname.endsWith(`/deployments/${DEPLOYMENT_ID}`)) {
@@ -173,6 +179,14 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         `GET /api/projects/${PROJECT_ID}/environments`,
       ]);
     }
+
+    setJsonMode(false);
+    routingConvergence = { status: "pending" };
+    requests.length = 0;
+    environmentReads = 0;
+
+    await withMockFetch(handleRequest, runDeploy);
+    assertEquals(environmentReads, 2);
 
     setJsonMode(false);
     releaseSourceContent = "export const value = 2;\n";

@@ -127,7 +127,10 @@ After `veryfront build`:
 
 After `veryfront deploy`:
 
-- The CLI confirms the deployed release and environment.
+- The CLI confirms the committed release and environment.
+- The CLI reports whether every shared proxy acknowledged the active release. An
+  unconfirmed data-plane update is a warning after commit, not a failed deploy;
+  do not retry solely because of that warning.
 - `veryfront open` opens the deployed project.
 - The same page, API route, agent, workflow, task, or run path works in
   production.

@@ -9,6 +9,7 @@ export {
   DeployArgsSchema,
   deployCommand,
   getDeployment,
+  getDeploymentRoutingConvergenceWarning,
   getEnvironmentByName,
   getProject,
   getRelease,
@@ -19,6 +20,8 @@ export {
   verifyReleaseSource,
 } from "./command.ts";
 export type {
+  Deployment,
+  DeploymentRoutingConvergence,
   DeploymentVerification,
   DeployOptions,
   ReleaseSourceVerification,

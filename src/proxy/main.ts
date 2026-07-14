@@ -15,6 +15,8 @@
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
+ * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
@@ -78,6 +80,11 @@ import {
   parseProxyDrainTimeoutMs,
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
+import {
+  handleProxyRoutingInvalidationRequest,
+  PROXY_ROUTING_INVALIDATION_PATH,
+} from "./routing-invalidation.ts";
+import { startProxyRoutingInvalidationBus } from "./routing-invalidation-redis.ts";
 
 type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
@@ -162,6 +169,20 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
   getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
   DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
 );
+const routingInvalidationSecret = getEnv("VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET") ?? "";
+const routingInvalidationSecretBytes =
+  new TextEncoder().encode(routingInvalidationSecret).byteLength;
+const expectedReplicasRaw = getEnv("VERYFRONT_PROXY_EXPECTED_REPLICAS");
+const expectedReplicas = Number(expectedReplicasRaw);
+const hasValidExpectedReplicas = Number.isInteger(expectedReplicas) && expectedReplicas > 0;
+if (isProduction() && !hasValidExpectedReplicas) {
+  throw new Error("VERYFRONT_PROXY_EXPECTED_REPLICAS must be a positive integer in production");
+}
+if (isProduction() && routingInvalidationSecretBytes < 32) {
+  throw new Error(
+    "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET must contain at least 32 bytes in production",
+  );
+}
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
 let shuttingDown = false;
 
@@ -180,16 +201,39 @@ register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler
 const cache = await createCacheFromEnv();
+const routingInvalidationLogger = {
+  debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),
+  info: (msg: string, extra?: Record<string, unknown>) => proxyLogger.info(msg, extra),
+  warn: (msg: string, extra?: Record<string, unknown>) => proxyLogger.warn(msg, extra),
+  error: (msg: string, error?: Error, extra?: Record<string, unknown>) =>
+    proxyLogger.error(msg, extra ?? {}, error),
+};
 const proxyHandler = createProxyHandler({
   config,
   cache,
-  logger: {
-    debug: (msg, extra) => proxyLogger.debug(msg, extra),
-    info: (msg, extra) => proxyLogger.info(msg, extra),
-    warn: (msg, extra) => proxyLogger.warn(msg, extra),
-    error: (msg, error, extra) => proxyLogger.error(msg, extra ?? {}, error),
-  },
+  logger: routingInvalidationLogger,
 });
+const routingInvalidationBus = await startProxyRoutingInvalidationBus({
+  expectedReplicas: hasValidExpectedReplicas ? expectedReplicas : undefined,
+  integritySecret: routingInvalidationSecret,
+  logger: routingInvalidationLogger,
+  onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup,
+}).catch((error) => {
+  if (isProduction()) {
+    throw new Error("Proxy routing invalidation bus failed to start", { cause: error });
+  }
+  proxyLogger.error(
+    "Proxy routing invalidation bus failed; TTL recovery remains active",
+    {},
+    error instanceof Error ? error : new Error(String(error)),
+  );
+  return null;
+});
+if (isProduction() && !routingInvalidationBus) {
+  throw new Error(
+    "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
+  );
+}
 
 // Validate configuration on startup
 const missingCredentials = proxyHandler.validateConfig();
@@ -675,6 +719,10 @@ async function router(req: Request): Promise<Response> {
     let response: Response;
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       response = await handleWebSocketUpgrade(req, url);
+    } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
+      response = await handleProxyRoutingInvalidationRequest(req, {
+        publisher: routingInvalidationBus,
+      });
     } else if (url.pathname === "/_proxy/stats") {
       response = Object.keys(proxyHandler.localProjects).length === 0
         ? new Response("Forbidden", { status: 403 })
@@ -709,6 +757,8 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   });
 
   try {
+    // New requests receive the draining response after shuttingDown is set.
+    // Keep this replica subscribed while already-started responses finish.
     const drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
     if (!drained) {
       const now = performance.now();
@@ -723,6 +773,8 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
         ),
       });
     }
+
+    await routingInvalidationBus?.close();
 
     const closed = await closeProxyServerWithin(
       () => server.close(),

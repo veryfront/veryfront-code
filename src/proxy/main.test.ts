@@ -34,4 +34,29 @@ describe("proxy main request URL parsing", () => {
     assertEquals(drainIndex >= 0, true);
     assertEquals(closeIndex > drainIndex, true);
   });
+
+  it("starts acknowledged routing invalidation fan-out and handles signed ingress", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "startProxyRoutingInvalidationBus");
+    assertStringIncludes(source, "onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup");
+    assertStringIncludes(source, "handleProxyRoutingInvalidationRequest");
+    assertStringIncludes(source, "if (isProduction() && !routingInvalidationBus)");
+    assertStringIncludes(
+      source,
+      "VERYFRONT_PROXY_EXPECTED_REPLICAS must be a positive integer in production",
+    );
+    assertStringIncludes(
+      source,
+      "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET must contain at least 32 bytes in production",
+    );
+    assertStringIncludes(source, "integritySecret: routingInvalidationSecret");
+
+    const drainIndex = source.indexOf("await proxyRequestDrainTracker.waitForDrain");
+    const busCloseIndex = source.indexOf("await routingInvalidationBus?.close()");
+    const serverCloseIndex = source.indexOf("await closeProxyServerWithin");
+    assertEquals(drainIndex >= 0, true);
+    assertEquals(busCloseIndex > drainIndex, true);
+    assertEquals(serverCloseIndex > busCloseIndex, true);
+  });
 });
