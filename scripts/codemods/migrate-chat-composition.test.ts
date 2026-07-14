@@ -142,6 +142,11 @@ export function Example() {
   assertStringIncludes(result.code, "chat={primary}");
   assertStringIncludes(result.code, "{...secondary}");
   assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertStringIncludes(
+    result.code,
+    "https://github.com/veryfront/veryfront-code/blob/main/scripts/codemods/README.md",
+  );
+  assert(!result.code.includes("/docs/plans/"));
   assertEquals(result.warnings, [
     "A Chat element uses different useChat results for chat and a spread.",
   ]);

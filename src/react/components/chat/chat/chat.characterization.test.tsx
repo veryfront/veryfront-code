@@ -1,17 +1,16 @@
 /**
- * Characterization safety net for the `<Chat>` god file (plan E0.5).
+ * Characterization safety net for the controlled `<Chat>` render path.
  *
  * Locks the *observable* behaviour of the controlled render path — the surface
  * E1 (context spine) and E3 (state glue) will rewire — so a refactor that
  * changes what a consumer sees fails loudly. Uses the controlled `chat={…}`
  * entry (a fake `useChat()` session) so the assertions are deterministic and
- * network-free; the app-mode persistence effect's invariants are documented in
- * docs/plans/PROGRESS-implementation.md and characterized in the E3 PR (they
- * need a `useChat` mock).
+ * network-free. Conversation persistence invariants are owned by
+ * `hooks/use-conversation-chat.test.tsx`.
  *
- * These tests describe CURRENT behaviour, not desired behaviour — if E1/E3
- * intentionally change an output, update the assertion in the same commit and
- * say why.
+ * These tests describe current behaviour, not desired behaviour. If an
+ * intentional change alters an output, update the assertion in the same commit
+ * and say why.
  */
 import { renderToString } from "react-dom/server";
 import { assert } from "#veryfront/testing/assert";

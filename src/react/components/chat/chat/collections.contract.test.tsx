@@ -1,18 +1,17 @@
 /**
- * Collection-conformance contract (plan E6 / §K).
+ * Collection-conformance contract.
  *
- * Every chat *collection* (a component that renders N of something) ships the
- * same four access points off one implementation — the 4-tier pattern in
- * docs/plans/K0-collections-house-rule.md:
+ * Participating chat collections ship the same four access points off one
+ * implementation. See
+ * docs/architecture/22-chat-collection-composition-contract.md:
  *
  *   1. data hook   `useX()`      — throws outside its provider (fail-fast)
  *   2. leaf        `<X.Item>`    — one row, an addressable dumb consumer
  *   3. list        `<X.List>`    — `children ?? items.map(<X.Item/>)`
  *   4. batteries   `<X>`         — provider + default layout, zero-config
  *
- * This is the shared conformance template. `Sources` is the reference; the twins
- * (`AttachmentsPanel` here) prove it generalises. Homogeneous lists get the
- * lighter structural check; the rest follow by convention.
+ * This is the shared conformance template. `Sources` is the reference and
+ * `AttachmentsPanel` proves the contract applies to a second collection.
  */
 import { renderToString } from "react-dom/server";
 import { assert } from "#veryfront/testing/assert";
