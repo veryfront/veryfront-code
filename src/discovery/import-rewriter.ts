@@ -22,6 +22,7 @@ export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/eval",
   "veryfront/metrics",
   "veryfront/schemas",
+  "veryfront/integrations",
   // Server-side chat upload route handler (app/api/uploads/route.ts).
   "veryfront/chat/uploads",
 ] as const;

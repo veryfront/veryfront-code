@@ -13,6 +13,7 @@ describe("discovery/import-rewriter", () => {
         'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
         'import { evalAgent } from "veryfront/eval";',
+        'import { executeRemoteIntegrationTool } from "veryfront/integrations";',
       ].join("\n"),
       "/project/workflows",
     );
@@ -22,6 +23,7 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(transformed, import.meta.resolve("veryfront/knowledge"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/workflow"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/eval"));
+    assertStringIncludes(transformed, import.meta.resolve("veryfront/integrations"));
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
 
@@ -33,6 +35,7 @@ describe("discovery/import-rewriter", () => {
         'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
         'import { evalAgent } from "veryfront/eval";',
+        'import { executeRemoteIntegrationTool } from "veryfront/integrations";',
       ].join("\n"),
       "/project/workflows",
       { compiled: true },
@@ -57,6 +60,10 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(
       transformed,
       'const { evalAgent } = globalThis.__VERYFRONT_MODULES__["veryfront/eval"]',
+    );
+    assertStringIncludes(
+      transformed,
+      'const { executeRemoteIntegrationTool } = globalThis.__VERYFRONT_MODULES__["veryfront/integrations"]',
     );
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
