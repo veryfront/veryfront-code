@@ -46,5 +46,7 @@ export const pushHelp: CommandHelp = {
     "Use --branch main to update the existing Veryfront main branch",
     "Uploads supported text source files using their relative paths",
     ".vfignore controls which supported files are excluded",
+    "--dry-run never creates a project or branch, changes remote files, or writes a Push receipt",
+    "If an upload fails, Push does not delete remote files",
   ],
 };
