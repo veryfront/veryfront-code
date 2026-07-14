@@ -11,9 +11,10 @@ Veryfront deployments before a project uses it in production.
 
 Phase 0 uses the professional developer and serialized CI as the bridge. It
 does not connect Veryfront to a canonical repository, verify an exact Git SHA
-on the server, create pull requests automatically, or prevent direct Studio
-main edits. This checklist verifies the implemented safety controls and records
-the operating controls that remain manual.
+on the server, natively create Git pull requests, or prevent direct Studio main
+edits. A repository-owned workflow may automate the documented handoff and
+`gh pr create` sequence. This checklist verifies the implemented safety
+controls and records the operating controls that remain manual.
 
 Do not mark this plan complete from unit-test counts alone. Run the manual
 scenarios against an installed release and retain the evidence named below.
@@ -217,7 +218,8 @@ Evidence: `<PULL_APPLY_EVIDENCE>`, `<FEATURE_BRANCH_SHA>`
 ### B5. Open and review the pull request
 
 - [ ] Commit the reviewed full snapshot to the feature branch.
-- [ ] Push the branch and run `gh pr create` with base `main`.
+- [ ] Push the branch and run `gh pr create` with base `main`, either manually
+      or from a repository-owned workflow.
 - [ ] Confirm the PR description records the immutable release version and base
       Git SHA.
 - [ ] Run the project's format, lint, test, and build gates.
@@ -334,7 +336,9 @@ Each owner must explicitly accept these limitations before production use:
 - [ ] The server does not fetch or verify an exact Git SHA.
 - [ ] Studio permissions can still permit direct main edits.
 - [ ] Pull applies a full snapshot and does not auto-merge stale Studio work.
-- [ ] Pull request creation and conflict resolution remain manual Git work.
+- [ ] Veryfront has no native Git pull-request creation or reconciliation;
+      developers or repository-owned CI create the PR, and professional
+      developers resolve conflicts in Git.
 - [ ] Binary and unsupported files remain outside the managed-source handoff.
 - [ ] Process controls require one serialized writer and a successful main Push
       before new Studio work.

@@ -13,8 +13,10 @@ release, and deploys that release to an environment.
 This workflow is a CI-mediated bridge, not an enforced repository connection.
 Veryfront does not yet know which Git repository is canonical. Existing Studio
 permissions can still allow direct edits to Veryfront `main`, and a project API
-key can upload the source present in its checkout. Pull request creation and
-conflict resolution remain manual.
+key can upload the source present in its checkout. Veryfront does not open Git
+pull requests in this phase. A developer or repository-owned CI workflow can
+run the documented handoff commands, while review and conflict resolution stay
+in Git.
 
 Use one serialized CI writer for each Veryfront project, protect its API key,
 and use immutable releases for Studio-to-Git handoffs. The connected-repository

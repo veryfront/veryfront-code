@@ -149,6 +149,13 @@ The pull request targets `main` and records both the immutable release and its
 Studio base Git SHA. Reviewers can use those values to trace the handoff and
 identify a stale snapshot.
 
+You can put the same Pull, test, commit, and `gh pr create` sequence in a
+repository-owned CI workflow. Require the release version and Studio base Git
+SHA as inputs, write both values into the pull request, and label a mismatch
+between the base SHA and current `main` as a stale full snapshot. Veryfront does
+not hold the Git credential or create the pull request in Phase 0; the
+repository workflow does.
+
 ## Resolve conflicts in Git
 
 If `main` changes before the pull request merges, update the feature branch in
