@@ -58,9 +58,17 @@ Extension availability is separate from contract requirement:
 
 ### Eval export
 
-| Package                                                     | Contract                     | Description                                             |
-| ----------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
-| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http) | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
+| Package                                                               | Contract                     | Description                                             |
+| --------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
+| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http)           | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
+| [`@veryfront/ext-eval-report-mlflow`](./ext-eval-report-mlflow)       | `EvalReportExporterRegistry` | MLflow Tracking exporter for redacted eval reports      |
+
+Eval report exporters receive the generic, redacted `EvalReport` shape. Keep
+project-specific extraction in eval adapters or metrics, then select an exporter
+id such as `mlflow` from the CLI with `--export mlflow` or
+`VERYFRONT_EVAL_EXPORTERS=mlflow`. Future vendor integrations such as
+Braintrust should live as sibling `@veryfront/ext-eval-report-*` packages behind
+the same contract.
 
 ### Schema
 
@@ -125,6 +133,7 @@ to satisfy Veryfront runtime features.
 | SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                     |
 | OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                   |
 | Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                           |
+| Eval report export to MLflow                | `@veryfront/ext-eval-report-mlflow`                                                                                            |
 
 An agent runtime needs `@veryfront/ext-sandbox-shell-tools` only when it creates
 local bash or shell tools. MCP-only remote tool execution does not need that

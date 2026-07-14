@@ -150,8 +150,8 @@ describe("Message.Header — sub-parts", () => {
   });
 });
 
-// The 4th, headless access point to a message's parts (§K tier-1): read them as
-// data and render however you like, without reimplementing part grouping.
+// The headless access point to a message's parts lets consumers render the data
+// without reimplementing part grouping.
 describe("useMessageParts — headless parts data", () => {
   it("exposes grouped parts + text content as data inside a Message", () => {
     function PartsProbe() {

@@ -629,6 +629,33 @@ Gateways should treat `context.trace` as correlation metadata. It is not span
 export, does not include logs or metric streams, and does not replace ambient
 OpenTelemetry export.
 
+Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
+MLflow Tracking runs. The CLI path can be environment-only: set
+`MLFLOW_TRACKING_URI` to activate the extension, then select the fixed exporter
+id `mlflow` for the run.
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5001 \
+veryfront eval deep-research --export mlflow
+```
+
+For authenticated MLflow Tracking servers, keep credentials out of
+`MLFLOW_TRACKING_URI`. Use `MLFLOW_TRACKING_TOKEN` for bearer auth or
+`MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth.
+
+Use `VERYFRONT_EVAL_EXPORTERS=mlflow` when CI should select the same exporter
+for every eval command without repeating `--export`:
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5001 \
+VERYFRONT_EVAL_EXPORTERS=mlflow \
+veryfront eval deep-research
+```
+
+`--export` wins over `VERYFRONT_EVAL_EXPORTERS` when both are set. The legacy
+singular `VERYFRONT_EVAL_EXPORT` is used only when
+`VERYFRONT_EVAL_EXPORTERS` is unset.
+
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
 written.
@@ -641,6 +668,61 @@ veryfront eval deep-research \
   --export braintrust,langfuse \
   --json
 ```
+
+MLflow artifact uploads support HTTP(S) run artifact roots directly. For
+proxied artifact roots such as `mlflow-artifacts:/...` or object-store-backed
+roots, configure an explicit HTTP(S) MLflow artifact server URI with
+`MLFLOW_ARTIFACTS_URI`. v1 does not upload directly to local filesystem roots or
+backend-specific schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar
+URIs.
+
+The MLflow exporter logs generic aggregate metrics from the normalized
+`EvalReport`; it does not know project-specific label formats. If a project
+wants generic classification aggregates such as accuracy, macro precision,
+macro recall, macro F1, per-category counts, or confusion counts, extract safe
+labels inside the eval metric and place them in metric evidence:
+
+```ts
+{
+  name: "intent.classification",
+  pass: true,
+  evidence: {
+    expectedCategory: "billing",
+    predictedCategory: "billing",
+  },
+}
+```
+
+Metric evidence is redacted by default. Opt in only when the evidence contains
+safe aggregate labels rather than private prompts, outputs, customer records, or
+tool payloads:
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5001 \
+VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE=true \
+veryfront eval deep-research --export mlflow
+```
+
+Programmatic eval runs can use the same redaction opt-in through export context:
+
+```ts
+const report = await runEval(definition, {
+  adapters,
+  export: {
+    exporterIds: ["mlflow"],
+    context: {
+      redaction: {
+        includeMetricEvidence: true,
+      },
+    },
+  },
+});
+```
+
+Braintrust should follow the same contract as a sibling
+`@veryfront/ext-eval-report-*` exporter, for example a future
+`@veryfront/ext-eval-report-braintrust`, instead of being special-cased in
+project eval definitions or the MLflow exporter.
 
 ## Discovery
 

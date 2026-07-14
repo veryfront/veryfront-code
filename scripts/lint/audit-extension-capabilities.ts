@@ -83,7 +83,33 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
         },
       ],
     },
+    {
+      label: "eval report MLflow export",
+      manifestPath: "extensions/ext-eval-report-mlflow/deno.json",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: [
+            "MLFLOW_ARTIFACTS_URI",
+            "MLFLOW_EXPERIMENT_NAME",
+            "MLFLOW_RUN_NAME",
+            "MLFLOW_TRACKING_PASSWORD",
+            "MLFLOW_TRACKING_TOKEN",
+            "MLFLOW_TRACKING_URI",
+            "MLFLOW_TRACKING_USERNAME",
+          ],
+        },
+      ],
+    },
   ];
+
+const FORBIDDEN_ENV_READ_KEYS_BY_MANIFEST = new Map<string, string[]>([
+  [
+    "extensions/ext-eval-report-mlflow/deno.json",
+    ["VERYFRONT_EVAL_MLFLOW_EXPORTER_ID"],
+  ],
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -183,6 +209,32 @@ export function auditExtensionCapabilities(
             formatCapabilities(input.manifestCapabilities)
           }; factory ${formatCapabilities(input.factoryCapabilities)}`,
       });
+    }
+
+    const forbiddenEnvKeys = FORBIDDEN_ENV_READ_KEYS_BY_MANIFEST.get(
+      input.manifestPath,
+    ) ?? [];
+    for (const forbiddenKey of forbiddenEnvKeys) {
+      for (
+        const [label, capabilities] of [
+          ["manifest", input.manifestCapabilities],
+          ["factory", input.factoryCapabilities],
+        ] as const
+      ) {
+        if (
+          capabilities.some((capability) =>
+            capability.type === "env:read" &&
+            Array.isArray(capability.keys) &&
+            capability.keys.includes(forbiddenKey)
+          )
+        ) {
+          issues.push({
+            manifestPath: input.manifestPath,
+            message:
+              `${input.manifestPath} ${label} capabilities must not register forbidden env key ${forbiddenKey}`,
+          });
+        }
+      }
     }
 
     const policy = policyByManifest.get(input.manifestPath);

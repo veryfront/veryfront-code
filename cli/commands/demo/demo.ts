@@ -619,7 +619,14 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     console.log();
     console.log(`  ${dim("1.")} Edit your app in ${brand(`${projectName}/`)}`);
     console.log(`  ${dim("2.")} Run ${brand("veryfront dev")} to start developing`);
-    console.log(`  ${dim("3.")} Run ${brand("veryfront deploy")} to publish changes`);
+    console.log(
+      `  ${dim("3.")} Run ${brand("veryfront push --branch main")} to upload changes`,
+    );
+    console.log(
+      `  ${dim("4.")} Run ${
+        brand("veryfront deploy --branch main --env production")
+      } to create a release and deploy`,
+    );
     console.log();
     console.log(`  ${dim("Learn more at https://veryfront.com/docs")}`);
     console.log();

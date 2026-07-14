@@ -1,21 +1,17 @@
 #!/usr/bin/env -S deno run --allow-read
 /**
- * Ratchets for the `veryfront/chat` composition overhaul (plan E0).
+ * Structural ratchets for the current `veryfront/chat` composition contract.
  *
- * Three anti-patterns, each seeded with today's count as a baseline that may
- * only shrink — the same shape as `check-skipped-tests-baseline`. New violations
- * fail the build; burning one down prints the new total so the baseline can be
- * lowered to lock the win in. Targets drop to 0 as the overhaul lands
- * (feature toggles → E8, passthrough props → E9, forwardRef → E2).
+ * New violations fail the build. When a non-zero baseline shrinks, lower it in
+ * the same change to lock the improvement in.
  *
- *   1. forwardRef        — React 19 makes `ref` a regular prop; `forwardRef` is
- *                          legacy ceremony (plan §G2/E2).
- *   2. feature toggles   — `show* / enable* / hide*` boolean props customize
- *                          behaviour with flags instead of composition
- *                          (composition-patterns §1.1; plan §B/E8).
- *   3. passthrough props — `*ClassName` bags, `icons={{}}` maps, `dragProps`
- *                          leak styling/structure through the parent instead of
- *                          per-sub-component slots (plan §E/E9).
+ *   1. forwardRef        — React 19 accepts `ref` as a regular prop.
+ *   2. feature toggles   — `show* / enable* / hide*` booleans select structure
+ *                          instead of letting callers compose it.
+ *   3. passthrough props — `*ClassName` bags, `icons={{}}` maps, and `dragProps`
+ *                          leak leaf styling through a parent component.
+ *   4. inline context    — inline provider objects change identity on every
+ *                          render.
  *
  * Scope: chat component source only (`src/react/components/chat`), excluding
  * tests and stories.
@@ -25,11 +21,11 @@ const SCAN_ROOT = "src/react/components/chat";
 
 // Lower each baseline when you burn violations down. Raising one means a new
 // anti-pattern is being added — compose instead.
-// E2 complete: chat no longer uses forwardRef (React 19 `ref` prop). Locked at 0.
+// Chat uses the React 19 `ref` prop directly. Locked at 0.
 export const FORWARDREF_BASELINE = 0;
 export const FEATURE_TOGGLE_BASELINE = 0;
 export const PASSTHROUGH_BASELINE = 0;
-// E1 memoized the last inline context value (F-3). Locked at 0.
+// Provider values must have stable identities. Locked at 0.
 export const INLINE_CONTEXT_BASELINE = 0;
 
 /** `forwardRef` / `React.forwardRef` call sites. */
@@ -95,21 +91,19 @@ async function walk(
   }
 }
 
-// Per-file LOC ceilings (§0.9 / F-1 "God components"). A file may only shrink
-// past its ceiling — lower the number when you split one up. Presentation+logic
-// fused in one file is the structural reason the acid test fails; this stops the
-// big files from growing back.
+// Per-file LOC ceilings keep large chat components from growing further. Lower
+// a ceiling when its file shrinks so the improvement cannot silently regress.
 const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/index.tsx": 330,
   "src/react/components/chat/chat/composition/message.tsx": 1001,
-  // Bumped once for E4: the ChatSidebar.Item menu compound (Item.Menu/.Rename/
-  // .Delete). Extracting Item into its own file is a tracked follow-up.
+  // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).
+  // Split responsibilities before adding more behavior to this file.
   "src/react/components/chat/chat/components/sidebar.tsx": 740,
   "src/react/components/chat/chat/composition/chat-composer.tsx": 667,
   "src/react/components/chat/agent-picker.tsx": 502,
   "src/react/components/chat/chat-actions.tsx": 515,
   "src/react/components/chat/chat/controlled-chat.tsx": 244,
-  "src/react/components/chat/chat/app-mode-chat.tsx": 200,
+  "src/react/components/chat/chat/app-mode-chat.tsx": 199,
 };
 
 function checkFileSizes(): boolean {

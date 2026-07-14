@@ -194,13 +194,13 @@ Show when command is run without required arguments:
 ```
   veryfront deploy
 
-  Deploy your project to production.
+  Create a release from previously pushed source and deploy it to production.
 
   Usage: veryfront deploy [options]
 
   Examples:
-    $ veryfront deploy
-    $ veryfront deploy --env staging
+    $ veryfront push --branch main
+    $ veryfront deploy --branch main --env staging
 
   Run 'veryfront deploy --help' for all options.
 ```
@@ -209,18 +209,18 @@ Show when command is run without required arguments:
 
 ```
   veryfront deploy
-  Deploy your project to production.
+  Create a release from previously pushed source and deploy it to production.
 
   Usage: veryfront deploy [options]
   Options:
     -e, --env <name>      Environment (default: production)
     -b, --branch <name>   Branch to deploy
-    -f, --force           Skip confirmation
+    -y, --yes             Skip confirmation
     -n, --dry-run         Preview without deploying
 
   Examples:
-    $ veryfront deploy
-    $ veryfront deploy --env staging
+    $ veryfront push --branch main
+    $ veryfront deploy --branch main --env staging
     $ veryfront deploy --branch feature-x --dry-run
 
   Tips:
@@ -234,7 +234,8 @@ Show when command is run without required arguments:
 | --------------- | ----------------------- |
 | `-h, --help`    | Show help               |
 | `-v, --version` | Show version            |
-| `-f, --force`   | Skip confirmations      |
+| `-y, --yes`     | Skip confirmations      |
+| `-f, --force`   | Command-specific force  |
 | `-n, --dry-run` | Preview without action  |
 | `-q, --quiet`   | Minimal output          |
 | `--json`        | Machine-readable output |
@@ -334,7 +335,8 @@ tasks.start(deployIdx);
 **stdout** is for primary output (results, `--json` data). **stderr** is for human-facing side-effects (progress, spinners, errors). This ensures `--json` output stays parseable when piped:
 
 ```bash
-veryfront deploy --json 2>/dev/null | jq '.url'
+veryfront push --branch main --yes
+veryfront deploy --branch main --env production --yes --json | tail -n 1 | jq '.data.deploymentId'
 ```
 
 Progress indicators (`createSpinner`) already write to stdout with ANSI clear sequences, so they self-clean in TTY mode and are suppressed in non-TTY mode.

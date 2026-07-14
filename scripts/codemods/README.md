@@ -1,22 +1,30 @@
-# Migrate the `veryfront/chat` composition breaking batch
+# Chat composition codemod
 
-This guide covers the E8-E11 breaking batch. The replacement composition APIs
-land in the same release as the removals, so you can migrate once. See the
-[breaking-change summary](./CHANGELOG-chat-breaking.md) for the release-facing
-list of changes.
+This maintainer how-to migrates an application from the removed
+`veryfront/chat` compatibility APIs to the compound composition APIs. The
+codemod is a source-repository tool; it is not distributed as a public
+Veryfront CLI command.
+
+## Prerequisites
+
+- A clean checkout of `veryfront-code` at the version whose APIs the target
+  application will consume.
+- A clean Git worktree for the target application.
+- Deno installed for running the repository task.
 
 ## Run the codemod
 
-Run the codemod against one or more files or directories:
+From the `veryfront-code` repository root, run the codemod against one or more
+target files or directories. The target may be outside the repository:
 
 ```bash
-deno task codemod:chat -- ./app
+deno task codemod:chat -- /path/to/application
 ```
 
 Use check mode in CI to find files that still need migration:
 
 ```bash
-deno task codemod:chat -- --check ./app
+deno task codemod:chat -- --check /path/to/application
 ```
 
 The codemod parses TypeScript and JSX with Babel. It automatically:
@@ -34,7 +42,7 @@ your typecheck still identifies it and inserts a `TODO(veryfront-migration)`
 comment beside the JSX element. Resolve every marker before merging the
 consumer migration.
 
-## E8: Replace behavior flags with composition
+## Replace behavior flags with composition
 
 The `<Chat>` preset now has one fixed arrangement. It includes attachments,
 message sources, multi-step rendering, message actions, and the scroll-to-bottom
@@ -70,7 +78,7 @@ the tab and upload values directly to composed `TabSwitcher` and
 + </Message.Root>
 ```
 
-## E9: Move customization to compound leaves
+## Move customization to compound leaves
 
 | Removed API                                    | Replacement                                                                         |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -97,7 +105,7 @@ the tab and upload values directly to composed `TabSwitcher` and
 + </InlineCitation>
 ```
 
-## E10: Use one controlled Chat path
+## Use one controlled Chat path
 
 Pass one complete `UseChatResult` to the preset:
 
@@ -169,10 +177,13 @@ the prop type that matches the canonical component name.
 Run these checks in the consumer application:
 
 ```bash
-deno task codemod:chat -- --check ./app
-deno check ./app/main.tsx
+deno task codemod:chat -- --check /path/to/application
+deno check /path/to/application/main.tsx
 ```
 
 The Veryfront repository verifies the published surface with
 `deno task typecheck:consumer`. Its chat ratchet gate requires zero feature
 flags and zero passthrough bags.
+
+If the target uses another TypeScript configuration or package manager, run
+its normal typecheck and test commands after the codemod check.

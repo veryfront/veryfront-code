@@ -33,7 +33,7 @@ const USE_CHAT_IMPORTS = new Set([
   "veryfront/agent/react",
 ]);
 const MIGRATION_GUIDE =
-  "https://github.com/veryfront/veryfront-code/blob/main/docs/plans/MIGRATION-chat-breaking.md";
+  "https://github.com/veryfront/veryfront-code/blob/main/scripts/codemods/README.md";
 
 const IMPORT_RENAMES = new Map<string, string>([
   ["Attachment", "AttachmentPill"],

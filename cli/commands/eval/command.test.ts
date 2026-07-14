@@ -16,6 +16,7 @@ import {
   applyGatewayBillingGroupFinalization,
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
+  createEvalCliExportConfig,
   createEvalExitCode,
   createEvalMarkdownReport,
   createEvalModelArtifactPaths,
@@ -26,6 +27,7 @@ import {
   createResultsJsonl,
   createSummaryArtifact,
   createToolAdapter,
+  type EvalOptions,
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
@@ -35,6 +37,8 @@ import {
   normalizeEvalInputForAgent,
   normalizeToolCalls,
   normalizeUsage,
+  resolveEvalExporterIds,
+  resolveEvalExportRedactionFromEnv,
   resolveToolTargetId,
   runEvalWithGatewayBillingGroup,
   summarizeReportForCli,
@@ -46,7 +50,21 @@ const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
+const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
 const originalFetch = globalThis.fetch;
+const redactionEnvNames = [
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_REFERENCES",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_TRACES",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS",
+  "VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST",
+] as const;
+const originalRedactionEnv = Object.fromEntries(
+  redactionEnvNames.map((name) => [name, Deno.env.get(name)]),
+) as Record<(typeof redactionEnvNames)[number], string | undefined>;
 
 function restoreEnv(): void {
   if (originalApiToken === undefined) {
@@ -71,6 +89,27 @@ function restoreEnv(): void {
     Deno.env.delete("XDG_CONFIG_HOME");
   } else {
     Deno.env.set("XDG_CONFIG_HOME", originalXdgConfigHome);
+  }
+
+  if (originalEvalExport === undefined) {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+  } else {
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", originalEvalExport);
+  }
+
+  if (originalEvalExporters === undefined) {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+  } else {
+    Deno.env.set("VERYFRONT_EVAL_EXPORTERS", originalEvalExporters);
+  }
+
+  for (const name of redactionEnvNames) {
+    const original = originalRedactionEnv[name];
+    if (original === undefined) {
+      Deno.env.delete(name);
+    } else {
+      Deno.env.set(name, original);
+    }
   }
 
   globalThis.fetch = originalFetch;
@@ -232,6 +271,113 @@ describe("eval CLI command helpers", () => {
   it("normalizes eval ids without requiring users to type the namespace", () => {
     assertEquals(normalizeEvalCliId("deep-research"), "eval:deep-research");
     assertEquals(normalizeEvalCliId("eval:deep-research"), "eval:deep-research");
+  });
+
+  it("resolves eval exporters from CLI flags instead of environment defaults", () => {
+    Deno.env.set("VERYFRONT_EVAL_EXPORTERS", "mlflow,braintrust");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
+
+    assertEquals(resolveEvalExporterIds({ exporters: ["custom"] }), ["custom"]);
+  });
+
+  it("resolves plural eval exporter env before the legacy env var", () => {
+    Deno.env.set("VERYFRONT_EVAL_EXPORTERS", "mlflow,braintrust");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
+
+    assertEquals(resolveEvalExporterIds({ exporters: [] }), ["mlflow", "braintrust"]);
+  });
+
+  it("uses the legacy eval exporter env var only when the plural env var is unset", () => {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
+
+    assertEquals(resolveEvalExporterIds({ exporters: [] }), ["langfuse"]);
+  });
+
+  it("keeps eval export redaction safe by default", () => {
+    for (const name of redactionEnvNames) Deno.env.delete(name);
+
+    assertEquals(resolveEvalExportRedactionFromEnv(), {});
+  });
+
+  it("threads the runtime project slug into eval export context", () => {
+    const registry = createEvalReportExporterRegistry();
+    const config = createEvalCliExportConfig(
+      {
+        id: "eval:answers",
+        filePath: "/repo/evals/answers.eval.ts",
+        exportName: "default",
+        definition: {
+          id: "eval:answers",
+          target: "agent:assistant",
+          targetKind: "agent",
+          dataset: { kind: "inline", examples: [] },
+          metrics: [],
+        },
+      } as unknown as DiscoveredEval,
+      { exporters: ["mlflow"] } as EvalOptions,
+      "/repo",
+      createEvalArtifactPaths("/tmp/report"),
+      registry,
+      { projectSlug: "customer-support-agent" },
+    );
+
+    assertEquals(config?.context?.projectReference, "customer-support-agent");
+  });
+
+  it("lists evals without initializing selected exporter extensions", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const command = new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--allow-all",
+          new URL("../../main.ts", import.meta.url).pathname,
+          "eval",
+          "--list",
+          "--export",
+          "mlflow",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: {
+          HOME: Deno.env.get("HOME") ?? projectDir,
+          PATH: Deno.env.get("PATH") ?? "",
+          NO_COLOR: "1",
+          MLFLOW_TRACKING_URI: "file:///tmp/mlruns",
+        },
+      });
+
+      const result = await command.output();
+      const output = `${new TextDecoder().decode(result.stdout)}${
+        new TextDecoder().decode(result.stderr)
+      }`;
+
+      assertEquals(result.code, 0, output);
+      assertStringIncludes(output, "No evals found.");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("resolves eval export redaction from exact global env toggles", () => {
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS", "true");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS", "1");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_REFERENCES", "yes");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_TRACES", "on");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE", "true");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS", "true");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST", "topic,tenantId topic");
+
+    assertEquals(resolveEvalExportRedactionFromEnv(), {
+      includeInputs: true,
+      includeOutputs: true,
+      includeReferences: true,
+      includeTraces: true,
+      includeMetricEvidence: true,
+      includeMetricExplanations: true,
+      metadataAllowlist: ["topic", "tenantId"],
+    });
   });
 
   it("finds explicit eval ids without forcing the namespace", () => {
@@ -871,6 +1017,21 @@ describe("eval CLI command helpers", () => {
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+
+  it("reports unknown CLI eval exporters as failed export results", async () => {
+    const exported = await exportEvalReportForCli(createReport(), {
+      registry: createEvalReportExporterRegistry(),
+      exporterIds: ["missing"],
+    });
+
+    assertEquals(exported.exports, [
+      {
+        exporterId: "missing",
+        ok: false,
+        error: 'No EvalReportExporter registered for "missing".',
+      },
+    ]);
   });
 
   it("renders a markdown eval report", () => {

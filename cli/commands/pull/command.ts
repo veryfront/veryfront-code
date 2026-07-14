@@ -9,11 +9,11 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { dirname, join, normalize, resolve } from "veryfront/platform/path";
+import { dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
+import { isNotFoundError, lstat } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
 import { resolveCliApiUrl } from "#cli/shared/constants";
-import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, cwd, env, runCommand } from "veryfront/platform";
 import {
   createApiClient,
   readConfigFile,
@@ -34,6 +34,7 @@ import {
 } from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 
 /**
  * Schema factory for pull command arguments
@@ -48,6 +49,7 @@ export const getPullArgsSchema = defineSchema((v) =>
     release: v.string().optional(),
     force: v.boolean().default(false),
     dryRun: v.boolean().default(false),
+    prune: v.boolean().default(false),
     quiet: v.boolean().default(false),
   })
 );
@@ -68,6 +70,7 @@ export const parsePullArgs = createArgParser(PullArgsSchema, {
   release: CommonArgs.release,
   force: CommonArgs.force,
   dryRun: CommonArgs.dryRun,
+  prune: { keys: ["prune"], type: "boolean" },
   quiet: CommonArgs.quiet,
 });
 
@@ -96,10 +99,12 @@ export interface PullOptions {
   env?: string;
   /** Release version to pull from (e.g., "v1.2.0") */
   release?: string;
-  /** Force overwrite without confirmation */
+  /** Skip confirmation without changing overwrite semantics */
   force?: boolean;
   /** Dry run - show what would be written without writing */
   dryRun?: boolean;
+  /** Delete managed local files that are absent from the selected source */
+  prune?: boolean;
   /** Quiet mode - suppress spinner/progress output */
   quiet?: boolean;
 }
@@ -136,9 +141,14 @@ interface WriteOp {
   relativePath: string;
 }
 
+interface DeleteOp {
+  path: string;
+  relativePath: string;
+}
+
 interface PullProjectResult {
   written: number;
-  skipped: number;
+  deleted: number;
   cancelled: boolean;
 }
 
@@ -150,32 +160,71 @@ interface FailedProject {
   error?: unknown;
 }
 
-/**
- * Validate and sanitize file path to prevent path traversal attacks.
- * Ensures the resolved path is within the project directory.
- *
- * @param filePath - The file path from API to validate
- * @param projectDir - The project directory base path
- * @returns Sanitized absolute path
- * @throws Error if path attempts to escape project directory
- */
-function validateFilePath(filePath: string, projectDir: string): string {
-  const normalizedPath = normalize(filePath);
-
-  if (normalizedPath.startsWith("/") || normalizedPath.startsWith("..")) {
-    throw new Error(
-      `Invalid file path: "${filePath}" - paths must be relative and cannot escape project directory`,
-    );
+/** Validate a remote file path as a canonical relative POSIX path. */
+export function validateRemoteFilePath(filePath: string): string {
+  if (
+    filePath.length === 0 ||
+    filePath.includes("\\") ||
+    filePath.includes("\0") ||
+    isAbsolute(filePath)
+  ) {
+    throw new Error(`Invalid file path: "${filePath}" - expected a relative POSIX path`);
   }
 
-  const fullPath = resolve(projectDir, normalizedPath);
-  const resolvedProjectDir = resolve(projectDir);
+  const segments = filePath.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(`Invalid file path: "${filePath}" - path must be canonical`);
+  }
+  if (segments.some((segment) => [".git", ".veryfront"].includes(segment.toLowerCase()))) {
+    throw new Error(`Invalid file path: "${filePath}" - reserved local metadata path`);
+  }
 
-  if (!fullPath.startsWith(resolvedProjectDir + "/") && fullPath !== resolvedProjectDir) {
+  return filePath;
+}
+
+/** Resolve a validated remote path and reject local symlink traversal. */
+async function validateFilePath(filePath: string, projectDir: string): Promise<WriteOp> {
+  const canonicalPath = validateRemoteFilePath(filePath);
+  const resolvedProjectDir = resolve(projectDir);
+  const fullPath = resolve(resolvedProjectDir, canonicalPath);
+  const destinationRelativePath = relative(resolvedProjectDir, fullPath).replace(/\\/g, "/");
+
+  if (
+    destinationRelativePath === ".." ||
+    destinationRelativePath.startsWith("../") ||
+    isAbsolute(destinationRelativePath)
+  ) {
     throw new Error(`Invalid file path: "${filePath}" - resolved path escapes project directory`);
   }
 
-  return fullPath;
+  const segments = canonicalPath.split("/");
+  let currentPath = resolvedProjectDir;
+  for (const [index, segment] of segments.entries()) {
+    currentPath = join(currentPath, segment);
+    let info;
+    try {
+      info = await lstat(currentPath);
+    } catch (error) {
+      if (isNotFoundError(error)) break;
+      throw error;
+    }
+    if (info.isSymlink) {
+      throw new Error(
+        `Invalid file path: "${filePath}" - symbolic links are not allowed in pull destinations`,
+      );
+    }
+    const isFinal = index === segments.length - 1;
+    if (!isFinal && !info.isDirectory) {
+      throw new Error(
+        `Invalid file path: "${filePath}" - a parent path is not a directory`,
+      );
+    }
+    if (isFinal && info.isDirectory) {
+      throw new Error(`Invalid file path: "${filePath}" - destination is a directory`);
+    }
+  }
+
+  return { path: fullPath, relativePath: canonicalPath };
 }
 
 /**
@@ -261,26 +310,39 @@ export async function getFileContent(
   const url = buildFileContentUrl(projectSlug, path, source);
   const response = await client.get<{ path: string; content: string; size: number }>(url);
 
-  // Ensure text files end with a trailing newline (POSIX standard)
-  const content = response.content;
-  if (content && !content.endsWith("\n")) return content + "\n";
-  return content;
+  return response.content;
 }
 
 /** Concurrency limit for parallel file fetches */
 const CONCURRENCY = 20;
 
-async function processFile(
+interface PreparedWriteOp extends WriteOp {
+  content: string;
+}
+
+async function fetchFile(
   op: WriteOp,
   client: ReturnType<typeof createApiClient>,
   projectSlug: string,
   source: PullSource,
+): Promise<
+  { success: true; op: PreparedWriteOp } | { success: false; error: Error; path: string }
+> {
+  try {
+    const content = await getFileContent(client, projectSlug, op.relativePath, source);
+    return { success: true, op: { ...op, content } };
+  } catch (error) {
+    return { success: false, path: op.relativePath, error: error as Error };
+  }
+}
+
+async function writePreparedFile(
+  op: PreparedWriteOp,
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<{ success: boolean; path: string; error?: Error }> {
   try {
-    const content = await getFileContent(client, projectSlug, op.relativePath, source);
     await fs.mkdir(dirname(op.path), { recursive: true });
-    await fs.writeTextFile(op.path, content);
+    await fs.writeTextFile(op.path, op.content);
     return { success: true, path: op.relativePath };
   } catch (error) {
     return { success: false, path: op.relativePath, error: error as Error };
@@ -293,20 +355,40 @@ async function writeFiles(
   projectSlug: string,
   source: PullSource,
   dryRun: boolean,
-): Promise<{ written: number; skipped: number }> {
+): Promise<{ written: number; failed: number }> {
   if (dryRun) {
     for (const op of ops) cliLogger.info(`  Would write: ${op.relativePath}`);
-    return { written: ops.length, skipped: 0 };
+    return { written: ops.length, failed: 0 };
   }
 
   const fs = createFileSystem();
-  let written = 0;
-  let skipped = 0;
+  const prepared: PreparedWriteOp[] = [];
+  let failed = 0;
 
   for (let i = 0; i < ops.length; i += CONCURRENCY) {
     const batch = ops.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
-      batch.map((op) => processFile(op, client, projectSlug, source, fs)),
+      batch.map((op) => fetchFile(op, client, projectSlug, source)),
+    );
+
+    for (const result of results) {
+      if (result.success) {
+        prepared.push(result.op);
+        continue;
+      }
+      cliLogger.error(`Failed to fetch ${result.path}:`, result.error);
+      failed++;
+    }
+  }
+
+  if (failed > 0) return { written: 0, failed };
+
+  let written = 0;
+
+  for (let i = 0; i < prepared.length; i += CONCURRENCY) {
+    const batch = prepared.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((op) => writePreparedFile(op, fs)),
     );
 
     for (const result of results) {
@@ -315,11 +397,164 @@ async function writeFiles(
         continue;
       }
       cliLogger.error(`Failed to write ${result.path}:`, result.error);
-      skipped++;
+      failed++;
     }
   }
 
-  return { written, skipped };
+  return { written, failed };
+}
+
+async function listManagedLocalFiles(
+  projectDir: string,
+  ignoreChecker: ReturnType<typeof createIgnoreChecker>,
+): Promise<DeleteOp[]> {
+  const fs = createFileSystem();
+  if (!(await fs.exists(projectDir))) return [];
+
+  const files: DeleteOp[] = [];
+
+  async function walk(currentDir: string): Promise<void> {
+    const entries = await fs.readDir(currentDir);
+
+    for await (const entry of entries) {
+      const path = join(currentDir, entry.name);
+      const relativePath = relative(projectDir, path).replace(/\\/g, "/");
+
+      if (ignoreChecker.isIgnored(relativePath)) continue;
+      if (entry.isSymlink) {
+        if (ignoreChecker.isSupportedExtension(entry.name)) {
+          throw new Error(
+            `Veryfront pull with --prune does not support symbolic links: "${relativePath}". Remove the link and run veryfront pull again.`,
+          );
+        }
+        continue;
+      }
+      if (entry.isDirectory) {
+        await walk(path);
+        continue;
+      }
+      if (!ignoreChecker.isSupportedExtension(entry.name)) continue;
+      files.push({ path, relativePath });
+    }
+  }
+
+  await walk(projectDir);
+  return files;
+}
+
+async function deleteLocalFiles(
+  ops: DeleteOp[],
+  dryRun: boolean,
+): Promise<{ deleted: number; failed: number }> {
+  if (dryRun) {
+    for (const op of ops) cliLogger.info(`  Would delete: ${op.relativePath}`);
+    return { deleted: ops.length, failed: 0 };
+  }
+
+  const fs = createFileSystem();
+  let deleted = 0;
+  let failed = 0;
+  for (const op of ops) {
+    try {
+      await fs.remove(op.path);
+      deleted++;
+    } catch (error) {
+      cliLogger.error(`Failed to delete ${op.relativePath}:`, error);
+      failed++;
+    }
+  }
+  return { deleted, failed };
+}
+
+function cleanGitEnvironment(): Record<string, string> {
+  const gitEnv = env();
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith("GIT_")) delete gitEnv[key];
+  }
+  return gitEnv;
+}
+
+async function nearestExistingDirectory(path: string): Promise<string | null> {
+  let current = resolve(path);
+  while (true) {
+    try {
+      const info = await lstat(current);
+      if (info.isDirectory) return current;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+async function findGitRoot(projectDir: string): Promise<string | null> {
+  const cwd = await nearestExistingDirectory(projectDir);
+  if (!cwd) return null;
+
+  try {
+    const repository = await runCommand("git", {
+      args: ["rev-parse", "--show-toplevel"],
+      cwd,
+      clearEnv: true,
+      env: cleanGitEnvironment(),
+      capture: true,
+      timeoutMs: 5_000,
+    });
+    const root = repository.stdout?.trim();
+    return repository.success && root ? resolve(root) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isUntrackedPushReceipt(statusLine: string): boolean {
+  if (!statusLine.startsWith("?? ")) return false;
+  const path = statusLine.slice(3).replace(/\\/g, "/");
+  return path === ".veryfront/push-receipt.json" ||
+    path.endsWith("/.veryfront/push-receipt.json");
+}
+
+async function assertCleanGitWorktrees(projectDirs: readonly string[]): Promise<void> {
+  const gitRoots = new Set<string>();
+  for (const projectDir of projectDirs) {
+    const gitRoot = await findGitRoot(projectDir);
+    if (!gitRoot) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Pull with --prune requires ${projectDir} to be inside a Git worktree. Clone or initialize the repository, or use --dry-run to preview without deleting files.`,
+      });
+    }
+    gitRoots.add(gitRoot);
+  }
+
+  for (const gitRoot of gitRoots) {
+    const status = await runCommand("git", {
+      args: ["status", "--porcelain=v1", "--untracked-files=all"],
+      cwd: gitRoot,
+      clearEnv: true,
+      env: cleanGitEnvironment(),
+      capture: true,
+      timeoutMs: 5_000,
+    });
+    if (!status.success) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Veryfront could not verify that the Git worktree is clean before pruning files.",
+      });
+    }
+
+    const dirty = (status.stdout ?? "").split("\n").some((line) =>
+      line !== "" && !isUntrackedPushReceipt(line)
+    );
+    if (dirty) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Pull with --prune requires a clean Git worktree at ${gitRoot}. Commit or stash local changes, then run the command again.`,
+      });
+    }
+  }
 }
 
 function formatPullSource(source: PullSource): string {
@@ -368,19 +603,24 @@ function pullProjectListError(projectSlug: string, sourceLabel: string, error: u
   return wrapped;
 }
 
-async function confirmPullWrite(projectDir: string): Promise<boolean> {
+async function confirmPullWrite(
+  projectDir: string,
+  writeCount: number,
+  deleteCount: number,
+): Promise<boolean> {
   if (isInteractive() && !isTTY()) {
     throw INVALID_ARGUMENT.create({
       detail:
         `Pull requires confirmation before writing files, but no interactive prompt is available. ` +
-        `Re-run with --force to write into ${projectDir} without prompting.`,
+        `Re-run with --yes to write into ${projectDir} without prompting.`,
     });
   }
 
-  return await confirmPrompt(
-    `This will overwrite local files in ${projectDir}. Continue?`,
-    false,
-  );
+  const actions: string[] = [];
+  if (writeCount > 0) actions.push(`overwrite ${writeCount} local files`);
+  if (deleteCount > 0) actions.push(`delete ${deleteCount} managed local files`);
+  const action = actions.join(" and ");
+  return await confirmPrompt(`This will ${action} in ${projectDir}. Continue?`, false);
 }
 
 async function pullSingleProject(
@@ -389,6 +629,7 @@ async function pullSingleProject(
   source: PullSource,
   force: boolean,
   dryRun: boolean,
+  prune: boolean,
   config: ResolvedConfig,
   quiet = false,
 ): Promise<PullProjectResult> {
@@ -408,50 +649,105 @@ async function pullSingleProject(
     spinner.stop();
   }
 
-  if (files.length === 0) {
-    if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
-    return { written: 0, skipped: 0, cancelled: false };
-  }
-
+  const pruneIgnoreChecker = prune
+    ? createIgnoreChecker(await loadIgnorePatterns(projectDir))
+    : null;
   const writeOps: WriteOp[] = [];
+  const remotePaths = new Set<string>();
   for (const file of files) {
     try {
-      writeOps.push({ path: validateFilePath(file.path, projectDir), relativePath: file.path });
+      const op = await validateFilePath(file.path, projectDir);
+      if (remotePaths.has(op.relativePath)) {
+        throw new Error(`Duplicate remote file path: "${op.relativePath}"`);
+      }
+      remotePaths.add(op.relativePath);
+
+      if (
+        pruneIgnoreChecker &&
+        (pruneIgnoreChecker.isIgnored(op.relativePath) ||
+          !pruneIgnoreChecker.isSupportedExtension(op.relativePath))
+      ) {
+        continue;
+      }
+      writeOps.push(op);
     } catch (error) {
-      if (!quiet) cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
+      throw INVALID_ARGUMENT.create({
+        detail: `Veryfront returned an invalid file path "${file.path}": ${
+          describeError(error)
+        }. No local files were changed.`,
+        cause: error,
+      });
     }
   }
 
+  let deleteOps: DeleteOp[] = [];
+  if (pruneIgnoreChecker) {
+    const managedRemotePaths = new Set(writeOps.map((op) => op.relativePath));
+    const localFiles = await listManagedLocalFiles(projectDir, pruneIgnoreChecker);
+    deleteOps = localFiles.filter((file) => !managedRemotePaths.has(file.relativePath));
+  }
+
+  if (writeOps.length === 0 && deleteOps.length === 0) {
+    if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
+    return { written: 0, deleted: 0, cancelled: false };
+  }
+
   if (!quiet) {
+    const deleteSummary = deleteOps.length > 0 ? ` and ${deleteOps.length} to delete` : "";
     cliLogger.info(
-      `\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`,
+      `\nFound ${writeOps.length} files to ${
+        dryRun ? "pull" : "write"
+      }${deleteSummary} from ${projectSlug}.`,
     );
   }
 
   if (!force && !dryRun) {
-    const confirmed = await confirmPullWrite(projectDir);
+    const confirmed = await confirmPullWrite(projectDir, writeOps.length, deleteOps.length);
     if (!confirmed) {
       cliLogger.info("Pull cancelled.");
-      return { written: 0, skipped: 0, cancelled: true };
+      return { written: 0, deleted: 0, cancelled: true };
     }
   }
 
   spinner = quiet ? createNoopSpinner() : createSpinner(`Writing files to ${projectDir}...`);
 
-  const result = await writeFiles(writeOps, client, projectSlug, source, dryRun);
+  const writeResult = await writeFiles(writeOps, client, projectSlug, source, dryRun);
+
+  if (writeResult.failed > 0) {
+    spinner.stop();
+    throw new Error(
+      `Failed to pull ${writeResult.failed} file${
+        writeResult.failed === 1 ? "" : "s"
+      }. No local files were pruned. Review git status and restore a clean worktree before retrying if any files were written.`,
+    );
+  }
+
+  const deleteResult = await deleteLocalFiles(deleteOps, dryRun);
 
   spinner.stop();
 
+  if (deleteResult.failed > 0) {
+    throw new Error(
+      `Failed to prune ${deleteResult.failed} local file${
+        deleteResult.failed === 1 ? "" : "s"
+      }. Some files may have changed. Review git status and restore a clean worktree before retrying.`,
+    );
+  }
+
   if (!quiet) {
     if (dryRun) {
-      logInfo(`Dry run complete for ${projectSlug}. Would write ${result.written} files.`);
+      logInfo(
+        `Dry run complete for ${projectSlug}. Would write ${writeResult.written} and delete ${deleteResult.deleted} files.`,
+      );
     } else {
-      logSuccess(`Pulled ${result.written} files from ${projectSlug} (${sourceLabel}).`);
-      if (result.skipped > 0) logWarning(`Skipped ${result.skipped} files due to errors.`);
+      const deletion = deleteResult.deleted > 0 ? ` and deleted ${deleteResult.deleted}` : "";
+      logSuccess(
+        `Pulled ${writeResult.written} files${deletion} from ${projectSlug} (${sourceLabel}).`,
+      );
     }
   }
 
-  return { ...result, cancelled: false };
+  return { written: writeResult.written, deleted: deleteResult.deleted, cancelled: false };
 }
 
 function formatProjectCount(count: number): string {
@@ -496,6 +792,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         projectDir = cwd(),
         force = false,
         dryRun = false,
+        prune = false,
         quiet = false,
       } = options;
 
@@ -529,6 +826,19 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         };
       }
 
+      if (prune && !dryRun) {
+        spinner.update("Checking Git worktree...");
+        const targetDirs = projects?.length
+          ? projects.map((project) => join(projectDir, project))
+          : [projectDir];
+        try {
+          await assertCleanGitWorktrees(targetDirs);
+        } catch (error) {
+          spinner.stop();
+          throw error;
+        }
+      }
+
       spinner.stop();
 
       if (!projects?.length) {
@@ -538,6 +848,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           source,
           force,
           dryRun,
+          prune,
           config,
           quiet,
         );
@@ -545,7 +856,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       }
 
       let totalWritten = 0;
-      let totalSkippedFiles = 0;
+      let totalDeleted = 0;
       const failedProjects: FailedProject[] = [];
       const cancelledProjects: string[] = [];
 
@@ -561,11 +872,12 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
             source,
             force,
             dryRun,
+            prune,
             config,
             quiet,
           );
           totalWritten += result.written;
-          totalSkippedFiles += result.skipped;
+          totalDeleted += result.deleted;
           if (result.cancelled) cancelledProjects.push(project);
         } catch (error) {
           cliLogger.error(`Failed to pull ${project}: ${describeError(error)}`);
@@ -583,10 +895,15 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         cliLogger.info("");
         if (dryRun) {
           logInfo(
-            `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
+            `Dry run complete. Would write ${totalWritten} and delete ${totalDeleted} files total across ${projects.length} projects.`,
           );
         } else if (totalWritten > 0) {
-          logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
+          const deletion = totalDeleted > 0 ? ` and deleted ${totalDeleted}` : "";
+          logSuccess(
+            `Pulled ${totalWritten} files${deletion} total across ${projects.length} projects.`,
+          );
+        } else if (totalDeleted > 0) {
+          logSuccess(`Deleted ${totalDeleted} files across ${projects.length} projects.`);
         } else {
           logInfo(`No files were pulled across ${projects.length} projects.`);
         }
@@ -605,9 +922,6 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
             }.`,
           );
         }
-        if (totalSkippedFiles > 0) {
-          logWarning(`Skipped ${totalSkippedFiles} files due to write errors.`);
-        }
       }
 
       if (failedProjects.length > 0) {
@@ -624,6 +938,10 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         throw new Error(detail);
       }
     },
-    { "cli.dryRun": options.dryRun ?? false, "cli.source_type": source.type },
+    {
+      "cli.dryRun": options.dryRun ?? false,
+      "cli.prune": options.prune ?? false,
+      "cli.source_type": source.type,
+    },
   );
 }

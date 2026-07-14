@@ -16,6 +16,10 @@ const filesToCheck = [
   "extensions/README.md",
 ];
 
+// Local planning notes are intentionally untracked and are not part of the
+// repository documentation contract.
+const ignoredPrefixes = ["docs/plans/"];
+
 let broken = 0;
 let checked = 0;
 
@@ -63,6 +67,8 @@ for (const dir of dirsToCheck) {
   }
 
   for await (const entry of walk(dirPath, { exts: [".md"], includeDirs: false })) {
+    const relativePath = entry.path.slice(repoRoot.length).replaceAll("\\", "/");
+    if (ignoredPrefixes.some((prefix) => relativePath.startsWith(prefix))) continue;
     await checkFile(entry.path);
   }
 }

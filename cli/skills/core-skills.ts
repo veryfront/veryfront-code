@@ -76,30 +76,30 @@ Create a Veryfront app with AI capabilities.
   {
     metadata: {
       name: "deploy-safely",
-      description: "Build, test, deploy, and verify with rollback on failure",
+      description: "Build, test, push, deploy, and verify with rollback through Git on failure",
       metadata: { version: "1.0.0" },
     },
     skillMd: `# Deploy Safely
 
-Build, test, deploy, and verify with rollback on failure.
+Build and test the reviewed Git source, then push it to Veryfront before creating a release and deployment. If verification fails, revert the Git commit and run the normal delivery sequence again.
 
 ## Steps
 
-1. \`veryfront build --json\`, abort if success: false
+1. \`veryfront build --json\`, abort if success is false
 2. \`veryfront test --json\`, abort if any test fails
-3. \`veryfront push --branch <branch> --force\`, abort if any upload fails
+3. \`veryfront push --branch <branch> --yes\`, abort if any upload fails
 4. \`veryfront deploy --env <environment> --branch <branch> --yes --json\`
 5. Record the project, environment, release, deployment, and commit IDs
 6. Use vf_get_errors to verify no runtime errors after deploy
-7. If errors: redeploy previous version
+7. If errors: run \`git revert <bad-commit>\` and \`git push origin <branch>\`, then let CI run steps 3 and 4 or repeat them manually
 
 ## Error Recovery
 
 - **Build fails**: Check vf_get_errors, fix and retry
-- **Tests fail**: Read JSON output, fix failing tests
-- **Push fails**: Fix failed uploads before retrying deploy
+- **Tests fail**: Read the JSON output, fix failing tests
+- **Push fails**: Fix the upload failure and rerun Push before Deploy
 - **Deploy fails**: Check environment, auth, branch
-- **Post-deploy errors**: Redeploy previous release`,
+- **Post-deploy errors**: Revert the failing Git commit, push the revert, then run the normal Push and Deploy sequence`,
     directory: "core:deploy-safely",
   },
   {
