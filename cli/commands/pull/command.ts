@@ -122,6 +122,7 @@ export function resolvePullSource(options: PullOptions): PullSource {
 
 interface ProjectFile {
   path: string;
+  content: string;
   size: number;
   type: string;
   created_at: string;
@@ -136,9 +137,13 @@ interface ListFilesResponse {
   };
 }
 
-interface WriteOp {
+interface ValidatedFilePath {
   path: string;
   relativePath: string;
+}
+
+interface WriteOp extends ValidatedFilePath {
+  content: string;
 }
 
 interface DeleteOp {
@@ -183,7 +188,10 @@ export function validateRemoteFilePath(filePath: string): string {
 }
 
 /** Resolve a validated remote path and reject local symlink traversal. */
-async function validateFilePath(filePath: string, projectDir: string): Promise<WriteOp> {
+async function validateFilePath(
+  filePath: string,
+  projectDir: string,
+): Promise<ValidatedFilePath> {
   const canonicalPath = validateRemoteFilePath(filePath);
   const resolvedProjectDir = resolve(projectDir);
   const fullPath = resolve(resolvedProjectDir, canonicalPath);
@@ -313,31 +321,11 @@ export async function getFileContent(
   return response.content;
 }
 
-/** Concurrency limit for parallel file fetches */
+/** Concurrency limit for parallel file writes. */
 const CONCURRENCY = 20;
 
-interface PreparedWriteOp extends WriteOp {
-  content: string;
-}
-
-async function fetchFile(
+async function writeFile(
   op: WriteOp,
-  client: ReturnType<typeof createApiClient>,
-  projectSlug: string,
-  source: PullSource,
-): Promise<
-  { success: true; op: PreparedWriteOp } | { success: false; error: Error; path: string }
-> {
-  try {
-    const content = await getFileContent(client, projectSlug, op.relativePath, source);
-    return { success: true, op: { ...op, content } };
-  } catch (error) {
-    return { success: false, path: op.relativePath, error: error as Error };
-  }
-}
-
-async function writePreparedFile(
-  op: PreparedWriteOp,
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<{ success: boolean; path: string; error?: Error }> {
   try {
@@ -351,9 +339,6 @@ async function writePreparedFile(
 
 async function writeFiles(
   ops: WriteOp[],
-  client: ReturnType<typeof createApiClient>,
-  projectSlug: string,
-  source: PullSource,
   dryRun: boolean,
 ): Promise<{ written: number; failed: number }> {
   if (dryRun) {
@@ -362,33 +347,13 @@ async function writeFiles(
   }
 
   const fs = createFileSystem();
-  const prepared: PreparedWriteOp[] = [];
   let failed = 0;
+  let written = 0;
 
   for (let i = 0; i < ops.length; i += CONCURRENCY) {
     const batch = ops.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
-      batch.map((op) => fetchFile(op, client, projectSlug, source)),
-    );
-
-    for (const result of results) {
-      if (result.success) {
-        prepared.push(result.op);
-        continue;
-      }
-      cliLogger.error(`Failed to fetch ${result.path}:`, result.error);
-      failed++;
-    }
-  }
-
-  if (failed > 0) return { written: 0, failed };
-
-  let written = 0;
-
-  for (let i = 0; i < prepared.length; i += CONCURRENCY) {
-    const batch = prepared.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(
-      batch.map((op) => writePreparedFile(op, fs)),
+      batch.map((op) => writeFile(op, fs)),
     );
 
     for (const result of results) {
@@ -655,21 +620,13 @@ async function pullSingleProject(
   const writeOps: WriteOp[] = [];
   const remotePaths = new Set<string>();
   for (const file of files) {
+    let op: ValidatedFilePath;
     try {
-      const op = await validateFilePath(file.path, projectDir);
+      op = await validateFilePath(file.path, projectDir);
       if (remotePaths.has(op.relativePath)) {
         throw new Error(`Duplicate remote file path: "${op.relativePath}"`);
       }
       remotePaths.add(op.relativePath);
-
-      if (
-        pruneIgnoreChecker &&
-        (pruneIgnoreChecker.isIgnored(op.relativePath) ||
-          !pruneIgnoreChecker.isSupportedExtension(op.relativePath))
-      ) {
-        continue;
-      }
-      writeOps.push(op);
     } catch (error) {
       throw INVALID_ARGUMENT.create({
         detail: `Veryfront returned an invalid file path "${file.path}": ${
@@ -678,6 +635,21 @@ async function pullSingleProject(
         cause: error,
       });
     }
+
+    if (
+      pruneIgnoreChecker &&
+      (pruneIgnoreChecker.isIgnored(op.relativePath) ||
+        !pruneIgnoreChecker.isSupportedExtension(op.relativePath))
+    ) {
+      continue;
+    }
+    if (typeof file.content !== "string") {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Veryfront returned invalid content for file "${file.path}". No local files were changed.`,
+      });
+    }
+    writeOps.push({ ...op, content: file.content });
   }
 
   let deleteOps: DeleteOp[] = [];
@@ -711,7 +683,7 @@ async function pullSingleProject(
 
   spinner = quiet ? createNoopSpinner() : createSpinner(`Writing files to ${projectDir}...`);
 
-  const writeResult = await writeFiles(writeOps, client, projectSlug, source, dryRun);
+  const writeResult = await writeFiles(writeOps, dryRun);
 
   if (writeResult.failed > 0) {
     spinner.stop();
