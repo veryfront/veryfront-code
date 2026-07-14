@@ -31,8 +31,8 @@ Phase 0 depends on operating rules that Veryfront cannot enforce yet:
   release.
 - After every Git merge, wait for CI to push the new `main` source into
   Veryfront before anyone starts new Studio work.
-- Start the pilot in staging. Enable production only after the acceptance
-  evidence is approved.
+- Start the pilot in staging. Enable production only after an Admin or Owner
+  approves the staging evidence described below.
 
 ## Prerequisites
 
@@ -185,9 +185,22 @@ newer Git changes.
 
 ## Promote the pilot to production
 
-Complete and approve the internal Phase 0 acceptance checklist against staging
-before production promotion. After approval, use the same serialized job
-pattern with the production environment:
+Before production promotion, require an Admin or Owner to verify and record all
+of these staging results in the team's normal change-management system:
+
+- The serialized CI job checked out the reviewed Git `main` SHA and passed the
+  repository's required tests.
+- Push and Deploy both succeeded from that checkout, and the deployment
+  evidence names the same commit SHA, project, release, and staging environment.
+- A smoke test passed against the staging deployment.
+- The team successfully rehearsed rollback by reverting a Git change and
+  allowing the same CI workflow to deploy the resulting commit.
+- If Studio-to-Git handoff is in scope for the pilot, one immutable Studio
+  release completed the reviewed pull-request flow in
+  [Move Studio changes into Git](./move-studio-changes-to-git.md).
+
+After that approval, use the same serialized job pattern with the production
+environment:
 
 ```bash title="Terminal"
 veryfront push --branch main --yes
@@ -237,8 +250,7 @@ configured environment.
 2. Confirm the final deployment evidence names the merged commit.
 3. Open the staging environment with `veryfront open --env staging`.
 4. Check the changed route or API behavior.
-5. Complete and approve the Phase 0 acceptance evidence before production
-   promotion.
+5. Record the Admin or Owner staging approval before production promotion.
 
 ## Next
 
