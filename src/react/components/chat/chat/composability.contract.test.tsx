@@ -167,13 +167,12 @@ describe("chat composability contract", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The acid test (leaf-override probe). §0.1: "change any leaf X on any node Y,
-// in place, without re-implementing its parent Z." Proven here on the `Sources`
-// collection exemplar (the K0 4-tier reference): a hand-written leaf swapped for
-// `Sources.Pill` still receives the working list state from `useSources()` —
-// i.e. overriding one leaf loses no sibling behaviour. Per-component acid tests
-// live in each component's own `*.test.tsx` (E4); this is the cross-cutting
-// canary that the pattern itself holds.
+// Leaf-override probe for the collection composition contract documented in
+// docs/architecture/22-chat-collection-composition-contract.md. A hand-written
+// leaf swapped for `Sources.Pill` still receives working list state through
+// `useSources()`, so replacing one visual tier does not lose sibling behavior.
+// Focused component tests own component-specific variants; this is the
+// cross-cutting canary for the shared pattern.
 // ---------------------------------------------------------------------------
 describe("chat composability contract — acid test (leaf override)", () => {
   it("a swapped Sources leaf still reads working context", () => {

@@ -24,6 +24,10 @@ boundaries, or docs structure.
 - `architecture/`: Private Veryfront Code architecture notes. These docs are
   not part of the public docs sync.
 
+Shared plans and unresolved work belong in the GitHub issue tracker. Local
+planning notes may use `docs/plans/`; that directory is Git-ignored and excluded
+from documentation validation.
+
 ## API reference generation
 
 Public API reference pages in `docs/api-reference/veryfront/` are generated from

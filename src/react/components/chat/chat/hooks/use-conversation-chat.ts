@@ -15,9 +15,8 @@ const useIsomorphicLayoutEffect = typeof document !== "undefined"
 
 /**
  * `useConversationChat` — the library primitive that binds a `useChat` session
- * to conversation persistence, so **application code never writes the
- * persistence `useEffect` itself** (composition-patterns §2.3 "lift state into a
- * provider/hook", not "sync state up with an effect").
+ * to conversation persistence, so application code does not need to duplicate
+ * the persistence effect.
  *
  * Inside a `ConversationsProvider` it seeds the session from the active
  * conversation and saves changes back to the store; standalone, an explicit

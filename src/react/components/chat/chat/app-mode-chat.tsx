@@ -66,9 +66,8 @@ function UncontrolledChat(
   }: ChatProps,
 ): React.ReactElement {
   // Seed + persistence are the library's job, not app code's: `useConversationChat`
-  // does `useChat` + conversation seeding + the persist bridge internally (the
-  // §2.3 anti-pattern lifted into a reusable hook). This component stays a dumb
-  // presenter of the resulting session.
+  // does `useChat` + conversation seeding + the persist bridge internally. This
+  // component stays a presenter of the resulting session.
   const { chat, resolvedAgentId } = useConversationChat({
     api,
     agentId,
