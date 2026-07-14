@@ -106,7 +106,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "RUNNER_TEMP");
     assertStringIncludes(guide, "NDJSON records");
     assertStringIncludes(guide, "git revert");
-    assertStringIncludes(guide, "Start the pilot in staging");
+    assertStringIncludes(guide, "Start with staging");
     assertStringIncludes(guide, "veryfront push --branch main --dry-run");
     assertStringIncludes(guide, "does not create a missing project or branch");
     assertStringIncludes(guide, "veryfront deploy --branch main --env staging --yes");
@@ -149,7 +149,7 @@ describe("guide content contracts", () => {
     assertEquals(guide.includes("veryfront pull --branch"), false);
   });
 
-  it("keeps the Phase 0 Pull safety contract in command help", async () => {
+  it("keeps the Pull safety contract in command help", async () => {
     const help = await Deno.readTextFile("cli/commands/pull/command-help.ts");
 
     assertStringIncludes(help, "full managed-source snapshot");

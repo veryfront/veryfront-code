@@ -8,22 +8,20 @@ Use this guide to make a reviewed Git commit the source of a Veryfront
 deployment. The CI job pushes the checked-out source, creates an immutable
 release, and deploys that release to an environment.
 
-## Understand the Phase 0 boundary
+## Understand the trust boundary
 
-This workflow is a CI-mediated bridge, not an enforced repository connection.
-Veryfront does not yet know which Git repository is canonical. Existing Studio
-permissions can still allow direct edits to Veryfront `main`, and a project API
-key can upload the source present in its checkout. Veryfront does not open Git
-pull requests in this phase. A developer or repository-owned CI workflow can
-run the documented handoff commands, while review and conflict resolution stay
-in Git.
+This workflow uses CI as the bridge between Git and Veryfront. It is
+not an enforced repository connection, so Veryfront cannot verify which Git
+repository is canonical. Existing Studio permissions can still allow direct
+edits to Veryfront `main`, and a project API key can upload the source present
+in its checkout. Veryfront does not create Git pull requests as part of this
+workflow. A developer or repository-owned CI workflow runs the handoff
+commands, while review and conflict resolution stay in Git.
 
 Use one serialized CI writer for each Veryfront project, protect its API key,
-and use immutable releases for Studio-to-Git handoffs. The connected-repository
-phase adds exact-SHA server fetches, GitHub App verification, and automated pull
-requests.
+and use immutable releases for Studio-to-Git handoffs.
 
-Phase 0 depends on operating rules that Veryfront cannot enforce yet:
+This workflow depends on operating rules that Veryfront does not enforce:
 
 - Treat Git `main` as the canonical source.
 - Do not edit or publish directly from Studio `main`. Make citizen-developer
@@ -31,7 +29,7 @@ Phase 0 depends on operating rules that Veryfront cannot enforce yet:
   release.
 - After every Git merge, wait for CI to push the new `main` source into
   Veryfront before anyone starts new Studio work.
-- Start the pilot in staging. Enable production only after an Admin or Owner
+- Start with staging. Enable production only after an Admin or Owner
   approves the staging evidence described below.
 
 ## Prerequisites
@@ -39,7 +37,7 @@ Phase 0 depends on operating rules that Veryfront cannot enforce yet:
 - A Veryfront project with the `veryfront` package pinned in its lockfile.
 - A dedicated project API key stored in the CI secret manager.
 - The project slug stored as a CI variable.
-- A protected `staging` environment in Veryfront for the pilot.
+- A protected `staging` environment in Veryfront.
 - A protected `production` environment in Veryfront before promotion.
 - A CI job that runs after changes merge to `main`.
 - `.veryfront/` in `.gitignore` so local Push receipts are never committed.
@@ -65,7 +63,7 @@ the checkout as the reviewed commit.
 
 ## Preview the Push
 
-Preview the source reconciliation before the pilot changes Veryfront:
+Preview the source reconciliation before it changes Veryfront:
 
 ```bash title="Terminal"
 veryfront push --branch main --dry-run
@@ -106,7 +104,8 @@ defaults:
 ## Add a GitHub Actions workflow
 
 Add a workflow that serializes main updates and keeps the API key scoped to the
-deployment step. Keep this staging target while the pilot is under review:
+deployment step. Keep this staging target until production delivery is
+approved:
 
 ```yaml title=".github/workflows/deploy-veryfront.yml"
 name: Deploy Veryfront
@@ -175,15 +174,15 @@ same time. `cancel-in-progress: false` lets an active Push and Deploy sequence
 finish before the next run starts.
 
 The SHA check skips a queued workflow when a newer `main` commit already
-exists. It is a Phase 0 race reduction, not the exact-SHA enforcement provided
-by a connected repository.
+exists. This reduces races between queued CI runs, but it does not provide
+server-side exact-SHA enforcement.
 
 Do not start a new Studio change until this job has pushed the latest Git
 `main` source successfully. A Studio release created from an older baseline is
-a stale full snapshot, and the Phase 0 handoff does not auto-merge it with
-newer Git changes.
+a stale full snapshot, and the CLI handoff does not auto-merge it with newer
+Git changes.
 
-## Promote the pilot to production
+## Promote to production
 
 Before production promotion, require an Admin or Owner to verify and record all
 of these staging results in the team's normal change-management system:
@@ -195,7 +194,7 @@ of these staging results in the team's normal change-management system:
 - A smoke test passed against the staging deployment.
 - The team successfully rehearsed rollback by reverting a Git change and
   allowing the same CI workflow to deploy the resulting commit.
-- If Studio-to-Git handoff is in scope for the pilot, one immutable Studio
+- If Studio-to-Git handoff is in scope, one immutable Studio
   release completed the reviewed pull-request flow in
   [Move Studio changes into Git](./move-studio-changes-to-git.md).
 
