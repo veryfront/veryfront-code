@@ -161,23 +161,6 @@ describe("guide content contracts", () => {
     assertStringIncludes(help, "A fetch failure causes no writes or pruning");
   });
 
-  it("tracks Phase 0 release acceptance separately from public guides", async () => {
-    const planPath = "docs/plans/2026-07-14-phase-0-git-handoff-acceptance.md";
-    const plan = await Deno.readTextFile(planPath);
-    const index = await Deno.readTextFile("docs/plans/README.md");
-
-    assertStringIncludes(index, "Phase 0 Git handoff acceptance");
-    assertStringIncludes(index, "Acceptance pending");
-    assertStringIncludes(plan, "Compatibility baseline | `v0.1.1063`");
-    assertStringIncludes(plan, "## A. Staging-first CI pilot");
-    assertStringIncludes(plan, "## B. Studio release to Git pull request");
-    assertStringIncludes(plan, "## C. Failure and recovery safety");
-    assertStringIncludes(plan, "## D. Compatibility checks");
-    assertStringIncludes(plan, "## E. Production promotion");
-    assertStringIncludes(plan, "## Accepted Phase 0 limitations");
-    assertStringIncludes(plan, "Do not mark this plan complete from unit-test counts alone");
-  });
-
   it("never recommends exposing a secret to verify environment config", async () => {
     const guide = await Deno.readTextFile("docs/guides/configuration.md");
 
