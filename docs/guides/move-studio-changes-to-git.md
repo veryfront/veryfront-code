@@ -24,8 +24,8 @@ into Veryfront and deploy it to staging. Record that successful job's Git SHA.
 Do not start a new Studio change before this Push finishes.
 
 Create a non-main Studio branch for the citizen-developer change. Do not edit
-or publish directly from Studio `main`. Phase 0 cannot enforce this rule, so the
-team must apply it as part of the pilot operating procedure.
+or publish directly from Studio `main`. Apply this rule through the team's
+source-control policy and CI ownership.
 
 ## Create the Studio handoff
 
@@ -65,7 +65,7 @@ if [ "$CURRENT_MAIN_SHA" != "$BASE_GIT_SHA" ]; then
 fi
 ```
 
-For the safest pilot path, stop when these SHAs differ. Push the latest Git
+For the safest workflow, stop when these SHAs differ. Push the latest Git
 `main` source into Veryfront, recreate the Studio change, and publish a new
 release. If the professional developer deliberately continues, they own the
 full Git diff and every conflict resolution.
@@ -150,11 +150,10 @@ Studio base Git SHA. Reviewers can use those values to trace the handoff and
 identify a stale snapshot.
 
 You can put the same Pull, test, commit, and `gh pr create` sequence in a
-repository-owned CI workflow. Require the release version and Studio base Git
-SHA as inputs, write both values into the pull request, and label a mismatch
-between the base SHA and current `main` as a stale full snapshot. Veryfront does
-not hold the Git credential or create the pull request in Phase 0; the
-repository workflow does.
+repository-owned CI workflow. Keep the Git credential and pull request creation
+in that workflow. Require the release version and Studio base Git SHA as inputs,
+write both values into the pull request, and label a mismatch between the base
+SHA and current `main` as a stale full snapshot.
 
 ## Resolve conflicts in Git
 
@@ -173,8 +172,8 @@ from Studio.
 
 After the pull request merges, the normal CI workflow pushes the reviewed Git
 `main` source to Veryfront and creates the staging release and deployment
-during the pilot. The approved production workflow uses the same sequence.
-Wait for that Push before anyone starts another Studio change.
+when staging is configured. The approved production workflow uses the same
+sequence. Wait for that Push before anyone starts another Studio change.
 
 ## Verify it worked
 

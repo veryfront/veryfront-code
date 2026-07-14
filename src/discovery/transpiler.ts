@@ -32,6 +32,7 @@ import * as workflowMod from "#veryfront/workflow";
 import * as evalMod from "#veryfront/eval";
 import * as metricsMod from "#veryfront/metrics";
 import * as schemasMod from "#veryfront/schemas";
+import * as integrationsMod from "#veryfront/integrations/index.ts";
 import * as chatUploadsMod from "#veryfront/chat/uploads";
 
 type TranspileCacheEntry = {
@@ -116,6 +117,7 @@ async function ensureVeryfrontGlobals(): Promise<void> {
     "veryfront/eval": evalMod,
     "veryfront/metrics": metricsMod,
     "veryfront/schemas": schemasMod,
+    "veryfront/integrations": integrationsMod,
     "veryfront/chat/uploads": chatUploadsMod,
   } satisfies Record<(typeof DISCOVERY_GLOBAL_VERYFRONT_MODULES)[number], unknown>;
 
