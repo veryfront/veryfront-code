@@ -101,6 +101,57 @@ function restoreEnv(key: string, value: string | undefined): void {
   else Deno.env.set(key, value);
 }
 
+async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+  try {
+    await withGitProject(async ({ projectDir }) => {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "missing-project");
+      _resetEnvironmentConfig();
+
+      const requests: string[] = [];
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+
+        if (request.method === "GET" && url.pathname === "/projects/missing-project/files") {
+          return Response.json({ error: "not found" }, { status: 404 });
+        }
+        if (request.method === "POST" && url.pathname === "/projects") {
+          return Response.json({ id: "project-created-by-dry-run" }, { status: 201 });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname === "/projects/missing-project/branches"
+        ) {
+          return Response.json({ data: [], page_info: {} });
+        }
+
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+      }) as typeof fetch;
+
+      await pushCommand({
+        projectDir,
+        branch,
+        dryRun: true,
+        quiet: true,
+      });
+
+      assertEquals(requests, ["GET /projects/missing-project/files"]);
+      assertEquals(await readPushReceipt(projectDir), null);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+    _resetEnvironmentConfig();
+  }
+}
+
 describe("generateBranchName", () => {
   it("should generate a branch name with push- prefix", () => {
     const name = generateBranchName();
@@ -707,6 +758,16 @@ describe("push receipt source snapshot", () => {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
+  });
+});
+
+describe("push dry-run project bootstrap", () => {
+  it("does not create a missing project when targeting main", async () => {
+    await assertMissingProjectDryRunDoesNotMutate("main");
+  });
+
+  it("does not create a missing project or branch when targeting a named branch", async () => {
+    await assertMissingProjectDryRunDoesNotMutate("feature-x");
   });
 });
 

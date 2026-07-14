@@ -106,6 +106,15 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "RUNNER_TEMP");
     assertStringIncludes(guide, "NDJSON records");
     assertStringIncludes(guide, "git revert");
+    assertStringIncludes(guide, "Start the pilot in staging");
+    assertStringIncludes(guide, "veryfront push --branch main --dry-run");
+    assertStringIncludes(guide, "does not create a missing project or branch");
+    assertStringIncludes(guide, "veryfront deploy --branch main --env staging --yes");
+    assertStringIncludes(guide, "veryfront open --env staging");
+    assertStringIncludes(guide, "Do not edit or publish directly from Studio `main`");
+    assertStringIncludes(guide, "before anyone starts new Studio work");
+    assertStringIncludes(guide, "supported text files only");
+    assertStringIncludes(guide, "Binary images, fonts, archives");
     assertEquals(guide.includes("--quiet"), false);
     assertEquals(guide.includes("--release-name <previous>"), false);
   });
@@ -125,8 +134,48 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(guide, "Resolve conflicts in Git");
     assertStringIncludes(guide, "failure can leave a partial Git diff");
+    assertStringIncludes(guide, "BASE_GIT_SHA");
+    assertStringIncludes(guide, "gh pr create");
+    assertStringIncludes(guide, "--base main");
+    assertStringIncludes(guide, "full managed-source snapshot");
+    assertStringIncludes(guide, "does not perform a three-way merge");
+    assertStringIncludes(guide, "Do not edit");
+    assertStringIncludes(guide, "directly from Studio `main`");
+    assertStringIncludes(guide, "before anyone starts another Studio change");
+    assertStringIncludes(guide, "--yes` and `--force` skip");
+    assertStringIncludes(guide, "does not write or delete");
+    assertStringIncludes(guide, "local files");
     assertStringIncludes(guide, "git merge origin/main");
     assertEquals(guide.includes("veryfront pull --branch"), false);
+  });
+
+  it("keeps the Phase 0 Pull safety contract in command help", async () => {
+    const help = await Deno.readTextFile("cli/commands/pull/command-help.ts");
+
+    assertStringIncludes(help, "full managed-source snapshot");
+    assertStringIncludes(help, "does not perform a Git merge");
+    assertStringIncludes(help, "--yes and --force skip confirmation only");
+    assertStringIncludes(help, "never writes or deletes local files");
+    assertStringIncludes(help, "preserves remote bytes exactly");
+    assertStringIncludes(help, "symlink-traversing remote paths fail");
+    assertStringIncludes(help, "A fetch failure causes no writes or pruning");
+  });
+
+  it("tracks Phase 0 release acceptance separately from public guides", async () => {
+    const planPath = "docs/plans/2026-07-14-phase-0-git-handoff-acceptance.md";
+    const plan = await Deno.readTextFile(planPath);
+    const index = await Deno.readTextFile("docs/plans/README.md");
+
+    assertStringIncludes(index, "Phase 0 Git handoff acceptance");
+    assertStringIncludes(index, "Acceptance pending");
+    assertStringIncludes(plan, "Compatibility baseline | `v0.1.1063`");
+    assertStringIncludes(plan, "## A. Staging-first CI pilot");
+    assertStringIncludes(plan, "## B. Studio release to Git pull request");
+    assertStringIncludes(plan, "## C. Failure and recovery safety");
+    assertStringIncludes(plan, "## D. Compatibility checks");
+    assertStringIncludes(plan, "## E. Production promotion");
+    assertStringIncludes(plan, "## Accepted Phase 0 limitations");
+    assertStringIncludes(plan, "Do not mark this plan complete from unit-test counts alone");
   });
 
   it("never recommends exposing a secret to verify environment config", async () => {

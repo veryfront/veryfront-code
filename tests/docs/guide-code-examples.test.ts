@@ -434,7 +434,14 @@ describe("Guide: deploy-from-ci.md", () => {
   it("uses supported Push and Deploy arguments in the required order", async () => {
     const guide = await readGuide("deploy-from-ci.md");
     const pushCommand = "veryfront push --branch main --yes";
-    const deployCommand = "veryfront deploy --branch main --env production --yes";
+    const stagingCommand = "veryfront deploy --branch main --env staging --yes";
+    const productionCommand = "veryfront deploy --branch main --env production --yes";
+
+    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--dry-run"]);
+    const parsedDryRun = parsePushArgs(dryRunArgs);
+    assert(parsedDryRun.success);
+    assertEquals(parsedDryRun.data.branch, "main");
+    assertEquals(parsedDryRun.data.dryRun, true);
 
     const pushArgs = parseCliArgs(["push", "--branch", "main", "--yes"]);
     const parsedPush = parsePushArgs(pushArgs);
@@ -447,16 +454,18 @@ describe("Guide: deploy-from-ci.md", () => {
       "--branch",
       "main",
       "--env",
-      "production",
+      "staging",
       "--yes",
     ]);
     const parsedDeploy = parseDeployArgs(deployArgs);
     assert(parsedDeploy.success);
     assertEquals(parsedDeploy.data.branch, "main");
-    assertEquals(parsedDeploy.data.env, "production");
+    assertEquals(parsedDeploy.data.env, "staging");
     assertEquals(deployArgs.yes, true);
 
-    assert(guide.indexOf(pushCommand) < guide.indexOf(deployCommand));
+    assert(guide.indexOf("veryfront push --branch main --dry-run") < guide.indexOf(pushCommand));
+    assert(guide.indexOf(pushCommand) < guide.indexOf(stagingCommand));
+    assert(guide.indexOf(stagingCommand) < guide.indexOf(productionCommand));
     assertStringIncludes(guide, "cancel-in-progress: false");
     assertStringIncludes(guide, "RUNNER_TEMP");
   });
@@ -482,6 +491,9 @@ describe("Guide: move-studio-changes-to-git.md", () => {
       guide,
       'veryfront pull --release "$VERYFRONT_RELEASE" --prune --yes',
     );
+    assertStringIncludes(guide, "BASE_GIT_SHA");
+    assertStringIncludes(guide, "gh pr create");
+    assertStringIncludes(guide, "--base main");
     assertStringIncludes(guide, "git merge origin/main");
   });
 });

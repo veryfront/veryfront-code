@@ -21,12 +21,24 @@ and use immutable releases for Studio-to-Git handoffs. The connected-repository
 phase adds exact-SHA server fetches, GitHub App verification, and automated pull
 requests.
 
+Phase 0 depends on operating rules that Veryfront cannot enforce yet:
+
+- Treat Git `main` as the canonical source.
+- Do not edit or publish directly from Studio `main`. Make citizen-developer
+  changes on a non-main Studio branch and hand them to Git through an immutable
+  release.
+- After every Git merge, wait for CI to push the new `main` source into
+  Veryfront before anyone starts new Studio work.
+- Start the pilot in staging. Enable production only after the acceptance
+  evidence is approved.
+
 ## Prerequisites
 
 - A Veryfront project with the `veryfront` package pinned in its lockfile.
 - A dedicated project API key stored in the CI secret manager.
 - The project slug stored as a CI variable.
-- A protected `production` environment in Veryfront.
+- A protected `staging` environment in Veryfront for the pilot.
+- A protected `production` environment in Veryfront before promotion.
 - A CI job that runs after changes merge to `main`.
 - `.veryfront/` in `.gitignore` so local Push receipts are never committed.
 
@@ -35,22 +47,39 @@ variables.
 
 ## Define the managed source set
 
-Push and `pull --prune` use the same supported text-file extensions and
-`.vfignore` rules. Ignored and unsupported files are not reconciled with
-Veryfront.
+Push and `pull --prune` reconcile supported text files only. The managed set
+includes TypeScript, JavaScript, JSON, stylesheets, HTML, Markdown, MDX, text,
+SVG, YAML, and TOML. Binary images, fonts, archives, and other unsupported
+files remain outside this handoff. Manage those files through another reviewed
+delivery path.
+
+Both commands use the same `.vfignore` rules. Ignored files and unsupported
+extensions are not reconciled with Veryfront.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git. An untracked, Git-ignored, or symlinked `.vfignore` cannot
 provide clean production provenance, so Deploy will stop instead of treating
 the checkout as the reviewed commit.
 
-## Push and deploy
+## Preview the Push
+
+Preview the source reconciliation before the pilot changes Veryfront:
+
+```bash title="Terminal"
+veryfront push --branch main --dry-run
+```
+
+Push dry-run reads the local and remote source needed for the comparison but
+makes no mutation. It does not create a missing project or branch, upload or
+delete files, or write `.veryfront/push-receipt.json`.
+
+## Start with staging
 
 Run Push and Deploy from the same Git checkout and CI job:
 
 ```bash title="Terminal"
 veryfront push --branch main --yes
-veryfront deploy --branch main --env production --yes
+veryfront deploy --branch main --env staging --yes
 ```
 
 Push records the checked-out commit and source digest in
@@ -59,7 +88,7 @@ project, branch, commit, and checkout. Do not split the two commands across CI
 jobs or clean the checkout between them.
 
 Deploy creates an immutable release from the pushed source, then assigns that
-release to `production`.
+release to `staging`.
 
 The current directory is the Veryfront project directory. It maps to the Git
 repository root by default. For a monorepo, run both commands from the same
@@ -74,8 +103,8 @@ defaults:
 
 ## Add a GitHub Actions workflow
 
-Add a workflow that serializes production updates and keeps the API key scoped
-to the deployment step:
+Add a workflow that serializes main updates and keeps the API key scoped to the
+deployment step. Keep this staging target while the pilot is under review:
 
 ```yaml title=".github/workflows/deploy-veryfront.yml"
 name: Deploy Veryfront
@@ -89,13 +118,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: veryfront-production-${{ github.repository }}
+  group: veryfront-main-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  deploy-staging:
     runs-on: ubuntu-latest
-    environment: production
+    environment: staging
     steps:
       - name: Check out the merged commit
         uses: actions/checkout@v4
@@ -132,7 +161,7 @@ jobs:
           fi
 
           npx --no-install veryfront push --branch main --yes
-          npx --no-install veryfront deploy --branch main --env production --yes
+          npx --no-install veryfront deploy --branch main --env staging --yes
 ```
 
 `npm ci` and `npx --no-install` use the Veryfront version in the project
@@ -147,6 +176,25 @@ The SHA check skips a queued workflow when a newer `main` commit already
 exists. It is a Phase 0 race reduction, not the exact-SHA enforcement provided
 by a connected repository.
 
+Do not start a new Studio change until this job has pushed the latest Git
+`main` source successfully. A Studio release created from an older baseline is
+a stale full snapshot, and the Phase 0 handoff does not auto-merge it with
+newer Git changes.
+
+## Promote the pilot to production
+
+Complete and approve the internal Phase 0 acceptance checklist against staging
+before production promotion. After approval, use the same serialized job
+pattern with the production environment:
+
+```bash title="Terminal"
+veryfront push --branch main --yes
+veryfront deploy --branch main --env production --yes
+```
+
+Keep Push and Deploy in the same checkout and job after promotion. Do not add a
+second unsynchronized writer for production.
+
 ## Capture deployment evidence
 
 Deploy prints human-readable output by default. Add `--json` only when the CI
@@ -154,17 +202,18 @@ system needs machine-readable audit evidence. JSON mode emits NDJSON records
 for each step and a final result.
 
 Write the audit file outside the Git checkout so it does not make the source
-dirty before the production check:
+dirty before Deploy verifies the Push receipt:
 
 ```bash title="GitHub Actions deployment step"
 set -o pipefail
-veryfront deploy --branch main --env production --yes --json \
-  | tee "${RUNNER_TEMP}/veryfront-deploy.ndjson"
+veryfront deploy --branch main --env staging --yes --json \
+  | tee "${RUNNER_TEMP}/veryfront-staging-deploy.ndjson"
 ```
 
-Store `${RUNNER_TEMP}/veryfront-deploy.ndjson` as a CI artifact. The final
-result includes the project, commit SHA, source digest, release, environment,
-and deployment identifiers.
+Store `${RUNNER_TEMP}/veryfront-staging-deploy.ndjson` as a CI artifact. The
+final result includes the project, commit SHA, source digest, release,
+environment, and deployment identifiers. Capture the equivalent production
+artifact after promotion.
 
 ## Roll back
 
@@ -177,14 +226,17 @@ git push origin main
 ```
 
 The push to Git starts the same serialized CI workflow. It creates a new
-immutable release from the reverted source and deploys it to production.
+immutable release from the reverted source and deploys it to the workflow's
+configured environment.
 
 ## Verify it worked
 
-1. Confirm the CI job reports successful Push and Deploy steps.
+1. Confirm the staging CI job reports successful Push and Deploy steps.
 2. Confirm the final deployment evidence names the merged commit.
-3. Open the production environment with `veryfront open`.
+3. Open the staging environment with `veryfront open --env staging`.
 4. Check the changed route or API behavior.
+5. Complete and approve the Phase 0 acceptance evidence before production
+   promotion.
 
 ## Next
 

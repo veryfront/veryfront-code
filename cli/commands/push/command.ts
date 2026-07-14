@@ -502,41 +502,51 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const branchName = branch || generateBranchName();
       const isMainBranch = branchName === "main";
 
-      // First-push: If project doesn't exist on server yet, create it
+      // First-push: If project doesn't exist on server yet, create it unless this is a dry run.
       let mainFiles: RemoteFile[] = [];
+      let projectExists = true;
       try {
         mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
       } catch (error) {
         // Project doesn't exist yet - create it on first push
         if (getErrorStatus(error) === 404) {
-          spinner.update("Creating project...");
-          let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
-          try {
-            reserveResult = await reserveProjectSlug(
-              config.projectSlug,
-              config.apiToken,
-              undefined,
-              config.apiUrl,
-              { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
-            );
-          } catch (reserveError) {
-            spinner.stop();
-            if (reserveError instanceof ProjectSlugConflictError) {
-              throw projectSlugConflictError(reserveError, projectReferenceSource);
+          if (dryRun) {
+            projectExists = false;
+            if (!quiet) {
+              logInfo(
+                `Project "${config.projectSlug}" does not exist. Dry run will not create it.`,
+              );
             }
-            throw reserveError;
-          }
-          if (reserveResult.slug !== config.projectSlug) {
-            await writeProjectSlug(projectDir, reserveResult.slug);
-            logInfo(`Project slug: ${reserveResult.slug}`);
-          }
-          config = { ...config, projectSlug: reserveResult.slug };
-          // Now try to get files again (should be empty for new project)
-          try {
-            mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
-          } catch {
-            // Project just created, no files yet
-            mainFiles = [];
+          } else {
+            spinner.update("Creating project...");
+            let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
+            try {
+              reserveResult = await reserveProjectSlug(
+                config.projectSlug,
+                config.apiToken,
+                undefined,
+                config.apiUrl,
+                { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
+              );
+            } catch (reserveError) {
+              spinner.stop();
+              if (reserveError instanceof ProjectSlugConflictError) {
+                throw projectSlugConflictError(reserveError, projectReferenceSource);
+              }
+              throw reserveError;
+            }
+            if (reserveResult.slug !== config.projectSlug) {
+              await writeProjectSlug(projectDir, reserveResult.slug);
+              logInfo(`Project slug: ${reserveResult.slug}`);
+            }
+            config = { ...config, projectSlug: reserveResult.slug };
+            // Now try to get files again (should be empty for new project)
+            try {
+              mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+            } catch {
+              // Project just created, no files yet
+              mainFiles = [];
+            }
           }
         } else {
           throw error;
@@ -554,12 +564,18 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const ops = sourceSnapshot.files;
       const localPaths = new Set(ops.map((op) => op.path));
 
-      const target = await resolvePushRemoteFiles(
-        client,
-        config.projectSlug,
-        branchName,
-        mainFiles,
-      );
+      const target = projectExists
+        ? await resolvePushRemoteFiles(
+          client,
+          config.projectSlug,
+          branchName,
+          mainFiles,
+        )
+        : {
+          branchId: null,
+          remoteFiles: mainFiles,
+          source: { type: "main" } satisfies PullSource,
+        };
       const toDelete = target.remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
 
       if (ops.length === 0 && toDelete.length === 0) {
