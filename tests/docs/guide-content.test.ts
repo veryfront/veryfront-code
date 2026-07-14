@@ -98,7 +98,11 @@ describe("guide content contracts", () => {
 
     assertStringIncludes(guide, "same Git checkout and CI job");
     assertStringIncludes(guide, "cancel-in-progress: false");
-    assertStringIncludes(guide, "not an enforced repository connection");
+    assertStringIncludes(
+      guide,
+      "repository access and deployment credentials inside",
+    );
+    assertStringIncludes(guide, "similar to a GitOps workflow");
     assertStringIncludes(guide, "Skipping superseded main commit");
     assertStringIncludes(guide, "working-directory: apps/storefront");
     assertStringIncludes(guide, ".veryfront/` in `.gitignore");

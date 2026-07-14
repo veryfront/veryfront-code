@@ -24,8 +24,8 @@ into Veryfront and deploy it to staging. Record that successful job's Git SHA.
 Do not start a new Studio change before this Push finishes.
 
 Create a non-main Studio branch for the citizen-developer change. Do not edit
-or publish directly from Studio `main`. This CLI workflow cannot enforce the
-rule, so the team must apply it as part of its source-control policy.
+or publish directly from Studio `main`. Apply this rule through the team's
+source-control policy and CI ownership.
 
 ## Create the Studio handoff
 
@@ -150,11 +150,10 @@ Studio base Git SHA. Reviewers can use those values to trace the handoff and
 identify a stale snapshot.
 
 You can put the same Pull, test, commit, and `gh pr create` sequence in a
-repository-owned CI workflow. Require the release version and Studio base Git
-SHA as inputs, write both values into the pull request, and label a mismatch
-between the base SHA and current `main` as a stale full snapshot. Veryfront does
-not hold the Git credential or create the pull request in this workflow; the
-repository-owned workflow does.
+repository-owned CI workflow. Keep the Git credential and pull request creation
+in that workflow. Require the release version and Studio base Git SHA as inputs,
+write both values into the pull request, and label a mismatch between the base
+SHA and current `main` as a stale full snapshot.
 
 ## Resolve conflicts in Git
 
