@@ -42,6 +42,7 @@ function mockFilesResponse(paths: string[], next?: string): Promise<unknown> {
   return Promise.resolve({
     data: paths.map((path) => ({
       path,
+      content: `content for ${path}`,
       size: 100,
       type: "file",
       created_at: "",
@@ -427,6 +428,78 @@ describe("getFileContent", () => {
 });
 
 describe("pullCommand", () => {
+  it("writes listed content after every page loads without per-file requests", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    let requestCount = 0;
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        requestCount++;
+
+        assertEquals(url.pathname, "/projects/alpha/files");
+        assertEquals(await exists(join(tempDir, "app", "first.ts")), false);
+        assertEquals(await exists(join(tempDir, "app", "second.ts")), false);
+
+        if (requestCount === 1) {
+          assertEquals(url.searchParams.get("cursor"), null);
+          return Response.json({
+            data: [{
+              path: "app/first.ts",
+              content: "first page\n",
+              size: 11,
+              type: "file",
+              created_at: "",
+              updated_at: "",
+            }],
+            page_info: { next: "next-page" },
+          });
+        }
+
+        if (requestCount === 2) {
+          assertEquals(url.searchParams.get("cursor"), "next-page");
+          return Response.json({
+            data: [{
+              path: "app/second.ts",
+              content: "second page\n",
+              size: 12,
+              type: "file",
+              created_at: "",
+              updated_at: "",
+            }],
+            page_info: {},
+          });
+        }
+
+        throw new Error(`Pull made an unexpected per-file request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(requestCount, 2);
+      assertEquals(await Deno.readTextFile(join(tempDir, "app", "first.ts")), "first page\n");
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "app", "second.ts")),
+        "second page\n",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("prunes managed local files missing from the selected Studio branch", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
@@ -455,6 +528,7 @@ describe("pullCommand", () => {
               JSON.stringify({
                 data: [{
                   path: "app/keep.ts",
+                  content: "export default 1;",
                   size: 12,
                   type: "file",
                   created_at: "",
@@ -466,12 +540,7 @@ describe("pullCommand", () => {
             ),
           );
         }
-        return Promise.resolve(
-          new Response(JSON.stringify({ path: "app/keep.ts", content: "export default 1;" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
+        throw new Error(`Pruning pull made an unexpected per-file request: ${url}`);
       }) as typeof fetch;
 
       await pullCommand({
@@ -516,8 +585,8 @@ describe("pullCommand", () => {
           return Promise.resolve(
             Response.json({
               data: [
-                { path: "app/local-only.ts", size: 7, type: "file" },
-                { path: "assets/image.png", size: 7, type: "file" },
+                { path: "app/local-only.ts", content: "remote\n", size: 7, type: "file" },
+                { path: "assets/image.png", content: "binary", size: 7, type: "file" },
               ],
               page_info: {},
             }),
@@ -597,8 +666,8 @@ describe("pullCommand", () => {
         Promise.resolve(
           Response.json({
             data: [
-              { path: "app/page.ts", size: 7, type: "file" },
-              { path: "app/page.ts", size: 7, type: "file" },
+              { path: "app/page.ts", content: "first", size: 7, type: "file" },
+              { path: "app/page.ts", content: "second", size: 7, type: "file" },
             ],
             page_info: {},
           }),
@@ -684,6 +753,7 @@ describe("pullCommand", () => {
               JSON.stringify({
                 data: [{
                   path: "app/keep.ts",
+                  content: "new\n",
                   size: 12,
                   type: "file",
                   created_at: "",
@@ -753,7 +823,7 @@ describe("pullCommand", () => {
     }
   });
 
-  it("keeps prune candidates and fails when a remote file cannot be written", async () => {
+  it("leaves local files untouched when a later list page fails", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
     const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
@@ -765,40 +835,30 @@ describe("pullCommand", () => {
       await initializeCleanTestGit(tempDir);
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
+      let requestCount = 0;
 
       globalThis.fetch = ((input: string | URL | Request) => {
         const url = String(input);
-        if (url.includes("/files?branch=studio-change")) {
+        requestCount++;
+        if (requestCount === 1) {
           return Promise.resolve(
             new Response(
               JSON.stringify({
-                data: [
-                  {
-                    path: "app/keep.ts",
-                    size: 12,
-                    type: "file",
-                    created_at: "",
-                    updated_at: "",
-                  },
-                  {
-                    path: "app/broken.ts",
-                    size: 12,
-                    type: "file",
-                    created_at: "",
-                    updated_at: "",
-                  },
-                ],
-                page_info: {},
+                data: [{
+                  path: "app/keep.ts",
+                  content: "new\n",
+                  size: 4,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                }],
+                page_info: { next: "next-page" },
               }),
               { status: 200, headers: { "content-type": "application/json" } },
             ),
           );
         }
-        if (url.includes("app%2Fkeep.ts")) {
-          return Promise.resolve(
-            Response.json({ path: "app/keep.ts", content: "new\n" }),
-          );
-        }
+        assertStringIncludes(url, "cursor=next-page");
         return Promise.resolve(
           new Response(JSON.stringify({ error: "failed" }), {
             status: 500,
@@ -820,7 +880,8 @@ describe("pullCommand", () => {
         Error,
       );
 
-      assertStringIncludes(describeTestError(error), "Failed to pull");
+      assertEquals(requestCount, 2);
+      assertStringIncludes(describeTestError(error), "Failed to list files");
       assertEquals(await Deno.readTextFile(join(tempDir, "app", "keep.ts")), "old\n");
       assertEquals(await exists(join(tempDir, "app", "remove.ts")), true);
     } finally {
@@ -941,15 +1002,17 @@ describe("pullCommand", () => {
       globalThis.fetch = ((input: string | URL | Request) => {
         const url = String(input);
         const project = url.includes("/projects/alpha/") ? "alpha" : "beta";
-        if (!url.includes("app.ts")) {
-          return Promise.resolve(
-            Response.json({
-              data: [{ path: "app.ts", size: 10, type: "file" }],
-              page_info: {},
-            }),
-          );
-        }
-        return Promise.resolve(Response.json({ path: "app.ts", content: `${project} new\n` }));
+        return Promise.resolve(
+          Response.json({
+            data: [{
+              path: "app.ts",
+              content: `${project} new\n`,
+              size: 10,
+              type: "file",
+            }],
+            page_info: {},
+          }),
+        );
       }) as typeof fetch;
 
       await pullCommand({
@@ -987,6 +1050,7 @@ describe("pullCommand", () => {
             JSON.stringify({
               data: [{
                 path: "../outside.ts",
+                content: "outside",
                 size: 12,
                 type: "file",
                 created_at: "",
@@ -1040,6 +1104,7 @@ describe("pullCommand", () => {
               JSON.stringify({
                 data: [{
                   path: "app/page.tsx",
+                  content: "outside",
                   size: 12,
                   type: "file",
                   created_at: "",
@@ -1051,12 +1116,7 @@ describe("pullCommand", () => {
             ),
           );
         }
-        return Promise.resolve(
-          new Response(JSON.stringify({ path: "app/page.tsx", content: "outside" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
+        throw new Error(`Pull made an unexpected per-file request: ${url}`);
       }) as typeof fetch;
 
       const error = await assertRejects(
@@ -1100,6 +1160,7 @@ describe("pullCommand", () => {
               JSON.stringify({
                 data: [{
                   path: "app/page.tsx",
+                  content: "export default null;",
                   size: 10,
                   type: "file",
                   created_at: "",
@@ -1111,12 +1172,7 @@ describe("pullCommand", () => {
             ),
           );
         }
-        return Promise.resolve(
-          new Response(JSON.stringify({ path: "app/page.tsx", content: "export default null;" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
+        throw new Error(`Pull made an unexpected per-file request: ${url}`);
       }) as typeof fetch;
 
       const error = await assertRejects(
@@ -1202,6 +1258,7 @@ describe("pullCommand", () => {
               JSON.stringify({
                 data: [{
                   path: "app/page.tsx",
+                  content: "export default null;",
                   size: 12,
                   type: "file",
                   created_at: "2026-01-01T00:00:00Z",
@@ -1214,12 +1271,7 @@ describe("pullCommand", () => {
           );
         }
 
-        return Promise.resolve(
-          new Response(JSON.stringify({ path: "app/page.tsx", content: "export default null;" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
+        throw new Error(`Pull made an unexpected per-file request: ${url}`);
       }) as typeof fetch;
 
       const error = await assertRejects(

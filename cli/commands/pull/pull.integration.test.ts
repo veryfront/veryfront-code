@@ -36,6 +36,7 @@ describe("pull command integration", () => {
       if (!first) return;
 
       assertExists(first.path);
+      assertEquals(typeof first.content, "string");
       assertExists(first.size);
       assertExists(first.type);
     });
