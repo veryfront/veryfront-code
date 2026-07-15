@@ -282,6 +282,132 @@ describe("ProjectScopedRegistryManager transactions", () => {
     });
   });
 
+  it("preserves a live registration that arrives while replacement is staged", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    runWithCacheKeyContext(scope, () => manager.register("old-agent", "old"));
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.clear();
+          manager.register("discovered-agent", "discovered");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => manager.register("route-agent", "route"));
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("old-agent"), undefined);
+      assertEquals(manager.get("discovered-agent"), "discovered");
+      assertEquals(manager.get("route-agent"), "route");
+    });
+  });
+
+  it("preserves a live deletion that arrives while mutations are staged", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    runWithCacheKeyContext(scope, () => {
+      manager.register("deleted-agent", "old");
+      manager.register("stable-agent", "stable");
+    });
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("discovered-agent", "discovered");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.delete("deleted-agent"), true);
+    });
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("deleted-agent"), undefined);
+      assertEquals(manager.get("stable-agent"), "stable");
+      assertEquals(manager.get("discovered-agent"), "discovered");
+    });
+  });
+
+  it("honors a live clear after a transaction stages the first item", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("staged-agent", "staged");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => manager.clear());
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("staged-agent"), undefined);
+    });
+  });
+
+  it("serializes concurrent transactions for the same registry scope", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let secondStarted = false;
+
+    const first = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("first-agent", "first");
+          firstStarted.resolve();
+          await releaseFirst.promise;
+        }),
+    );
+    await firstStarted.promise;
+
+    const second = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          secondStarted = true;
+          manager.register("second-agent", "second");
+        }),
+    );
+    await Promise.resolve();
+    assertEquals(secondStarted, false);
+
+    releaseFirst.resolve();
+    await Promise.all([first, second]);
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("first-agent"), "first");
+      assertEquals(manager.get("second-agent"), "second");
+    });
+  });
+
   it("discards staged mutations when the transaction fails", async () => {
     const manager = new ProjectScopedRegistryManager<string>("skill");
     runWithCacheKeyContext(scope, () => manager.register("stable-skill", "stable"));
