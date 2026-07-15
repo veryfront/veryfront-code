@@ -71,8 +71,8 @@ function contextValue(
   const noop = () => {};
   return {
     conversations: [],
-    active,
-    activeId: active.id,
+    activeConversation: active,
+    activeConversationId: active.id,
     isLoading: false,
     select: noop,
     create: () => active,
@@ -97,8 +97,8 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const placeholder = conversation("placeholder", []);
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
-      active: null,
-      activeId: null,
+      activeConversation: null,
+      activeConversationId: null,
     };
     let latest: UseConversationChatResult | null = null;
 
@@ -152,8 +152,8 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const placeholder = conversation("placeholder", []);
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
-      active: null,
-      activeId: null,
+      activeConversation: null,
+      activeConversationId: null,
     };
     let latest: UseConversationChatResult | null = null;
 
@@ -209,8 +209,8 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const placeholder = conversation("placeholder", []);
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
-      active: null,
-      activeId: null,
+      activeConversation: null,
+      activeConversationId: null,
     };
     let latest: UseConversationChatResult | null = null;
 
@@ -342,7 +342,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       const staleSubmit = latest!.chat.handleSubmit;
 
       const pendingRender = renderedMessageIds.length;
-      renderValue({ ...contextValue(first, save), activeId: second.id });
+      renderValue({ ...contextValue(first, save), activeConversationId: second.id });
       assertEquals(
         renderedMessageIds[pendingRender],
         [],
@@ -421,7 +421,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       await settle();
       assertEquals(latest!.chat.status, "error");
 
-      renderValue({ ...contextValue(first, () => {}), activeId: second.id });
+      renderValue({ ...contextValue(first, () => {}), activeConversationId: second.id });
       assertEquals(latest!.chat.isLoading, false);
       assertEquals(latest!.chat.error, null);
       assertEquals(latest!.chat.status, "ready");

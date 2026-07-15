@@ -124,8 +124,9 @@ export interface UseConversationsResult {
   /** All conversations as summaries (no messages), newest first. */
   conversations: ConversationSummary[];
   /** The full active conversation (with messages), or `null`. */
-  active: Conversation | null;
-  activeId: string | null;
+  activeConversation: Conversation | null;
+  /** Id of the active conversation, or `null`. */
+  activeConversationId: string | null;
   /** True while the initial list is loading from the store. */
   isLoading: boolean;
   select: (id?: string | null) => void;
@@ -382,8 +383,8 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   // on every render of the provider.
   return React.useMemo(() => ({
     conversations: summaries,
-    active,
-    activeId,
+    activeConversation: active,
+    activeConversationId: activeId,
     isLoading,
     select,
     create,

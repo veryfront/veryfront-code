@@ -163,15 +163,15 @@ UncontrolledChat.displayName = "UncontrolledChat";
  */
 export function ConversationBoundChat(props: ChatProps): React.ReactElement {
   const conversations = useConversationsContextOptional();
-  if (!conversations || conversations.activeId == null) {
+  if (!conversations || conversations.activeConversationId == null) {
     return <UncontrolledChat ref={props.ref} {...props} />;
   }
-  const { active, activeId } = conversations;
+  const { activeConversation, activeConversationId } = conversations;
   // Wait for the active thread's messages before mounting, so `useChat` seeds
   // from the right thread rather than a still-loading one.
-  if (active?.id !== activeId) {
+  if (activeConversation?.id !== activeConversationId) {
     return <>{props.skeleton ?? <ChatMessagesSkeleton />}</>;
   }
-  return <UncontrolledChat key={activeId} ref={props.ref} {...props} />;
+  return <UncontrolledChat key={activeConversationId} ref={props.ref} {...props} />;
 }
 ConversationBoundChat.displayName = "ConversationBoundChat";

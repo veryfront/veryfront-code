@@ -90,8 +90,16 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       const view = mount(store);
       await settle();
 
-      assertEquals(view.get().activeId, "newer", "newest stored conversation should be active");
-      assertEquals(view.get().active?.title, "Newer", "active conversation should load");
+      assertEquals(
+        view.get().activeConversationId,
+        "newer",
+        "newest stored conversation should be active",
+      );
+      assertEquals(
+        view.get().activeConversation?.title,
+        "Newer",
+        "active conversation should load",
+      );
 
       flushSync(() => view.root.unmount());
       await settle();
