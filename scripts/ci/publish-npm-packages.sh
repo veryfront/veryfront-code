@@ -86,7 +86,10 @@ update_package_version() {
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
-  for attempt in $(seq 1 24); do
+  # npm can expose a published version before its gitHead metadata converges.
+  # Allow up to five minutes of empty reads while preserving hash mismatches as
+  # immediate failures.
+  for attempt in $(seq 1 60); do
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
@@ -94,7 +97,7 @@ wait_for_npm_git_head() {
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
     fi
-    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/24)."
+    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/60)."
     sleep 5
   done
 
