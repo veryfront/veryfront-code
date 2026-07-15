@@ -163,8 +163,8 @@ export async function withSpan<T>(
   const spanContext = shimTrace.setSpan(parentContext, span);
 
   try {
-    const result = await shimContext.with(spanContext, () => fn(span));
     span.setStatus({ code: SpanStatusCode.OK });
+    const result = await shimContext.with(spanContext, () => fn(span));
     return result;
   } catch (error) {
     setSpanErrorStatus(span, error);
@@ -287,6 +287,14 @@ export function setActiveSpanAttributes(
   if (!span) return;
 
   for (const [key, value] of Object.entries(attributes)) span.setAttribute(key, value);
+}
+
+/** Marks the active span as failed. */
+export function setActiveSpanErrorStatus(error: unknown): void {
+  const span = shimTrace.getActiveSpan?.();
+  if (!span) return;
+
+  setSpanErrorStatus(span, error);
 }
 
 /** Context for with. */

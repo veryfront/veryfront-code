@@ -288,6 +288,78 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(response.toolCalls[0]?.result, updateError);
   });
 
+  it("forces a final response after create_agent succeeds during generate()", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-generate-1",
+              toolName: "create_agent",
+              input: '{"id":"gmail-assistant-e2e"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "Created Gmail Assistant." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const createAgent = tool({
+      id: "create_agent",
+      description: "Create a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: async ({ id }) => ({
+        id,
+        name: "Gmail Assistant",
+        source_path: `agents/${id}.ts`,
+      }),
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Create agents and summarize successful tool results.",
+      tools: { create_agent: createAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Create a Gmail agent" });
+
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
+    assertEquals(toolNamesByStep[1], []);
+  });
+
   it("removes provider-native tools from the forced final response after create_agent", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
