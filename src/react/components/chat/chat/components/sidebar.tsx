@@ -251,10 +251,8 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
       <ChatTokens />
       <div
         data-vf-chat=""
-        // Fills its parent by default: a composed layout container
-        // (`AppShell.Sidebar`) provides the width and off-canvas overlay. The
-        // standalone `<ChatSidebar>` preset supplies its own fixed-width rail
-        // chrome via `className` ({@link STANDALONE_SIDEBAR_CHROME}).
+        // Fills its parent by default (a composed layout container provides
+        // width + overlay); the standalone preset supplies its own rail chrome.
         className={cn("flex flex-col h-full", className)}
       >
         {children}
@@ -682,10 +680,8 @@ export interface ChatSidebarProps extends Omit<ChatSidebarRootProps, "children">
 
 /** The one-shot preset — composes Root + NewButton + auto List. */
 /**
- * Fixed-width rail chrome for the standalone `<ChatSidebar>` preset: a 240px
- * (`w-60`) column that becomes an off-canvas overlay on small screens.
- * `ChatSidebar.Root` itself is width-agnostic (fills its parent), so compose
- * this class onto it — or supply your own — when there is no layout container.
+ * Fixed-width rail chrome (240px `w-60`, off-canvas overlay on small screens)
+ * for the standalone `<ChatSidebar>` preset. `ChatSidebar.Root` is width-agnostic.
  */
 export const STANDALONE_SIDEBAR_CHROME =
   "w-60 shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]";

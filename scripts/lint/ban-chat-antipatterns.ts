@@ -95,11 +95,13 @@ async function walk(
 // a ceiling when its file shrinks so the improvement cannot silently regress.
 const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/index.tsx": 330,
-  "src/react/components/chat/chat/composition/message.tsx": 1001,
+  // Message.Sources extracted to composition/message-sources.tsx.
+  "src/react/components/chat/chat/composition/message.tsx": 987,
   // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).
   // Split responsibilities before adding more behavior to this file.
-  "src/react/components/chat/chat/components/sidebar.tsx": 740,
-  "src/react/components/chat/chat/composition/chat-composer.tsx": 667,
+  "src/react/components/chat/chat/components/sidebar.tsx": 739,
+  // useComposerValue extracted to composition/use-composer-value.ts.
+  "src/react/components/chat/chat/composition/chat-composer.tsx": 619,
   "src/react/components/chat/agent-picker.tsx": 502,
   "src/react/components/chat/chat-actions.tsx": 515,
   "src/react/components/chat/chat/controlled-chat.tsx": 244,

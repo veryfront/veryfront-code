@@ -47,11 +47,7 @@ export interface AgentOption {
   id: string;
   /** Display name (also the search keyword). */
   name: string;
-  /**
-   * Avatar image URL; initials are shown when absent. Named to match
-   * `AgentMetadata.avatarUrl` so `useAgents()` results pass through without a
-   * `.map`. `null` (the metadata's absent value) is treated as no avatar.
-   */
+  /** Avatar image URL (matches `AgentMetadata.avatarUrl`); initials shown when absent/null. */
   avatarUrl?: string | null;
   /** Dims the row and blocks selection. */
   disabled?: boolean;
