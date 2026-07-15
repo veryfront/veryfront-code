@@ -23,18 +23,73 @@
  * @module
  */
 
-import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const DEFAULT_SCOPE_ID = "__default__";
 
-function buildRegistryScopeId(): string {
-  const cacheContext = tryGetCacheKeyContext();
-  if (!cacheContext) {
-    return DEFAULT_SCOPE_ID;
-  }
+interface RegistryTransactionStage {
+  commit(): void;
+}
 
-  return `${cacheContext.projectId}:${cacheContext.mode}:${cacheContext.versionId}`;
+interface RegistryTransaction {
+  readonly targetScopeId: string;
+  readonly stages: Map<object, RegistryTransactionStage>;
+  state: "active" | "committed" | "aborted";
+}
+
+const registryTransactionStorage = new AsyncLocalStorage<RegistryTransaction>();
+
+function buildRegistryScopeId(): string {
+  // tryGetRegistryScopeId() returns a project-isolated key even when
+  // tryGetCacheKeyContext() would return null (e.g. control-plane runs for an
+  // environment source without a pinned releaseId). Without this, all such
+  // runs collapse to "__default__", so concurrent projects can overwrite one
+  // another's registered primitives.
+  return tryGetRegistryScopeId() ?? DEFAULT_SCOPE_ID;
+}
+
+/**
+ * Stage project-scoped registry mutations and publish them as one synchronous
+ * commit after the callback succeeds. Reads inside the callback see staged
+ * state; concurrent requests keep seeing the previous live state.
+ * The commit is an authoritative replacement, so it linearizes after and may
+ * supersede live writes made to the same scope while staging is in progress.
+ * Use this for complete discovery generations, not incremental updates.
+ *
+ * Nested calls participate in the existing transaction. If a nested tenant
+ * context changes the registry scope, the first registry access throws rather
+ * than committing data into the wrong tenant.
+ */
+export async function runWithRegistryTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  const existing = registryTransactionStorage.getStore();
+  if (existing?.state === "active") return await fn();
+
+  const transaction: RegistryTransaction = {
+    targetScopeId: buildRegistryScopeId(),
+    stages: new Map(),
+    state: "active",
+  };
+
+  return await registryTransactionStorage.run(transaction, async () => {
+    try {
+      const result = await fn();
+
+      // Map replacement is synchronous. No other request can observe a partial
+      // commit between managers in this JavaScript turn.
+      for (const stage of transaction.stages.values()) {
+        stage.commit();
+      }
+      transaction.state = "committed";
+      transaction.stages.clear();
+      return result;
+    } catch (error) {
+      transaction.state = "aborted";
+      transaction.stages.clear();
+      throw error;
+    }
+  });
 }
 
 /**
@@ -56,10 +111,57 @@ export class ProjectScopedRegistryManager<T> {
     return buildRegistryScopeId();
   }
 
+  /** Return a transaction-local copy of the target registry when staging. */
+  private getTransactionRegistry(scopeId: string): Map<string, T> | undefined {
+    const transaction = registryTransactionStorage.getStore();
+    if (!transaction) return undefined;
+    if (transaction.state === "committed") return undefined;
+    if (transaction.state === "aborted") {
+      throw new Error(
+        `[${this.registryName}] Registry transaction already aborted for scope ` +
+          `"${transaction.targetScopeId}"`,
+      );
+    }
+
+    if (scopeId !== transaction.targetScopeId) {
+      throw new Error(
+        `[${this.registryName}] Registry scope changed during transaction: ` +
+          `expected "${transaction.targetScopeId}", got "${scopeId}"`,
+      );
+    }
+
+    const existing = transaction.stages.get(this) as
+      | (RegistryTransactionStage & { registry: Map<string, T> })
+      | undefined;
+    if (existing) return existing.registry;
+
+    const registry = new Map(this.registriesByScope.get(scopeId));
+    const stage: RegistryTransactionStage & { registry: Map<string, T> } = {
+      registry,
+      commit: () => {
+        if (registry.size === 0) {
+          this.registriesByScope.delete(scopeId);
+        } else {
+          this.registriesByScope.set(scopeId, registry);
+        }
+      },
+    };
+    transaction.stages.set(this, stage);
+    return registry;
+  }
+
+  /** Read the active registry, routing transaction access to its staged copy. */
+  private getActiveScopeRegistry(scopeId: string): Map<string, T> | undefined {
+    return this.getTransactionRegistry(scopeId) ?? this.registriesByScope.get(scopeId);
+  }
+
   /**
    * Get or create registry for a specific project.
    */
   private getScopeRegistry(scopeId: string): Map<string, T> {
+    const staged = this.getTransactionRegistry(scopeId);
+    if (staged) return staged;
+
     const existing = this.registriesByScope.get(scopeId);
     if (existing) return existing;
 
@@ -90,6 +192,9 @@ export class ProjectScopedRegistryManager<T> {
    * Use for framework-provided tools, not user-defined ones.
    */
   registerShared(id: string, item: T): void {
+    // Shared framework infrastructure is intentionally process-wide and is
+    // published immediately even inside a project transaction. Project
+    // discovery must never use this method for tenant-owned definitions.
     if (this.sharedRegistry.has(id)) {
       agentLogger.debug(`[${this.registryName}] Shared "${id}" already registered. Overwriting.`);
     }
@@ -104,7 +209,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   get(id: string): T | undefined {
     const scopeId = this.getCurrentScopeId();
-    return this.registriesByScope.get(scopeId)?.get(id) ?? this.sharedRegistry.get(id);
+    return this.getActiveScopeRegistry(scopeId)?.get(id) ?? this.sharedRegistry.get(id);
   }
 
   /**
@@ -115,7 +220,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   getOwn(id: string): T | undefined {
     const scopeId = this.getCurrentScopeId();
-    return this.registriesByScope.get(scopeId)?.get(id);
+    return this.getActiveScopeRegistry(scopeId)?.get(id);
   }
 
   /**
@@ -123,7 +228,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   has(id: string): boolean {
     const scopeId = this.getCurrentScopeId();
-    return (this.registriesByScope.get(scopeId)?.has(id) ?? false) ||
+    return (this.getActiveScopeRegistry(scopeId)?.has(id) ?? false) ||
       this.sharedRegistry.has(id);
   }
 
@@ -132,7 +237,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   getAllIds(): string[] {
     const scopeId = this.getCurrentScopeId();
-    const projectIds = this.registriesByScope.get(scopeId)?.keys() ?? [];
+    const projectIds = this.getActiveScopeRegistry(scopeId)?.keys() ?? [];
     const sharedIds = this.sharedRegistry.keys();
     return Array.from(new Set([...projectIds, ...sharedIds]));
   }
@@ -142,7 +247,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   getAll(): Map<string, T> {
     const scopeId = this.getCurrentScopeId();
-    const projectRegistry = this.registriesByScope.get(scopeId);
+    const projectRegistry = this.getActiveScopeRegistry(scopeId);
     if (!projectRegistry) return new Map(this.sharedRegistry);
 
     const result = new Map<string, T>(this.sharedRegistry);
@@ -155,7 +260,7 @@ export class ProjectScopedRegistryManager<T> {
    */
   delete(id: string): boolean {
     const scopeId = this.getCurrentScopeId();
-    const registry = this.registriesByScope.get(scopeId);
+    const registry = this.getActiveScopeRegistry(scopeId);
     if (!registry?.has(id)) return false;
 
     registry.delete(id);
@@ -167,6 +272,11 @@ export class ProjectScopedRegistryManager<T> {
    * Clear all items for the current project.
    */
   clear(): void {
+    const staged = this.getTransactionRegistry(this.getCurrentScopeId());
+    if (staged) {
+      staged.clear();
+      return;
+    }
     this.clearProject(this.getCurrentScopeId());
   }
 
@@ -174,6 +284,13 @@ export class ProjectScopedRegistryManager<T> {
    * Clear a specific project's registry.
    */
   clearProject(projectId: string): void {
+    const transaction = registryTransactionStorage.getStore();
+    if (transaction && transaction.state !== "committed") {
+      throw new Error(
+        `[${this.registryName}] clearProject() is not supported during a registry transaction`,
+      );
+    }
+
     let cleared = false;
     for (const scopeId of Array.from(this.registriesByScope.keys())) {
       if (scopeId === projectId || scopeId.startsWith(`${projectId}:`)) {
@@ -191,6 +308,13 @@ export class ProjectScopedRegistryManager<T> {
    * Clear everything (for testing).
    */
   clearAll(): void {
+    const transaction = registryTransactionStorage.getStore();
+    if (transaction && transaction.state !== "committed") {
+      throw new Error(
+        `[${this.registryName}] clearAll() is not supported during a registry transaction`,
+      );
+    }
+
     this.registriesByScope.clear();
     this.sharedRegistry.clear();
     agentLogger.debug(`[${this.registryName}] Cleared all registries`);
@@ -216,7 +340,7 @@ export class ProjectScopedRegistryManager<T> {
       projectCount: this.registriesByScope.size,
       sharedCount: this.sharedRegistry.size,
       totalItems,
-      currentProjectItems: this.registriesByScope.get(scopeId)?.size ?? 0,
+      currentProjectItems: this.getActiveScopeRegistry(scopeId)?.size ?? 0,
     };
   }
 }

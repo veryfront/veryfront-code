@@ -4,7 +4,9 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import {
   type CacheKeyContext,
   runWithCacheKeyContext,
+  runWithoutCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
 import {
@@ -44,13 +46,21 @@ export function getWorkflowTenant(): CapturedTenantContext | undefined {
   return workflowTenantStorage.getStore();
 }
 
-function cacheKeyContextFromWorkflowTenant(tenant: CapturedTenantContext): CacheKeyContext {
+function cacheKeyContextFromWorkflowTenant(
+  tenant: CapturedTenantContext,
+): CacheKeyContext | null {
   const mode = tenant.productionMode ? "production" : "preview";
 
+  // Environment sources are mutable and have no immutable version segment.
+  // A synthetic "latest" distributed-cache bucket can mix different source
+  // snapshots, so these tenants use request context for registry isolation and
+  // deliberately skip distributed caching.
+  if (mode === "production" && !tenant.releaseId) return null;
+
   return {
-    projectId: tenant.projectId || tenant.projectSlug || "default",
+    projectId: tenant.projectId || tenant.projectSlug,
     mode,
-    versionId: mode === "production" ? (tenant.releaseId || "latest") : (tenant.branch || "main"),
+    versionId: mode === "production" ? tenant.releaseId! : (tenant.branch || "main"),
   };
 }
 
@@ -65,7 +75,24 @@ export function runWithWorkflowTenant<T>(
   if (!tenant) return fn();
   return workflowTenantStorage.run(
     tenant,
-    () => runWithCacheKeyContext(cacheKeyContextFromWorkflowTenant(tenant), fn),
+    () =>
+      runWithRequestContext(
+        {
+          projectSlug: tenant.projectSlug,
+          token: tenant.token,
+          projectId: tenant.projectId,
+          productionMode: tenant.productionMode,
+          releaseId: tenant.releaseId,
+          branch: tenant.branch,
+          environmentName: tenant.environmentName,
+        },
+        () => {
+          const cacheContext = cacheKeyContextFromWorkflowTenant(tenant);
+          return cacheContext
+            ? runWithCacheKeyContext(cacheContext, fn)
+            : runWithoutCacheKeyContext(fn);
+        },
+      ),
   );
 }
 

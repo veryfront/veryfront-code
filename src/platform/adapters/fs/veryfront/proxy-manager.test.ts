@@ -215,6 +215,47 @@ describe("ProxyFSAdapterManager", () => {
       assertEquals(manager.hasAdapter("project", true, "rel-2"), false);
       manager.dispose();
     });
+
+    it("should differentiate release-less production adapters by environment", () => {
+      const manager = createManager();
+      const disposed: string[] = [];
+      const adapters = (manager as unknown as {
+        adapters: Map<
+          string,
+          { adapter: { dispose: () => void }; lastAccessed: number }
+        >;
+      }).adapters;
+      adapters.set("proxy:project:production:environment:production", {
+        adapter: { dispose: () => disposed.push("production") },
+        lastAccessed: Date.now(),
+      });
+      adapters.set("proxy:project:production:environment:Development", {
+        adapter: { dispose: () => disposed.push("Development") },
+        lastAccessed: Date.now(),
+      });
+
+      assertEquals(
+        manager.hasAdapter("project", true, null),
+        true,
+      );
+      assertEquals(
+        manager.hasAdapter("project", true, null, null, "Development"),
+        true,
+      );
+
+      manager.evictAdapter("project", true, null);
+      assertEquals(disposed, ["production"]);
+      assertEquals(manager.hasAdapter("project", true, null), false);
+      assertEquals(manager.hasAdapter("project", true, null, null, "Development"), true);
+
+      manager.evictAdapter("project", true, null, null, "Development");
+      assertEquals(disposed, ["production", "Development"]);
+      assertEquals(
+        manager.hasAdapter("project", true, null, null, "Development"),
+        false,
+      );
+      manager.dispose();
+    });
   });
 
   describe("getStats", () => {

@@ -57,12 +57,27 @@ describe("Branch Cache Isolation - Context Verification", () => {
       );
       assertEquals(releaseKey, "proxy:test-project:production:rel_123");
 
+      const environmentKey = buildProxyManagerCacheKey(
+        "test-project",
+        true,
+        null,
+        null,
+        "Development",
+      );
+      assertEquals(
+        environmentKey,
+        "proxy:test-project:production:environment:Development",
+      );
+
       let threw = false;
       try {
         buildProxyManagerCacheKey("test-project", true, null, null);
       } catch (e) {
         threw = true;
-        assertEquals((e as Error).message, "Missing releaseId in production for test-project");
+        assertEquals(
+          (e as Error).message,
+          "Missing releaseId or environmentName in production for test-project",
+        );
       }
       assertEquals(threw, true, "Expected error when releaseId is missing in production mode");
     });
