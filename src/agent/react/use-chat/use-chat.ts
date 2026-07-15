@@ -18,6 +18,7 @@ import type {
   ChatFilePart,
   ChatMessage,
   ChatMessagePart,
+  ChatStatus,
   InferenceMode,
   ToolOutput,
   UseChatOptions,
@@ -127,6 +128,8 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
   messagesRef.current = messages;
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState<ChatStatus>("ready");
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [data, setData] = useState<unknown>(null);
   const [model, setModel] = useState<string | undefined>(options.model);
@@ -207,8 +210,11 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
       const base = message.baseMessages ?? messagesRef.current;
       setMessages([...base, userMessage]);
       setIsLoading(true);
+      setStatus("submitted");
+      setStreamingMessageId(null);
       setError(null);
 
+      let didError = false;
       try {
         const allMessages = [...base, userMessage];
 
@@ -256,9 +262,17 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
 
         if (!response.body) return;
 
-        const streamingMessageId = generateClientId("msg");
+        const fallbackStreamingId = generateClientId("msg");
         let hasAddedStreamingMessage = false;
-        const currentMessageIdRef = { current: streamingMessageId };
+        const currentMessageIdRef = { current: fallbackStreamingId };
+        // Promote the turn to `streaming` and publish the id of the message
+        // currently receiving tokens. Idempotent — repeated identical values
+        // bail out of re-render, so calling per chunk is cheap.
+        const markStreaming = () => {
+          if (!isLatestRequest(requestIdRef.current, requestId)) return;
+          setStatus("streaming");
+          setStreamingMessageId(currentMessageIdRef.current);
+        };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
         let serverModel: string | undefined = model;
         setActiveModel((current) =>
@@ -274,6 +288,13 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
               ...assistantMessage,
               metadata: { ...assistantMessage.metadata, model: serverModel },
             };
+            // A response delivered as a single complete message (no incremental
+            // `onUpdate`) still passes through `streaming` for one commit so
+            // consumers see a consistent lifecycle.
+            if (!hasAddedStreamingMessage) {
+              currentMessageIdRef.current = withMeta.id;
+              markStreaming();
+            }
             setMessages((prev) => {
               if (!isLatestRequest(requestIdRef.current, requestId)) return prev;
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
@@ -319,7 +340,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
           },
           onUpdate: (parts, messageId, messageMetadata) => {
             if (!isLatestRequest(requestIdRef.current, requestId)) return;
-            const id = messageId ?? streamingMessageId;
+            const id = messageId ?? fallbackStreamingId;
             const metadata = { ...messageMetadata, model: serverModel };
 
             if (messageId && messageId !== currentMessageIdRef.current) {
@@ -336,6 +357,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
                     )
                     : prev
                 );
+                markStreaming();
                 return;
               }
             }
@@ -359,6 +381,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
                   ]
                   : prev
               );
+              markStreaming();
               return;
             }
 
@@ -371,6 +394,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
                 )
                 : prev
             );
+            markStreaming();
           },
           onToolCall: options.onToolCall
             ? (arg) =>
@@ -384,12 +408,15 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
         if (!isLatestRequest(requestIdRef.current, requestId)) return;
 
         const nextError = ensureError(error);
+        didError = true;
         setError(nextError);
         options.onError?.(nextError);
       } finally {
         // Only the latest request can clear loading/abort state.
         if (isLatestRequest(requestIdRef.current, requestId)) {
           setIsLoading(false);
+          setStatus(didError ? "error" : "ready");
+          setStreamingMessageId(null);
           abortControllerRef.current = null;
         }
       }
@@ -424,6 +451,8 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
     // request id also fences callbacks and state updaters queued by that chunk.
     invalidateActiveRequest();
     setIsLoading(false);
+    setStatus("ready");
+    setStreamingMessageId(null);
   }, [invalidateActiveRequest]);
 
   /**
@@ -440,6 +469,8 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
     setMessages(nextMessages);
     setInput("");
     setIsLoading(false);
+    setStatus("ready");
+    setStreamingMessageId(null);
     setError(null);
     setData(null);
     setModel(options.model);
@@ -590,6 +621,8 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
     messages,
     input,
     isLoading,
+    status,
+    streamingMessageId,
     error,
     model,
     activeModel,

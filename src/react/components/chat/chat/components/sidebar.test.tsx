@@ -73,7 +73,7 @@ describe("ChatSidebar — conversation-native", () => {
       flushSync(() => {
         root.render(
           <ConversationsProvider store={store} id="a">
-            <ChatSidebar fill />
+            <ChatSidebar />
           </ConversationsProvider>,
         );
       });
@@ -97,7 +97,6 @@ describe("ChatSidebar — conversation-native", () => {
       flushSync(() => {
         root.render(
           <ChatSidebar
-            fill
             conversations={[summary("x", "Controlled chat", 5000)]}
             activeId="x"
             onSelect={() => {}}

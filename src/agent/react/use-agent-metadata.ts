@@ -151,6 +151,38 @@ export function getAgentPromptSuggestions(agent: AgentMetadata | null): string[]
   }) ?? [];
 }
 
+/**
+ * A prompt suggestion normalized for rendering: the short `label` shown on the
+ * chip and the full `prompt` sent when it is clicked.
+ */
+export interface PromptSuggestion {
+  /** Short chip label — the agent's `title`, falling back to the prompt. */
+  label: string;
+  /** Full text sent to the agent when the chip is clicked. */
+  prompt: string;
+}
+
+/**
+ * Normalize an agent's prompt suggestions to `{ label, prompt }[]`, ready to
+ * render — the chip shows the short `title` while the click sends the full
+ * `prompt`. Saves consumers from flat-mapping `agent.suggestions.suggestions`
+ * and reconciling the `title`/`prompt` fields themselves.
+ */
+export function getAgentPromptSuggestionItems(
+  agent: AgentMetadata | null,
+): PromptSuggestion[] {
+  const list = agent?.suggestions?.suggestions;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((suggestion) => {
+    if (suggestion.type !== "prompt" || !("prompt" in suggestion) || !suggestion.prompt) {
+      return [];
+    }
+    const title = (suggestion as { title?: unknown }).title;
+    const label = typeof title === "string" && title.length > 0 ? title : suggestion.prompt;
+    return [{ label, prompt: suggestion.prompt }];
+  });
+}
+
 /** React hook for browser-safe source-defined agent metadata. */
 export function useAgentMetadata(agentId: string | null | undefined): UseAgentMetadataResult {
   const [agent, setAgent] = useState<AgentMetadata | null>(null);

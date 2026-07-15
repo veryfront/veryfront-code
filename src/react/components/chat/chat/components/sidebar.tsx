@@ -221,19 +221,13 @@ export interface ChatSidebarRootProps extends ChatSidebarControlProps {
   loading?: boolean;
   /** When `false`, the rail renders nothing. Default `true`. */
   isOpen?: boolean;
-  /**
-   * Fill the parent instead of owning a fixed width + mobile overlay chrome.
-   * Set when embedding inside a layout container (e.g. `AppShell.Sidebar`) that
-   * already provides width and the off-canvas overlay. Default `false`.
-   */
-  fill?: boolean;
   className?: string;
   children: React.ReactNode;
 }
 
 /** Context provider + outer rail container for the compound sidebar. */
 export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement | null {
-  const { loading, isOpen = true, fill = false, className, children } = props;
+  const { loading, isOpen = true, className, children } = props;
   const resolved = useResolvedSidebar(props);
 
   const value = React.useMemo<ChatSidebarContextValue>(
@@ -257,14 +251,11 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
       <ChatTokens />
       <div
         data-vf-chat=""
-        className={cn(
-          "flex flex-col h-full",
-          fill
-            ? "w-full"
-            : "shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
-          className,
-        )}
-        style={fill ? undefined : { width: 240 }}
+        // Fills its parent by default: a composed layout container
+        // (`AppShell.Sidebar`) provides the width and off-canvas overlay. The
+        // standalone `<ChatSidebar>` preset supplies its own fixed-width rail
+        // chrome via `className` ({@link STANDALONE_SIDEBAR_CHROME}).
+        className={cn("flex flex-col h-full", className)}
       >
         {children}
       </div>
@@ -690,12 +681,24 @@ ChatSidebarList.displayName = "ChatSidebar.List";
 export interface ChatSidebarProps extends Omit<ChatSidebarRootProps, "children"> {}
 
 /** The one-shot preset — composes Root + NewButton + auto List. */
+/**
+ * Fixed-width rail chrome for the standalone `<ChatSidebar>` preset: a 240px
+ * (`w-60`) column that becomes an off-canvas overlay on small screens.
+ * `ChatSidebar.Root` itself is width-agnostic (fills its parent), so compose
+ * this class onto it — or supply your own — when there is no layout container.
+ */
+export const STANDALONE_SIDEBAR_CHROME =
+  "w-60 shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]";
+
 function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
   // Show the "new" button whenever an action is available (explicit or context).
   const ctx = useConversationsContextOptional();
   const hasNew = props.onNew !== undefined || ctx !== null;
   return (
-    <ChatSidebarRoot {...props}>
+    <ChatSidebarRoot
+      {...props}
+      className={cn(STANDALONE_SIDEBAR_CHROME, props.className)}
+    >
       {hasNew && <ChatSidebarNewButton />}
       <ChatSidebarList />
     </ChatSidebarRoot>

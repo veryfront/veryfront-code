@@ -68,6 +68,8 @@ export function ControlledChat(
     inferenceMode,
     input,
     isLoading,
+    status,
+    streamingMessageId,
     messages,
     model,
     reload,
@@ -154,6 +156,8 @@ export function ControlledChat(
       messages={messages}
       input={input}
       isLoading={isLoading}
+      status={status}
+      streamingMessageId={streamingMessageId}
       error={error}
       setInput={setInput}
       onSubmit={handleSubmit}

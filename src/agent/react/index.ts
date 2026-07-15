@@ -13,6 +13,7 @@ export type {
   ChatMessage,
   ChatMessagePart,
   ChatReasoningPart,
+  ChatStatus,
   ChatStepPart,
   ChatStreamEvent,
   ChatTextPart,
@@ -30,6 +31,7 @@ export { useAgent } from "./use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "./use-agent.ts";
 
 export {
+  getAgentPromptSuggestionItems,
   getAgentPromptSuggestions,
   normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
@@ -41,6 +43,7 @@ export type {
   AgentMetadataSuggestion,
   AgentMetadataSuggestions,
   AgentMetadataTaskSuggestion,
+  PromptSuggestion,
   UseAgentMetadataResult,
 } from "./use-agent-metadata.ts";
 

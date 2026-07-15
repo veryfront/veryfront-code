@@ -47,8 +47,12 @@ export interface AgentOption {
   id: string;
   /** Display name (also the search keyword). */
   name: string;
-  /** Avatar image URL; initials are shown when absent. */
-  avatarSrc?: string;
+  /**
+   * Avatar image URL; initials are shown when absent. Named to match
+   * `AgentMetadata.avatarUrl` so `useAgents()` results pass through without a
+   * `.map`. `null` (the metadata's absent value) is treated as no avatar.
+   */
+  avatarUrl?: string | null;
   /** Dims the row and blocks selection. */
   disabled?: boolean;
 }
@@ -186,7 +190,7 @@ function AgentPickerTrigger(
       {selected && (
         <Avatar
           name={selected.name}
-          avatarSrc={selected.avatarSrc}
+          avatarSrc={selected.avatarUrl ?? undefined}
           tone="muted"
           aria-hidden="true"
           className="size-5! bg-[var(--background)]"
@@ -305,7 +309,7 @@ function AgentPickerItem(
     >
       <Avatar
         name={agent.name}
-        avatarSrc={agent.avatarSrc}
+        avatarSrc={agent.avatarUrl ?? undefined}
         tone="muted"
         aria-hidden="true"
         className="size-5! bg-[var(--background)]"

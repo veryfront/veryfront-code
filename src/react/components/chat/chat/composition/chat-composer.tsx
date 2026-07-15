@@ -33,6 +33,8 @@ import {
 } from "../../../ui/dropdown-menu.tsx";
 import { type ModelOption, ModelSelector } from "../../model-selector.tsx";
 import type { ChatTheme } from "../../theme.ts";
+import type { ChatFilePart } from "#veryfront/agent/react";
+import { attachmentsToFileParts, hasPendingAttachments } from "../chat-attachments.ts";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import { DropZoneOverlay } from "../components/drop-zone.tsx";
@@ -162,6 +164,31 @@ export function ChatInputStop(
   );
 }
 ChatInputStop.displayName = "ChatInput.Stop";
+
+/** Props for the unified {@link ChatInputSubmit} control. */
+export interface ChatInputSubmitProps extends ChatInputActionProps {
+  /**
+   * Icon shown while streaming. Defaults to the stop glyph. The `icon` prop
+   * applies to the idle/send state.
+   */
+  stopIcon?: React.ReactNode;
+}
+
+/**
+ * Unified submit control: renders {@link ChatInputStop} while a turn is
+ * streaming and {@link ChatInputSend} otherwise, so the common case needs one
+ * control instead of wiring `Send` + `Stop` and relying on their internal
+ * visibility. `Send`/`Stop` remain available as low-level escapes.
+ */
+export function ChatInputSubmit(
+  { icon, stopIcon, ...rest }: ChatInputSubmitProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  return c.isLoading
+    ? <ChatInputStop icon={stopIcon} {...rest} />
+    : <ChatInputSend icon={icon} {...rest} />;
+}
+ChatInputSubmit.displayName = "ChatInput.Submit";
 
 /** Voice button — shows when the field is empty and voice is available. */
 export function ChatInputVoice(
@@ -411,7 +438,24 @@ export interface ComposerStateProps {
   onChange: (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => void;
+  /**
+   * Explicit submit handler. Optional when `sendMessage` is provided — the
+   * composer then owns submit (fold attachments → file parts, guard in-flight
+   * uploads, clear input + attachments) so a composed consumer calls nothing.
+   */
   onSubmit?: (e?: React.FormEvent) => void;
+  /**
+   * Send a message directly. When set, the composer builds `onSubmit` itself:
+   * it trims the input, waits while any upload is still in flight, folds the
+   * resolved attachments into `file` parts, sends, then clears via `setInput`
+   * and `onClearAttachments`. Provide this (with `setInput`) instead of wiring
+   * the submit glue in userland.
+   */
+  sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void;
+  /** Clear the input after the composer-owned submit sends. */
+  setInput?: (value: string) => void;
+  /** Clear pending attachments after the composer-owned submit sends. */
+  onClearAttachments?: () => void;
   isLoading?: boolean;
   stop?: () => void;
   onVoice?: () => void;
@@ -436,16 +480,38 @@ function useComposerValue(p: ComposerStateProps): ComposerContextValue {
     attachment.state !== "error"
   ) ?? false;
 
+  // When `sendMessage` is supplied the composer owns submit: trim, wait for
+  // in-flight uploads, fold resolved attachments into file parts, send, clear.
+  // Otherwise fall back to the caller's explicit `onSubmit` (controlled mode).
+  const { sendMessage, setInput, onClearAttachments, onSubmit } = p;
+  const onSubmitEffective = React.useCallback((e?: React.FormEvent) => {
+    if (!sendMessage) {
+      onSubmit?.(e);
+      return;
+    }
+    e?.preventDefault();
+    if (p.isLoading) return;
+    const attachments = p.attachments ?? [];
+    // Sending now would carry only the resolved files and drop the in-flight one.
+    if (hasPendingAttachments(attachments)) return;
+    const text = p.input.trim();
+    const files = attachmentsToFileParts(attachments);
+    if (!text && files.length === 0) return;
+    sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
+    setInput?.("");
+    onClearAttachments?.();
+  }, [sendMessage, onSubmit, setInput, onClearAttachments, p.isLoading, p.input, p.attachments]);
+
   return React.useMemo<ComposerContextValue>(() => ({
     input: p.input,
-    setInput: () => {},
+    setInput: p.setInput ?? (() => {}),
     onChange: p.onChange,
     attachments: p.attachments ?? [],
     onAttach: p.onAttach,
     onSelectAttachment: p.onSelectAttachment,
     onRemoveAttachment: p.onRemoveAttachment,
     attachAccept: p.attachAccept,
-    onSubmit: (e?: React.FormEvent) => p.onSubmit?.(e),
+    onSubmit: onSubmitEffective,
     isLoading: p.isLoading ?? false,
     canSubmit: p.input.trim().length > 0 || hasResolvedAttachment,
     onStop: p.stop,
@@ -457,13 +523,14 @@ function useComposerValue(p: ComposerStateProps): ComposerContextValue {
     onModelChange: p.onModelChange,
   }), [
     p.input,
+    p.setInput,
     p.onChange,
     p.attachments,
     p.onAttach,
     p.onSelectAttachment,
     p.onRemoveAttachment,
     p.attachAccept,
-    p.onSubmit,
+    onSubmitEffective,
     p.isLoading,
     hasResolvedAttachment,
     p.stop,
@@ -659,6 +726,7 @@ export const ChatInput = Object.assign(ChatInputBase, {
   Field: ChatInputField,
   Send: ChatInputSend,
   Stop: ChatInputStop,
+  Submit: ChatInputSubmit,
   Voice: ChatInputVoice,
   Model: ChatInputModel,
   Attach: ChatInputAttach,

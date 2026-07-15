@@ -23,12 +23,17 @@ import * as React from "react";
 import { type AgentMetadata, useAgents } from "#veryfront/agent/react";
 import { type AgentOption, AgentPicker } from "./agent-picker.tsx";
 
-/** Map browser-safe agent metadata to the picker's row shape. */
+/**
+ * Narrow browser-safe agent metadata to the picker's row shape. `AgentOption`
+ * now shares `AgentMetadata`'s `avatarUrl` field, so `AgentMetadata[]` is also
+ * accepted by `<AgentPicker agents>` directly — this helper just drops the
+ * fields the rows don't use.
+ */
 export function agentsToPickerOptions(agents: AgentMetadata[]): AgentOption[] {
   return agents.map((agent) => ({
     id: agent.id,
     name: agent.name,
-    ...(agent.avatarUrl ? { avatarSrc: agent.avatarUrl } : {}),
+    avatarUrl: agent.avatarUrl,
   }));
 }
 

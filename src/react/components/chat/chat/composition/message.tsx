@@ -65,6 +65,12 @@ function metadataString(
 /** Props accepted by message root. */
 export interface MessageRootProps {
   message: ChatMessage;
+  /**
+   * Whether this turn is still streaming. Omit to derive it from
+   * `ChatContext` (`streamingMessageId === message.id`) so a hand-composed
+   * transcript never has to compute an off-by-one index. Pass a boolean only
+   * to override the context (e.g. rendering outside a live chat).
+   */
   isStreaming?: boolean;
   children: React.ReactNode;
   className?: string;
@@ -82,11 +88,14 @@ export interface MessageRootProps {
 }
 
 function MessageRoot(
-  { message, isStreaming = false, children, className, ref, ...overrides }: MessageRootProps,
+  { message, isStreaming, children, className, ref, ...overrides }: MessageRootProps,
 ): React.ReactElement {
   {
     const chat = useChatContextOptional();
     const role = message.role as MessageContextValue["role"];
+    // Derive streaming from context unless the caller pins it explicitly.
+    const resolvedStreaming = isStreaming ??
+      (chat?.streamingMessageId != null && chat.streamingMessageId === message.id);
     const answerParts = React.useMemo(
       () =>
         getAnswerPartsForRendering(message.parts, {
@@ -124,7 +133,7 @@ function MessageRoot(
       () => ({
         message,
         role,
-        isStreaming,
+        isStreaming: resolvedStreaming,
         parts,
         textContent,
         branch,
@@ -151,7 +160,7 @@ function MessageRoot(
         message,
         message.id,
         role,
-        isStreaming,
+        resolvedStreaming,
         parts,
         onReload,
         textContent,
@@ -209,7 +218,7 @@ function MessageAvatar(
         chat?.agent?.name ??
         metadataString(message.metadata, "agentId")}
       avatarUrl={metadataString(message.metadata, "agentAvatarUrl") ??
-        chat?.agent?.avatarUrl}
+        chat?.agent?.avatarUrl ?? undefined}
       model={metadataString(message.metadata, "model")}
       className={className}
     />
@@ -316,7 +325,7 @@ function MessageHeader(
     chat?.agent?.name ??
     metadataString(message.metadata, "agentId");
   const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
-    chat?.agent?.avatarUrl;
+    chat?.agent?.avatarUrl ?? undefined;
 
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
@@ -566,22 +575,43 @@ MessagePart.displayName = "Message.Part";
 export interface MessageSourcesProps {
   onSourceClick?: (source: Source, index: number) => void;
   className?: string;
+  /**
+   * Render each citation yourself. Pass a function-child to map every source
+   * (e.g. a restyled `SourcePill`), or `Sources.List` / `Sources.Pill` nodes to
+   * recompose the row. Omit for the default anatomy (a wrap of pills).
+   */
+  children?: React.ReactNode | ((source: Source, index: number) => React.ReactNode);
+  /** Render each source yourself instead of using the default `Sources.Pill`. */
+  renderItem?: (options: { item: Source; index: number }) => React.ReactNode;
 }
 
-/** The inline citation sources extracted from this message's tool results. */
+/**
+ * The inline citation sources extracted from this message's tool results.
+ * A black-box wrap of pills by default; compose it like the underlying
+ * `Sources` collection — a function-child, `renderItem`, or `Sources.List` /
+ * `Sources.Pill` leaves reading `useSources()`.
+ */
 function MessageSources(
-  { onSourceClick, className }: MessageSourcesProps,
+  { onSourceClick, className, children, renderItem }: MessageSourcesProps,
 ): React.ReactElement | null {
   const { message } = useMessageContext();
   const chat = useChatContextOptional();
   const sources = extractSourcesFromParts(message.parts);
   if (sources.length === 0) return null;
+  // A function-child maps each source — normalize it to the collection's
+  // `renderItem` so a consumer never has to reach for the underlying `Sources`.
+  const itemRenderer = typeof children === "function"
+    ? ({ item, index }: { item: Source; index: number }) => children(item, index)
+    : renderItem;
   return (
     <SourcesImpl
       sources={sources}
       onSourceClick={onSourceClick ?? chat?.onSourceClick}
       className={className}
-    />
+      renderItem={itemRenderer}
+    >
+      {typeof children === "function" ? undefined : children}
+    </SourcesImpl>
   );
 }
 MessageSources.displayName = "Message.Sources";
