@@ -495,6 +495,55 @@ describe("createApiClient", () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("retries PUT after a nested ECONNRESET and preserves the request body", async () => {
+      let callCount = 0;
+      const requestBodies: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
+        callCount++;
+        requestBodies.push(String(init?.body));
+        if (callCount === 1) {
+          const cause = Object.assign(new Error("read failed"), { code: "ECONNRESET" });
+          return Promise.reject(new TypeError("fetch failed", { cause }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ updated: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
+        assertEquals(result.updated, true);
+        assertEquals(callCount, 2);
+        assertEquals(requestBodies, [
+          JSON.stringify({ content: "same" }),
+          JSON.stringify({ content: "same" }),
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries PUT on 502 and succeeds on the second attempt", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ updated: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
+        assertEquals(result.updated, true);
+        assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("retry behavior for non-idempotent requests", () => {
@@ -554,6 +603,28 @@ describe("createApiClient", () => {
           () => client.post("/test", {}),
           Error,
           "connection reset",
+        );
+        assertEquals(callCount, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does NOT retry POST when fetch wraps ECONNRESET in a cause", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        const cause = Object.assign(new Error("read failed"), { code: "ECONNRESET" });
+        return Promise.reject(new TypeError("fetch failed", { cause }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.post("/test", {}),
+          TypeError,
+          "fetch failed",
         );
         assertEquals(callCount, 1);
       } finally {
