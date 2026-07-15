@@ -33,6 +33,7 @@ import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
   setActiveSpanAttributes as setOtelActiveSpanAttributes,
+  setActiveSpanErrorStatus as setOtelActiveSpanErrorStatus,
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -377,6 +378,9 @@ async function traceConfiguredToolExecution(input: {
           input.remoteToolSources,
         );
         const resultError = getToolResultError(result);
+        if (resultError !== undefined) {
+          setOtelActiveSpanErrorStatus(resultError);
+        }
         setOtelActiveSpanAttributes(
           buildRuntimeToolTraceAttributes({
             mode: input.mode,
@@ -440,6 +444,9 @@ async function traceProviderExecutedTool(input: {
   await withSpan(
     "agent.tool_execute",
     async () => {
+      if (errorMessage !== undefined) {
+        setOtelActiveSpanErrorStatus(errorMessage);
+      }
       setOtelActiveSpanAttributes(
         buildRuntimeToolTraceAttributes({
           ...input,
@@ -848,6 +855,7 @@ export class AgentRuntime {
       const remoteToolSources = getRuntimeRemoteToolSources(this.config);
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
+      let agentWriteFinalResponseToolGuardEnabled = false;
 
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
@@ -878,7 +886,12 @@ export class AgentRuntime {
         currentSystemPrompt = preparedStep.systemPrompt;
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
-        const tools = preparedStep.tools;
+        const tools = agentWriteFinalResponseToolGuardEnabled
+          ? preparedStep.tools.filter((tool) =>
+            !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+          )
+          : preparedStep.tools;
+        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
@@ -895,7 +908,7 @@ export class AgentRuntime {
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
-              providerTools,
+              providerTools: stepProviderTools,
             }),
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
@@ -1047,6 +1060,15 @@ export class AgentRuntime {
               toolCall.error = generatedToolResult.isError === true
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
+              if (toolCall.error !== undefined) {
+                setOtelActiveSpanErrorStatus(toolCall.error);
+              }
+              if (
+                generatedToolResult.isError !== true &&
+                shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
+              ) {
+                agentWriteFinalResponseToolGuardEnabled = true;
+              }
               setSpanAttributes(
                 toolSpan,
                 compactRuntimeTraceAttributes({
@@ -1141,6 +1163,9 @@ export class AgentRuntime {
               });
 
               const resultError = getToolResultError(result);
+              if (resultError !== undefined) {
+                setOtelActiveSpanErrorStatus(resultError);
+              }
               toolCall.status = resultError === undefined ? "completed" : "error";
               toolCall.result = result;
               toolCall.error = resultError;
@@ -1160,6 +1185,9 @@ export class AgentRuntime {
               );
 
               if (resultError === undefined) {
+                if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
+                  agentWriteFinalResponseToolGuardEnabled = true;
+                }
                 // Track skill policy from successful load_skill results
                 if (tc.toolName === LOAD_SKILL_TOOL_ID) {
                   activeSkillId = extractSkillId(result);

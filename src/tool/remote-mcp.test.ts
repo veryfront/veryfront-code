@@ -169,6 +169,57 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("preserves MCP isError when structuredContent lacks an error field", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: {
+          isError: true,
+          structuredContent: {
+            message: "Remote search failed",
+            retryable: true,
+          },
+          content: [],
+        },
+      }), async () => await source.executeTool("search_docs", { query: "auth" }));
+
+    assertEquals(result, {
+      isError: true,
+      message: "Remote search failed",
+      retryable: true,
+    });
+  });
+
+  it("wraps non-object structured MCP errors with a canonical marker", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: {
+          isError: true,
+          structuredContent: "Remote search failed",
+          content: [],
+        },
+      }), async () => await source.executeTool("search_docs", { query: "auth" }));
+
+    assertEquals(result, {
+      isError: true,
+      message: "Remote search failed",
+      output: "Remote search failed",
+    });
+  });
+
   it("normalizes remote MCP tool responses with generic error markers", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",

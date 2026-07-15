@@ -1,5 +1,6 @@
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
+import { hasToolExecutionErrorMarker } from "#veryfront/tool/result.ts";
 import type {
   ChatStreamState,
   StreamingToolCall,
@@ -27,7 +28,7 @@ function getMcpToolErrorMessage(result: unknown): string | undefined {
 }
 
 export function getToolResultError(result: unknown): string | undefined {
-  if (!result || typeof result !== "object" || !("error" in result)) {
+  if (!hasToolExecutionErrorMarker(result)) {
     return undefined;
   }
 
@@ -36,7 +37,16 @@ export function getToolResultError(result: unknown): string | undefined {
     return mcpToolErrorMessage;
   }
 
-  return stringifyToolError(result.error);
+  const record = result as Record<string, unknown>;
+  if (typeof record.error === "string") {
+    return stringifyToolError(record.error);
+  }
+
+  if (typeof record.message === "string" && record.message.trim().length > 0) {
+    return record.message;
+  }
+
+  return "Tool execution failed";
 }
 
 export function createToolResultMessage(
