@@ -163,7 +163,6 @@ export async function withSpan<T>(
   const spanContext = shimTrace.setSpan(parentContext, span);
 
   try {
-    span.setStatus({ code: SpanStatusCode.OK });
     const result = await shimContext.with(spanContext, () => fn(span));
     return result;
   } catch (error) {

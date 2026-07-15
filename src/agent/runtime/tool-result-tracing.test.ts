@@ -76,6 +76,12 @@ describe("agent runtime tool result tracing", () => {
                 return span;
               },
               setStatus(status) {
+                if (
+                  status.code === SpanStatusCode.UNSET ||
+                  captured.status?.code === SpanStatusCode.OK
+                ) {
+                  return span;
+                }
                 captured.status = status;
                 return span;
               },

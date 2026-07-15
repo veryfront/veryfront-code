@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "npm:@opentelemetry/sdk-trace-base@2.8.0";
+import {
   _resetShimForTests,
   type AttributeValue,
   type Context,
@@ -11,6 +16,7 @@ import {
   type Span,
   type SpanContext,
   SpanKind,
+  SpanStatusCode,
   type Tracer,
 } from "./api-shim.ts";
 
@@ -85,6 +91,46 @@ describe("observability/tracing/otlp-setup", () => {
     await withSpan("genai.chat", async () => "ok", {}, { kind: SpanKind.CLIENT });
 
     assertEquals(capturedKind, SpanKind.CLIENT);
+  });
+
+  it("withSpan preserves callback-owned ERROR status on real OpenTelemetry spans", async () => {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const rootContext: Context = {
+      getValue: () => undefined,
+      setValue() {
+        return this;
+      },
+      deleteValue() {
+        return this;
+      },
+    };
+    setGlobalContextAccessor({
+      active: () => rootContext,
+      with: (_context, fn) => fn(),
+    });
+    setGlobalTracerProvider({
+      getTracer(name, version) {
+        return provider.getTracer(name, version) as unknown as Tracer;
+      },
+    });
+    const { withSpan } = await import("./otlp-setup.ts");
+
+    try {
+      await withSpan("test.callback-error", async (span) => {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "tool failed" });
+      });
+      await provider.forceFlush();
+
+      const [finishedSpan] = exporter.getFinishedSpans();
+      assertExists(finishedSpan);
+      assertEquals(finishedSpan.status.code, SpanStatusCode.ERROR);
+    } finally {
+      _resetShimForTests();
+      await provider.shutdown();
+    }
   });
 
   it("withSpanSync should execute the callback when OTLP is unavailable", async () => {
