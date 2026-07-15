@@ -631,8 +631,8 @@ OpenTelemetry export.
 
 Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
-`MLFLOW_TRACKING_URI` to activate the extension, then select the fixed exporter
-id `mlflow` for the run.
+`MLFLOW_TRACKING_URI` to activate the extension, then select the default
+exporter id `mlflow` for the run.
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
@@ -654,7 +654,9 @@ veryfront eval deep-research
 
 `--export` wins over `VERYFRONT_EVAL_EXPORTERS` when both are set. The legacy
 singular `VERYFRONT_EVAL_EXPORT` is used only when
-`VERYFRONT_EVAL_EXPORTERS` is unset.
+`VERYFRONT_EVAL_EXPORTERS` is unset. If a project sets
+`VERYFRONT_EVAL_MLFLOW_EXPORTER_ID`, select that same id with `--export` or
+`VERYFRONT_EVAL_EXPORTERS`.
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
@@ -672,9 +674,13 @@ veryfront eval deep-research \
 MLflow artifact uploads support HTTP(S) run artifact roots directly. For
 proxied artifact roots such as `mlflow-artifacts:/...` or object-store-backed
 roots, configure an explicit HTTP(S) MLflow artifact server URI with
-`MLFLOW_ARTIFACTS_URI`. v1 does not upload directly to local filesystem roots or
+`MLFLOW_ARTIFACTS_URI`. For local tracking on one port and artifact serving on
+another, set `MLFLOW_ARTIFACTS_PORT` to derive the artifact URI from
+`MLFLOW_TRACKING_URI`. v1 does not upload directly to local filesystem roots or
 backend-specific schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar
-URIs.
+URIs. After upload, the exporter verifies retrieval through MLflow
+`artifacts/list` for the `veryfront-eval` path and stores only the sanitized
+artifact paths in the export receipt.
 
 The MLflow exporter logs generic aggregate metrics from the normalized
 `EvalReport`; it does not know project-specific label formats. If a project

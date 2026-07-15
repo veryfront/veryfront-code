@@ -91,6 +91,7 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
         {
           type: "env:read",
           keys: [
+            "MLFLOW_ARTIFACTS_PORT",
             "MLFLOW_ARTIFACTS_URI",
             "MLFLOW_EXPERIMENT_NAME",
             "MLFLOW_RUN_NAME",
@@ -98,18 +99,14 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
             "MLFLOW_TRACKING_TOKEN",
             "MLFLOW_TRACKING_URI",
             "MLFLOW_TRACKING_USERNAME",
+            "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
           ],
         },
       ],
     },
   ];
 
-const FORBIDDEN_ENV_READ_KEYS_BY_MANIFEST = new Map<string, string[]>([
-  [
-    "extensions/ext-eval-report-mlflow/deno.json",
-    ["VERYFRONT_EVAL_MLFLOW_EXPORTER_ID"],
-  ],
-]);
+const FORBIDDEN_ENV_READ_KEYS_BY_MANIFEST = new Map<string, string[]>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

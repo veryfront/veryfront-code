@@ -16,6 +16,7 @@ import {
 import factory, { createEvalReportMlflowExporter } from "./index.ts";
 
 const MLFLOW_ENV_KEYS = [
+  "MLFLOW_ARTIFACTS_PORT",
   "MLFLOW_ARTIFACTS_URI",
   "MLFLOW_EXPERIMENT_NAME",
   "MLFLOW_RUN_NAME",
@@ -23,6 +24,7 @@ const MLFLOW_ENV_KEYS = [
   "MLFLOW_TRACKING_TOKEN",
   "MLFLOW_TRACKING_URI",
   "MLFLOW_TRACKING_USERNAME",
+  "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
 ] as const;
 
 const originalMlflowEnv = new Map(
@@ -191,6 +193,7 @@ function createMlflowFetchRecorder(options: {
   experimentId?: string;
   runId?: string;
   artifactUri?: string;
+  artifactListPaths?: string[];
 } = {}): {
   requests: RecordedMlflowRequest[];
   fetchImpl: (
@@ -201,6 +204,11 @@ function createMlflowFetchRecorder(options: {
   const experimentId = options.experimentId ?? "exp-1";
   const runId = options.runId ?? "run-1";
   const artifactUri = options.artifactUri ?? "http://artifacts.test/root";
+  const artifactListPaths = options.artifactListPaths ?? [
+    "veryfront-eval/report.json",
+    "veryfront-eval/summary.json",
+    "veryfront-eval/results.jsonl",
+  ];
   const requests: RecordedMlflowRequest[] = [];
 
   const fetchImpl = (
@@ -240,6 +248,16 @@ function createMlflowFetchRecorder(options: {
     if (url.endsWith("/api/2.0/mlflow/runs/update")) {
       return Promise.resolve(jsonResponse({}));
     }
+    if (url.includes("/api/2.0/mlflow/artifacts/list")) {
+      return Promise.resolve(jsonResponse({
+        root_uri: artifactUri,
+        files: artifactListPaths.map((path) => ({
+          path,
+          is_dir: false,
+          file_size: 128,
+        })),
+      }));
+    }
     if (init?.method === "PUT") {
       return Promise.resolve(new Response("", { status: 200 }));
     }
@@ -266,6 +284,7 @@ describe("ext-eval-report-mlflow", () => {
       {
         type: "env:read",
         keys: [
+          "MLFLOW_ARTIFACTS_PORT",
           "MLFLOW_ARTIFACTS_URI",
           "MLFLOW_EXPERIMENT_NAME",
           "MLFLOW_RUN_NAME",
@@ -273,6 +292,7 @@ describe("ext-eval-report-mlflow", () => {
           "MLFLOW_TRACKING_TOKEN",
           "MLFLOW_TRACKING_URI",
           "MLFLOW_TRACKING_USERNAME",
+          "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
         ],
       },
     ]);
@@ -316,7 +336,7 @@ describe("ext-eval-report-mlflow", () => {
     assertEquals(registry.list(), []);
   });
 
-  it("uses the fixed mlflow exporter id even when config includes an id field", async () => {
+  it("uses the configured MLflow exporter id from config and unregisters it during teardown", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "http://mlflow.test");
     const registry = createEvalReportExporterRegistry();
@@ -328,9 +348,26 @@ describe("ext-eval-report-mlflow", () => {
 
     await extension.setup?.(createContext(registry));
 
-    assertEquals(registry.list().map((exporter) => exporter.id), ["mlflow"]);
-    assertExists(registry.get("mlflow"));
+    assertEquals(registry.list().map((exporter) => exporter.id), ["custom-config"]);
+    assertExists(registry.get("custom-config"));
+    assertEquals(registry.get("mlflow"), undefined);
+
+    await extension.teardown?.();
     assertEquals(registry.get("custom-config"), undefined);
+  });
+
+  it("uses VERYFRONT_EVAL_MLFLOW_EXPORTER_ID when config does not set an id", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "http://mlflow.test");
+    Deno.env.set("VERYFRONT_EVAL_MLFLOW_EXPORTER_ID", "databricks-mlflow");
+    const registry = createEvalReportExporterRegistry();
+    const { fetchImpl } = createMlflowFetchRecorder();
+    const extension = factory({ fetch: fetchImpl });
+
+    await extension.setup?.(createContext(registry));
+
+    assertEquals(registry.list().map((exporter) => exporter.id), ["databricks-mlflow"]);
+    assertExists(registry.get("databricks-mlflow"));
   });
 
   it("rejects non-HTTP tracking URIs before making MLflow REST calls", async () => {
@@ -429,6 +466,15 @@ describe("ext-eval-report-mlflow", () => {
       "veryfront-eval/summary.json",
       "veryfront-eval/results.jsonl",
     ]);
+    assertEquals(receipt.metadata?.artifactVerification, {
+      method: "artifacts/list",
+      verified: true,
+      artifacts: [
+        "veryfront-eval/report.json",
+        "veryfront-eval/summary.json",
+        "veryfront-eval/results.jsonl",
+      ],
+    });
 
     const createRun = requests.find((request) =>
       request.url.endsWith("/api/2.0/mlflow/runs/create")
@@ -475,6 +521,15 @@ describe("ext-eval-report-mlflow", () => {
         "http://artifacts.test/root/veryfront-eval/results.jsonl",
       ],
     );
+
+    const artifactList = requests.find((request) =>
+      request.url.includes("/api/2.0/mlflow/artifacts/list")
+    );
+    assertExists(artifactList);
+    const artifactListUrl = new URL(artifactList.url);
+    assertEquals(artifactList.method, "GET");
+    assertEquals(artifactListUrl.searchParams.get("run_id"), "run-1");
+    assertEquals(artifactListUrl.searchParams.get("path"), "veryfront-eval");
   });
 
   it("maps MLflow REST and explicit artifact endpoints for mlflow-artifacts URIs", async () => {
@@ -519,6 +574,11 @@ describe("ext-eval-report-mlflow", () => {
           endpoint: "http://mlflow.test:5001/api/2.0/mlflow/runs/log-batch",
         },
         {
+          method: "GET",
+          endpoint:
+            "http://mlflow.test:5001/api/2.0/mlflow/artifacts/list?run_id=run-1&path=veryfront-eval",
+        },
+        {
           method: "POST",
           endpoint: "http://mlflow.test:5001/api/2.0/mlflow/runs/log-batch",
         },
@@ -549,6 +609,33 @@ describe("ext-eval-report-mlflow", () => {
             "http://mlflow.test:5600/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/results.jsonl",
           contentType: "application/x-ndjson",
         },
+      ],
+    );
+  });
+
+  it("derives a local MLflow artifact server URI from MLFLOW_ARTIFACTS_PORT", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "http://mlflow.test:5001");
+    Deno.env.set("MLFLOW_ARTIFACTS_PORT", "5600");
+    const registry = createEvalReportExporterRegistry();
+    const { requests, fetchImpl } = createMlflowFetchRecorder({
+      artifactUri: "mlflow-artifacts:/exp-1/run-1/artifacts",
+    });
+    const extension = factory({ fetch: fetchImpl });
+
+    await extension.setup?.(createContext(registry));
+    const results = await registry.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    assertEquals(results[0]?.ok, true);
+    assertEquals(
+      requests.filter((request) => request.method === "PUT").map((request) => request.url),
+      [
+        "http://mlflow.test:5600/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/report.json",
+        "http://mlflow.test:5600/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/summary.json",
+        "http://mlflow.test:5600/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/results.jsonl",
       ],
     );
   });
@@ -764,7 +851,7 @@ describe("ext-eval-report-mlflow", () => {
     );
     assertEquals(
       error.message,
-      "MLflow artifactsUri is required for non-HTTP artifact URI s3://mlflow-bucket/exp-1/run-1/artifacts. Configure MLFLOW_ARTIFACTS_URI or config.artifactsUri.",
+      "MLflow artifactsUri is required for non-HTTP artifact URI s3://mlflow-bucket/exp-1/run-1/artifacts. Configure MLFLOW_ARTIFACTS_URI, MLFLOW_ARTIFACTS_PORT, or config.artifactsUri.",
     );
 
     const updates = requests.filter((request) =>

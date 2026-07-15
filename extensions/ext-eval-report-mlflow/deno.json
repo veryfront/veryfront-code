@@ -19,13 +19,15 @@
       {
         "type": "env:read",
         "keys": [
+          "MLFLOW_ARTIFACTS_PORT",
           "MLFLOW_ARTIFACTS_URI",
           "MLFLOW_EXPERIMENT_NAME",
           "MLFLOW_RUN_NAME",
           "MLFLOW_TRACKING_PASSWORD",
           "MLFLOW_TRACKING_TOKEN",
           "MLFLOW_TRACKING_URI",
-          "MLFLOW_TRACKING_USERNAME"
+          "MLFLOW_TRACKING_USERNAME",
+          "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID"
         ]
       }
     ],
