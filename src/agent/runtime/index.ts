@@ -376,6 +376,7 @@ async function traceConfiguredToolExecution(input: {
           input.allowedRemoteToolNames,
           input.remoteToolSources,
         );
+        const resultError = getToolResultError(result);
         setOtelActiveSpanAttributes(
           buildRuntimeToolTraceAttributes({
             mode: input.mode,
@@ -383,10 +384,12 @@ async function traceConfiguredToolExecution(input: {
             toolName: input.toolName,
             toolCallId: input.toolCallId,
             context: input.context,
-            status: "completed",
+            status: resultError === undefined ? "completed" : "failed",
             providerExecuted: false,
             inputSizeBytes,
             outputSizeBytes: estimateSerializedSizeBytes(result),
+            errorType: resultError === undefined ? undefined : "ToolResultError",
+            errorMessage: resultError,
           }),
         );
         return result;
@@ -1137,36 +1140,47 @@ export class AgentRuntime {
                 context: executionContext,
               });
 
-              toolCall.status = "completed";
+              const resultError = getToolResultError(result);
+              toolCall.status = resultError === undefined ? "completed" : "error";
               toolCall.result = result;
+              toolCall.error = resultError;
               toolCall.executionTime = Date.now() - startTime;
               setSpanAttributes(
                 toolSpan,
                 compactRuntimeTraceAttributes({
-                  "tool.status": "completed",
+                  "tool.status": resultError === undefined ? "completed" : "failed",
                   "tool.provider_executed": false,
                   "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                  ...(resultError === undefined ? {} : {
+                    error: true,
+                    "error.type": "ToolResultError",
+                    "error.message": resultError,
+                  }),
                 }),
               );
 
-              // Track skill policy from load_skill results
-              if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                activeSkillId = extractSkillId(result);
-                activeSkillPolicy = extractSkillPolicy(result);
-                activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                  INACTIVE_SKILL_TOOL_AVAILABILITY;
-                activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
-                mustLoadSkillFirst = false;
-              }
-              activeSkillPolicy = removeFormInputAfterSubmission(
-                tc.toolName,
-                result,
-                activeSkillId,
-                activeSkillPolicy,
-              );
-              if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
-                hasSubmittedFormInputInLoop = true;
-                currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+              if (resultError === undefined) {
+                // Track skill policy from successful load_skill results
+                if (tc.toolName === LOAD_SKILL_TOOL_ID) {
+                  activeSkillId = extractSkillId(result);
+                  activeSkillPolicy = extractSkillPolicy(result);
+                  activeSkillToolAvailability = extractSkillToolAvailability(result) ??
+                    INACTIVE_SKILL_TOOL_AVAILABILITY;
+                  activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+                  mustLoadSkillFirst = false;
+                }
+                activeSkillPolicy = removeFormInputAfterSubmission(
+                  tc.toolName,
+                  result,
+                  activeSkillId,
+                  activeSkillPolicy,
+                );
+                if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
+                  hasSubmittedFormInputInLoop = true;
+                  currentRuntimeContext = markSubmittedFormInputRuntimeContext(
+                    currentRuntimeContext,
+                  );
+                }
               }
 
               const toolResultMessage = createToolResultMessage(
@@ -1683,41 +1697,54 @@ export class AgentRuntime {
             context: executionContext,
           });
 
-          toolCall.status = "completed";
+          const resultError = getToolResultError(result);
+          toolCall.status = resultError === undefined ? "completed" : "error";
           toolCall.result = result;
+          toolCall.error = resultError;
           toolCall.executionTime = Date.now() - startTime;
           toolCalls.push(toolCall);
 
-          // Track skill policy from load_skill results
-          if (tc.name === LOAD_SKILL_TOOL_ID) {
-            activeSkillId = extractSkillId(result);
-            activeSkillPolicy = extractSkillPolicy(result);
-            activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-              INACTIVE_SKILL_TOOL_AVAILABILITY;
-            activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
-            mustLoadSkillFirst = false;
-          }
-          activeSkillPolicy = removeFormInputAfterSubmission(
-            tc.name,
-            result,
-            activeSkillId,
-            activeSkillPolicy,
-          );
-          if (isSubmittedFormInputExecutionResult(tc.name, result)) {
-            hasSubmittedFormInputInLoop = true;
-            currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
-          }
-          if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
-            agentWriteFinalResponseToolGuardEnabled = true;
+          if (resultError === undefined) {
+            // Track skill policy from successful load_skill results
+            if (tc.name === LOAD_SKILL_TOOL_ID) {
+              activeSkillId = extractSkillId(result);
+              activeSkillPolicy = extractSkillPolicy(result);
+              activeSkillToolAvailability = extractSkillToolAvailability(result) ??
+                INACTIVE_SKILL_TOOL_AVAILABILITY;
+              activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+              mustLoadSkillFirst = false;
+            }
+            activeSkillPolicy = removeFormInputAfterSubmission(
+              tc.name,
+              result,
+              activeSkillId,
+              activeSkillPolicy,
+            );
+            if (isSubmittedFormInputExecutionResult(tc.name, result)) {
+              hasSubmittedFormInputInLoop = true;
+              currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+            }
+            if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
+              agentWriteFinalResponseToolGuardEnabled = true;
+            }
           }
 
           const dynamic = isDynamicTool(tc.name);
-          sendSSE(controller, encoder, {
-            type: "tool-output-available",
-            toolCallId: toolCall.id,
-            output: result,
-            ...(dynamic ? { dynamic: true } : {}),
-          });
+          if (resultError === undefined) {
+            sendSSE(controller, encoder, {
+              type: "tool-output-available",
+              toolCallId: toolCall.id,
+              output: result,
+              ...(dynamic ? { dynamic: true } : {}),
+            });
+          } else {
+            sendSSE(controller, encoder, {
+              type: "tool-output-error",
+              toolCallId: toolCall.id,
+              errorText: resultError,
+              ...(dynamic ? { dynamic: true } : {}),
+            });
+          }
 
           const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
