@@ -7,8 +7,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { step } from "../dsl/step.ts";
 import type { RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { StepExecutor } from "./step-executor.ts";
+import { runWithWorkflowTenant, StepExecutor } from "./step-executor.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
+import {
+  runWithCacheKeyContext,
+  tryGetCacheKeyContext,
+  tryGetRegistryScopeId,
+} from "#veryfront/cache/cache-key-builder.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import type { CapturedTenantContext } from "../types.ts";
 
 /** A step whose tool throws `error`, counting how many times it is invoked. */
 function makeThrowingStepNode(
@@ -50,6 +61,38 @@ function makeStepNode(retry: RetryConfig): WorkflowNode {
     retry,
   });
 }
+
+describe("workflow tenant registry scoping", () => {
+  it("restores a release-less production environment without a synthetic cache scope", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "workflow-environment-project",
+      projectId: "workflow-environment-project-id",
+      token: "<TOKEN>",
+      productionMode: true,
+      releaseId: null,
+      environmentName: "Development",
+    };
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+
+    await runWithRequestContext(tenant, async () => {
+      manager.register("environment-skill", "available");
+    });
+
+    await runWithCacheKeyContext(
+      { projectId: "outer-project", mode: "production", versionId: "outer-release" },
+      () =>
+        runWithWorkflowTenant(tenant, async () => {
+          assertEquals(manager.get("environment-skill"), "available");
+          assertEquals(tryGetCacheKeyContext(), null);
+          assertEquals(
+            tryGetRegistryScopeId(),
+            "workflow-environment-project-id:production:environment:Development",
+          );
+          assertEquals(getCurrentRequestContext()?.environmentName, "Development");
+        }),
+    );
+  });
+});
 
 describe("StepExecutor retry validation", () => {
   it("rejects negative maxAttempts before executing the step", async () => {

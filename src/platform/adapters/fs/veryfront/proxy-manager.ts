@@ -169,6 +169,7 @@ export class ProxyFSAdapterManager {
       effectiveProductionMode,
       effectiveReleaseId,
       effectiveBranch,
+      effectiveEnvironmentName,
     );
 
     logger.debug("getAdapter called", {
@@ -391,7 +392,7 @@ export class ProxyFSAdapterManager {
       invalidationCallbacks: createDefaultInvalidationCallbacks({
         ...this.baseConfig.invalidationCallbacks,
         evictCurrentAdapter: () =>
-          this.evictAdapter(projectSlug, productionMode, releaseId, branch),
+          this.evictAdapter(projectSlug, productionMode, releaseId, branch, environmentName),
       }),
     };
 
@@ -550,12 +551,17 @@ export class ProxyFSAdapterManager {
     productionMode?: boolean,
     releaseId?: string | null,
     branch?: string | null,
+    environmentName?: string | null,
   ): boolean {
+    const effectiveProductionMode = productionMode ?? false;
+    const effectiveEnvironmentName = environmentName ??
+      (effectiveProductionMode ? "production" : null);
     const cacheKey = buildProxyManagerCacheKey(
       projectSlug,
-      productionMode ?? false,
+      effectiveProductionMode,
       releaseId ?? null,
       branch ?? null,
+      effectiveEnvironmentName,
     );
     return this.adapters.has(cacheKey);
   }
@@ -565,12 +571,17 @@ export class ProxyFSAdapterManager {
     productionMode?: boolean,
     releaseId?: string | null,
     branch?: string | null,
+    environmentName?: string | null,
   ): void {
+    const effectiveProductionMode = productionMode ?? false;
+    const effectiveEnvironmentName = environmentName ??
+      (effectiveProductionMode ? "production" : null);
     const cacheKey = buildProxyManagerCacheKey(
       projectSlug,
-      productionMode ?? false,
+      effectiveProductionMode,
       releaseId ?? null,
       branch ?? null,
+      effectiveEnvironmentName,
     );
 
     const adapter = this.adapters.get(cacheKey);

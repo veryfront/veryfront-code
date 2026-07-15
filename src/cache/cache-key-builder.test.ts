@@ -9,7 +9,10 @@ import {
   getProjectScopedKeyAlways,
   runWithCacheKeyContext,
   tryGetCacheKeyContext,
+  tryGetRegistryScopeContext,
+  tryGetRegistryScopeId,
 } from "./cache-key-builder.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 describe("cache-key-builder", () => {
   describe("getContentHashKey", () => {
@@ -77,6 +80,178 @@ describe("cache-key-builder", () => {
       const result = runWithCacheKeyContext(ctx, tryGetCacheKeyContext);
 
       assertEquals(result?.projectId, "test");
+    });
+  });
+
+  describe("tryGetRegistryScopeContext", () => {
+    it("returns null without project identity", async () => {
+      const result = await runWithRequestContext(
+        {
+          projectSlug: "",
+          token: "<TOKEN>",
+          productionMode: true,
+          environmentName: "Development",
+        },
+        async () => tryGetRegistryScopeContext(),
+      );
+
+      assertEquals(result, null);
+    });
+
+    it("uses immutable release and mutable branch scopes", async () => {
+      const release = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: "release-id",
+        },
+        async () => tryGetRegistryScopeContext(),
+      );
+      const branch = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project-id",
+          token: "<TOKEN>",
+          productionMode: false,
+          branch: "feature",
+        },
+        async () => tryGetRegistryScopeContext(),
+      );
+
+      assertEquals(release, {
+        scopeId: "project-id:production:release-id",
+        immutable: true,
+      });
+      assertEquals(branch, {
+        scopeId: "project-id:preview:feature",
+        immutable: false,
+      });
+    });
+
+    it("isolates release-less environments for the same project", async () => {
+      const development = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: "Development",
+        },
+        async () => tryGetRegistryScopeContext(),
+      );
+      const production = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: "Production",
+        },
+        async () => tryGetRegistryScopeContext(),
+      );
+
+      assertEquals(development, {
+        scopeId: "project-id:production:environment:Development",
+        immutable: false,
+      });
+      assertEquals(production, {
+        scopeId: "project-id:production:environment:Production",
+        immutable: false,
+      });
+    });
+
+    it("uses the canonical production environment when its name is omitted", async () => {
+      const result = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: null,
+        },
+        async () => tryGetRegistryScopeContext(),
+      );
+
+      assertEquals(result, {
+        scopeId: "project-id:production:environment:production",
+        immutable: false,
+      });
+    });
+
+    it("keeps an explicit cache scope authoritative inside a filesystem source", async () => {
+      const result = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "filesystem-project",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: "filesystem-release",
+        },
+        async () =>
+          runWithCacheKeyContext(
+            {
+              projectId: "workflow-project",
+              mode: "production",
+              versionId: "workflow-release",
+            },
+            () => tryGetRegistryScopeContext(),
+          ),
+      );
+
+      assertEquals(result, {
+        scopeId: "workflow-project:production:workflow-release",
+        immutable: true,
+      });
+    });
+
+    it("keeps an outer explicit cache scope authoritative over nested filesystem work", async () => {
+      const result = await runWithCacheKeyContext(
+        {
+          projectId: "project-id",
+          mode: "production",
+          versionId: "outer-release",
+        },
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "project",
+              projectId: "project-id",
+              token: "<TOKEN>",
+              productionMode: true,
+              releaseId: null,
+              environmentName: "Development",
+            },
+            async () => tryGetRegistryScopeContext(),
+          ),
+      );
+
+      assertEquals(result, {
+        scopeId: "project-id:production:outer-release",
+        immutable: true,
+      });
+    });
+
+    it("keeps explicit cache contexts available without a filesystem source", () => {
+      const scope = runWithCacheKeyContext(
+        { projectId: "project-id", mode: "production", versionId: "release-id" },
+        () => ({
+          context: tryGetRegistryScopeContext(),
+          id: tryGetRegistryScopeId(),
+        }),
+      );
+
+      assertEquals(scope, {
+        context: {
+          scopeId: "project-id:production:release-id",
+          immutable: true,
+        },
+        id: "project-id:production:release-id",
+      });
     });
   });
 

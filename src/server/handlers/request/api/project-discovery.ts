@@ -1,7 +1,8 @@
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
 import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
-import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -95,9 +96,9 @@ function summarizeDiscoveryFailures(
 
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
-  const cacheContext = tryGetCacheKeyContext();
-  if (cacheContext) {
-    return `${cacheContext.projectId}:${cacheContext.mode}:${cacheContext.versionId}`;
+  const registryScope = tryGetRegistryScopeContext();
+  if (registryScope) {
+    return registryScope.scopeId;
   }
 
   const slug = ctx.projectSlug ?? ctx.projectDir;
@@ -114,9 +115,9 @@ function discoveryKey(ctx: HandlerContext): string {
 }
 
 function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
-  const cacheContext = tryGetCacheKeyContext();
-  if (cacheContext) {
-    return cacheContext.mode === "production";
+  const registryScope = tryGetRegistryScopeContext();
+  if (registryScope) {
+    return registryScope.immutable;
   }
 
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
@@ -145,45 +146,48 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
       );
       const { toolRegistry } = await import("#veryfront/tool/registry.ts");
 
-      // Clear stale entries for this project scope before re-discovery.
-      // This prevents agents/tools removed in a new release from lingering.
-      clearTrackedAgents();
-      clearTranspileCache();
-      agentRegistry.clear();
-      toolRegistry.clear();
+      return await runWithRegistryTransaction(async () => {
+        // Clear stale entries in a transaction-local copy. Concurrent runs keep
+        // using the prior live registry until discovery succeeds and the staged
+        // replacement is committed atomically.
+        clearTrackedAgents();
+        clearTranspileCache();
+        agentRegistry.clear();
+        toolRegistry.clear();
 
-      const discoveryOptions = createProjectDiscoveryConfig({
-        projectDir: ctx.projectDir,
-        config: ctx.config,
-        fsAdapter: ctx.adapter.fs,
-      });
-      const result = await discoverAll(discoveryOptions);
-      const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
-        discoveryOptions.agentDirs.length > 0;
-
-      const logData = {
-        projectSlug: ctx.projectSlug,
-        releaseId: ctx.releaseId,
-        agents: result.agents.size,
-        tools: result.tools.size,
-        errors: result.errors.length,
-      };
-
-      if (result.errors.length > 0) {
-        logger.warn("Primitive discovery completed with errors", {
-          ...logData,
-          failures: summarizeDiscoveryFailures(result.errors, ctx.projectDir),
-          omittedErrors: Math.max(0, result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG),
+        const discoveryOptions = createProjectDiscoveryConfig({
+          projectDir: ctx.projectDir,
+          config: ctx.config,
+          fsAdapter: ctx.adapter.fs,
         });
-      } else if (
-        result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
-      ) {
-        logger.info("Primitive discovery found 0 agents and 0 tools", logData);
-      } else {
-        logger.info("Primitive discovery completed", logData);
-      }
+        const result = await discoverAll(discoveryOptions);
+        const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
+          discoveryOptions.agentDirs.length > 0;
 
-      return result;
+        const logData = {
+          projectSlug: ctx.projectSlug,
+          releaseId: ctx.releaseId,
+          agents: result.agents.size,
+          tools: result.tools.size,
+          errors: result.errors.length,
+        };
+
+        if (result.errors.length > 0) {
+          logger.warn("Primitive discovery completed with errors", {
+            ...logData,
+            failures: summarizeDiscoveryFailures(result.errors, ctx.projectDir),
+            omittedErrors: Math.max(0, result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG),
+          });
+        } else if (
+          result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
+        ) {
+          logger.info("Primitive discovery found 0 agents and 0 tools", logData);
+        } else {
+          logger.info("Primitive discovery completed", logData);
+        }
+
+        return result;
+      });
     })(),
   };
 

@@ -98,16 +98,20 @@ export function buildProxyManagerCacheKey(
   productionMode: boolean,
   releaseId: string | null,
   branch: string | null,
+  environmentName?: string | null,
 ): string {
   const mode = productionMode ? "production" : "preview";
 
   if (productionMode) {
-    if (!releaseId) {
+    if (releaseId) {
+      return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${releaseId}`;
+    }
+    if (!environmentName) {
       throw CACHE_INVARIANT_VIOLATION.create({
-        detail: `Missing releaseId in production for ${projectSlug}`,
+        detail: `Missing releaseId or environmentName in production for ${projectSlug}`,
       });
     }
-    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${releaseId}`;
+    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:environment:${environmentName}`;
   }
 
   return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${branch ?? "main"}`;
