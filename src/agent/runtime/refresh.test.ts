@@ -5,7 +5,12 @@ import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
-import type { Message, RuntimeStateRequest, ToolExecutionResultRequest } from "../types.ts";
+import type {
+  AgentResponse,
+  Message,
+  RuntimeStateRequest,
+  ToolExecutionResultRequest,
+} from "../types.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -205,6 +210,82 @@ describe("agent runtime refresh hooks", () => {
       projectId: "project-generate",
     });
     assertEquals(toolResults[0]?.context?.projectId, "project-generate");
+  });
+
+  it("classifies structured errors returned during generate()", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "update-agent-generate-error-1",
+              toolName: "update_agent",
+              input: '{"id":"jira-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "I can retry with the required input." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const updateError = {
+      error: "tool_error",
+      message: "Invalid input - system: system or system_prompt is required",
+    };
+    const updateAgent = tool({
+      id: "update_agent",
+      description: "Update a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: () => updateError,
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Update agents and recover from failed tool calls.",
+      tools: { update_agent: updateAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({
+      input: "Attach the project skill to my Jira agent",
+    });
+
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertEquals(response.toolCalls[0]?.error, updateError.message);
+    assertEquals(response.toolCalls[0]?.result, updateError);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {
@@ -534,6 +615,104 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[1]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+  });
+
+  it("keeps tools available after update_agent returns a structured error", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "update-agent-error-1",
+                toolName: "update_agent",
+                input: '{"id":"jira-agent"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "I can retry with the required input." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const updateError = {
+      error: "tool_error",
+      message: "Invalid input - system: system or system_prompt is required",
+    };
+    const updateAgent = tool({
+      id: "update_agent",
+      description: "Update a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: () => updateError,
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Update agents and recover from failed tool calls.",
+      tools: { update_agent: updateAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Attach the project skill to my Jira agent",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+
+    const streamBody = await response.text();
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(streamBody.includes('"type":"tool-output-error"'), true);
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), false);
+    assertEquals(streamBody.includes(updateError.message), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "error");
+    assertEquals(finishedResponse.toolCalls[0]?.error, updateError.message);
+    assertEquals(finishedResponse.toolCalls[0]?.result, updateError);
   });
 
   it("keeps skill file tools hidden after a failed load_skill attempt", async () => {
