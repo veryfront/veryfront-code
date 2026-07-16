@@ -257,11 +257,13 @@ export async function prepareHostedChatRuntimeToolAssembly<
         : sourceProviderToolNames.has(toolName)),
   );
   const localToolNames = Object.keys(localHostTools);
-  // Remote tools no longer flood the initial inventory. They are listed in
-  // remoteToolNames for catalog purposes and activated on-demand via load_tools.
-  // Only local and provider-native tools seed the initial inventory union.
+  // Initial inventory = configured-binding remote tools + local + provider-native.
+  // The full MCP catalog does not flood the union: remoteToolNames is already
+  // filtered by the agent's configured binding (allowedToolNames), so only the
+  // explicitly selected subset reaches the provider cap. On-demand activation
+  // via load_tools extends this set at runtime beyond what the binding pre-loads.
   const availableToolNames = selectProviderCompatibleToolNames(
-    [...new Set([...localToolNames, ...providerToolNames])].sort(),
+    [...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames])].sort(),
     {
       model: input.taskContext.model,
       requiredToolNames: localToolNames,
