@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { IntegrationRuntimeConfigInput } from "#veryfront/integrations/types.ts";
 
 // Sub-schemas
 const getCorsSchema = defineSchema((v) =>
@@ -601,9 +602,12 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           v.string(),
           v
             .object({
-              /** Token scope: "project" (shared) or "endUser" (per-end-user OAuth). */
-              scope: v.enum(["project", "endUser"]).optional(),
-              /** @deprecated Use `scope: "endUser"` instead. */
+              /** Token scope. Legacy "endUser" input is normalized to "user". */
+              scope: v
+                .enum(["user", "project", "endUser"])
+                .transform((scope): "user" | "project" => scope === "project" ? "project" : "user")
+                .optional(),
+              /** @deprecated Use `scope: "user"` instead. */
               perUser: v.boolean().optional(),
               /** Allowlist of tool IDs to expose. When set, only these tools are registered.
                * This keeps the MCP context narrow by excluding unused tools.
@@ -672,7 +676,14 @@ export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
 // Inferred types
 export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
-export type VeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
+type InferredVeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
+/**
+ * User-authored configuration accepted before schema transforms run.
+ * `endUser` remains a deprecated integration scope input and normalizes to `user`.
+ */
+export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrations"> & {
+  integrations?: Record<string, IntegrationRuntimeConfigInput | undefined>;
+};
 
 // Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {

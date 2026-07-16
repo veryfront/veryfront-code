@@ -208,6 +208,26 @@ export default config as const;
       }
     });
 
+    it("normalizes legacy integration scope while loading config", async () => {
+      const adapter = setup();
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+      });
+      const projectDir = "/typed-integration-config";
+      const configPath = "/veryfront.config.ts";
+      const source = [
+        'import { defineConfig } from "veryfront";',
+        'export default defineConfig({ integrations: { linear: { scope: "endUser" } } });',
+      ].join("\n");
+
+      adapter.fs.files.set(configPath, source);
+
+      const config = await getConfig(projectDir, adapter);
+      assertEquals(config.integrations?.linear?.scope, "user");
+    });
+
     it("should try multiple config file names", async () => {
       const adapter = setup();
       const projectDir = await Deno.makeTempDir({ prefix: "vf-config-mjs-" });

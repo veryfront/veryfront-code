@@ -302,14 +302,14 @@ describe("integrations/remote-tools", () => {
         "sync-token",
         {
           github: { scope: "project", tools: ["list-repos"] },
-          slack: { scope: "endUser" },
+          slack: { scope: "user" },
         },
       ));
 
     assertEquals(requestBody, {
       integrations: {
         github: { scope: "project", tools: ["list-repos"] },
-        slack: { scope: "endUser" },
+        slack: { scope: "user" },
       },
     });
   });

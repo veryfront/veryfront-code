@@ -12,7 +12,7 @@ import {
   defineConfigWithEnv as publicDefineConfigWithEnv,
   mergeConfigs as publicMergeConfigs,
 } from "veryfront";
-import type { VeryfrontConfig } from "./schemas/index.ts";
+import type { VeryfrontConfig, VeryfrontConfigInput } from "./schemas/index.ts";
 import { createTestEnvironmentConfig } from "./environment-config.ts";
 
 describe("define-config", () => {
@@ -27,6 +27,15 @@ describe("define-config", () => {
     it("should work with minimal config", () => {
       const config: VeryfrontConfig = {};
       expect(defineConfig(config)).toEqual({});
+    });
+
+    it("accepts the deprecated endUser scope as configuration input", () => {
+      const config: VeryfrontConfigInput = {
+        integrations: { linear: { scope: "endUser" } },
+      };
+
+      expect(defineConfig(config)).toBe(config);
+      expect(config.integrations?.linear?.scope).toBe("endUser");
     });
 
     it("should preserve all config properties", () => {
@@ -59,6 +68,23 @@ describe("define-config", () => {
           env,
         ),
       ).toEqual({ title: "Release", react: { version: "production" } });
+    });
+
+    it("composes deprecated scope input before validation", () => {
+      const legacy = publicDefineConfig({
+        integrations: { linear: { scope: "endUser" } },
+      });
+      const merged = publicMergeConfigs(legacy);
+
+      expect(merged.integrations?.linear?.scope).toBe("endUser");
+    });
+
+    it("keeps canonical composition typed as validated config", () => {
+      const canonical: VeryfrontConfig = publicMergeConfigs(
+        publicDefineConfig({ integrations: { linear: { scope: "user" } } }),
+      );
+
+      expect(canonical.integrations?.linear?.scope).toBe("user");
     });
   });
 

@@ -77,6 +77,9 @@ export {
 export type {
   IntegrationConnector,
   IntegrationRuntimeConfig,
+  IntegrationRuntimeConfigInput,
   IntegrationScope,
+  IntegrationScopeInput,
   IntegrationTool,
+  LegacyIntegrationScope,
 } from "./types.ts";

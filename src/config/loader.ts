@@ -172,9 +172,9 @@ function validateCorsConfig(userConfig: unknown): void {
   });
 }
 
-function validateConfigShape(userConfig: unknown): void {
-  validateVeryfrontConfig(userConfig);
-  if (!userConfig || typeof userConfig !== "object") return;
+function validateConfigShape(userConfig: unknown): VeryfrontConfig {
+  const normalizedConfig = validateVeryfrontConfig(userConfig) as VeryfrontConfig;
+  if (!userConfig || typeof userConfig !== "object") return normalizedConfig;
 
   const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
@@ -182,6 +182,10 @@ function validateConfigShape(userConfig: unknown): void {
       detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
     });
   }
+  return {
+    ...(userConfig as VeryfrontConfig),
+    integrations: normalizedConfig.integrations,
+  };
 }
 
 /** @internal Exported for tests: merges user config over fresh defaults (deep for nested objects). */
@@ -282,9 +286,9 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
   }
 
   validateCorsConfig(userConfig);
-  validateConfigShape(userConfig);
+  const normalizedConfig = validateConfigShape(userConfig);
 
-  const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
+  const merged = mergeConfigs(normalizedConfig);
 
   if (merged.react?.version) {
     logger.debug("React version from config", { version: merged.react.version });

@@ -31,13 +31,23 @@ export default defineConfig({
       tools: ["send-message", "list-channels"],
     },
 
-    // Per-user tokens (each end-user authenticates individually)
+    // Private user token (each user authenticates individually)
     linear: {
-      perUser: true,
+      scope: "user",
     },
   },
 });
 ```
+
+Use `scope: "user"` for a private connection owned by the current user, or
+`scope: "project"` for a connection shared with the project. The legacy
+`scope: "endUser"` value and `perUser: true` remain accepted during migration,
+but Veryfront normalizes both to `user` and only syncs `user | project` to the
+API.
+
+Before deploying clients that write the canonical `user` scope, fully deploy
+the Phase 1 API compatibility release. During the migration, that API release
+must accept both canonical `user` writes and legacy `endUser` writes.
 
 ## Authentication flow
 

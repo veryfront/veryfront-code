@@ -13,6 +13,7 @@ import { logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
+import type { IntegrationScope } from "./types.ts";
 
 /**
  * Default timeout for outbound integration API calls. Without it, a hung remote
@@ -37,6 +38,11 @@ interface CallToolTextContent {
 type RemoteIntegrationToolExecutionContext = {
   runId?: string;
   agentId?: string;
+};
+
+type IntegrationConfigSyncInput = {
+  scope: IntegrationScope;
+  tools?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -254,12 +260,12 @@ export async function executeRemoteIntegrationTool(
 /**
  * Sync integration config from veryfront.config.ts to the API.
  * This is a full-replace operation. Called by the MCP server path
- * which has access to the config.
+ * which has access to the validated, canonical config.
  */
 export async function syncIntegrationConfig(
   apiBaseUrl: string,
   apiToken: string,
-  integrations: Record<string, { scope?: string; tools?: string[] }>,
+  integrations: Record<string, IntegrationConfigSyncInput>,
 ): Promise<void> {
   try {
     const response = await fetch(`${apiBaseUrl}/integrations/config`, {
