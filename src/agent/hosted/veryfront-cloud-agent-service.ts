@@ -70,6 +70,7 @@ import {
   type DefaultHostedChatRuntimeCreationOptions,
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
+import { createHostedRootLocalToolRuntime } from "./root-sandbox-tool-source.ts";
 import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-generator.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
@@ -774,6 +775,13 @@ function createAgentRuntime(
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
   const refreshSystem = createProjectSteeringRefresh(context);
+  const localToolRuntime = createHostedRootLocalToolRuntime({
+    allowedToolNames: options.allowedTools,
+    apiUrl: config.VERYFRONT_API_URL,
+    authToken: options.authToken,
+    createBashTool: context.options.createBashTool,
+    buildBaseTools: (taskContext) => buildLocalTools(context, options, taskContext),
+  });
 
   return createDefaultHostedChatRuntime({
     options,
@@ -783,7 +791,8 @@ function createAgentRuntime(
       studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
       mcpServers: resolveMcpServers(context.options),
     },
-    buildLocalTools: (taskContext) => buildLocalTools(context, options, taskContext),
+    buildLocalTools: localToolRuntime.buildLocalTools,
+    cleanup: localToolRuntime.cleanup,
     refreshSystem,
     onSteeringMutation: async ({ mutation, taskContext }) => {
       if (mutation.skillsChanged) {

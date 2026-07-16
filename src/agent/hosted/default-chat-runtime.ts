@@ -120,7 +120,10 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
   config: DefaultHostedChatRuntimeConfig;
-  buildLocalTools: (taskContext: DefaultHostedChatRuntimeTaskContext) => HostToolSet;
+  buildLocalTools: (
+    taskContext: DefaultHostedChatRuntimeTaskContext,
+  ) => HostToolSet | Promise<HostToolSet>;
+  cleanup?: () => Promise<void>;
   createTaskContext?: (
     input: CreateDefaultHostedChatRuntimeContextInput,
   ) => DefaultHostedChatRuntimeTaskContext;
@@ -177,7 +180,7 @@ async function buildToolAssembly(
   return prepareHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
-    localTools: input.buildLocalTools(input.taskContext),
+    localTools: await input.buildLocalTools(input.taskContext),
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
     studioMcpUrl: input.config.studioMcpUrl,
@@ -323,7 +326,7 @@ export async function createDefaultHostedChatRuntime(
   const taskContext = input.createTaskContext
     ? input.createTaskContext({ options: input.options, modelId })
     : createDefaultTaskContext({ options: input.options, modelId });
-  const cleanup = () => Promise.resolve();
+  const cleanup = input.cleanup ?? (() => Promise.resolve());
 
   try {
     const toolAssembly = await buildToolAssembly({
@@ -368,7 +371,13 @@ export async function createDefaultHostedChatRuntime(
       }),
     };
   } catch (error) {
-    await cleanup();
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      input.logger?.warn("Hosted chat runtime cleanup failed after setup error", {
+        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+    }
     throw error;
   }
 }

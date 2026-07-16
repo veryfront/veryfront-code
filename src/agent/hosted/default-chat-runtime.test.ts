@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -142,4 +142,102 @@ Deno.test("createDefaultHostedChatRuntime resolves configured owner tool selecto
 
   assertExists(capturedContext);
   assertEquals(capturedContext.availableToolNames, ["researcher--fetch-paper"]);
+});
+
+Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes its cleanup", async () => {
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  let cleanupCalls = 0;
+
+  const runtime = await createDefaultHostedChatRuntime({
+    options: {
+      projectId: "project-1",
+      authToken: "token-1",
+      instructions: "Base instructions",
+      model: "openai/gpt-5.4-nano",
+      allowedTools: ["bash"],
+    },
+    config: {
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+    },
+    buildLocalTools: async (taskContext) => {
+      capturedContext = taskContext;
+      await Promise.resolve();
+      return { bash: localTool("Run shell commands") };
+    },
+    cleanup: () => {
+      cleanupCalls += 1;
+      return Promise.resolve();
+    },
+    createRemoteToolSource: emptyRemoteSource,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames, ["bash"]);
+  await runtime.cleanup();
+  assertEquals(cleanupCalls, 1);
+});
+
+Deno.test("createDefaultHostedChatRuntime cleans up after partial per-run tool setup failure", async () => {
+  let cleanupCalls = 0;
+
+  await assertRejects(
+    () =>
+      createDefaultHostedChatRuntime({
+        options: {
+          projectId: "project-1",
+          authToken: "token-1",
+          instructions: "Base instructions",
+          model: "openai/gpt-5.4-nano",
+          allowedTools: ["bash"],
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+        },
+        buildLocalTools: async () => {
+          await Promise.resolve();
+          throw new Error("sandbox tool setup failed");
+        },
+        cleanup: () => {
+          cleanupCalls += 1;
+          return Promise.resolve();
+        },
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    "sandbox tool setup failed",
+  );
+
+  assertEquals(cleanupCalls, 1);
+});
+
+Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup also fails", async () => {
+  await assertRejects(
+    () =>
+      createDefaultHostedChatRuntime({
+        options: {
+          projectId: "project-1",
+          authToken: "token-1",
+          instructions: "Base instructions",
+          model: "openai/gpt-5.4-nano",
+          allowedTools: ["bash"],
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+        },
+        buildLocalTools: async () => {
+          await Promise.resolve();
+          throw new Error("sandbox tool setup failed");
+        },
+        cleanup: () => Promise.reject(new Error("sandbox cleanup failed")),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      }),
+    Error,
+    "sandbox tool setup failed",
+  );
 });
