@@ -11,6 +11,10 @@ type HostToolExecute = {
 export type HostToolDefinition = {
   id?: string;
   type?: Tool["type"];
+  /** Owning agent id retained for owner-aware hosted tool selection. */
+  ownerAgentId?: string;
+  /** Short selector accepted by the owning agent's `tools:` configuration. */
+  shortName?: string;
   title?: string;
   description?: string;
   inputSchema?: unknown;

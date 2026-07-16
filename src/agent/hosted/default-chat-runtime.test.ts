@@ -108,3 +108,38 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
     toolRegistry.clearAll();
   }
 });
+
+Deno.test("createDefaultHostedChatRuntime resolves configured owner tool selectors", async () => {
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+
+  await createDefaultHostedChatRuntime({
+    options: {
+      projectId: "project-1",
+      authToken: "token-1",
+      instructions: "Base instructions",
+      model: "openai/gpt-5.4-nano",
+      agentId: "researcher",
+      allowedTools: ["fetch-paper"],
+    },
+    config: {
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+    },
+    buildLocalTools: (taskContext) => {
+      capturedContext = taskContext;
+      return {
+        "researcher--fetch-paper": {
+          ...localTool("Fetch a paper"),
+          id: "researcher--fetch-paper",
+          ownerAgentId: "researcher",
+          shortName: "fetch-paper",
+        },
+      };
+    },
+    createRemoteToolSource: emptyRemoteSource,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames, ["researcher--fetch-paper"]);
+});
