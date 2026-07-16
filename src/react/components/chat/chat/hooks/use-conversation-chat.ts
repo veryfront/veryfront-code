@@ -214,6 +214,8 @@ export function useConversationChat(
       messages: sessionMessages,
       input: "",
       isLoading: false,
+      status: "ready" as const,
+      streamingMessageId: null,
       error: null,
       model: undefined,
       data: null,

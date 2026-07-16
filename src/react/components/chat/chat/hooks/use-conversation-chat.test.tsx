@@ -390,6 +390,50 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     }
   });
 
+  it("resets turn lifecycle state while the next conversation is loading", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(new Response("failed", { status: 500 }));
+    const first = conversation("first", [userMessage("first-message", "First thread")]);
+    const second = conversation("second", [userMessage("second-message", "Second thread")]);
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const renderValue = (value: UseConversationsResult) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={value}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+
+    try {
+      renderValue(contextValue(first, () => {}));
+      await settle();
+      await latest!.chat.sendMessage({ text: "Fail this turn" });
+      await settle();
+      assertEquals(latest!.chat.status, "error");
+
+      renderValue({ ...contextValue(first, () => {}), activeId: second.id });
+      assertEquals(latest!.chat.isLoading, false);
+      assertEquals(latest!.chat.error, null);
+      assertEquals(latest!.chat.status, "ready");
+      assertEquals(latest!.chat.streamingMessageId, null);
+    } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
   it("clears branch state when conversations reuse message ids", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;

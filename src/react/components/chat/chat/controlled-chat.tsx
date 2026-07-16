@@ -74,7 +74,9 @@ export function ControlledChat(
     sendMessage,
     setInput,
     setModel: onModelChange,
+    status,
     stop,
+    streamingMessageId,
     switchBranch,
   } = chat;
   const onSubmit = submit ?? sessionSubmit;
@@ -154,6 +156,8 @@ export function ControlledChat(
       messages={messages}
       input={input}
       isLoading={isLoading}
+      status={status}
+      streamingMessageId={streamingMessageId}
       error={error}
       setInput={setInput}
       onSubmit={handleSubmit}

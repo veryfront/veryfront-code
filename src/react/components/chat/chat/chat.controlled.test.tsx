@@ -20,6 +20,8 @@ function fakeSession(
     messages,
     input: "",
     isLoading: false,
+    status: "ready",
+    streamingMessageId: null,
     error: null,
     model: undefined,
     activeModel: undefined,
@@ -75,6 +77,10 @@ function userMsg(text: string): ChatMessage {
   return { id: `m-${text}`, role: "user", parts: [{ type: "text", text }] } as ChatMessage;
 }
 
+function assistantMsg(id: string, text: string): ChatMessage {
+  return { id, role: "assistant", parts: [{ type: "text", text }] } as ChatMessage;
+}
+
 describe("Chat — controlled via chat={useChat()}", () => {
   it("renders the session's messages (the object drives the surface)", () => {
     const html = renderToString(
@@ -86,6 +92,29 @@ describe("Chat — controlled via chat={useChat()}", () => {
   it("treats chat={} as controlled — no agentId/app-mode fetch needed", () => {
     const html = renderToString(<Chat chat={fakeSession([])} />);
     assert(html.length > 0, "renders an empty controlled chat");
+  });
+
+  it("marks the exact assistant message identified by the streaming session", () => {
+    const html = renderToString(
+      <Chat
+        chat={fakeSession([
+          assistantMsg("streaming-message", "Streaming answer"),
+          assistantMsg("later-message", "Later answer"),
+        ], {
+          isLoading: true,
+          status: "streaming",
+          streamingMessageId: "streaming-message",
+        })}
+      />,
+    );
+
+    const streamingAnswer = html.indexOf("Streaming answer");
+    const continuing = html.indexOf("Continuing...");
+    const laterAnswer = html.indexOf("Later answer");
+    assert(
+      streamingAnswer < continuing && continuing < laterAnswer,
+      "the continuing marker must follow the streaming id instead of the last-message index",
+    );
   });
 
   it("submits externally controlled attachments through the chat session", () => {
