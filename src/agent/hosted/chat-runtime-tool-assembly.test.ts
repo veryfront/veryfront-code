@@ -242,8 +242,9 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertEquals(toolAssembly.localToolNames, ["sleep"]);
   assertEquals(toolAssembly.remoteToolNames, ["create_file", "studio_open_project"]);
   assertEquals(toolAssembly.providerToolNames, []);
-  assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file", "studio_open_project"]);
-  assertEquals(taskContext.availableToolNames, ["create_file", "sleep", "studio_open_project"]);
+  // Remote tools are no longer in the initial inventory (activated on-demand via load_tools).
+  assertEquals(toolAssembly.compatibleRemoteToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["sleep"]);
   assertEquals(toolAssembly.systemInstructions.includes("Current run tool inventory:"), true);
 
   const runtimeSleepTool = toolAssembly.runtimeTools.sleep;
@@ -340,9 +341,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
   });
 
   assertEquals(toolAssembly.remoteToolNames, ["create_file"]);
-  assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file"]);
+  // Remote tools are not in the initial inventory; compatibleRemoteToolNames is empty.
+  assertEquals(toolAssembly.compatibleRemoteToolNames, []);
   assertEquals(toolAssembly.providerToolNames, ["web_search"]);
-  assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
+  // Provider-native tools remain in the initial inventory; remote tools do not.
+  assertEquals(taskContext.availableToolNames, ["web_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly separates matching direct and provider bindings", async () => {

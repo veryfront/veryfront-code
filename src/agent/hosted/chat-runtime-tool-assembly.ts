@@ -35,6 +35,7 @@ import {
   resolveHostedRuntimeAllowedToolNames,
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
+import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -91,6 +92,13 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   onSteeringMutation?: HostedProjectRemoteToolSourceMutationHandler;
   onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   preloadLatestConversationUserText?: boolean;
+  /**
+   * Per-run tool discovery context. When provided, its `activatedRemoteToolNames`
+   * Set is passed (by reference) to every remote tool source as the live
+   * execution gate. The same Set is mutated by `load_tools`, so newly activated
+   * tools become executable without re-creating the sources.
+   */
+  toolDiscoveryContext?: RuntimeToolDiscoveryContext;
 };
 
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
@@ -218,6 +226,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
     getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
     conversationId: input.conversationId,
     allowedToolNames,
+    ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
+      ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
+      : {}),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     prepareToolInput: input.prepareRemoteToolInput,
     shouldRetryWithTool: input.shouldRetryWithRemoteTool,
@@ -246,8 +257,11 @@ export async function prepareHostedChatRuntimeToolAssembly<
         : sourceProviderToolNames.has(toolName)),
   );
   const localToolNames = Object.keys(localHostTools);
+  // Remote tools no longer flood the initial inventory. They are listed in
+  // remoteToolNames for catalog purposes and activated on-demand via load_tools.
+  // Only local and provider-native tools seed the initial inventory union.
   const availableToolNames = selectProviderCompatibleToolNames(
-    [...new Set([...localToolNames, ...remoteToolNames, ...providerToolNames])].sort(),
+    [...new Set([...localToolNames, ...providerToolNames])].sort(),
     {
       model: input.taskContext.model,
       requiredToolNames: localToolNames,
