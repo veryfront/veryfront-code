@@ -38,6 +38,15 @@ export function useSources(): SourcesContextValue {
   return ctx;
 }
 
+/**
+ * Read the enclosing `Sources` state if present, or `null` outside one. Lets a
+ * leaf like `Message.Source` opt into the row's `onSourceClick` without failing
+ * when rendered standalone.
+ */
+export function useSourcesOptional(): SourcesContextValue | null {
+  return React.useContext(SourcesContext);
+}
+
 /** Props accepted by `Sources` / `Sources.Root`. */
 export interface SourcesProps {
   sources: Source[];
