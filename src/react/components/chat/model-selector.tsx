@@ -142,6 +142,8 @@ export interface ModelSelectorContextValue {
   value?: string;
   /** The resolved selected option (from `value`, else the first model). */
   selectedModel?: ModelOption;
+  /** @deprecated Use `selectedModel`. */
+  selected?: ModelOption;
   /** Select a model by value (also closes the menu). */
   onSelect: (value: string) => void;
   /** Popover open state. */
@@ -395,6 +397,7 @@ function ModelSelectorRoot({
   const context: ModelSelectorContextValue = {
     value,
     selectedModel: selected,
+    selected,
     onSelect: handleSelect,
     open,
     setOpen,

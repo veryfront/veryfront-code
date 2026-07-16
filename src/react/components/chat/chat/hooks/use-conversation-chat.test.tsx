@@ -72,7 +72,9 @@ function contextValue(
   return {
     conversations: [],
     activeConversation: active,
+    active,
     activeConversationId: active.id,
+    activeId: active.id,
     isLoading: false,
     select: noop,
     create: () => active,
@@ -98,7 +100,9 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
       activeConversation: null,
+      active: null,
       activeConversationId: null,
+      activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
 
@@ -153,7 +157,9 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
       activeConversation: null,
+      active: null,
       activeConversationId: null,
+      activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
 
@@ -210,7 +216,9 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
       activeConversation: null,
+      active: null,
       activeConversationId: null,
+      activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
 
@@ -421,7 +429,11 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       await settle();
       assertEquals(latest!.chat.status, "error");
 
-      renderValue({ ...contextValue(first, () => {}), activeConversationId: second.id });
+      renderValue({
+        ...contextValue(first, () => {}),
+        activeConversationId: second.id,
+        activeId: second.id,
+      });
       assertEquals(latest!.chat.isLoading, false);
       assertEquals(latest!.chat.error, null);
       assertEquals(latest!.chat.status, "ready");

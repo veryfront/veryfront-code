@@ -55,6 +55,24 @@ describe("ModelSelector preset", () => {
 });
 
 describe("ModelSelector — composability contract", () => {
+  it("keeps the legacy selected alias aligned with selectedModel", () => {
+    function SelectionProbe(): null {
+      const context = useModelSelector();
+      assertEquals(context.selected, context.selectedModel);
+      return null;
+    }
+
+    renderToString(
+      <ModelSelector
+        models={models}
+        value="openai/gpt-4o"
+        onChange={() => {}}
+      >
+        <SelectionProbe />
+      </ModelSelector>,
+    );
+  });
+
   it("recomposes: a caller can supply their own Trigger + Content", () => {
     const html = renderToString(
       <ModelSelector

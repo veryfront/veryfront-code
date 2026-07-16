@@ -80,6 +80,25 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
 }
 
 describe("react/components/chat/hooks/useConversations — save", () => {
+  it("keeps the legacy active aliases aligned with the explicit fields", async () => {
+    const restoreDom = installDom();
+    const store = memoryConversationStore([
+      conversation({ id: "active", title: "Active", updatedAt: 20 }),
+    ]);
+    try {
+      const view = mount(store);
+      await settle();
+
+      assertEquals(view.get().active, view.get().activeConversation);
+      assertEquals(view.get().activeId, view.get().activeConversationId);
+
+      flushSync(() => view.root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("selects the newest stored conversation in uncontrolled mode", async () => {
     const restoreDom = installDom();
     const store = memoryConversationStore([
