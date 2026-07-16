@@ -86,6 +86,12 @@ export interface IntegrationConnector {
 /** Canonical user- or project-scoped integration connection. */
 export type IntegrationScope = "user" | "project";
 
+/** @deprecated Use the canonical `"user"` scope. Accepted only in configuration input. */
+export type LegacyIntegrationScope = "endUser";
+
+/** Integration scope accepted before configuration validation normalizes legacy input. */
+export type IntegrationScopeInput = IntegrationScope | LegacyIntegrationScope;
+
 /** Configuration used by integration runtime. */
 export interface IntegrationRuntimeConfig {
   /** Token scope. "project" = shared project token, "user" = private user token. */
@@ -95,3 +101,8 @@ export interface IntegrationRuntimeConfig {
   /** Allowlist of tool IDs to expose. When set, only these tools are registered. */
   tools?: string[];
 }
+
+/** User-authored integration configuration accepted before validation. */
+export type IntegrationRuntimeConfigInput = Omit<IntegrationRuntimeConfig, "scope"> & {
+  scope?: IntegrationScopeInput;
+};

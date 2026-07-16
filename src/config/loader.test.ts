@@ -210,19 +210,22 @@ export default config as const;
 
     it("normalizes legacy integration scope while loading config", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-integration-scope-" });
-      const configPath = `${projectDir}/veryfront.config.js`;
-      const source = 'export default { integrations: { linear: { scope: "endUser" } } };';
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+      });
+      const projectDir = "/typed-integration-config";
+      const configPath = "/veryfront.config.ts";
+      const source = [
+        'import { defineConfig } from "veryfront";',
+        'export default defineConfig({ integrations: { linear: { scope: "endUser" } } });',
+      ].join("\n");
 
-      try {
-        await Deno.writeTextFile(configPath, source);
-        adapter.fs.files.set(configPath, source);
+      adapter.fs.files.set(configPath, source);
 
-        const config = await getConfig(projectDir, adapter);
-        assertEquals(config.integrations?.linear?.scope, "user");
-      } finally {
-        await Deno.remove(projectDir, { recursive: true });
-      }
+      const config = await getConfig(projectDir, adapter);
+      assertEquals(config.integrations?.linear?.scope, "user");
     });
 
     it("should try multiple config file names", async () => {

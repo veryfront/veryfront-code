@@ -41,7 +41,7 @@ type RemoteIntegrationToolExecutionContext = {
 };
 
 type IntegrationConfigSyncInput = {
-  scope?: IntegrationScope | "endUser";
+  scope: IntegrationScope;
   tools?: string[];
 };
 
@@ -260,24 +260,13 @@ export async function executeRemoteIntegrationTool(
 /**
  * Sync integration config from veryfront.config.ts to the API.
  * This is a full-replace operation. Called by the MCP server path
- * which has access to the config. Legacy `endUser` scope input is accepted
- * during migration but normalized to `user` before transmission.
+ * which has access to the validated, canonical config.
  */
 export async function syncIntegrationConfig(
   apiBaseUrl: string,
   apiToken: string,
   integrations: Record<string, IntegrationConfigSyncInput>,
 ): Promise<void> {
-  const canonicalIntegrations = Object.fromEntries(
-    Object.entries(integrations).map(([name, config]) => [
-      name,
-      {
-        ...config,
-        scope: config.scope === "endUser" ? "user" : config.scope,
-      },
-    ]),
-  );
-
   try {
     const response = await fetch(`${apiBaseUrl}/integrations/config`, {
       method: "POST",
@@ -285,7 +274,7 @@ export async function syncIntegrationConfig(
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ integrations: canonicalIntegrations }),
+      body: JSON.stringify({ integrations }),
       signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
     });
 

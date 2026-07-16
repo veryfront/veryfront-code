@@ -1,17 +1,17 @@
-import type { VeryfrontConfig } from "./schemas/index.ts";
+import type { VeryfrontConfig, VeryfrontConfigInput } from "./schemas/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
 /** Define a Veryfront project configuration object. */
-export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
+export function defineConfig<const T extends VeryfrontConfigInput>(config: T): T {
   return config;
 }
 
 /** Define a Veryfront project configuration from the current environment name. */
-export function defineConfigWithEnv(
-  factory: (env: string) => VeryfrontConfig,
+export function defineConfigWithEnv<const T extends VeryfrontConfigInput>(
+  factory: (env: string) => T,
   envConfig: EnvironmentConfig = getEnvironmentConfig(),
-): VeryfrontConfig {
+): T {
   return factory(envConfig.nodeEnv);
 }
 

@@ -12,7 +12,7 @@ import {
   defineConfigWithEnv as publicDefineConfigWithEnv,
   mergeConfigs as publicMergeConfigs,
 } from "veryfront";
-import type { VeryfrontConfig } from "./schemas/index.ts";
+import type { VeryfrontConfig, VeryfrontConfigInput } from "./schemas/index.ts";
 import { createTestEnvironmentConfig } from "./environment-config.ts";
 
 describe("define-config", () => {
@@ -27,6 +27,15 @@ describe("define-config", () => {
     it("should work with minimal config", () => {
       const config: VeryfrontConfig = {};
       expect(defineConfig(config)).toEqual({});
+    });
+
+    it("accepts the deprecated endUser scope as configuration input", () => {
+      const config: VeryfrontConfigInput = {
+        integrations: { linear: { scope: "endUser" } },
+      };
+
+      expect(defineConfig(config)).toBe(config);
+      expect(config.integrations?.linear?.scope).toBe("endUser");
     });
 
     it("should preserve all config properties", () => {

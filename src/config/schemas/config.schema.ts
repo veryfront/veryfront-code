@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { IntegrationRuntimeConfigInput } from "#veryfront/integrations/types.ts";
 
 // Sub-schemas
 const getCorsSchema = defineSchema((v) =>
@@ -675,7 +676,14 @@ export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
 // Inferred types
 export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
-export type VeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
+type InferredVeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
+/**
+ * User-authored configuration accepted before schema transforms run.
+ * `endUser` remains a deprecated integration scope input and normalizes to `user`.
+ */
+export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrations"> & {
+  integrations?: Record<string, IntegrationRuntimeConfigInput | undefined>;
+};
 
 // Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {

@@ -45,6 +45,10 @@ Use `scope: "user"` for a private connection owned by the current user, or
 but Veryfront normalizes both to `user` and only syncs `user | project` to the
 API.
 
+Before deploying clients that write the canonical `user` scope, fully deploy
+the Phase 1 API compatibility release. During the migration, that API release
+must accept both canonical `user` writes and legacy `endUser` writes.
+
 ## Authentication flow
 
 When an agent calls an integration tool and no valid token exists:

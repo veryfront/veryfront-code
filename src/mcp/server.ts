@@ -112,14 +112,10 @@ export interface IntegrationLoaderConfig {
   apiToken?: string;
 }
 
-type CompatibleIntegrationRuntimeConfig = Omit<IntegrationRuntimeConfig, "scope"> & {
-  scope?: IntegrationScope | "endUser";
-};
-
 function normalizeIntegrationScope(
-  config: CompatibleIntegrationRuntimeConfig | undefined,
+  config: IntegrationRuntimeConfig | undefined,
 ): IntegrationScope {
-  if (config?.scope === "user" || config?.scope === "endUser") return "user";
+  if (config?.scope === "user") return "user";
   if (config?.scope === "project") return "project";
   return config?.perUser ? "user" : "project";
 }
@@ -907,9 +903,8 @@ export class MCPServer {
       { scope: IntegrationScope; tools?: string[] }
     > = {};
     for (const [name, cfg] of Object.entries(config.integrations)) {
-      const compatibleConfig = cfg as CompatibleIntegrationRuntimeConfig | undefined;
       integrationConfigs[name] = {
-        scope: normalizeIntegrationScope(compatibleConfig),
+        scope: normalizeIntegrationScope(cfg),
         tools: cfg?.tools,
       };
     }
