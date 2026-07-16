@@ -113,6 +113,7 @@ describe("react/agent/useChat status lifecycle", () => {
       assertEquals(latest!.error, null);
     } finally {
       flushSync(() => root.unmount());
+      await settle();
       globalThis.fetch = originalFetch;
       restoreDom();
     }
@@ -141,6 +142,7 @@ describe("react/agent/useChat status lifecycle", () => {
       assert(latest!.error !== null, "error is populated");
     } finally {
       flushSync(() => root.unmount());
+      await settle();
       globalThis.fetch = originalFetch;
       restoreDom();
     }
