@@ -13,6 +13,7 @@ import { logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
+import type { IntegrationScope } from "./types.ts";
 
 /**
  * Default timeout for outbound integration API calls. Without it, a hung remote
@@ -37,6 +38,11 @@ interface CallToolTextContent {
 type RemoteIntegrationToolExecutionContext = {
   runId?: string;
   agentId?: string;
+};
+
+type IntegrationConfigSyncInput = {
+  scope?: IntegrationScope | "endUser";
+  tools?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -254,13 +260,24 @@ export async function executeRemoteIntegrationTool(
 /**
  * Sync integration config from veryfront.config.ts to the API.
  * This is a full-replace operation. Called by the MCP server path
- * which has access to the config.
+ * which has access to the config. Legacy `endUser` scope input is accepted
+ * during migration but normalized to `user` before transmission.
  */
 export async function syncIntegrationConfig(
   apiBaseUrl: string,
   apiToken: string,
-  integrations: Record<string, { scope?: string; tools?: string[] }>,
+  integrations: Record<string, IntegrationConfigSyncInput>,
 ): Promise<void> {
+  const canonicalIntegrations = Object.fromEntries(
+    Object.entries(integrations).map(([name, config]) => [
+      name,
+      {
+        ...config,
+        scope: config.scope === "endUser" ? "user" : config.scope,
+      },
+    ]),
+  );
+
   try {
     const response = await fetch(`${apiBaseUrl}/integrations/config`, {
       method: "POST",
@@ -268,7 +285,7 @@ export async function syncIntegrationConfig(
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ integrations }),
+      body: JSON.stringify({ integrations: canonicalIntegrations }),
       signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
     });
 

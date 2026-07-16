@@ -59,7 +59,7 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `getRemoteIntegrationToolDefinitions` | Fetch integration tool definitions for the current request context. Returns ToolDefinition[] that the agent runtime merges into the model's available tools. Returns empty array if no API config or no tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L162) |
 | `isRemoteIntegrationTool` | Check if a tool name looks like a remote integration tool. Integration tools use "integration__tool_id" format (double underscore separator). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L190) |
 | `listConnectors` | List connectors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L54) |
-| `syncIntegrationConfig` | Sync integration config from veryfront.config.ts to the API. This is a full-replace operation. Called by the MCP server path which has access to the config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L226) |
+| `syncIntegrationConfig` | Sync integration config from veryfront.config.ts to the API. This is a full-replace operation. Called by the MCP server path which has access to the config. Legacy `endUser` scope input is accepted during migration but normalized to `user` before transmission. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L266) |
 
 ### Types
 
@@ -72,7 +72,7 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `IntegrationName` | Public API contract for integration name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L479) |
 | `IntegrationPrompt` | Public API contract for integration prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L493) |
 | `IntegrationRuntimeConfig` | Configuration used by integration runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L89) |
-| `IntegrationScope` | Public API contract for integration scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L86) |
+| `IntegrationScope` | Canonical user- or project-scoped integration connection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L87) |
 | `IntegrationTool` | Public API contract for integration tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L65) |
 | `IntegrationToolMeta` | Public API contract for integration tool meta. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L487) |
 | `OAuthConfig` | Configuration used by oauth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L485) |

@@ -8,7 +8,7 @@ import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import type { IntegrationRuntimeConfig } from "#veryfront/integrations/types.ts";
+import type { IntegrationRuntimeConfig, IntegrationScope } from "#veryfront/integrations/types.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { createMCPHTTPHandler } from "./http-transport.ts";
 import { SessionManager } from "./session.ts";
@@ -110,6 +110,18 @@ export interface IntegrationLoaderConfig {
   integrations: Record<string, IntegrationRuntimeConfig | undefined>;
   apiBaseUrl: string;
   apiToken?: string;
+}
+
+type CompatibleIntegrationRuntimeConfig = Omit<IntegrationRuntimeConfig, "scope"> & {
+  scope?: IntegrationScope | "endUser";
+};
+
+function normalizeIntegrationScope(
+  config: CompatibleIntegrationRuntimeConfig | undefined,
+): IntegrationScope {
+  if (config?.scope === "user" || config?.scope === "endUser") return "user";
+  if (config?.scope === "project") return "project";
+  return config?.perUser ? "user" : "project";
 }
 
 const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
@@ -890,10 +902,14 @@ export class MCPServer {
     // Sync config to API — this is the only responsibility of the MCP server path.
     // Actual tool discovery happens per-request in the agent runtime (getAvailableTools)
     // and the API's MCP tools/list handler.
-    const integrationConfigs: Record<string, { scope?: string; tools?: string[] }> = {};
+    const integrationConfigs: Record<
+      string,
+      { scope: IntegrationScope; tools?: string[] }
+    > = {};
     for (const [name, cfg] of Object.entries(config.integrations)) {
+      const compatibleConfig = cfg as CompatibleIntegrationRuntimeConfig | undefined;
       integrationConfigs[name] = {
-        scope: cfg?.scope ?? (cfg?.perUser ? "endUser" : "project"),
+        scope: normalizeIntegrationScope(compatibleConfig),
         tools: cfg?.tools,
       };
     }

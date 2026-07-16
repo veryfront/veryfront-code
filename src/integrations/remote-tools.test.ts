@@ -309,7 +309,7 @@ describe("integrations/remote-tools", () => {
     assertEquals(requestBody, {
       integrations: {
         github: { scope: "project", tools: ["list-repos"] },
-        slack: { scope: "endUser" },
+        slack: { scope: "user" },
       },
     });
   });

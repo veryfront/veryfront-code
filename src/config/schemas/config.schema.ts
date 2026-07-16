@@ -601,9 +601,12 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           v.string(),
           v
             .object({
-              /** Token scope: "project" (shared) or "endUser" (per-end-user OAuth). */
-              scope: v.enum(["project", "endUser"]).optional(),
-              /** @deprecated Use `scope: "endUser"` instead. */
+              /** Token scope. Legacy "endUser" input is normalized to "user". */
+              scope: v
+                .enum(["user", "project", "endUser"])
+                .transform((scope): "user" | "project" => scope === "project" ? "project" : "user")
+                .optional(),
+              /** @deprecated Use `scope: "user"` instead. */
               perUser: v.boolean().optional(),
               /** Allowlist of tool IDs to expose. When set, only these tools are registered.
                * This keeps the MCP context narrow by excluding unused tools.
