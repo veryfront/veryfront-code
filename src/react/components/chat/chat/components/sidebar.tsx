@@ -2,11 +2,9 @@
  * ChatSidebar — a conversation rail, available as a one-shot preset or as a
  * composable compound (mirroring `Chat` / `Message`).
  *
- * Conversation-native: it lists {@link ConversationSummary} rows and, inside a
- * {@link ConversationsProvider}, needs **no props at all** — it reads the list,
- * the active id, and select/new/delete/rename straight from context. Pass props
- * to override any of them (controlled), or drop to the compound parts for a
- * custom layout.
+ * Conversation-native: inside a {@link ConversationsProvider} it needs **no
+ * props** — the list, active id, and select/new/delete/rename come from context.
+ * Pass props to override (controlled), or use the compound parts for a custom layout.
  *
  * @example Zero-config inside a provider
  * ```tsx
@@ -156,7 +154,9 @@ function useResolvedSidebar(props: ChatSidebarControlProps): {
   const ctx = useConversationsContextOptional();
 
   const conversations = props.conversations ?? ctx?.conversations ?? [];
-  const activeId = props.activeId !== undefined ? props.activeId : ctx?.activeId ?? null;
+  const activeId = props.activeId !== undefined
+    ? props.activeId
+    : ctx?.activeConversationId ?? null;
   const onSelect = props.onSelect ?? ctx?.select ?? noop;
   const onDelete = props.onDelete ?? ctx?.remove ?? noop;
   const onRename = props.onRename ?? ctx?.rename;

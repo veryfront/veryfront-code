@@ -44,7 +44,9 @@ export function useConversation(
   // Inside a provider, reuse its already-loaded active conversation when it
   // matches — avoids a redundant round-trip and stays in sync with edits.
   const context = useConversationsContextOptional();
-  const fromContext = context?.active && context.active.id === id ? context.active : null;
+  const fromContext = context?.activeConversation && context.activeConversation.id === id
+    ? context.activeConversation
+    : null;
 
   const store = React.useMemo(
     () => options.store ?? localConversationStore(storageKey),
