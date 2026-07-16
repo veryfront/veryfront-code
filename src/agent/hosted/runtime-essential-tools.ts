@@ -13,6 +13,12 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
 const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
 
+/**
+ * Tool discovery tools are unconditionally essential: they must never be
+ * truncated by the provider cap, regardless of skill availability.
+ */
+const TOOL_DISCOVERY_TOOL_NAMES = ["search_tools", "load_tools"] as const;
+
 /** Normalize hosted runtime allowed tools. */
 export function normalizeHostedRuntimeAllowedToolNames(
   toolNames: HostedRuntimeAllowedToolNames | undefined,
@@ -36,12 +42,20 @@ export function resolveHostedRuntimeAllowedToolNames(
     return allowedToolNames;
   }
 
-  if (!input.availableSkillIds?.length) {
-    return allowedToolNames;
-  }
-
   const localToolNames = new Set(input.localToolNames);
   const resolvedToolNames = new Set(allowedToolNames);
+
+  // Tool discovery is unconditionally essential: force-add whenever the tools
+  // are registered as local tools, regardless of skill availability.
+  for (const toolName of TOOL_DISCOVERY_TOOL_NAMES) {
+    if (localToolNames.has(toolName)) {
+      resolvedToolNames.add(toolName);
+    }
+  }
+
+  if (!input.availableSkillIds?.length) {
+    return resolvedToolNames;
+  }
 
   for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
     if (localToolNames.has(toolName)) {
