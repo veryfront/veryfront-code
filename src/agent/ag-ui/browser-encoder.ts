@@ -521,6 +521,29 @@ function completeToolInput(
   return events;
 }
 
+const STRUCTURED_TOOL_ERROR_CODES = new Set(["authentication_required", "reconnect_required"]);
+
+function parseStructuredToolErrorText(errorText: unknown): Record<string, unknown> | undefined {
+  if (typeof errorText !== "string" || !errorText.startsWith("{")) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(errorText);
+    if (
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) &&
+      typeof (parsed as Record<string, unknown>).error === "string" &&
+      STRUCTURED_TOOL_ERROR_CODES.has((parsed as Record<string, unknown>).error as string)
+    ) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Not JSON — treat as plain error text.
+  }
+
+  return undefined;
+}
+
 function createToolResultEvent(
   toolCallId: unknown,
   result: Record<string, unknown> | unknown,
@@ -799,7 +822,15 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
-        createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
+        createToolResultEvent(
+          event.toolCallId,
+          // Structured tool errors (authentication_required / reconnect_required
+          // with a connectUrl) travel JSON-serialized through the string-typed
+          // errorText channel; restore them so the platform executor and the
+          // Studio Connect card see the machine code, not prose.
+          parseStructuredToolErrorText(event.errorText) ?? { error: event.errorText },
+          true,
+        ),
       ];
 
     case "tool-output-denied":

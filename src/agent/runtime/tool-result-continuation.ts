@@ -27,9 +27,36 @@ function getMcpToolErrorMessage(result: unknown): string | undefined {
   return record.error;
 }
 
+const STRUCTURED_TOOL_AUTH_ERRORS = new Set(["authentication_required", "reconnect_required"]);
+
+/**
+ * Structured auth payloads must survive the string-typed errorText channel:
+ * the platform executor and the Studio Connect card key on the machine code
+ * and connectUrl, not the human message. Serialize the payload as JSON; the
+ * AG-UI encoder parses JSON errorText back into a structured tool result.
+ */
+function serializeStructuredToolAuthError(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+
+  const record = result as Record<string, unknown>;
+  if (typeof record.error !== "string" || !STRUCTURED_TOOL_AUTH_ERRORS.has(record.error)) {
+    return undefined;
+  }
+
+  const { isError: _isError, ...payload } = record;
+  return JSON.stringify(payload);
+}
+
 export function getToolResultError(result: unknown): string | undefined {
   if (!hasToolExecutionErrorMarker(result)) {
     return undefined;
+  }
+
+  const structuredAuthError = serializeStructuredToolAuthError(result);
+  if (structuredAuthError !== undefined) {
+    return structuredAuthError;
   }
 
   const mcpToolErrorMessage = getMcpToolErrorMessage(result);
