@@ -12,7 +12,7 @@ import { type ClassValue, clsx } from "#veryfront/utils/clsx.ts";
 // The design-token vocabulary now lives in the base `veryfront/ui` layer;
 // chat renders against the same tokens, so re-export the generator here to
 // keep `theme.ts`'s existing API (`generateTokenCSS`) stable for chat callers.
-export { generateTokenCSS } from "../ui/design-tokens.ts";
+export { generateTokenCSS, UI_SCOPE_ATTRS, UI_SCOPE_SELECTOR } from "../ui/design-tokens.ts";
 
 // ---------------------------------------------------------------------------
 // Theme interfaces
