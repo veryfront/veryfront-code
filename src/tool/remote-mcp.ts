@@ -201,6 +201,20 @@ function normalizeKnownToolError(
   };
 }
 
+function preserveToolExecutionErrorMarker(value: unknown): unknown {
+  if (isRecord(value) && !Array.isArray(value)) {
+    return hasToolExecutionErrorMarker(value) ? value : { ...value, isError: true };
+  }
+
+  return {
+    isError: true,
+    message: typeof value === "string" && value.trim().length > 0
+      ? value
+      : "Remote MCP tool returned an error",
+    ...(value === undefined ? {} : { output: value }),
+  };
+}
+
 function isReconnectRequiredToolOutput(value: unknown): value is Record<string, unknown> {
   return isRecord(value) && value.error === "reconnect_required";
 }
@@ -423,7 +437,9 @@ function normalizeCallToolResult(input: {
       const errorBody = "structuredContent" in result
         ? result.structuredContent
         : parseJsonText(text) ?? { error: "tool_error", message: text };
-      return normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context);
+      return preserveToolExecutionErrorMarker(
+        normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context),
+      );
     }
 
     if ("structuredContent" in result) {
@@ -435,7 +451,9 @@ function normalizeCallToolResult(input: {
 
   if (isError) {
     const errorBody = "structuredContent" in result ? result.structuredContent : result;
-    return normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context);
+    return preserveToolExecutionErrorMarker(
+      normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context),
+    );
   }
 
   if ("structuredContent" in result) {

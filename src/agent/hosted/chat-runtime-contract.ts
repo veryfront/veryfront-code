@@ -126,6 +126,10 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   temperature?: number;
   maxSteps?: number;
   allowedTools?: string[];
+  /** Provider-native selection kept separate from local and MCP tool bindings. */
+  allowedProviderTools?: string[];
+  /** Preserve skill runtime infrastructure for a config-derived empty tool selector. */
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
   allowDelegation?: boolean;
   thinking?: TThinkingConfig;
   conversationId?: string;

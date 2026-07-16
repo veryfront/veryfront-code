@@ -188,6 +188,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       model: "configured-model",
       thinking: { enabled: true, budgetTokens: 1000 },
       maxSteps: 50,
+      tools: ["get_agent", "load_skill", "update_agent"],
     },
     projectId: "project-1",
     authToken: "token-1",
@@ -255,6 +256,8 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     thinking: { enabled: false },
     maxSteps: 7,
     allowedTools: ["load_skill"],
+    allowedProviderTools: ["load_skill"],
+    includeRuntimeEssentialToolsWhenEmpty: false,
     allowDelegation: false,
     conversationId: "conversation-1",
     runId: "run-1",
@@ -270,6 +273,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         model: "configured-model",
         thinking: { enabled: true, budgetTokens: 1000 },
         maxSteps: 50,
+        tools: ["get_agent", "load_skill", "update_agent"],
       },
       environmentContext: "Browser workspace",
       initialProjectInstructions: "Project instructions",
@@ -279,6 +283,31 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4-nano",
+      tools: ["get_agent", "get_agent_source", "update_agent"],
+      providerTools: ["web_search"],
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  assertEquals(result.creationOptions.allowedTools, [
+    "get_agent",
+    "get_agent_source",
+    "update_agent",
+  ]);
+  assertEquals(result.creationOptions.allowedProviderTools, ["web_search"]);
+  assertEquals(result.creationOptions.includeRuntimeEssentialToolsWhenEmpty, true);
 });
 
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
@@ -347,6 +376,95 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
       content: "agent-1:Project instructions",
     },
   ]);
+});
+
+Deno.test("prepareHostedChatExecution strips provider history enabled by a runtime override", async () => {
+  const messages: ChatUiMessage[] = [
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Search the web." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "web_search",
+          toolCallId: "toolu_web_search",
+          input: { query: "Veryfront" },
+          state: "output-available",
+          providerExecuted: true,
+          output: null,
+        },
+        { type: "text", text: "I found the official site." },
+      ],
+    },
+    {
+      id: "tool-1",
+      role: "tool",
+      parts: [{
+        type: "tool-web_search",
+        toolCallId: "toolu_web_search",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        state: "output-available",
+        output: null,
+      }],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Continue." }],
+    },
+  ];
+
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages,
+      model: "anthropic/claude-sonnet-4-6",
+      runtimeOverrides: { allowedTools: ["web_search"] },
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "anthropic/claude-sonnet-4-6",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(result.finalMessages.map((message) => message.role), [
+    "user",
+    "assistant",
+    "user",
+  ]);
+  assertEquals(result.finalMessages[1]?.parts, [{
+    type: "text",
+    text: "I found the official site.",
+  }]);
 });
 
 Deno.test("prepareHostedChatExecution does not carry old submitted form input into a new user turn", async () => {

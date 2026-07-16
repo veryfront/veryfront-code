@@ -35,10 +35,12 @@ import {
   resolveHostedRuntimeAllowedToolNames,
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
+import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
+  agentId?: string;
   projectId?: string | null;
   branchId?: string | null;
   model?: string;
@@ -77,6 +79,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
+  allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
@@ -88,6 +92,13 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   onSteeringMutation?: HostedProjectRemoteToolSourceMutationHandler;
   onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   preloadLatestConversationUserText?: boolean;
+  /**
+   * Per-run tool discovery context. When provided, its `activatedRemoteToolNames`
+   * Set is passed (by reference) to every remote tool source as the live
+   * execution gate. The same Set is mutated by `load_tools`, so newly activated
+   * tools become executable without re-creating the sources.
+   */
+  toolDiscoveryContext?: RuntimeToolDiscoveryContext;
 };
 
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
@@ -118,6 +129,51 @@ function filterPostFormInputLocalTools(
   );
 }
 
+function resolveOwnerScopedToolName(input: {
+  toolName: string;
+  agentId?: string;
+  localTools: HostToolSet;
+}): string {
+  if (input.agentId === undefined) {
+    return input.toolName;
+  }
+
+  for (const [registeredName, tool] of Object.entries(input.localTools)) {
+    if (
+      tool.ownerAgentId === input.agentId &&
+      tool.shortName === input.toolName
+    ) {
+      return registeredName;
+    }
+  }
+
+  return input.toolName;
+}
+
+function resolveOwnerScopedToolNames(input: {
+  toolNames: HostedChatRuntimeAllowedToolNames | undefined;
+  agentId?: string;
+  localTools: HostToolSet;
+}): HostedChatRuntimeAllowedToolNames | undefined {
+  const toolNames = normalizeHostedRuntimeAllowedToolNames(input.toolNames);
+  if (toolNames === null) {
+    return input.toolNames;
+  }
+
+  const resolvedToolNames = new Set<string>();
+  for (const toolName of toolNames) {
+    resolvedToolNames.add(
+      resolveOwnerScopedToolName({
+        toolName,
+        agentId: input.agentId,
+        localTools: input.localTools,
+      }),
+    );
+  }
+
+  return resolvedToolNames;
+}
+
 /** Filter hosted chat runtime local tools. */
 export function filterHostedChatRuntimeLocalTools(input: {
   tools: HostToolSet;
@@ -138,10 +194,16 @@ export async function prepareHostedChatRuntimeToolAssembly<
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
+  const ownerScopedAllowedToolNames = resolveOwnerScopedToolNames({
+    toolNames: input.allowedToolNames,
+    agentId: input.taskContext.agentId,
+    localTools: input.localTools,
+  });
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
-    allowedToolNames: input.allowedToolNames,
+    allowedToolNames: ownerScopedAllowedToolNames,
     localToolNames: Object.keys(input.localTools),
     availableSkillIds: input.taskContext.availableSkillIds,
+    includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
   });
   const sortedLocalTools = filterHostedChatRuntimeLocalTools({
     tools: filterPostFormInputLocalTools(input.localTools, input.taskContext),
@@ -164,6 +226,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
     getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
     conversationId: input.conversationId,
     allowedToolNames,
+    ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
+      ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
+      : {}),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     prepareToolInput: input.prepareRemoteToolInput,
     shouldRetryWithTool: input.shouldRetryWithRemoteTool,
@@ -175,17 +240,30 @@ export async function prepareHostedChatRuntimeToolAssembly<
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
   const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
-  const localProviderToolNames = new Set(
-    Object.keys(sortedLocalTools).filter((toolName) => sourceProviderToolNames.has(toolName)),
+  const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
+    input.allowedProviderToolNames,
   );
-  const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
+  const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
+  const localProviderToolNames = new Set(
+    Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
+  );
+  const providerToolNames = providerNativeToolNames.filter(
     (toolName) =>
       !localProviderToolNames.has(toolName) &&
-      (allowedToolNames ? allowedToolNames.has(toolName) : sourceProviderToolNames.has(toolName)),
+      (allowedProviderToolNames
+        ? allowedProviderToolNames.has(toolName)
+        : allowedToolNames
+        ? allowedToolNames.has(toolName)
+        : sourceProviderToolNames.has(toolName)),
   );
   const localToolNames = Object.keys(localHostTools);
+  // Initial inventory = configured-binding remote tools + local + provider-native.
+  // The full MCP catalog does not flood the union: remoteToolNames is already
+  // filtered by the agent's configured binding (allowedToolNames), so only the
+  // explicitly selected subset reaches the provider cap. On-demand activation
+  // via load_tools extends this set at runtime beyond what the binding pre-loads.
   const availableToolNames = selectProviderCompatibleToolNames(
-    [...new Set([...localToolNames, ...remoteToolNames, ...providerToolNames])].sort(),
+    [...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames])].sort(),
     {
       model: input.taskContext.model,
       requiredToolNames: localToolNames,

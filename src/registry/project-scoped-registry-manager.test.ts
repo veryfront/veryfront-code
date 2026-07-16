@@ -1,8 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import { ProjectScopedRegistryManager } from "./project-scoped-registry-manager.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import {
+  ProjectScopedRegistryManager,
+  runWithRegistryTransaction,
+} from "./project-scoped-registry-manager.ts";
 
 describe("ProjectScopedRegistryManager", () => {
   function createManager<T>(name: string): ProjectScopedRegistryManager<T> {
@@ -240,5 +244,307 @@ describe("ProjectScopedRegistryManager", () => {
       assertEquals(manager.get("shared-a"), "value");
       assertEquals(manager.get("proj-a"), undefined);
     });
+  });
+});
+
+describe("ProjectScopedRegistryManager transactions", () => {
+  const scope = { projectId: "project-transaction", mode: "preview" as const, versionId: "main" };
+
+  it("keeps the live registry visible until a staged replacement commits", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+    runWithCacheKeyContext(scope, () => manager.register("old-skill", "old"));
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.clear();
+          manager.register("new-skill", "new");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("old-skill"), "old");
+      assertEquals(manager.get("new-skill"), undefined);
+    });
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("old-skill"), undefined);
+      assertEquals(manager.get("new-skill"), "new");
+    });
+  });
+
+  it("preserves a live registration that arrives while replacement is staged", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    runWithCacheKeyContext(scope, () => manager.register("old-agent", "old"));
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.clear();
+          manager.register("discovered-agent", "discovered");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => manager.register("route-agent", "route"));
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("old-agent"), undefined);
+      assertEquals(manager.get("discovered-agent"), "discovered");
+      assertEquals(manager.get("route-agent"), "route");
+    });
+  });
+
+  it("preserves a live deletion that arrives while mutations are staged", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    runWithCacheKeyContext(scope, () => {
+      manager.register("deleted-agent", "old");
+      manager.register("stable-agent", "stable");
+    });
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("discovered-agent", "discovered");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.delete("deleted-agent"), true);
+    });
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("deleted-agent"), undefined);
+      assertEquals(manager.get("stable-agent"), "stable");
+      assertEquals(manager.get("discovered-agent"), "discovered");
+    });
+  });
+
+  it("honors a live clear after a transaction stages the first item", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("staged-agent", "staged");
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => manager.clear());
+
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("staged-agent"), undefined);
+    });
+  });
+
+  it("serializes concurrent transactions for the same registry scope", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let secondStarted = false;
+
+    const first = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("first-agent", "first");
+          firstStarted.resolve();
+          await releaseFirst.promise;
+        }),
+    );
+    await firstStarted.promise;
+
+    const second = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          secondStarted = true;
+          manager.register("second-agent", "second");
+        }),
+    );
+    await Promise.resolve();
+    assertEquals(secondStarted, false);
+
+    releaseFirst.resolve();
+    await Promise.all([first, second]);
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("first-agent"), "first");
+      assertEquals(manager.get("second-agent"), "second");
+    });
+  });
+
+  it("discards staged mutations when the transaction fails", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+    runWithCacheKeyContext(scope, () => manager.register("stable-skill", "stable"));
+
+    await assertRejects(
+      () =>
+        runWithCacheKeyContext(
+          scope,
+          () =>
+            runWithRegistryTransaction(async () => {
+              manager.clear();
+              manager.register("partial-skill", "partial");
+              throw new Error("discovery failed");
+            }),
+        ),
+      Error,
+      "discovery failed",
+    );
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("stable-skill"), "stable");
+      assertEquals(manager.get("partial-skill"), undefined);
+    });
+  });
+
+  it("rejects registry access after a nested context changes tenant scope", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+
+    await assertRejects(
+      () =>
+        runWithCacheKeyContext(
+          scope,
+          () =>
+            runWithRegistryTransaction(async () => {
+              manager.register("project-skill", "stable");
+              await runWithCacheKeyContext(
+                { projectId: "other-project", mode: "preview", versionId: "main" },
+                async () => {
+                  manager.get("project-skill");
+                },
+              );
+            }),
+        ),
+      Error,
+      "Registry scope changed during transaction",
+    );
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("project-skill"), undefined);
+    });
+  });
+
+  it("routes async descendant writes to the live registry after commit", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+    const lateWrite = Promise.withResolvers<void>();
+
+    await runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("committed-skill", "committed");
+          setTimeout(() => {
+            try {
+              manager.clear();
+              manager.register("late-skill", "late");
+              lateWrite.resolve();
+            } catch (error) {
+              lateWrite.reject(error);
+            }
+          }, 0);
+        }),
+    );
+    await lateWrite.promise;
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("committed-skill"), undefined);
+      assertEquals(manager.get("late-skill"), "late");
+    });
+  });
+});
+
+// Hardening identified while investigating veryfront/veryfront-api#3952.
+// The issue itself had invalid skill metadata and release-pinned requests, so
+// this registry race was not its deterministic cause.
+// Control-plane runs with agentSource.type === "environment" and no releaseId
+// produce a request context with { productionMode: true, releaseId: null }.
+// tryGetCacheKeyContext() returns null for this context (no stable distributed
+// cache key without a releaseId), so buildRegistryScopeId() collapsed to
+// "__default__" — a single shared scope for every project. Concurrent
+// requests' skillRegistry.clear() calls stomped each other's skills, producing
+// "Skill not found. Available skills: none" when load_skill executed.
+describe("concurrent environment-source runs with no releaseId", () => {
+  it("skills registered by project-x must survive project-y discovery clear", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+
+    // Request A: project-x, environment source, no releaseId
+    // (mirrors withAgentSourceContext options for type === "environment")
+    await runWithRequestContext(
+      {
+        projectSlug: "project-x",
+        projectId: "proj-x",
+        token: "tok-a",
+        productionMode: true,
+        releaseId: null,
+        environmentName: "Development",
+      },
+      async () => {
+        manager.clear();
+        manager.register("oncall-triage", "skill-x");
+        assertEquals(
+          manager.getAll().size,
+          1,
+          "project-x skill must be registered in its own scope",
+        );
+
+        // Concurrent request B (different project) runs discovery — its clear()
+        // must not wipe project-x's scope.
+        await runWithRequestContext(
+          {
+            projectSlug: "project-y",
+            projectId: "proj-y",
+            token: "tok-b",
+            productionMode: true,
+            releaseId: null,
+            environmentName: "Production",
+          },
+          async () => {
+            manager.clear();
+          },
+        );
+
+        assertEquals(
+          manager.getAll().size,
+          1,
+          "project-x skill must survive project-y's discovery clear",
+        );
+      },
+    );
   });
 });

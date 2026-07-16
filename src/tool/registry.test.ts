@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import { toolRegistry, toolToProviderDefinition } from "./registry.ts";
 import type { Tool } from "./types.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 describe("tool registry", () => {
   afterEach(() => {
@@ -216,6 +217,103 @@ describe("tool registry", () => {
       // The losing registration must have thrown a VeryfrontError
       assertEquals(errorFromB instanceof VeryfrontError, true);
       assertEquals((errorFromB as VeryfrontError).slug, "tool-id-conflict");
+    });
+
+    it("rejects a live conflict that arrives after a staged registration", async () => {
+      const schema = defineSchema((v) => v.object({}))();
+      const staged = tool({
+        id: "interleaved-tool",
+        description: "discovery version",
+        inputSchema: schema,
+        execute: async () => "discovery",
+      });
+      const live = tool({
+        id: "interleaved-tool",
+        description: "route version",
+        inputSchema: schema,
+        execute: async () => "route",
+      });
+      const stageReady = Promise.withResolvers<void>();
+      const releaseStage = Promise.withResolvers<void>();
+
+      const transaction = runWithRegistryTransaction(async () => {
+        toolRegistry.clear();
+        toolRegistry.register("interleaved-tool", staged);
+        stageReady.resolve();
+        await releaseStage.promise;
+      });
+
+      await stageReady.promise;
+      toolRegistry.register("interleaved-tool", live);
+      releaseStage.resolve();
+
+      await assertRejects(() => transaction, VeryfrontError, "interleaved-tool");
+      assertEquals(toolRegistry.get("interleaved-tool"), live);
+    });
+
+    it("rejects a staged conflict that follows a live registration", async () => {
+      const schema = defineSchema((v) => v.object({}))();
+      const live = tool({
+        id: "reverse-interleaved-tool",
+        description: "route version",
+        inputSchema: schema,
+        execute: async () => "route",
+      });
+      const staged = tool({
+        id: "reverse-interleaved-tool",
+        description: "discovery version",
+        inputSchema: schema,
+        execute: async () => "discovery",
+      });
+      const stageReady = Promise.withResolvers<void>();
+      const releaseStage = Promise.withResolvers<void>();
+
+      const transaction = runWithRegistryTransaction(async () => {
+        toolRegistry.clear();
+        stageReady.resolve();
+        await releaseStage.promise;
+        toolRegistry.register("reverse-interleaved-tool", staged);
+      });
+
+      await stageReady.promise;
+      toolRegistry.register("reverse-interleaved-tool", live);
+      releaseStage.resolve();
+
+      await assertRejects(() => transaction, VeryfrontError, "reverse-interleaved-tool");
+      assertEquals(toolRegistry.get("reverse-interleaved-tool"), live);
+    });
+
+    it("allows a staged replacement after an interleaved live clear", async () => {
+      const schema = defineSchema((v) => v.object({}))();
+      const first = tool({
+        id: "cleared-interleaved-tool",
+        description: "first discovery version",
+        inputSchema: schema,
+        execute: async () => "first",
+      });
+      const replacement = tool({
+        id: "cleared-interleaved-tool",
+        description: "replacement discovery version",
+        inputSchema: schema,
+        execute: async () => "replacement",
+      });
+      const firstStaged = Promise.withResolvers<void>();
+      const stageReplacement = Promise.withResolvers<void>();
+
+      const transaction = runWithRegistryTransaction(async () => {
+        toolRegistry.clear();
+        toolRegistry.register("cleared-interleaved-tool", first);
+        firstStaged.resolve();
+        await stageReplacement.promise;
+        toolRegistry.register("cleared-interleaved-tool", replacement);
+      });
+
+      await firstStaged.promise;
+      toolRegistry.clear();
+      stageReplacement.resolve();
+      await transaction;
+
+      assertEquals(toolRegistry.get("cleared-interleaved-tool"), replacement);
     });
   });
 });

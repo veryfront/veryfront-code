@@ -142,7 +142,35 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as exp
   assertEquals(taskContext.availableToolNames, []);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly does not add skill tools when no skills are active", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for config-derived empty tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill"]);
+  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps config-derived empty non-skill runs narrowed", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -160,13 +188,14 @@ Deno.test("prepareHostedChatRuntimeToolAssembly does not add skill tools when no
     },
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: ["sleep"],
+    allowedToolNames: [],
+    includeRuntimeEssentialToolsWhenEmpty: true,
     createRemoteToolSource: remoteSourceFromConfig,
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(taskContext.availableToolNames, ["sleep"]);
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(taskContext.availableToolNames, []);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runtime inventory", async () => {
@@ -213,6 +242,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertEquals(toolAssembly.localToolNames, ["sleep"]);
   assertEquals(toolAssembly.remoteToolNames, ["create_file", "studio_open_project"]);
   assertEquals(toolAssembly.providerToolNames, []);
+  // Configured-binding remote tools ARE in the initial inventory (combined semantics).
+  // The full MCP catalog does not flood the union; only the allowedToolNames subset does.
   assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file", "studio_open_project"]);
   assertEquals(taskContext.availableToolNames, ["create_file", "sleep", "studio_open_project"]);
   assertEquals(toolAssembly.systemInstructions.includes("Current run tool inventory:"), true);
@@ -221,6 +252,73 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertExists(runtimeSleepTool);
   await runtimeSleepTool.execute?.({});
   assertEquals(traceSpans, ["tool.sleep"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly applies configured tools before the OpenAI cap", async () => {
+  const availableConfiguredToolNames = ["get_agent", "get_agent_source", "update_agent"];
+  const configuredToolNames = ["bash", ...availableConfiguredToolNames];
+  const remoteTools = [
+    ...Array.from(
+      { length: 250 },
+      (_, index) => remoteTool(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+    ),
+    ...availableConfiguredToolNames.map((name) => remoteTool(name, `Tool ${name}`)),
+  ];
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: configuredToolNames,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () => Promise.resolve(remoteTools),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.remoteToolNames, availableConfiguredToolNames);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, availableConfiguredToolNames);
+  assertEquals(taskContext.availableToolNames, availableConfiguredToolNames);
+  assertEquals(taskContext.availableToolNames?.includes("catalog_tool_000"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's configured short tool name", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    agentId: "researcher",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      "researcher--fetch-paper": {
+        ...localTool("Fetch a paper"),
+        id: "researcher--fetch-paper",
+        ownerAgentId: "researcher",
+        shortName: "fetch-paper",
+      },
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["fetch-paper"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["researcher--fetch-paper"]);
+  assertEquals(taskContext.availableToolNames, ["researcher--fetch-paper"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {
@@ -237,15 +335,89 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     mcpServers: [{ kind: "veryfront-api" }],
-    allowedToolNames: ["create_file", "web_search"],
+    allowedToolNames: ["create_file"],
+    allowedProviderToolNames: ["web_search"],
     createRemoteToolSource: remoteSourceFromConfig,
     preloadLatestConversationUserText: false,
   });
 
   assertEquals(toolAssembly.remoteToolNames, ["create_file"]);
+  // Configured-binding remote tools appear in compatibleRemoteToolNames (combined semantics).
   assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file"]);
   assertEquals(toolAssembly.providerToolNames, ["web_search"]);
+  // Both configured remote tools and provider-native tools seed the initial inventory.
   assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly separates matching direct and provider bindings", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    agentId: "researcher",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      "researcher--web_search": {
+        ...localTool("Search a private corpus"),
+        id: "researcher--web_search",
+        ownerAgentId: "researcher",
+        shortName: "web_search",
+      },
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["web_search"],
+    allowedProviderToolNames: ["web_search"],
+    sourceProviderToolNames: ["web_search"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["researcher--web_search"]);
+  assertEquals(toolAssembly.providerToolNames, ["web_search"]);
+  assertEquals(taskContext.availableToolNames, ["researcher--web_search", "web_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly does not let provider bindings authorize direct tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    agentId: "researcher",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      "researcher--web_search": {
+        ...localTool("Search a private corpus"),
+        id: "researcher--web_search",
+        ownerAgentId: "researcher",
+        shortName: "web_search",
+      },
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    allowedProviderToolNames: ["web_search"],
+    sourceProviderToolNames: ["web_search"],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () => Promise.resolve([remoteTool("web_search", "Remote search")]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(toolAssembly.remoteToolNames, []);
+  assertEquals(toolAssembly.providerToolNames, ["web_search"]);
+  assertEquals(taskContext.availableToolNames, ["web_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps source provider tools inside forwarded allowed tools", async () => {

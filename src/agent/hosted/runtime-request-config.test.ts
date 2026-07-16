@@ -140,3 +140,79 @@ Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when reque
   assertEquals(result.effectiveRuntimeOverrides, { allowedTools: ["read_file"], maxSteps: 8 });
   assertEquals(result.requestedMaxSteps, 8);
 });
+
+Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      tools: ["get_agent", "get_agent_source", "update_agent"],
+      providerTools: ["web_search"],
+    }),
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(result.requestedAllowedTools, [
+    "get_agent",
+    "get_agent_source",
+    "update_agent",
+  ]);
+  assertEquals(result.requestedAllowedProviderTools, ["web_search"]);
+  assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, true);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig keeps explicit tool overrides ahead of configured tools", () => {
+  const resolve = (allowedTools: string[]) => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools } },
+      agentConfig: createAgentConfig({
+        tools: ["get_agent", "update_agent"],
+        providerTools: ["web_search"],
+      }),
+      resolveModelId: (model) => model,
+    });
+    assertEquals(result.requestedAllowedProviderTools, allowedTools);
+    assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, false);
+    return result.requestedAllowedTools;
+  };
+
+  assertEquals(resolve(["unbound_tool", "update_agent", "web_search"]), [
+    "unbound_tool",
+    "update_agent",
+    "web_search",
+  ]);
+  assertEquals(resolve([]), []);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig distinguishes unrestricted and omitted agent tools", () => {
+  const resolve = (
+    tools: RuntimeAgentMarkdownDefinition["tools"],
+    providerTools?: string[],
+  ) => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: {},
+      agentConfig: createAgentConfig({ tools, providerTools }),
+      resolveModelId: (model) => model,
+    });
+    return {
+      tools: result.requestedAllowedTools,
+      providerTools: result.requestedAllowedProviderTools,
+      includeRuntimeEssentialToolsWhenEmpty: result.includeRuntimeEssentialToolsWhenEmpty,
+    };
+  };
+
+  assertEquals(resolve(true), {
+    tools: undefined,
+    providerTools: [],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+  });
+  assertEquals(resolve(undefined), {
+    tools: [],
+    providerTools: [],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+  });
+  assertEquals(resolve(undefined, ["web_search"]), {
+    tools: [],
+    providerTools: ["web_search"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+  });
+});
