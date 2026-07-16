@@ -258,6 +258,101 @@ describe("load_tools tool", () => {
     });
   });
 
+  describe("binding policy", () => {
+    it("rejects names outside the binding policy with unknown_tool (no distinguishability)", async () => {
+      const context = makeContext();
+      // Binding policy allows only read_file; write_file is in the authorized catalog
+      // but outside the policy. Both cases must return the same unknown_tool reason.
+      const tool = createLoadToolsTool(
+        makeOptions(context, {
+          bindingPolicy: new Set(["read_file"]),
+          getAuthorizedToolNames: () => ["read_file", "write_file"],
+        }),
+      );
+      const result = await tool.execute({ names: ["write_file"] });
+
+      assertEquals("error" in result, true);
+      if ("error" in result) {
+        assertEquals(result.reasons["write_file"], "unknown_tool");
+      }
+      assertEquals(context.activatedRemoteToolNames?.has("write_file"), false);
+    });
+
+    it("allows activation when name is in both authorized catalog and binding policy", async () => {
+      const context = makeContext();
+      const tool = createLoadToolsTool(
+        makeOptions(context, {
+          bindingPolicy: new Set(["read_file", "write_file"]),
+          getAuthorizedToolNames: () => ["read_file", "write_file", "delete_file"],
+        }),
+      );
+      const result = await tool.execute({ names: ["read_file"] });
+
+      assertEquals("activated" in result, true);
+      assertEquals(context.activatedRemoteToolNames?.has("read_file"), true);
+    });
+
+    it("null binding policy means unrestricted: full authorized catalog can be activated", async () => {
+      const context = makeContext();
+      const tool = createLoadToolsTool(
+        makeOptions(context, {
+          bindingPolicy: null,
+          getAuthorizedToolNames: () => ["read_file", "write_file", "delete_file"],
+        }),
+      );
+      const result = await tool.execute({ names: ["delete_file"] });
+
+      assertEquals("activated" in result, true);
+      assertEquals(context.activatedRemoteToolNames?.has("delete_file"), true);
+    });
+
+    it("undefined binding policy means unrestricted (backward-compatible default)", async () => {
+      const context = makeContext();
+      // makeOptions does not set bindingPolicy, so it is undefined
+      const tool = createLoadToolsTool(makeOptions(context));
+      const result = await tool.execute({ names: ["read_file"] });
+
+      assertEquals("activated" in result, true);
+    });
+
+    it("empty binding policy prevents any activation (consistent with deny-all)", async () => {
+      const context = makeContext();
+      const tool = createLoadToolsTool(
+        makeOptions(context, {
+          bindingPolicy: new Set([]),
+          getAuthorizedToolNames: () => ["read_file", "write_file"],
+        }),
+      );
+      const result = await tool.execute({ names: ["read_file"] });
+
+      assertEquals("error" in result, true);
+      if ("error" in result) {
+        assertEquals(result.reasons["read_file"], "unknown_tool");
+      }
+    });
+
+    it("policy-blocked names and genuinely unknown names both return unknown_tool (no leakage)", async () => {
+      const context = makeContext();
+      const tool = createLoadToolsTool(
+        makeOptions(context, {
+          bindingPolicy: new Set(["read_file"]),
+          getAuthorizedToolNames: () => ["read_file"],
+        }),
+      );
+      // write_file is both outside the policy AND not in the authorized catalog
+      const resultBlocked = await tool.execute({ names: ["write_file"] });
+      // completely_unknown is not in the catalog either
+      const resultUnknown = await tool.execute({ names: ["completely_unknown"] });
+
+      assertEquals("error" in resultBlocked, true);
+      assertEquals("error" in resultUnknown, true);
+      if ("error" in resultBlocked && "error" in resultUnknown) {
+        assertEquals(resultBlocked.reasons["write_file"], "unknown_tool");
+        assertEquals(resultUnknown.reasons["completely_unknown"], "unknown_tool");
+      }
+    });
+  });
+
   describe("tool metadata", () => {
     it("has the correct tool id", () => {
       const tool = createLoadToolsTool(makeOptions(makeContext()));

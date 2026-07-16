@@ -21,6 +21,14 @@ export type LoadToolsToolOptions = {
    * (same reason) to avoid leaking existence of unauthorized tools.
    */
   getAuthorizedToolNames: () => readonly string[];
+  /**
+   * When set to a non-null Set, activation candidates are intersected with
+   * this policy before the authorized-catalog check. Names that are in the
+   * authorized catalog but outside the binding policy receive the same
+   * `unknown_tool` reason as genuinely unknown names — no distinguishability.
+   * null or undefined means unrestricted: the full authorized catalog applies.
+   */
+  bindingPolicy?: ReadonlySet<string> | null;
 };
 
 /** Input payload for load_tools. */
@@ -62,7 +70,13 @@ export function createLoadToolsTool(
   }
 
   function execute(input: LoadToolsInput): LoadToolsOutput {
-    const authorized = new Set(options.getAuthorizedToolNames());
+    // Intersect the full authorized catalog with the agent's binding policy.
+    // Names outside the policy return the same unknown_tool reason as genuinely
+    // unknown names so the policy boundary is not distinguishable to the model.
+    const fullAuthorized = new Set(options.getAuthorizedToolNames());
+    const authorized = options.bindingPolicy != null
+      ? new Set([...fullAuthorized].filter((name) => options.bindingPolicy!.has(name)))
+      : fullAuthorized;
     const activatedSet = getActivatedSet();
 
     // --- Validation pass (all-or-nothing) ---

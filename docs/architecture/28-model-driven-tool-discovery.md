@@ -83,6 +83,25 @@ posture:
    activated set feeds `isRemoteToolNameAllowed`, so a tool that was never
    activated cannot execute even if a schema leaks into a request.
 
+## Binding-policy interaction
+
+Two hardening rules govern how the agent's configured `tools` binding interacts
+with discovery and activation.
+
+**Deny-all excludes discovery tools.** When `allowedToolNames` resolves to an
+empty set (explicit `tools: []` binding or a per-run `allowedTools: []`
+override), `search_tools` and `load_tools` are not force-added even when
+`includeRuntimeEssentialToolsWhenEmpty` is set. Activating new tools is a
+broader capability than running pre-configured skills (`load_skill`, which is
+still injectable for skill-enabled empty bindings); the two are treated
+asymmetrically under deny-all.
+
+**Activation is bounded by the binding policy.** `load_tools` accepts a
+`bindingPolicy` option (`ReadonlySet<string> | null`). When set, the authorized
+catalog is intersected with the policy before name validation: names outside the
+policy return the same `unknown_tool` reason as genuinely unknown names (no
+distinguishability). `null` or omitted means unrestricted (`tools: true`).
+
 ## Durability and resume
 
 Activation is persisted as a `CUSTOM` conversation run event

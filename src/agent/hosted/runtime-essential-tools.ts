@@ -45,11 +45,16 @@ export function resolveHostedRuntimeAllowedToolNames(
   const localToolNames = new Set(input.localToolNames);
   const resolvedToolNames = new Set(allowedToolNames);
 
-  // Tool discovery is unconditionally essential: force-add whenever the tools
-  // are registered as local tools, regardless of skill availability.
-  for (const toolName of TOOL_DISCOVERY_TOOL_NAMES) {
-    if (localToolNames.has(toolName)) {
-      resolvedToolNames.add(toolName);
+  // Tool discovery is essential only when the agent already has at least one
+  // tool in its resolved set. Under deny-all (empty allowedToolNames), discovery
+  // tools are intentionally excluded: activating new tools is a broader
+  // capability than running pre-configured skills (load_skill), so the two are
+  // treated asymmetrically when allowedToolNames is empty.
+  if (resolvedToolNames.size > 0) {
+    for (const toolName of TOOL_DISCOVERY_TOOL_NAMES) {
+      if (localToolNames.has(toolName)) {
+        resolvedToolNames.add(toolName);
+      }
     }
   }
 

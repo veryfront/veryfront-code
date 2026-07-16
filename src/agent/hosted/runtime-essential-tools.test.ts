@@ -53,5 +53,20 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
 
       assertEquals(result?.size, 0);
     });
+
+    it("does not force-add discovery tools under deny-all even with includeRuntimeEssentialToolsWhenEmpty", () => {
+      // A sandboxed agent with tools: [] must not gain load_tools/search_tools
+      // even when the config-derived essential-tools flag is set. Activating tools
+      // is a broader capability than running pre-configured skills (load_skill), so
+      // the two are treated asymmetrically under deny-all.
+      const result = resolveHostedRuntimeAllowedToolNames({
+        allowedToolNames: new Set(),
+        localToolNames: ["search_tools", "load_tools", "load_skill"],
+        includeRuntimeEssentialToolsWhenEmpty: true,
+      });
+
+      assertEquals(result?.has("search_tools"), false);
+      assertEquals(result?.has("load_tools"), false);
+    });
   });
 });
