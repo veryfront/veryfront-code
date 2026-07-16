@@ -5,7 +5,7 @@
  * via the API's /integrations/tools/call endpoint.
  *
  * Design: NO global registration. Tools are fetched per-request because
- * different projects have different enabled integrations. The agent runtime
+ * different projects expose different authorized integration tools. The agent runtime
  * calls these functions at tool-enumeration and tool-execution time.
  */
 
@@ -196,7 +196,7 @@ async function callRemoteTool(
  * available tools. Returns empty array if no API config or no tools.
  *
  * Called per agent loop iteration — results are scoped to the current
- * project's enabled integrations via the per-request API token.
+ * project's authorized integration tools via the per-request API token.
  */
 export async function getRemoteIntegrationToolDefinitions(): Promise<
   ToolDefinition[]
@@ -259,8 +259,9 @@ export async function executeRemoteIntegrationTool(
 
 /**
  * Sync integration config from veryfront.config.ts to the API.
- * This is a full-replace operation. Called by the MCP server path
- * which has access to the validated, canonical config.
+ * This is a full-replace operation. Integrations omitted from the payload have
+ * their project policy removed by the API; no separate enabled/disabled state
+ * is sent. The MCP server calls this with validated, canonical config.
  */
 export async function syncIntegrationConfig(
   apiBaseUrl: string,

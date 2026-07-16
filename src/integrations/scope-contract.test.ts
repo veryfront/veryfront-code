@@ -4,9 +4,11 @@ import { validateVeryfrontConfig } from "#veryfront/config/schemas/config.schema
 import { createMCPServer } from "#veryfront/mcp/server.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { IntegrationScope } from "./types.ts";
+import type { IntegrationRuntimeConfig, IntegrationScope } from "./types.ts";
 
 const originalFetch = globalThis.fetch;
+const runtimeConfigHasEnabled: "enabled" extends keyof IntegrationRuntimeConfig ? true : false =
+  false;
 
 function requireCanonicalScope(scope: IntegrationScope): "user" | "project" {
   return scope;
@@ -21,6 +23,7 @@ describe("integration scope compatibility", () => {
     const scopes: IntegrationScope[] = ["user", "project"];
 
     assertEquals(scopes.map(requireCanonicalScope), ["user", "project"]);
+    assertEquals(runtimeConfigHasEnabled, false);
   });
 
   it("accepts legacy endUser config and normalizes it to user", () => {

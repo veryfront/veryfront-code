@@ -895,7 +895,9 @@ export class MCPServer {
       "../integrations/remote-tools.ts"
     );
 
-    // Sync config to API — this is the only responsibility of the MCP server path.
+    // Sync config to API as a full replacement. Omitted integrations have their
+    // project policy removed; this path never sends an enabled/disabled flag.
+    // This is the only responsibility of the MCP server path.
     // Actual tool discovery happens per-request in the agent runtime (getAvailableTools)
     // and the API's MCP tools/list handler.
     const integrationConfigs: Record<

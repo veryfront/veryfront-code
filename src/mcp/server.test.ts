@@ -1240,6 +1240,32 @@ describe("mcp/server", () => {
     assertEquals(configSyncCalled, true);
   });
 
+  it("syncs an empty integration config as a field-free full replacement", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    server.setIntegrationLoader({
+      integrations: {},
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
+    });
+
+    let requestBody: unknown;
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url === "https://api.example.com/integrations/config") {
+        requestBody = await request.json();
+        return Response.json({ synced: 0 });
+      }
+      return new Response("Not Found", { status: 404 });
+    };
+
+    await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+
+    assertEquals(requestBody, { integrations: {} });
+  });
+
   it("syncs integration config only once", async () => {
     const server = createMCPServer({
       enabled: true,

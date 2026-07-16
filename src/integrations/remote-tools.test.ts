@@ -313,4 +313,22 @@ describe("integrations/remote-tools", () => {
       },
     });
   });
+
+  it("sends an empty full replacement payload", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requestBody = await request.json();
+
+      return Response.json({ synced: 0 });
+    }, async () =>
+      await syncIntegrationConfig(
+        "https://api.test",
+        "sync-token",
+        {},
+      ));
+
+    assertEquals(requestBody, { integrations: {} });
+  });
 });
