@@ -1,6 +1,6 @@
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
-import type { Agent, AgentResponse } from "../types.ts";
+import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import {
   AgentRuntime,
@@ -46,6 +46,41 @@ const AG_UI_HEADERS: Record<string, string> = {
   "Cache-Control": "no-cache",
   Connection: "keep-alive",
 };
+
+/**
+ * Payload handed to {@link AgUiHandlerOptions.onComplete} after an AG-UI run
+ * streams to completion successfully — the server-side counterpart to the
+ * client's `useConversationChat` persistence path. Lets an application persist
+ * the finalized conversation without reconstructing it from the SSE stream.
+ */
+export interface AgUiCompletion {
+  agentId: string;
+  threadId: string;
+  runId: string;
+  /**
+   * The finalized messages this run produced (the assistant turn plus any tool
+   * messages), as returned by the agent's own `onFinish`.
+   */
+  messages: Message[];
+  /** The messages sent to the agent for this run (after `beforeStream`). */
+  inputMessages: Message[];
+  /** The full finalized response (text, toolCalls, usage, metadata). */
+  response: AgentResponse;
+}
+
+/**
+ * Called once after a successful AG-UI run with the finalized conversation.
+ *
+ * Semantics:
+ * - Fires exactly once, and only on success (a run that produced a finalized
+ *   response). It does NOT fire on error, or when the client disconnects before
+ *   the stream finishes.
+ * - Runs after the SSE stream has been fully flushed and closed, so a slow or
+ *   throwing persistence never delays or corrupts the response stream.
+ * - A rejected/throwing callback is caught and logged (never rethrown into the
+ *   stream); the run is still considered complete.
+ */
+export type AgUiOnComplete = (completion: AgUiCompletion) => void | Promise<void>;
 
 function isModelCredentialError(error: ReturnType<typeof fromError>): boolean {
   if (!error) return false;
@@ -154,6 +189,11 @@ async function createAgUiStreamResponse(
     onFinish?: () => void;
     onError?: (error: unknown) => void;
     onToolCallSeen?: (toolCallId: string) => void;
+    /**
+     * Fired once, after the stream is fully flushed and closed, with the
+     * finalized response — only when the run succeeded and produced one.
+     */
+    onComplete?: (response: AgentResponse) => void | Promise<void>;
   },
 ): Promise<Response> {
   const {
@@ -170,6 +210,7 @@ async function createAgUiStreamResponse(
     onFinish,
     onError,
     onToolCallSeen,
+    onComplete,
   } = options;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -207,6 +248,11 @@ async function createAgUiStreamResponse(
         return;
       }
 
+      // Fires the completion callback exactly once, after the stream is closed,
+      // so persistence never delays or corrupts the response. Only set on the
+      // success paths below — a client disconnect early-returns before this is
+      // flipped, and the error path leaves it false.
+      let succeeded = false;
       try {
         if (!upstreamBody) {
           for (const event of finalizeRunEvents(state, null)) {
@@ -215,7 +261,7 @@ async function createAgUiStreamResponse(
             }
           }
           onFinish?.();
-          closeController(controller);
+          succeeded = true;
           return;
         }
 
@@ -236,6 +282,7 @@ async function createAgUiStreamResponse(
           }
         }
         onFinish?.();
+        succeeded = true;
       } catch (error) {
         onError?.(error);
         enqueueEvent(controller, "RunError", {
@@ -243,6 +290,18 @@ async function createAgUiStreamResponse(
         });
       } finally {
         closeController(controller);
+        // Persist AFTER the stream is closed: a finalized response is required,
+        // and a throwing callback is contained (logged, never rethrown).
+        if (succeeded && onComplete) {
+          const response = getCompletedResponse?.() ?? null;
+          if (response) {
+            try {
+              await onComplete(response);
+            } catch (error) {
+              console.error("[AgUi] onComplete callback threw:", error);
+            }
+          }
+        }
       }
     },
   });
@@ -260,6 +319,7 @@ async function createAgUiDirectStreamResponse(
   rawRequest: Request,
   baseContext: Record<string, unknown>,
   beforeStream?: AgUiBeforeStream,
+  onComplete?: AgUiOnComplete,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
@@ -309,6 +369,17 @@ async function createAgUiDirectStreamResponse(
     upstreamStatus: upstream.status,
     upstreamStatusText: upstream.statusText,
     getCompletedResponse: () => completedResponse,
+    onComplete: onComplete
+      ? (response) =>
+        onComplete({
+          agentId: agent.id,
+          threadId,
+          runId,
+          messages: response.messages,
+          inputMessages: messages,
+          response,
+        })
+      : undefined,
   });
 }
 
@@ -319,6 +390,7 @@ async function createAgUiInjectedToolsStreamResponse(
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
   beforeStream?: AgUiBeforeStream,
+  onComplete?: AgUiOnComplete,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
@@ -392,6 +464,17 @@ async function createAgUiInjectedToolsStreamResponse(
     onError: () => {
       sessionManager.failRun(runId);
     },
+    onComplete: onComplete
+      ? (response) =>
+        onComplete({
+          agentId: agent.id,
+          threadId,
+          runId,
+          messages: response.messages,
+          inputMessages: messages,
+          response,
+        })
+      : undefined,
   });
 }
 
@@ -402,6 +485,12 @@ export interface AgUiHandlerOptions {
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
   beforeStream?: AgUiBeforeStream;
+  /**
+   * Called once after a successful run with the finalized conversation, so an
+   * application can persist it server-side. See {@link AgUiOnComplete} for the
+   * success / error / disconnect semantics.
+   */
+  onComplete?: AgUiOnComplete;
 }
 
 /** Public API contract for AG-UI handler config with agent. */
@@ -486,6 +575,7 @@ export function createAgUiHandler(
           context,
           options.sessionManager,
           options?.beforeStream,
+          options?.onComplete,
         );
       }
 
@@ -499,6 +589,7 @@ export function createAgUiHandler(
         request,
         context,
         options?.beforeStream,
+        options?.onComplete,
       );
     } catch (error) {
       if (

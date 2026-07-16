@@ -1,10 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertMatch, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
+import { type AgUiCompletion, AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
 import { AgentRuntime, RunResumeSessionManager } from "../index.ts";
-import type { Agent, Message } from "../types.ts";
+import type { Agent, AgentResponse, Message } from "../types.ts";
 
 const encoder = new TextEncoder();
 
@@ -861,5 +866,167 @@ describe("agent/ag-ui-handler", () => {
       await response.text(),
       "Injected AG-UI tools require a public RunResumeSessionManager",
     );
+  });
+});
+
+// A minimal deferred so a test can await the (post-close) onComplete callback.
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const FINALIZED_RESPONSE: AgentResponse = {
+  text: "hello from runtime",
+  messages: [
+    { id: "assistant-msg-1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
+  ],
+  toolCalls: [],
+  status: "completed",
+};
+
+/** A test agent whose stream reports a finalized response via `onFinish`. */
+function createFinishingAgent(
+  options: { response?: AgentResponse | null; failMidStream?: boolean } = {},
+): Agent {
+  const { response = FINALIZED_RESPONSE, failMidStream = false } = options;
+  return {
+    id: "assistant-1",
+    config: {
+      id: "assistant-1",
+      system: "You are helpful.",
+      model: "anthropic/claude-sonnet-4-6",
+    } as Agent["config"],
+    generate: async () => {
+      throw new Error("not used");
+    },
+    stream: async (input) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "hello" }),
+          );
+          if (failMidStream) {
+            controller.error(new Error("upstream exploded"));
+            return;
+          }
+          controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+          controller.close();
+        },
+      });
+      // A successful run reports its finalized response; a failing one never does.
+      if (!failMidStream && response) input.onFinish?.(response);
+      return {
+        toDataStreamResponse: () =>
+          new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+      };
+    },
+    respond: async () => new Response("not used"),
+    getMemory: () => {
+      throw new Error("not used");
+    },
+    getMemoryStats: async () => ({
+      totalMessages: 0,
+      estimatedTokens: 0,
+      type: "conversation",
+    }),
+    clearMemory: async () => {},
+  } as Agent;
+}
+
+function agUiRequest(text = "hello"): Request {
+  return new Request("http://localhost/api/ag-ui", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages: [{ id: "msg-1", role: "user", parts: [{ type: "text", text }] }],
+    }),
+  });
+}
+
+describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
+  it("fires once after a successful run with the finalized conversation", async () => {
+    const seen: AgUiCompletion[] = [];
+    const done = deferred();
+    const handler = createAgUiHandler({
+      agent: createFinishingAgent(),
+      onComplete: (completion) => {
+        seen.push(completion);
+        done.resolve();
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    await response.text();
+    await done.promise;
+
+    assertEquals(seen.length, 1);
+    const completion = seen[0]!;
+    assertEquals(completion.agentId, "assistant-1");
+    assert(completion.threadId.length > 0);
+    assert(completion.runId.length > 0);
+    // The finalized assistant turn is handed back without reconstruction...
+    assertEquals(completion.messages, FINALIZED_RESPONSE.messages);
+    // ...alongside the input that produced it and the full response.
+    assertEquals(completion.inputMessages.length, 1);
+    assertEquals(completion.inputMessages[0]?.role, "user");
+    assertEquals(completion.response.text, "hello from runtime");
+  });
+
+  it("does not fire when the run errors", async () => {
+    let calls = 0;
+    const handler = createAgUiHandler({
+      agent: createFinishingAgent({ failMidStream: true }),
+      onComplete: () => {
+        calls += 1;
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    const body = await response.text();
+    // Let the stream's finally settle before asserting the callback never ran.
+    await new Promise((r) => setTimeout(r, 0));
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(calls, 0);
+  });
+
+  it("does not fire when the run produced no finalized response", async () => {
+    let calls = 0;
+    const handler = createAgUiHandler({
+      // Stream succeeds but never reports a finalized response.
+      agent: createFinishingAgent({ response: null }),
+      onComplete: () => {
+        calls += 1;
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    await response.text();
+    await new Promise((r) => setTimeout(r, 0));
+
+    assertEquals(calls, 0);
+  });
+
+  it("contains a throwing callback without corrupting the stream", async () => {
+    const done = deferred();
+    const handler = createAgUiHandler({
+      agent: createFinishingAgent(),
+      onComplete: () => {
+        done.resolve();
+        throw new Error("persistence failed");
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    const body = await response.text();
+    await done.promise;
+
+    // The stream still delivered a well-formed successful run.
+    assertEquals(response.status, 200);
+    assertStringIncludes(body, "event: RunFinished");
   });
 });
