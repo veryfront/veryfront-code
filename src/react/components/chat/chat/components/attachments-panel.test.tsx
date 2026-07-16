@@ -3,6 +3,7 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd";
 import type { UploadedFile } from "./attachments-panel.tsx";
 import { AttachmentsPanel, useAttachmentsPanel } from "./attachments-panel.tsx";
+import { AttachmentPill } from "./attachment-pill.tsx";
 
 const uploads: UploadedFile[] = [
   { id: "upload-1", name: "run-analysis.csv", size: 24424, type: "text/csv" },
@@ -88,24 +89,22 @@ describe("AttachmentsPanel — composability contract", () => {
     assertStringIncludes(html, "vf-custom-list-class");
   });
 
-  it("recomposes the row from Item leaves (Icon / Name / Size / Remove)", () => {
+  it("recomposes the row from Item leaves (Icon + Remove) + AttachmentPill.Label", () => {
     const html = renderToString(
       <AttachmentsPanel uploads={uploads} onRemoveUpload={() => undefined}>
         <AttachmentsPanel.List>
           {uploads.map((file) => (
             <AttachmentsPanel.Item key={file.id} file={file}>
               <AttachmentsPanel.Item.Icon />
-              <div className="min-w-0 flex-1">
-                <AttachmentsPanel.Item.Name />
-                <AttachmentsPanel.Item.Size />
-              </div>
+              {/* Name + size are plain text — reuse the pill's Label leaf. */}
+              <AttachmentPill.Label />
               <AttachmentsPanel.Item.Remove />
             </AttachmentsPanel.Item>
           ))}
         </AttachmentsPanel.List>
       </AttachmentsPanel>,
     );
-    // Name + formatted size leaves render...
+    // Name + formatted size come through the Label leaf...
     assertStringIncludes(html, "run-analysis.csv");
     assertStringIncludes(html, "24 KB");
     // ...and the composed row uses the pill's ✕ Remove (wired to onRemoveUpload),
@@ -119,7 +118,7 @@ describe("AttachmentsPanel — composability contract", () => {
       <AttachmentsPanel uploads={uploads}>
         <AttachmentsPanel.List>
           <AttachmentsPanel.Item file={uploads[0]!}>
-            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Icon />
             <AttachmentsPanel.Item.Remove />
           </AttachmentsPanel.Item>
         </AttachmentsPanel.List>
@@ -128,9 +127,9 @@ describe("AttachmentsPanel — composability contract", () => {
     assert(!html.includes('aria-label="Remove run-analysis.csv"'));
   });
 
-  it("Item sub-parts read the file from context; used outside a Item they throw", () => {
+  it("Item leaves read the file from context; used outside an Item they throw", () => {
     function Orphan() {
-      return <AttachmentsPanel.Item.Name />;
+      return <AttachmentsPanel.Item.Icon />;
     }
     let threw = false;
     try {

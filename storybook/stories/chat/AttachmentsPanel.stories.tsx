@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { AttachmentsPanel } from "veryfront/chat";
+import { AttachmentPill, AttachmentsPanel } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -22,9 +22,8 @@ AttachmentsPanel.Root  <- or compose it: context (uploads, callbacks, file picke
   |     +-- AttachmentsPanel.Item    <- composes <AttachmentPill> and an overflow menu
   |     |     +-- AttachmentsPanel.Item.Icon     <- file-type icon square
   |     |     +-- AttachmentsPanel.Item.Preview  <- image thumbnail (image files)
-  |     |     +-- AttachmentsPanel.Item.Name     <- file name line
-  |     |     +-- AttachmentsPanel.Item.Size     <- formatted byte size
   |     |     +-- AttachmentsPanel.Item.Remove   <- delete control (onRemoveUpload)
+  |     |     (name / size: use AttachmentPill.Label or read useAttachments)
   +-- AttachmentsPanel.Empty  <- empty state (heading, hint, upload action)
   +-- AttachmentsPanel.Action <- upload/attach button (opens the native picker)`;
 
@@ -229,9 +228,9 @@ export const Loading: Story = {
     docs: {
       source: {
         code:
-          `import { AttachmentsPanel, useUploadsRegistry } from "veryfront/chat";
+          `import { AttachmentsPanel, useAttachments } from "veryfront/chat";
 
-const uploads = useUploadsRegistry({ url: "/api/uploads" });
+const uploads = useAttachments({ url: "/api/uploads" });
 
 <AttachmentsPanel
   uploads={uploads.items}
@@ -259,20 +258,18 @@ export const ComposedRow: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { AttachmentsPanel } from "veryfront/chat";
+        code: `import { AttachmentPill, AttachmentsPanel } from "veryfront/chat";
 
-// Own the row: compose it from the Item leaves instead of the default card.
-// Each leaf reads the item's file from context; Remove wires to onRemoveUpload.
+// Own the row: compose it from the domain leaves (.Icon derives pill state,
+// .Remove wires to onRemoveUpload) + AttachmentPill.Label for name/size. Plain
+// text isn't a leaf — read useAttachments() or use .Label.
 <AttachmentsPanel.Root uploads={uploads} onRemoveUpload={remove}>
   <div className="flex-1 overflow-y-auto px-4 py-4">
     <AttachmentsPanel.List>
       {uploads.map((file) => (
         <AttachmentsPanel.Item key={file.id} file={file}>
           <AttachmentsPanel.Item.Icon />
-          <div className="min-w-0 flex-1">
-            <AttachmentsPanel.Item.Name />
-            <AttachmentsPanel.Item.Size />
-          </div>
+          <AttachmentPill.Label />
           <AttachmentsPanel.Item.Remove />
         </AttachmentsPanel.Item>
       ))}
@@ -292,10 +289,7 @@ export const ComposedRow: Story = {
                 {uploads.map((file) => (
                   <AttachmentsPanel.Item key={file.id} file={file}>
                     <AttachmentsPanel.Item.Icon />
-                    <div className="min-w-0 flex-1">
-                      <AttachmentsPanel.Item.Name />
-                      <AttachmentsPanel.Item.Size />
-                    </div>
+                    <AttachmentPill.Label />
                     <AttachmentsPanel.Item.Remove />
                   </AttachmentsPanel.Item>
                 ))}

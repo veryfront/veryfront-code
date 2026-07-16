@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../ui/dropdown-menu.tsx";
-import { AttachmentPill, formatSize, useAttachmentPill } from "./attachment-pill.tsx";
+import { AttachmentPill, useAttachmentPill } from "./attachment-pill.tsx";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Public API contract for uploaded file. */
@@ -57,8 +57,14 @@ const AttachmentsPanelContext = React.createContext<
 >(null);
 
 /**
- * Read the enclosing `AttachmentsPanel` state. Throws when used outside an
+ * Read the enclosing `AttachmentsPanel`'s state to compose custom leaves inside
+ * a `Root` you're already rendering. Throws when used outside an
  * `AttachmentsPanel`.
+ *
+ * This is the *panel composition context*, not the headless state hook: it only
+ * re-surfaces what `<AttachmentsPanel.Root>` was given (plus `triggerAttach`).
+ * To OWN attachment state with no panel rendered, use the domain hook
+ * `useAttachments()` (upload / remove / list) and render whatever UI you like.
  */
 export function useAttachmentsPanel(): AttachmentsPanelContextValue {
   const ctx = React.useContext(AttachmentsPanelContext);
@@ -245,9 +251,10 @@ export interface AttachmentsPanelItemProps {
   file: UploadedFile;
   className?: string;
   /**
-   * Compose the row from `AttachmentsPanel.Item.*` leaves (`.Icon` / `.Preview`
-   * / `.Name` / `.Size` / `.Remove`), each reading the item's file from context.
-   * Omit for the default card (media + label + overflow menu).
+   * Compose the row from the `AttachmentsPanel.Item.*` leaves (`.Icon` /
+   * `.Preview` / `.Remove`), the `AttachmentPill.*` parts (e.g. `.Label`), or
+   * your own text read from `useAttachmentPill()`. Omit for the default card
+   * (media + label + overflow menu).
    */
   children?: React.ReactNode;
 }
@@ -292,10 +299,12 @@ function AttachmentsPanelItemMedia(
 }
 
 // ---------------------------------------------------------------------------
-// AttachmentsPanel.Item.* — the row leaves. Each reads the item's file from the
-// enclosing `AttachmentPill` context (and the panel state where needed), so a
-// consumer can restyle/reorder/replace one control without re-implementing the
-// row. Use them inside an `AttachmentsPanel.Item` (composed form).
+// AttachmentsPanel.Item.* — the row leaves that carry attachment-domain logic:
+// `.Icon` / `.Preview` (derived pill state) and `.Remove` (bound to the panel's
+// `onRemoveUpload`). Each reads the item's file from the enclosing
+// `AttachmentPill` context. Plain text (name / size) has no such logic — read it
+// from `useAttachmentPill()` / `useAttachments()` and render your own, or use
+// `AttachmentPill.Label`. Use these inside an `AttachmentsPanel.Item`.
 // ---------------------------------------------------------------------------
 
 /** `AttachmentsPanel.Item.Icon` — the file-type icon square. */
@@ -319,35 +328,13 @@ function AttachmentsPanelItemPreview(
 }
 AttachmentsPanelItemPreview.displayName = "AttachmentsPanel.Item.Preview";
 
-/** `AttachmentsPanel.Item.Name` — the file name line. */
-function AttachmentsPanelItemName(
-  { className }: { className?: string },
-): React.JSX.Element {
-  const { attachment } = useAttachmentPill();
-  return (
-    <p className={cn("truncate text-sm font-medium leading-tight", className)}>
-      {attachment.name || "Attachment"}
-    </p>
-  );
-}
-AttachmentsPanelItemName.displayName = "AttachmentsPanel.Item.Name";
-
-/**
- * `AttachmentsPanel.Item.Size` — the formatted byte size. Renders nothing when
- * the file carries no size.
- */
-function AttachmentsPanelItemSize(
-  { className }: { className?: string },
-): React.JSX.Element | null {
-  const { attachment } = useAttachmentPill();
-  if (attachment.size == null) return null;
-  return (
-    <p className={cn("truncate text-xs leading-tight text-[var(--faint)]", className)}>
-      {formatSize(attachment.size)}
-    </p>
-  );
-}
-AttachmentsPanelItemSize.displayName = "AttachmentsPanel.Item.Size";
+// Note: there is deliberately no `Item.Name` / `Item.Size` leaf. Those are plain
+// text with no attachment-domain logic — read them from `useAttachments()` (or
+// `useAttachmentPill().attachment`) and render your own text (`formatSize` is
+// exported for the byte label). `AttachmentPill.Label` also renders name + a
+// secondary size/type line if you want the default treatment. We only expose
+// leaves that carry domain binding (`.Remove`) or derived state (`.Icon` /
+// `.Preview`) — never a wrapper around a bare `<p>`.
 
 /** Props for `AttachmentsPanel.Item.Remove`. */
 export interface AttachmentsPanelItemRemoveProps {
@@ -386,8 +373,6 @@ AttachmentsPanelItemRemove.displayName = "AttachmentsPanel.Item.Remove";
 const AttachmentsPanelItemCompound = Object.assign(AttachmentsPanelItem, {
   Icon: AttachmentsPanelItemIcon,
   Preview: AttachmentsPanelItemPreview,
-  Name: AttachmentsPanelItemName,
-  Size: AttachmentsPanelItemSize,
   Remove: AttachmentsPanelItemRemove,
 });
 AttachmentsPanelItem.displayName = "AttachmentsPanel.Item";

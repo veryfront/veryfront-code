@@ -144,6 +144,7 @@ const expectedRuntimeExports = [
   "useMessageContextOptional",
   "useMessageParts",
   "useStreaming",
+  "useAttachments",
   "useUpload",
   "useUploadsRegistry",
   "useVoiceInput",

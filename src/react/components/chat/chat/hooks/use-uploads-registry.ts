@@ -1,5 +1,5 @@
 /**
- * useUploadsRegistry — a localStorage-backed index of files uploaded across a
+ * useAttachments — a localStorage-backed index of files uploaded across a
  * whole app, independent of any single conversation. The chat composer's
  * {@link useUpload} tracks attachments for *one* message and forgets them on
  * send; this hook instead keeps a durable list so an "Uploads" surface can show
@@ -26,8 +26,8 @@ import * as React from "react";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import type { UploadedFile } from "../components/attachments-panel.tsx";
 
-/** Options for {@link useUploadsRegistry}. */
-export interface UseUploadsRegistryOptions {
+/** Options for {@link useAttachments}. */
+export interface UseAttachmentsOptions {
   /**
    * Upload endpoint — `GET` lists, `POST` (multipart `file`) uploads, `DELETE`
    * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
@@ -41,8 +41,8 @@ export interface UseUploadsRegistryOptions {
   headers?: Record<string, string>;
 }
 
-/** Result of {@link useUploadsRegistry}. */
-export interface UseUploadsRegistryResult {
+/** Result of {@link useAttachments}. */
+export interface UseAttachmentsResult {
   /** All uploaded files, newest first. */
   items: UploadedFile[];
   /** `true` until the initial list fetch resolves (localStorage cache aside). */
@@ -109,10 +109,15 @@ function stableHeadersKey(headers: Record<string, string> | undefined): string {
   return JSON.stringify(Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)));
 }
 
-/** Persistent, cross-conversation registry of uploaded files. */
-export function useUploadsRegistry(
-  options: UseUploadsRegistryOptions = {},
-): UseUploadsRegistryResult {
+/**
+ * `useAttachments` — the headless state hook for chat attachments: a persistent,
+ * cross-conversation registry of uploaded files with the upload / remove / list
+ * actions. This is the domain primitive; render any UI on top of it (the
+ * `AttachmentsPanel` / `AttachmentPill` components are one skin — bring your own).
+ */
+export function useAttachments(
+  options: UseAttachmentsOptions = {},
+): UseAttachmentsResult {
   const { storageKey = "vf-uploads", headers } = options;
   // `url` is canonical; `api` is the deprecated alias.
   const endpoint = options.url ?? options.api ?? "/api/uploads";
@@ -246,3 +251,16 @@ export function useUploadsRegistry(
     refresh,
   };
 }
+
+/**
+ * @deprecated Renamed to {@link useAttachments}. The registry is the headless
+ * attachments primitive; the new name matches the `Attachment*` components.
+ * Kept as an alias for back-compat.
+ */
+export const useUploadsRegistry = useAttachments;
+
+/** @deprecated Renamed to {@link UseAttachmentsOptions}. */
+export type UseUploadsRegistryOptions = UseAttachmentsOptions;
+
+/** @deprecated Renamed to {@link UseAttachmentsResult}. */
+export type UseUploadsRegistryResult = UseAttachmentsResult;
