@@ -554,7 +554,11 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           const streamedStepState = createStreamedStepState();
           // If the step preparer returned a live forkToolNames (pinned ∪ activated),
           // use it for this step so newly activated tool schemas reach the provider.
-          const effectiveForkToolNames = prepared.forkToolNames ?? input.forkToolNames;
+          // Spread into a mutable array: RunAgentRuntimeForkStepInput.forkToolNames
+          // is typed as string[] (mutable) while prepared.forkToolNames is readonly.
+          const effectiveForkToolNames: string[] = [
+            ...(prepared.forkToolNames ?? input.forkToolNames),
+          ];
           const { stream, responsePromise } = await runStep({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
