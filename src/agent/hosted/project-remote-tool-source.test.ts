@@ -738,3 +738,36 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation f
     },
   ]);
 });
+
+Deno.test("createHostedProjectRemoteToolSource uses activatedRemoteToolNames as execution gate", async () => {
+  const activatedSet = new Set(["read_file"]);
+
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [simpleTool("read_file"), simpleTool("write_file")],
+    }),
+    // allowedToolNames would normally allow both; activatedRemoteToolNames narrows to activated set
+    allowedToolNames: new Set(["read_file", "write_file"]),
+    activatedRemoteToolNames: activatedSet,
+  });
+
+  // listTools shows only activated tools
+  const listed = (await source.listTools()).map((t) => t.name);
+  assertEquals(listed, ["read_file"]);
+
+  // Execution is allowed for activated tool
+  const result = await source.executeTool("read_file", {});
+  assertEquals(result, { ok: true });
+
+  // Execution is blocked for non-activated tool (throws)
+  await assertRejects(
+    () => source.executeTool("write_file", {}),
+    Error,
+    "write_file",
+  );
+
+  // Live mutation: activating write_file makes it executable
+  activatedSet.add("write_file");
+  const resultAfter = await source.executeTool("write_file", {});
+  assertEquals(resultAfter, { ok: true });
+});
