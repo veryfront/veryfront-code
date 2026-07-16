@@ -5,7 +5,7 @@ import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 export type AgentMetadataPromptSuggestion =
   | {
     type: "prompt";
-    title: string;
+    title?: string;
     prompt: string;
   }
   | {

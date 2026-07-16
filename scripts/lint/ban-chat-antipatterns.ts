@@ -99,13 +99,13 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/composition/message.tsx": 987,
   // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).
   // Split responsibilities before adding more behavior to this file.
-  "src/react/components/chat/chat/components/sidebar.tsx": 739,
+  "src/react/components/chat/chat/components/sidebar.tsx": 736,
   // useComposerValue extracted to composition/use-composer-value.ts.
   "src/react/components/chat/chat/composition/chat-composer.tsx": 619,
   "src/react/components/chat/agent-picker.tsx": 502,
   "src/react/components/chat/chat-actions.tsx": 515,
-  "src/react/components/chat/chat/controlled-chat.tsx": 244,
-  "src/react/components/chat/chat/app-mode-chat.tsx": 199,
+  "src/react/components/chat/chat/controlled-chat.tsx": 242,
+  "src/react/components/chat/chat/app-mode-chat.tsx": 177,
 };
 
 function checkFileSizes(): boolean {

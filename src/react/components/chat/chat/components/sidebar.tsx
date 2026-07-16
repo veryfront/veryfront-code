@@ -212,22 +212,19 @@ function groupConversations(
 
 /** Props accepted by {@link ChatSidebarRoot}. */
 export interface ChatSidebarRootProps extends ChatSidebarControlProps {
-  /** Override any of the sidebar icons. */
-  /**
-   * Show the loading skeleton instead of the list — e.g. while conversations
-   * are being fetched. When omitted, the auto {@link ChatSidebarList} shows a
-   * skeleton on its own until the client mounts.
-   */
+  /** Show the loading skeleton while conversations are being fetched. */
   loading?: boolean;
   /** When `false`, the rail renders nothing. Default `true`. */
   isOpen?: boolean;
+  /** @deprecated The root fills its parent by default. */
+  fill?: boolean;
   className?: string;
   children: React.ReactNode;
 }
 
 /** Context provider + outer rail container for the compound sidebar. */
 export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement | null {
-  const { loading, isOpen = true, className, children } = props;
+  const { loading, isOpen = true, fill = false, className, children } = props;
   const resolved = useResolvedSidebar(props);
 
   const value = React.useMemo<ChatSidebarContextValue>(
@@ -253,7 +250,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
         data-vf-chat=""
         // Fills its parent by default (a composed layout container provides
         // width + overlay); the standalone preset supplies its own rail chrome.
-        className={cn("flex flex-col h-full", className)}
+        className={cn("flex flex-col h-full", fill && "w-full", className)}
       >
         {children}
       </div>
@@ -693,7 +690,7 @@ function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
   return (
     <ChatSidebarRoot
       {...props}
-      className={cn(STANDALONE_SIDEBAR_CHROME, props.className)}
+      className={cn(props.fill ? "w-full" : STANDALONE_SIDEBAR_CHROME, props.className)}
     >
       {hasNew && <ChatSidebarNewButton />}
       <ChatSidebarList />

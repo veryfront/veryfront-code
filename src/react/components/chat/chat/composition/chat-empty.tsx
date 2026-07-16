@@ -28,8 +28,10 @@ export interface ChatEmptyProps {
    * sending a longer prompt (e.g. from `getAgentPromptSuggestionItems`).
    */
   suggestions?: Array<string | PromptSuggestion>;
-  /** Receives the clicked suggestion as a `{ label, prompt }` object. */
-  onSuggestionClick?: (suggestion: PromptSuggestion) => void;
+  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
+  onSuggestionClick?: (prompt: string) => void;
+  /** Receives the selected `{ label, prompt }` object. */
+  onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   quickActions?: QuickAction[];
   onQuickAction?: (action: QuickAction) => void;
   className?: string;
@@ -47,6 +49,7 @@ export function ChatEmpty(
     description,
     suggestions,
     onSuggestionClick,
+    onSuggestionSelect,
     quickActions,
     onQuickAction,
     className,
@@ -73,7 +76,10 @@ export function ChatEmpty(
             return (
               <ChatEmptyState.Suggestion
                 key={`${item.label}-${index}`}
-                onClick={() => onSuggestionClick?.(item)}
+                onClick={() => {
+                  onSuggestionSelect?.(item);
+                  onSuggestionClick?.(item.prompt);
+                }}
               >
                 {item.label}
               </ChatEmptyState.Suggestion>

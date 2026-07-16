@@ -66,7 +66,7 @@ describe("getAgentPromptSuggestionItems", () => {
 });
 
 describe("ChatEmpty suggestions", () => {
-  it("renders labels and hands the { label, prompt } object to onSuggestionClick", () => {
+  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", () => {
     const restoreDom = installDom();
     const clicked: PromptSuggestion[] = [];
     try {
@@ -75,7 +75,7 @@ describe("ChatEmpty suggestions", () => {
         root.render(
           <ChatEmpty
             suggestions={[{ label: "Triage login", prompt: "Triage a user who cannot sign in." }]}
-            onSuggestionClick={(s) => clicked.push(s)}
+            onSuggestionSelect={(suggestion) => clicked.push(suggestion)}
           />,
         );
       });
@@ -90,6 +90,32 @@ describe("ChatEmpty suggestions", () => {
         { label: "Triage login", prompt: "Triage a user who cannot sign in." },
       ], "click sends the full { label, prompt } — no .find needed");
 
+      flushSync(() => root.unmount());
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("keeps legacy onSuggestionClick handlers receiving prompt text", () => {
+    const restoreDom = installDom();
+    const clicked: string[] = [];
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatEmpty
+            suggestions={[{ label: "Triage login", prompt: "Triage the login incident." }]}
+            onSuggestionClick={(value) => clicked.push(value)}
+          />,
+        );
+      });
+
+      const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
+        candidate.textContent?.includes("Triage login")
+      );
+      assert(button, "renders the legacy suggestion chip");
+      flushSync(() => button.click());
+      assertEquals(clicked, ["Triage the login incident."]);
       flushSync(() => root.unmount());
     } finally {
       restoreDom();

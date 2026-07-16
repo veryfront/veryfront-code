@@ -28,6 +28,7 @@ function UncontrolledChat(
     agent: userAgent,
     suggestions: suggestionsProp,
     onSuggestionClick,
+    onSuggestionSelect,
     emptyState,
     // Attachments: default-wired through `useUpload` unless the caller
     // controls them. With no `uploadApi`, files inline as base64 `data:` URLs
@@ -102,8 +103,8 @@ function UncontrolledChat(
     }
     : undefined;
 
-  const handleSuggestion = onSuggestionClick ??
-    ((suggestion: PromptSuggestion) => {
+  const handleSuggestionSelect = onSuggestionSelect ??
+    (onSuggestionClick ? undefined : (suggestion: PromptSuggestion) => {
       void chat.sendMessage({ text: suggestion.prompt });
     });
 
@@ -142,7 +143,8 @@ function UncontrolledChat(
       agent={resolvedAgent}
       initializing={agentInitializing}
       suggestions={derivedSuggestions}
-      onSuggestionClick={handleSuggestion}
+      onSuggestionClick={onSuggestionClick}
+      onSuggestionSelect={handleSuggestionSelect}
       onAttach={manageAttachments ? upload.upload : userOnAttach}
       onDrop={manageAttachments ? upload.upload : userOnDrop}
       attachments={manageAttachments ? upload.attachments : userAttachments}

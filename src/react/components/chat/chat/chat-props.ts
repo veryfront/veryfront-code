@@ -76,8 +76,10 @@ export interface ChatProps {
    * `PromptSuggestion` objects for a short label + longer prompt.
    */
   suggestions?: Array<string | PromptSuggestion>;
-  /** Receives the clicked suggestion as a `{ label, prompt }` object. */
-  onSuggestionClick?: (suggestion: PromptSuggestion) => void;
+  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
+  onSuggestionClick?: (prompt: string) => void;
+  /** Receives the selected `{ label, prompt }` object. */
+  onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   /**
    * Opt-in idle hero for an empty thread (icon + title + optional blurb, plus
    * `suggestions`). When omitted, an empty thread renders as a blank canvas +
