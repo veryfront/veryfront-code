@@ -88,6 +88,59 @@ describe("AttachmentsPanel — composability contract", () => {
     assertStringIncludes(html, "vf-custom-list-class");
   });
 
+  it("recomposes the row from Item leaves (Icon / Name / Size / Remove)", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads} onRemoveUpload={() => undefined}>
+        <AttachmentsPanel.List>
+          {uploads.map((file) => (
+            <AttachmentsPanel.Item key={file.id} file={file}>
+              <AttachmentsPanel.Item.Icon />
+              <div className="min-w-0 flex-1">
+                <AttachmentsPanel.Item.Name />
+                <AttachmentsPanel.Item.Size />
+              </div>
+              <AttachmentsPanel.Item.Remove />
+            </AttachmentsPanel.Item>
+          ))}
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    // Name + formatted size leaves render...
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(html, "24 KB");
+    // ...and the composed row uses the pill's ✕ Remove (wired to onRemoveUpload),
+    // not the default overflow menu.
+    assertStringIncludes(html, 'aria-label="Remove run-analysis.csv"');
+    assert(!html.includes('aria-label="Actions for run-analysis.csv"'));
+  });
+
+  it("Item.Remove renders nothing when no onRemoveUpload is set", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={uploads[0]!}>
+            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Remove />
+          </AttachmentsPanel.Item>
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    assert(!html.includes('aria-label="Remove run-analysis.csv"'));
+  });
+
+  it("Item sub-parts read the file from context; used outside a Item they throw", () => {
+    function Orphan() {
+      return <AttachmentsPanel.Item.Name />;
+    }
+    let threw = false;
+    try {
+      renderToString(<Orphan />);
+    } catch {
+      threw = true;
+    }
+    assertEquals(threw, true);
+  });
+
   it("useAttachmentsPanel throws outside an AttachmentsPanel", () => {
     function Orphan() {
       useAttachmentsPanel();

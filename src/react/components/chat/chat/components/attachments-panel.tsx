@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../ui/dropdown-menu.tsx";
-import { AttachmentPill, useAttachmentPill } from "./attachment-pill.tsx";
+import { AttachmentPill, formatSize, useAttachmentPill } from "./attachment-pill.tsx";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Public API contract for uploaded file. */
@@ -244,37 +244,153 @@ AttachmentsPanelList.displayName = "AttachmentsPanel.List";
 export interface AttachmentsPanelItemProps {
   file: UploadedFile;
   className?: string;
+  /**
+   * Compose the row from `AttachmentsPanel.Item.*` leaves (`.Icon` / `.Preview`
+   * / `.Name` / `.Size` / `.Remove`), each reading the item's file from context.
+   * Omit for the default card (media + label + overflow menu).
+   */
+  children?: React.ReactNode;
 }
 
 /**
  * A single attachment row — the shared `Attachment` (`AttachmentPill`) card,
  * stretched full-width. This *composes* `AttachmentPill` (rather than rendering
  * its default anatomy) to swap the trailing remove (✕) for an overflow (⋯) menu
- * with Open / Delete — a live test of how composable `Attachment` is.
+ * with Open / Delete — a live test of how composable `Attachment` is. Pass
+ * children to recompose the row from the `AttachmentsPanel.Item.*` leaves.
  */
 function AttachmentsPanelItem(
-  { file: doc, className }: AttachmentsPanelItemProps,
+  { file: doc, className, children }: AttachmentsPanelItemProps,
 ): React.JSX.Element {
   return (
     // Borderless rows here — the panel is a plain list, not a field of chips.
+    // The `AttachmentPill` provides the per-item context the `Item.*` leaves read.
     <AttachmentPill attachment={doc} bordered={false} className={cn("w-full", className)}>
-      <AttachmentsPanelItemMedia />
-      <AttachmentPill.Label />
-      <AttachmentsPanelItemMenu file={doc} />
+      {children ?? (
+        <>
+          <AttachmentsPanelItemMedia />
+          <AttachmentPill.Label />
+          <AttachmentsPanelItemMenu file={doc} />
+        </>
+      )}
     </AttachmentPill>
   );
 }
-AttachmentsPanelItem.displayName = "AttachmentsPanel.Item";
 
 /**
  * The leading media square — reads the pill's derived state to show the image
  * `Thumbnail` (image attachments) or the file-type `Icon`, matching the default
  * anatomy's choice.
  */
-function AttachmentsPanelItemMedia(): React.JSX.Element {
+function AttachmentsPanelItemMedia(
+  { className }: { className?: string },
+): React.JSX.Element {
   const { imageSrc, isError } = useAttachmentPill();
-  return imageSrc && !isError ? <AttachmentPill.Thumbnail /> : <AttachmentPill.Icon />;
+  return imageSrc && !isError
+    ? <AttachmentPill.Thumbnail className={className} />
+    : <AttachmentPill.Icon className={className} />;
 }
+
+// ---------------------------------------------------------------------------
+// AttachmentsPanel.Item.* — the row leaves. Each reads the item's file from the
+// enclosing `AttachmentPill` context (and the panel state where needed), so a
+// consumer can restyle/reorder/replace one control without re-implementing the
+// row. Use them inside an `AttachmentsPanel.Item` (composed form).
+// ---------------------------------------------------------------------------
+
+/** `AttachmentsPanel.Item.Icon` — the file-type icon square. */
+function AttachmentsPanelItemIcon(
+  { className }: { className?: string },
+): React.JSX.Element {
+  return <AttachmentPill.Icon className={className} />;
+}
+AttachmentsPanelItemIcon.displayName = "AttachmentsPanel.Item.Icon";
+
+/**
+ * `AttachmentsPanel.Item.Preview` — the image thumbnail. Renders nothing when
+ * the file isn't an image (fall back to `AttachmentsPanel.Item.Icon`).
+ */
+function AttachmentsPanelItemPreview(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { imageSrc, isError } = useAttachmentPill();
+  if (!imageSrc || isError) return null;
+  return <AttachmentPill.Thumbnail className={className} />;
+}
+AttachmentsPanelItemPreview.displayName = "AttachmentsPanel.Item.Preview";
+
+/** `AttachmentsPanel.Item.Name` — the file name line. */
+function AttachmentsPanelItemName(
+  { className }: { className?: string },
+): React.JSX.Element {
+  const { attachment } = useAttachmentPill();
+  return (
+    <p className={cn("truncate text-sm font-medium leading-tight", className)}>
+      {attachment.name || "Attachment"}
+    </p>
+  );
+}
+AttachmentsPanelItemName.displayName = "AttachmentsPanel.Item.Name";
+
+/**
+ * `AttachmentsPanel.Item.Size` — the formatted byte size. Renders nothing when
+ * the file carries no size.
+ */
+function AttachmentsPanelItemSize(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { attachment } = useAttachmentPill();
+  if (attachment.size == null) return null;
+  return (
+    <p className={cn("truncate text-xs leading-tight text-[var(--faint)]", className)}>
+      {formatSize(attachment.size)}
+    </p>
+  );
+}
+AttachmentsPanelItemSize.displayName = "AttachmentsPanel.Item.Size";
+
+/** Props for `AttachmentsPanel.Item.Remove`. */
+export interface AttachmentsPanelItemRemoveProps {
+  className?: string;
+  /** Override the button's icon (defaults to the trash glyph). */
+  icon?: React.ReactNode;
+}
+
+/**
+ * `AttachmentsPanel.Item.Remove` — the delete control, wired to the panel's
+ * `onRemoveUpload` for this item. Renders nothing when no remove handler is set.
+ */
+function AttachmentsPanelItemRemove(
+  { className, icon }: AttachmentsPanelItemRemoveProps,
+): React.JSX.Element | null {
+  const { attachment } = useAttachmentPill();
+  const { onRemoveUpload } = useAttachmentsPanel();
+  if (!onRemoveUpload) return null;
+  return (
+    <Button
+      type="button"
+      variant="icon-ghost"
+      size="icon-sm"
+      on="card"
+      onClick={() => onRemoveUpload(attachment.id)}
+      aria-label={`Remove ${attachment.name}`}
+      className={cn("shrink-0", className)}
+    >
+      {icon ?? <TrashIcon />}
+    </Button>
+  );
+}
+AttachmentsPanelItemRemove.displayName = "AttachmentsPanel.Item.Remove";
+
+/** `AttachmentsPanel.Item` compound — the row plus its addressable leaves. */
+const AttachmentsPanelItemCompound = Object.assign(AttachmentsPanelItem, {
+  Icon: AttachmentsPanelItemIcon,
+  Preview: AttachmentsPanelItemPreview,
+  Name: AttachmentsPanelItemName,
+  Size: AttachmentsPanelItemSize,
+  Remove: AttachmentsPanelItemRemove,
+});
+AttachmentsPanelItem.displayName = "AttachmentsPanel.Item";
 
 /**
  * The trailing overflow (⋯) menu — Open (when the file has a url) and Delete
@@ -461,7 +577,7 @@ export const AttachmentsPanel = Object.assign(AttachmentsPanelRoot, {
   Root: AttachmentsPanelRoot,
   Header: AttachmentsPanelHeader,
   List: AttachmentsPanelList,
-  Item: AttachmentsPanelItem,
+  Item: AttachmentsPanelItemCompound,
   Loading: AttachmentsPanelLoading,
   Empty: AttachmentsPanelEmpty,
   Action: AttachmentsPanelAction,

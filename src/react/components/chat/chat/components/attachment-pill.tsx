@@ -61,7 +61,8 @@ function getExtension(name: string): string {
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
-function formatSize(bytes: number): string {
+/** Format a byte count as a compact `B` / `KB` / `MB` label. */
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

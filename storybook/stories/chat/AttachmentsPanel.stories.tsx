@@ -20,6 +20,11 @@ AttachmentsPanel.Root  <- or compose it: context (uploads, callbacks, file picke
   +-- AttachmentsPanel.Header <- "Attachments" title + close button (when onClose set)
   +-- AttachmentsPanel.List   <- flex-gap column of attachment cards
   |     +-- AttachmentsPanel.Item    <- composes <AttachmentPill> and an overflow menu
+  |     |     +-- AttachmentsPanel.Item.Icon     <- file-type icon square
+  |     |     +-- AttachmentsPanel.Item.Preview  <- image thumbnail (image files)
+  |     |     +-- AttachmentsPanel.Item.Name     <- file name line
+  |     |     +-- AttachmentsPanel.Item.Size     <- formatted byte size
+  |     |     +-- AttachmentsPanel.Item.Remove   <- delete control (onRemoveUpload)
   +-- AttachmentsPanel.Empty  <- empty state (heading, hint, upload action)
   +-- AttachmentsPanel.Action <- upload/attach button (opens the native picker)`;
 
@@ -242,6 +247,61 @@ const uploads = useUploadsRegistry({ url: "/api/uploads" });
       <ReviewSurface label="Loading">
         <div className="h-[280px]">
           <AttachmentsPanel uploads={[]} loading onAttach={() => undefined} />
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const ComposedRow: Story = {
+  name: "Composed row (Item leaves)",
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { AttachmentsPanel } from "veryfront/chat";
+
+// Own the row: compose it from the Item leaves instead of the default card.
+// Each leaf reads the item's file from context; Remove wires to onRemoveUpload.
+<AttachmentsPanel.Root uploads={uploads} onRemoveUpload={remove}>
+  <div className="flex-1 overflow-y-auto px-4 py-4">
+    <AttachmentsPanel.List>
+      {uploads.map((file) => (
+        <AttachmentsPanel.Item key={file.id} file={file}>
+          <AttachmentsPanel.Item.Icon />
+          <div className="min-w-0 flex-1">
+            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Size />
+          </div>
+          <AttachmentsPanel.Item.Remove />
+        </AttachmentsPanel.Item>
+      ))}
+    </AttachmentsPanel.List>
+  </div>
+</AttachmentsPanel.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ReviewSurface label="Composed row">
+        <div className="h-[280px]">
+          <AttachmentsPanel.Root uploads={uploads} onRemoveUpload={() => undefined}>
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <AttachmentsPanel.List>
+                {uploads.map((file) => (
+                  <AttachmentsPanel.Item key={file.id} file={file}>
+                    <AttachmentsPanel.Item.Icon />
+                    <div className="min-w-0 flex-1">
+                      <AttachmentsPanel.Item.Name />
+                      <AttachmentsPanel.Item.Size />
+                    </div>
+                    <AttachmentsPanel.Item.Remove />
+                  </AttachmentsPanel.Item>
+                ))}
+              </AttachmentsPanel.List>
+            </div>
+          </AttachmentsPanel.Root>
         </div>
       </ReviewSurface>
     </StoryFrame>
