@@ -119,3 +119,45 @@ export const Document: Story = {
     </StoryFrame>
   ),
 };
+
+// Acid test: swap ONE leaf — the fenced-code renderer — via `renderCodeBlock`,
+// without re-implementing `Markdown`. Prose, lists, and inline formatting keep
+// the default rendering; only code blocks change.
+export const CustomCodeBlock: Story = {
+  name: "Custom code block (renderCodeBlock)",
+  tags: ["!dev", "acid-test"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Markdown } from "veryfront/react/components/chat";
+
+<Markdown
+  renderCodeBlock={({ code, language }) => (
+    <pre className="rounded-md bg-[var(--foreground)] p-3 text-[var(--background)]">
+      <span className="mb-1 block text-xs opacity-60">{language ?? "code"}</span>
+      <code>{code}</code>
+    </pre>
+  )}
+>
+  {markdown}
+</Markdown>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="760px">
+      <ReviewSurface label="Custom code block">
+        <Markdown
+          renderCodeBlock={({ code, language }) => (
+            <pre className="overflow-x-auto rounded-md bg-[var(--foreground)] p-3 text-[var(--background)]">
+              <span className="mb-1 block text-xs opacity-60">{language ?? "code"}</span>
+              <code>{code}</code>
+            </pre>
+          )}
+        >
+          {markdownExample}
+        </Markdown>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};

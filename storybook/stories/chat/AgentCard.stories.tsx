@@ -199,7 +199,7 @@ export const Completed: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => (
     <StoryFrame maxWidth="720px">
       <AgentCard.Root

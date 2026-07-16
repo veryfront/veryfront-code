@@ -249,7 +249,7 @@ const uploads = useUploadsRegistry({ url: "/api/uploads" });
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {

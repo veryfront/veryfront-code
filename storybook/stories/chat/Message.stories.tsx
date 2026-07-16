@@ -174,7 +174,7 @@ export const RenderPair: Story = {
 };
 
 export const CompoundAssistant: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {
