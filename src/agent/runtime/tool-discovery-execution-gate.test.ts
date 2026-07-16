@@ -1,9 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  createProjectScopedRemoteToolCatalog,
-} from "../../tool/project-scoped-remote-tools.ts";
+import { createProjectScopedRemoteToolCatalog } from "../../tool/project-scoped-remote-tools.ts";
 import type { RemoteToolSource, ToolDefinition } from "../../tool/types.ts";
 import type { RuntimeToolDiscoveryContext } from "./tool-discovery-context.ts";
 

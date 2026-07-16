@@ -2,10 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeToolDiscoveryContext } from "./tool-discovery-context.ts";
-import {
-  createLoadToolsTool,
-  type LoadToolsToolOptions,
-} from "./load-tools-tool.ts";
+import { createLoadToolsTool, type LoadToolsToolOptions } from "./load-tools-tool.ts";
 
 const AUTHORIZED_TOOLS = ["read_file", "write_file", "search_code", "update_agent"] as const;
 
@@ -134,7 +131,9 @@ describe("load_tools tool", () => {
     it("does not call onToolsActivated when all names are already active", async () => {
       const context = makeContext(["read_file"]);
       let called = false;
-      context.onToolsActivated = () => { called = true; };
+      context.onToolsActivated = () => {
+        called = true;
+      };
 
       const tool = createLoadToolsTool(makeOptions(context));
       await tool.execute({ names: ["read_file"] });
@@ -244,8 +243,7 @@ describe("load_tools tool", () => {
       const existing = Array.from({ length: 126 }, (_, i) => `tool_${i}`);
       const context = makeContext(existing);
       const rejected: Array<{ names: string[]; reasons: Record<string, string> }> = [];
-      context.onToolsActivationRejected = (names, reasons) =>
-        rejected.push({ names, reasons });
+      context.onToolsActivationRejected = (names, reasons) => rejected.push({ names, reasons });
       const authorized = [...existing, "overflow_tool"];
       const tool = createLoadToolsTool(
         makeOptions(context, {

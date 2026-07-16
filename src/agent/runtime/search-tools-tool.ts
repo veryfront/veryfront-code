@@ -2,7 +2,10 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
-import type { RuntimeToolCatalogEntry, RuntimeToolDiscoveryContext } from "./tool-discovery-context.ts";
+import type {
+  RuntimeToolCatalogEntry,
+  RuntimeToolDiscoveryContext,
+} from "./tool-discovery-context.ts";
 
 export type { RuntimeToolCatalogEntry };
 
@@ -72,8 +75,7 @@ export function createSearchToolsTool(
 ): Tool<SearchToolsInput, SearchToolsOutput> {
   function execute(input: SearchToolsInput): SearchToolsOutput {
     const catalog = options.getAuthorizedCatalog();
-    const activatedSet: ReadonlySet<string> =
-      options.context.activatedRemoteToolNames ?? new Set();
+    const activatedSet: ReadonlySet<string> = options.context.activatedRemoteToolNames ?? new Set();
 
     let entries: readonly RuntimeToolCatalogEntry[];
 
@@ -104,8 +106,7 @@ export function createSearchToolsTool(
   return {
     id: "search_tools",
     type: "function",
-    description:
-      "Search the authorized MCP tool catalog for this run. " +
+    description: "Search the authorized MCP tool catalog for this run. " +
       "Returns name, description, source, and state (active|available|requires_grant) " +
       "for each matching tool. Input schemas are not returned. " +
       "Hard-unauthorized tools are invisible. " +

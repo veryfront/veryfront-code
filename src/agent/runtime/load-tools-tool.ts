@@ -122,19 +122,17 @@ export function createLoadToolsTool(
     return {
       activated: allActivated,
       newlyActivated: newNames,
-      message:
-        newNames.length > 0
-          ? `Activated ${newNames.length} tool(s): ${newNames.join(", ")}. ` +
-            `These tools are callable from the next step.`
-          : `All requested tools were already active: ${allActivated.join(", ")}.`,
+      message: newNames.length > 0
+        ? `Activated ${newNames.length} tool(s): ${newNames.join(", ")}. ` +
+          `These tools are callable from the next step.`
+        : `All requested tools were already active: ${allActivated.join(", ")}.`,
     };
   }
 
   return {
     id: "load_tools",
     type: "function",
-    description:
-      "Activate one or more MCP tools for use in this run. " +
+    description: "Activate one or more MCP tools for use in this run. " +
       "All names must be valid; the call is atomic (no partial activation). " +
       "Use search_tools first to discover available tool names and their current state. " +
       "Activated tools are callable from the next step. " +
