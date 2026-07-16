@@ -71,14 +71,15 @@ export function useConversationChat(
 
   // Inside a `ConversationsProvider`, bind to the active conversation — seed
   // from its messages/agent and persist changes back. No provider: standalone.
-  // `active` must match `activeId` so we never seed from a still-loading thread.
+  // The active conversation must match its id so we never seed from a still-loading thread.
   const conversations = useConversationsContextOptional();
-  const bound = conversations?.active && conversations.active.id === conversations.activeId
-    ? conversations.active
+  const bound = conversations?.activeConversation &&
+      conversations.activeConversation.id === conversations.activeConversationId
+    ? conversations.activeConversation
     : null;
   const isConversationPending = conversations !== null &&
     bound === null &&
-    (conversations.isLoading || conversations.activeId !== null);
+    (conversations.isLoading || conversations.activeConversationId !== null);
   const resolvedAgentId = bound?.agentId ?? agentId;
   const emptyMessagesRef = React.useRef<ChatMessage[]>([]);
   const sessionMessages = bound?.messages ??
@@ -111,7 +112,7 @@ export function useConversationChat(
   const sessionKey = bound
     ? `conversation:${bound.id}`
     : isConversationPending
-    ? `pending:${conversations.activeId}`
+    ? `pending:${conversations.activeConversationId}`
     : conversations
     ? "provider:unbound"
     : "standalone";
@@ -214,6 +215,8 @@ export function useConversationChat(
       messages: sessionMessages,
       input: "",
       isLoading: false,
+      status: "ready" as const,
+      streamingMessageId: null,
       error: null,
       model: undefined,
       data: null,

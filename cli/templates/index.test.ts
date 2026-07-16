@@ -149,6 +149,8 @@ describe("cli/templates", () => {
     ) {
       assertEquals(layout.includes(needle), true, `docs-agent layout should use ${needle}`);
     }
+    assertEquals(layout.includes("<ChatSidebar.Root"), true);
+    assertEquals(layout.includes("<ChatSidebar fill"), false);
 
     assertEquals(page.includes("useChat"), false);
     assertEquals(page.includes('agentId="rag"'), true);

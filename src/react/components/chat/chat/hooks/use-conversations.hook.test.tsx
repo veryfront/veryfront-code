@@ -80,6 +80,25 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
 }
 
 describe("react/components/chat/hooks/useConversations — save", () => {
+  it("keeps the legacy active aliases aligned with the explicit fields", async () => {
+    const restoreDom = installDom();
+    const store = memoryConversationStore([
+      conversation({ id: "active", title: "Active", updatedAt: 20 }),
+    ]);
+    try {
+      const view = mount(store);
+      await settle();
+
+      assertEquals(view.get().active, view.get().activeConversation);
+      assertEquals(view.get().activeId, view.get().activeConversationId);
+
+      flushSync(() => view.root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("selects the newest stored conversation in uncontrolled mode", async () => {
     const restoreDom = installDom();
     const store = memoryConversationStore([
@@ -90,8 +109,16 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       const view = mount(store);
       await settle();
 
-      assertEquals(view.get().activeId, "newer", "newest stored conversation should be active");
-      assertEquals(view.get().active?.title, "Newer", "active conversation should load");
+      assertEquals(
+        view.get().activeConversationId,
+        "newer",
+        "newest stored conversation should be active",
+      );
+      assertEquals(
+        view.get().activeConversation?.title,
+        "Newer",
+        "active conversation should load",
+      );
 
       flushSync(() => view.root.unmount());
       await settle();

@@ -39,12 +39,12 @@ import { Shimmer } from "../../../ui/shimmer.tsx";
 import { ToolCall } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
-import { Sources as SourcesImpl } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
 import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../ui/popover.tsx";
+import { MessageSources } from "./message-sources.tsx";
+export type { MessageSourcesProps } from "./message-sources.tsx";
 import {
-  extractSourcesFromParts,
   getAnswerPartsForRendering,
   getTextContentFromParts,
   groupPartsInOrder,
@@ -65,6 +65,12 @@ function metadataString(
 /** Props accepted by message root. */
 export interface MessageRootProps {
   message: ChatMessage;
+  /**
+   * Whether this turn is still streaming. Omit to derive it from
+   * `ChatContext` (`streamingMessageId === message.id`) so a hand-composed
+   * transcript never has to compute an off-by-one index. Pass a boolean only
+   * to override the context (e.g. rendering outside a live chat).
+   */
   isStreaming?: boolean;
   children: React.ReactNode;
   className?: string;
@@ -82,11 +88,14 @@ export interface MessageRootProps {
 }
 
 function MessageRoot(
-  { message, isStreaming = false, children, className, ref, ...overrides }: MessageRootProps,
+  { message, isStreaming, children, className, ref, ...overrides }: MessageRootProps,
 ): React.ReactElement {
   {
     const chat = useChatContextOptional();
     const role = message.role as MessageContextValue["role"];
+    // Derive streaming from context unless the caller pins it explicitly.
+    const resolvedStreaming = isStreaming ??
+      (chat?.streamingMessageId != null && chat.streamingMessageId === message.id);
     const answerParts = React.useMemo(
       () =>
         getAnswerPartsForRendering(message.parts, {
@@ -124,7 +133,7 @@ function MessageRoot(
       () => ({
         message,
         role,
-        isStreaming,
+        isStreaming: resolvedStreaming,
         parts,
         textContent,
         branch,
@@ -151,7 +160,7 @@ function MessageRoot(
         message,
         message.id,
         role,
-        isStreaming,
+        resolvedStreaming,
         parts,
         onReload,
         textContent,
@@ -209,7 +218,7 @@ function MessageAvatar(
         chat?.agent?.name ??
         metadataString(message.metadata, "agentId")}
       avatarUrl={metadataString(message.metadata, "agentAvatarUrl") ??
-        chat?.agent?.avatarUrl}
+        chat?.agent?.avatarUrl ?? undefined}
       model={metadataString(message.metadata, "model")}
       className={className}
     />
@@ -316,7 +325,7 @@ function MessageHeader(
     chat?.agent?.name ??
     metadataString(message.metadata, "agentId");
   const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
-    chat?.agent?.avatarUrl;
+    chat?.agent?.avatarUrl ?? undefined;
 
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
@@ -561,30 +570,6 @@ function MessagePart({
   );
 }
 MessagePart.displayName = "Message.Part";
-
-/** Props for `Message.Sources`. */
-export interface MessageSourcesProps {
-  onSourceClick?: (source: Source, index: number) => void;
-  className?: string;
-}
-
-/** The inline citation sources extracted from this message's tool results. */
-function MessageSources(
-  { onSourceClick, className }: MessageSourcesProps,
-): React.ReactElement | null {
-  const { message } = useMessageContext();
-  const chat = useChatContextOptional();
-  const sources = extractSourcesFromParts(message.parts);
-  if (sources.length === 0) return null;
-  return (
-    <SourcesImpl
-      sources={sources}
-      onSourceClick={onSourceClick ?? chat?.onSourceClick}
-      className={className}
-    />
-  );
-}
-MessageSources.displayName = "Message.Sources";
 
 // ---------------------------------------------------------------------------
 // Message.Actions — the reference render-or-compose pattern.

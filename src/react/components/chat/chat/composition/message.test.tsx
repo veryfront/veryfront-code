@@ -97,6 +97,31 @@ describe("Message.Content — composability contract", () => {
     assertStringIncludes(html, "Runs guide");
   });
 
+  it("Message.Sources maps each citation through a function child", () => {
+    const withSources: ChatMessage = {
+      ...assistantMessage,
+      parts: [
+        { type: "text", text: "See sources." },
+        {
+          type: "tool-result",
+          toolCallId: "tool-search-docs",
+          // deno-lint-ignore no-explicit-any
+          result: { documents: [{ title: "Runs guide", url: "/runs" }] } as any,
+          // deno-lint-ignore no-explicit-any
+        } as any,
+      ],
+    };
+    const html = renderToString(
+      <Message.Root message={withSources}>
+        <Message.Sources>
+          {(source, index) => <span key={index} data-testid="custom-citation">{source.title}</span>}
+        </Message.Sources>
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "custom-citation");
+    assertStringIncludes(html, "Runs guide");
+  });
+
   it("does not auto-append sources when the body is composed", () => {
     // In compose mode the caller owns sources — nothing is appended implicitly.
     const withSources: ChatMessage = {

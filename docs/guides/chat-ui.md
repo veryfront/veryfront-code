@@ -72,7 +72,7 @@ attachments:
   chat={chat}
   placeholder="Ask about your project"
   suggestions={["Summarize this repo", "Find deployment risks"]}
-  onSuggestionClick={(value) => chat.setInput(value)}
+  onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
   theme={{
     container: "bg-white text-slate-950",
     message: {
@@ -154,7 +154,7 @@ export default function CustomLayout() {
       <Chat.Empty
         title="What can I help with?"
         suggestions={["Explain React hooks", "Write a regex"]}
-        onSuggestionClick={(value) => chat.setInput(value)}
+        onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
       />
     </Chat.Root>
   );

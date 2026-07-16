@@ -71,7 +71,9 @@ function contextValue(
   const noop = () => {};
   return {
     conversations: [],
+    activeConversation: active,
     active,
+    activeConversationId: active.id,
     activeId: active.id,
     isLoading: false,
     select: noop,
@@ -97,7 +99,9 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const placeholder = conversation("placeholder", []);
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
+      activeConversation: null,
       active: null,
+      activeConversationId: null,
       activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
@@ -152,7 +156,9 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const placeholder = conversation("placeholder", []);
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
+      activeConversation: null,
       active: null,
+      activeConversationId: null,
       activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
@@ -209,7 +215,9 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const placeholder = conversation("placeholder", []);
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
+      activeConversation: null,
       active: null,
+      activeConversationId: null,
       activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
@@ -342,7 +350,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       const staleSubmit = latest!.chat.handleSubmit;
 
       const pendingRender = renderedMessageIds.length;
-      renderValue({ ...contextValue(first, save), activeId: second.id });
+      renderValue({ ...contextValue(first, save), activeConversationId: second.id });
       assertEquals(
         renderedMessageIds[pendingRender],
         [],
@@ -382,6 +390,54 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(saved.length, 1);
       assertEquals(saved[0]?.id, "second");
       assertEquals(saved[0]?.messages, [...second.messages, reply]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("resets turn lifecycle state while the next conversation is loading", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(new Response("failed", { status: 500 }));
+    const first = conversation("first", [userMessage("first-message", "First thread")]);
+    const second = conversation("second", [userMessage("second-message", "Second thread")]);
+    let latest: UseConversationChatResult | null = null;
+
+    function Capture(): null {
+      latest = useConversationChat();
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    const renderValue = (value: UseConversationsResult) => {
+      flushSync(() => {
+        root.render(
+          <ConversationsContextProvider value={value}>
+            <Capture />
+          </ConversationsContextProvider>,
+        );
+      });
+    };
+
+    try {
+      renderValue(contextValue(first, () => {}));
+      await settle();
+      await latest!.chat.sendMessage({ text: "Fail this turn" });
+      await settle();
+      assertEquals(latest!.chat.status, "error");
+
+      renderValue({
+        ...contextValue(first, () => {}),
+        activeConversationId: second.id,
+        activeId: second.id,
+      });
+      assertEquals(latest!.chat.isLoading, false);
+      assertEquals(latest!.chat.error, null);
+      assertEquals(latest!.chat.status, "ready");
+      assertEquals(latest!.chat.streamingMessageId, null);
     } finally {
       globalThis.fetch = originalFetch;
       flushSync(() => root.unmount());

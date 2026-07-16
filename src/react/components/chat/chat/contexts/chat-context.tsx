@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { ChatMessage } from "#veryfront/agent/react";
+import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
@@ -21,6 +21,14 @@ export interface ChatContextValue {
   // Messages
   messages: ChatMessage[];
   isLoading: boolean;
+  /**
+   * Streaming lifecycle of the current turn (`useChat().status`).
+   * Optional so hand-built providers can omit it; presentational nodes should
+   * prefer `status`/`streamingMessageId` over `isLoading`.
+   */
+  status?: ChatStatus;
+  /** Id of the assistant message currently streaming, or `null`/absent when idle. */
+  streamingMessageId?: string | null;
   error: Error | null;
 
   // Input
@@ -40,7 +48,9 @@ export interface ChatContextValue {
   // Agent identity — fallback for assistant message headers when a message's
   // own metadata omits `agentName` / `agentAvatarUrl` (e.g. the AG-UI stream
   // only carries `agentId`). Populated by `<Chat agentId>` from agent metadata.
-  agent?: { name?: string; avatarUrl?: string };
+  // Accepts `AgentMetadata` structurally (hence `avatarUrl: string | null`), so
+  // a `useAgentMetadata()` result can be passed straight through.
+  agent?: { name?: string; avatarUrl?: string | null };
 
   // Attachments
   attachments: AttachmentInfo[];

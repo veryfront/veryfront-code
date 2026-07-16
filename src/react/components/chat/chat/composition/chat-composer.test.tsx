@@ -247,6 +247,70 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
+  it("composer owns submit: folds resolved attachments, clears, and guards uploads", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    // deno-lint-ignore no-explicit-any
+    const sent: any[] = [];
+    let cleared = 0;
+    let inputSetTo: string | null = null;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+
+      const render = (state: "uploaded" | "uploading") =>
+        flushSync(() => {
+          root.render(
+            <ChatInput.Root
+              input="Ship it"
+              onChange={() => {}}
+              sendMessage={(m) => sent.push(m)}
+              setInput={(v) => (inputSetTo = v)}
+              onClearAttachments={() => (cleared += 1)}
+              attachments={[{
+                id: "file-1",
+                name: "brief.pdf",
+                state,
+                type: "application/pdf",
+                ...(state === "uploaded" ? { url: "https://example.com/brief.pdf" } : {}),
+              }]}
+            >
+              <ChatInput.Field />
+              <ChatInput.Send />
+            </ChatInput.Root>,
+          );
+        });
+
+      // A still-uploading attachment must block send entirely.
+      render("uploading");
+      const pendingBtn = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+      assert(pendingBtn, "send renders");
+      flushSync(() => pendingBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      assertEquals(sent.length, 0, "must not send while an upload is in flight");
+
+      // Once resolved, one click sends { text, files } and clears.
+      render("uploaded");
+      const readyBtn = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+      assert(readyBtn, "send renders");
+      flushSync(() => readyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+      assertEquals(sent.length, 1, "resolved send fires once");
+      assertEquals(sent[0].text, "Ship it");
+      assertEquals(sent[0].files?.[0]?.url, "https://example.com/brief.pdf");
+      assertEquals(inputSetTo, "", "clears the input after send");
+      assertEquals(cleared, 1, "clears attachments after send");
+
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
   it("uses the copied Studio prompt shell and non-scaling primary submit button", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
@@ -305,6 +369,35 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       </ChatInput.Root>,
     );
     assert(html.includes("custom-send"), "Expected the custom send icon to render");
+  });
+
+  describe("ChatInput.Submit", () => {
+    it("renders the send control (with its icon) while idle", () => {
+      const html = renderToString(
+        <ChatInput.Root input="hi" onChange={() => {}} onSubmit={() => {}}>
+          <ChatInput.Submit icon={<svg data-testid="mail-icon" />} />
+        </ChatInput.Root>,
+      );
+      assert(html.includes('aria-label="Send"'), "idle submit is the Send control");
+      assert(html.includes("mail-icon"), "idle submit uses the `icon` override");
+      assert(!html.includes('aria-label="Stop"'), "idle submit is not the Stop control");
+    });
+
+    it("renders the stop control while streaming, ignoring the send icon", () => {
+      const html = renderToString(
+        <ChatInput.Root
+          input="hi"
+          onChange={() => {}}
+          onSubmit={() => {}}
+          isLoading
+          stop={() => {}}
+        >
+          <ChatInput.Submit icon={<svg data-testid="mail-icon" />} />
+        </ChatInput.Root>,
+      );
+      assert(html.includes('aria-label="Stop"'), "streaming submit is the Stop control");
+      assert(!html.includes("mail-icon"), "the send icon must not leak onto Stop");
+    });
   });
 
   describe("ChatInput.Toolbar", () => {

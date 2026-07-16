@@ -154,7 +154,7 @@ function AgentPickerDocsPage() {
               description: "Display name (also the search keyword)",
             },
             {
-              name: "avatarSrc",
+              name: "avatarUrl",
               type: "string",
               description: "Avatar image URL; initials shown when absent",
             },

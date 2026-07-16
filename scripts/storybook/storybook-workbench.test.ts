@@ -184,6 +184,18 @@ describe("Storybook UI workbench", () => {
     );
   });
 
+  it("documents the preferred additive chat APIs", async () => {
+    const agentPicker = await readText(
+      "storybook/stories/chat/AgentPicker.stories.tsx",
+    );
+    const chat = await readText("storybook/stories/chat/Chat.stories.tsx");
+
+    assertStringIncludes(agentPicker, 'name: "avatarUrl"');
+    assertEquals(agentPicker.includes('name: "avatarSrc"'), false);
+    assertStringIncludes(chat, "onSuggestionSelect");
+    assertEquals(chat.includes("onSuggestionClick={setInput}"), false);
+  });
+
   it("covers the shipped UI families with Storybook stories that import real components", async () => {
     const requiredStories = [
       {

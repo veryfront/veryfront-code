@@ -358,7 +358,7 @@ function ChatReview({
             "Draft a test plan",
             "Summarize the run",
           ]}
-          onSuggestionClick={setInput}
+          onSuggestionSelect={(suggestion) => setInput(suggestion.prompt)}
         />
       </div>
     </div>

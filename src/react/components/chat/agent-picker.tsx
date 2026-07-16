@@ -7,9 +7,7 @@
  * branch is dropped (Studio-only deps) — the overlay always portals via our
  * `Floating` (through `PopoverContent`) so it never clips in the iframe.
  *
- * Semantic Studio classes remapped to veryfront's `[var(--token)]` vocabulary;
- * icons inherit the Command row's sizing. Composes the private ui
- * primitives (Popover, Command, Avatar) — no radix / cva / `@/` imports.
+ * Semantic Studio classes use Veryfront tokens and private UI primitives.
  *
  * @module react/components/chat/agent-picker
  */
@@ -47,7 +45,9 @@ export interface AgentOption {
   id: string;
   /** Display name (also the search keyword). */
   name: string;
-  /** Avatar image URL; initials are shown when absent. */
+  /** Avatar image URL (matches `AgentMetadata.avatarUrl`); initials shown when absent/null. */
+  avatarUrl?: string | null;
+  /** @deprecated Use `avatarUrl`. */
   avatarSrc?: string;
   /** Dims the row and blocks selection. */
   disabled?: boolean;
@@ -186,7 +186,7 @@ function AgentPickerTrigger(
       {selected && (
         <Avatar
           name={selected.name}
-          avatarSrc={selected.avatarSrc}
+          avatarSrc={selected.avatarUrl ?? selected.avatarSrc}
           tone="muted"
           aria-hidden="true"
           className="size-5! bg-[var(--background)]"
@@ -305,7 +305,7 @@ function AgentPickerItem(
     >
       <Avatar
         name={agent.name}
-        avatarSrc={agent.avatarSrc}
+        avatarSrc={agent.avatarUrl ?? agent.avatarSrc}
         tone="muted"
         aria-hidden="true"
         className="size-5! bg-[var(--background)]"

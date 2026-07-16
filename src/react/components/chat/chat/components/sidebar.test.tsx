@@ -73,7 +73,7 @@ describe("ChatSidebar — conversation-native", () => {
       flushSync(() => {
         root.render(
           <ConversationsProvider store={store} id="a">
-            <ChatSidebar fill />
+            <ChatSidebar />
           </ConversationsProvider>,
         );
       });
@@ -97,7 +97,6 @@ describe("ChatSidebar — conversation-native", () => {
       flushSync(() => {
         root.render(
           <ChatSidebar
-            fill
             conversations={[summary("x", "Controlled chat", 5000)]}
             activeId="x"
             onSelect={() => {}}
@@ -117,6 +116,21 @@ describe("ChatSidebar — conversation-native", () => {
     } finally {
       restoreDom();
     }
+  });
+
+  it("keeps the legacy fill prop in embedded layouts", () => {
+    const html = renderToString(
+      <ChatSidebar
+        fill
+        conversations={[summary("x", "Embedded chat", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    const railClass = html.match(/data-vf-chat="" class="([^"]*)"/)?.[1] ?? "";
+    assert(railClass.includes("w-full"), "fill keeps the embedded rail full-width");
+    assert(!railClass.includes("w-60"), "fill omits standalone fixed-width chrome");
   });
 });
 

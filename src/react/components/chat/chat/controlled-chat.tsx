@@ -15,13 +15,10 @@ import { ConversationScrollButton } from "./components/empty-state.tsx";
 import { InferenceBadge } from "./components/inference-badge.tsx";
 import type { ChatProps } from "./chat-props.ts";
 
-// ---------------------------------------------------------------------------
 // Chat — Preset component
-//
 // Composes ChatRoot, ChatMessageList, ChatInput, ChatEmpty, etc. into a
 // full-featured chat UI with sensible defaults. For custom layouts, use the
 // building blocks directly.
-// ---------------------------------------------------------------------------
 
 interface ControlledChatProps extends Omit<ChatProps, "chat"> {
   chat: UseChatResult;
@@ -40,6 +37,7 @@ export function ControlledChat(
     renderMessage,
     suggestions: suggestionsProp,
     onSuggestionClick,
+    onSuggestionSelect,
     emptyState,
     initializing = false,
     skeleton,
@@ -74,18 +72,15 @@ export function ControlledChat(
     sendMessage,
     setInput,
     setModel: onModelChange,
+    status,
     stop,
+    streamingMessageId,
     switchBranch,
   } = chat;
   const onSubmit = submit ?? sessionSubmit;
   const models = agent?.models;
   const suggestions = suggestionsProp ?? agent?.suggestions;
-  const theme = React.useMemo(
-    () => mergeThemes(defaultChatTheme, userTheme),
-    [
-      userTheme,
-    ],
-  );
+  const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
 
   // --- Attachments (batteries-included) ---
   // The composer's `+` menu and drag-to-attach are on by default: when the
@@ -154,6 +149,8 @@ export function ControlledChat(
       messages={messages}
       input={input}
       isLoading={isLoading}
+      status={status}
+      streamingMessageId={streamingMessageId}
       error={error}
       setInput={setInput}
       onSubmit={handleSubmit}
@@ -190,6 +187,7 @@ export function ControlledChat(
             description={emptyState.description}
             suggestions={suggestions}
             onSuggestionClick={onSuggestionClick}
+            onSuggestionSelect={onSuggestionSelect}
           />
         )
         : (
