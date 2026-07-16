@@ -6,6 +6,8 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
   allowedToolNames?: HostedRuntimeAllowedToolNames;
   localToolNames: Iterable<string>;
   availableSkillIds?: readonly string[];
+  /** Let the existing skill-enabled essential-tool policy handle an empty configured selector. */
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
 };
 
 const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
@@ -27,7 +29,10 @@ export function resolveHostedRuntimeAllowedToolNames(
   input: ResolveHostedRuntimeAllowedToolNamesInput,
 ): ReadonlySet<string> | null {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  if (!allowedToolNames || allowedToolNames.size === 0) {
+  if (
+    !allowedToolNames ||
+    (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty)
+  ) {
     return allowedToolNames;
   }
 

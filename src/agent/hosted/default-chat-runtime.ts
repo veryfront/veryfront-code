@@ -184,6 +184,8 @@ async function buildToolAssembly(
     mcpServers: input.config.mcpServers,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
+    allowedProviderToolNames: input.options.allowedProviderTools,
+    includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     createRemoteToolSource: input.createRemoteToolSource,

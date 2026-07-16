@@ -39,6 +39,7 @@ import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts"
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
+  agentId?: string;
   projectId?: string | null;
   branchId?: string | null;
   model?: string;
@@ -77,6 +78,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
+  allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
@@ -118,6 +121,51 @@ function filterPostFormInputLocalTools(
   );
 }
 
+function resolveOwnerScopedToolName(input: {
+  toolName: string;
+  agentId?: string;
+  localTools: HostToolSet;
+}): string {
+  if (input.agentId === undefined) {
+    return input.toolName;
+  }
+
+  for (const [registeredName, tool] of Object.entries(input.localTools)) {
+    if (
+      tool.ownerAgentId === input.agentId &&
+      tool.shortName === input.toolName
+    ) {
+      return registeredName;
+    }
+  }
+
+  return input.toolName;
+}
+
+function resolveOwnerScopedToolNames(input: {
+  toolNames: HostedChatRuntimeAllowedToolNames | undefined;
+  agentId?: string;
+  localTools: HostToolSet;
+}): HostedChatRuntimeAllowedToolNames | undefined {
+  const toolNames = normalizeHostedRuntimeAllowedToolNames(input.toolNames);
+  if (toolNames === null) {
+    return input.toolNames;
+  }
+
+  const resolvedToolNames = new Set<string>();
+  for (const toolName of toolNames) {
+    resolvedToolNames.add(
+      resolveOwnerScopedToolName({
+        toolName,
+        agentId: input.agentId,
+        localTools: input.localTools,
+      }),
+    );
+  }
+
+  return resolvedToolNames;
+}
+
 /** Filter hosted chat runtime local tools. */
 export function filterHostedChatRuntimeLocalTools(input: {
   tools: HostToolSet;
@@ -138,10 +186,16 @@ export async function prepareHostedChatRuntimeToolAssembly<
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
+  const ownerScopedAllowedToolNames = resolveOwnerScopedToolNames({
+    toolNames: input.allowedToolNames,
+    agentId: input.taskContext.agentId,
+    localTools: input.localTools,
+  });
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
-    allowedToolNames: input.allowedToolNames,
+    allowedToolNames: ownerScopedAllowedToolNames,
     localToolNames: Object.keys(input.localTools),
     availableSkillIds: input.taskContext.availableSkillIds,
+    includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
   });
   const sortedLocalTools = filterHostedChatRuntimeLocalTools({
     tools: filterPostFormInputLocalTools(input.localTools, input.taskContext),
@@ -175,13 +229,21 @@ export async function prepareHostedChatRuntimeToolAssembly<
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
   const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
-  const localProviderToolNames = new Set(
-    Object.keys(sortedLocalTools).filter((toolName) => sourceProviderToolNames.has(toolName)),
+  const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
+    input.allowedProviderToolNames,
   );
-  const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
+  const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
+  const localProviderToolNames = new Set(
+    Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
+  );
+  const providerToolNames = providerNativeToolNames.filter(
     (toolName) =>
       !localProviderToolNames.has(toolName) &&
-      (allowedToolNames ? allowedToolNames.has(toolName) : sourceProviderToolNames.has(toolName)),
+      (allowedProviderToolNames
+        ? allowedProviderToolNames.has(toolName)
+        : allowedToolNames
+        ? allowedToolNames.has(toolName)
+        : sourceProviderToolNames.has(toolName)),
   );
   const localToolNames = Object.keys(localHostTools);
   const availableToolNames = selectProviderCompatibleToolNames(
