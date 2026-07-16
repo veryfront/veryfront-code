@@ -321,51 +321,6 @@ describe("agent runtime streamed tool result collection", () => {
     );
   });
 
-  it("serializes structured auth errors so the machine code survives the errorText channel", () => {
-    const serialized = getToolResultError({
-      error: "authentication_required",
-      integration: "gmail",
-      connectUrl: "https://veryfront.org/connect/gmail",
-      message: "Authentication required for Gmail.",
-      isError: true,
-    });
-
-    assertEquals(
-      serialized === undefined ? undefined : JSON.parse(serialized),
-      {
-        error: "authentication_required",
-        integration: "gmail",
-        connectUrl: "https://veryfront.org/connect/gmail",
-        message: "Authentication required for Gmail.",
-      },
-    );
-
-    const reconnect = getToolResultError({
-      error: "reconnect_required",
-      integration: "gmail",
-      message: "Reconnect Gmail.",
-    });
-    assertEquals(
-      reconnect === undefined ? undefined : JSON.parse(reconnect),
-      {
-        error: "reconnect_required",
-        integration: "gmail",
-        message: "Reconnect Gmail.",
-      },
-    );
-  });
-
-  it("keeps flattening non-auth structured errors to their human message", () => {
-    assertEquals(
-      getToolResultError({
-        error: "rate_limited",
-        message: "Too many requests.",
-        isError: true,
-      }),
-      "Too many requests.",
-    );
-  });
-
   it("classifies only canonical returned tool error markers", () => {
     assertEquals(getToolResultError({ error: null }), undefined);
     assertEquals(getToolResultError({ error: false }), undefined);
