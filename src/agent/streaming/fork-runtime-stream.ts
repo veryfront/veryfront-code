@@ -160,6 +160,13 @@ type ForkRuntimeStepPreparationInput = {
 type ForkRuntimeStepPreparation = {
   messages: AgentMessage[];
   system: string;
+  /**
+   * When present (returned by a step preparer that reads from the live
+   * activated-tool context), this overrides `input.forkToolNames` for the
+   * current step so newly activated remote tool schemas are exposed to the
+   * provider without mutating the run-level fixed array.
+   */
+  forkToolNames?: readonly string[];
 };
 
 /** Public API contract for fork runtime step preparer. */
@@ -545,6 +552,13 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           });
           const state = createForkRuntimeStreamMappingState({ logger: input.logger });
           const streamedStepState = createStreamedStepState();
+          // If the step preparer returned a live forkToolNames (pinned ∪ activated),
+          // use it for this step so newly activated tool schemas reach the provider.
+          // Spread into a mutable array: RunAgentRuntimeForkStepInput.forkToolNames
+          // is typed as string[] (mutable) while prepared.forkToolNames is readonly.
+          const effectiveForkToolNames: string[] = [
+            ...(prepared.forkToolNames ?? input.forkToolNames),
+          ];
           const { stream, responsePromise } = await runStep({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
@@ -553,7 +567,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             messages: prepared.messages,
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            forkToolNames: input.forkToolNames,
+            forkToolNames: effectiveForkToolNames,
             ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
             runtimeTools: input.runtimeTools,
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
