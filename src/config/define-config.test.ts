@@ -69,6 +69,23 @@ describe("define-config", () => {
         ),
       ).toEqual({ title: "Release", react: { version: "production" } });
     });
+
+    it("composes deprecated scope input before validation", () => {
+      const legacy = publicDefineConfig({
+        integrations: { linear: { scope: "endUser" } },
+      });
+      const merged = publicMergeConfigs(legacy);
+
+      expect(merged.integrations?.linear?.scope).toBe("endUser");
+    });
+
+    it("keeps canonical composition typed as validated config", () => {
+      const canonical: VeryfrontConfig = publicMergeConfigs(
+        publicDefineConfig({ integrations: { linear: { scope: "user" } } }),
+      );
+
+      expect(canonical.integrations?.linear?.scope).toBe("user");
+    });
   });
 
   describe("defineConfigWithEnv", () => {

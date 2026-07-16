@@ -16,8 +16,12 @@ export function defineConfigWithEnv<const T extends VeryfrontConfigInput>(
 }
 
 /** Merge multiple partial Veryfront configuration objects into one config object. */
-export function mergeConfigs(...configs: Partial<VeryfrontConfig>[]): VeryfrontConfig {
-  return Object.assign({}, ...configs) as VeryfrontConfig;
+export function mergeConfigs(...configs: Partial<VeryfrontConfig>[]): VeryfrontConfig;
+export function mergeConfigs(...configs: Partial<VeryfrontConfigInput>[]): VeryfrontConfigInput;
+export function mergeConfigs(
+  ...configs: Partial<VeryfrontConfigInput>[]
+): VeryfrontConfigInput {
+  return Object.assign({}, ...configs);
 }
 
 export async function validateConfig(config: unknown): Promise<void> {
