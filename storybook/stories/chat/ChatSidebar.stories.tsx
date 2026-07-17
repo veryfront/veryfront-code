@@ -456,7 +456,7 @@ export const Loading: Story = {
 
 export const CustomRowMenu: Story = {
   name: "Custom row menu",
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: { source: { code: customMenuCode } },
   },

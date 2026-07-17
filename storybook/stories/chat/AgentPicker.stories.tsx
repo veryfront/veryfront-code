@@ -244,7 +244,7 @@ export const InputStyle: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => {
     const [value, setValue] = React.useState(agents[0].id);
     return (

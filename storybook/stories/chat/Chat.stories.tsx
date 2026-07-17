@@ -427,7 +427,7 @@ function ChatComposedReview(): React.ReactElement {
 }
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => <ChatComposedReview />,
   parameters: {
     docs: {
