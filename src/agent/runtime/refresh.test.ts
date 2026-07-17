@@ -787,6 +787,89 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(finishedResponse.toolCalls[0]?.result, updateError);
   });
 
+  it("streams integration authentication actions without flattening their structured output", async () => {
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "gmail-list-emails-auth-1",
+                toolName: "gmail__list_emails",
+                input: {},
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Connect Gmail to continue." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const authenticationRequired = {
+      error: "authentication_required",
+      integration: "gmail",
+      connectUrl: "https://api.example.test/oauth/connect/gmail?projectId=project-1",
+      message: "Authentication required for Gmail.",
+    };
+    const listEmails = tool({
+      id: "gmail__list_emails",
+      description: "List Gmail messages",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => authenticationRequired,
+    });
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Use Gmail when requested.",
+      tools: { gmail__list_emails: listEmails },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Summarize my inbox",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const streamBody = await response.text();
+
+    assertEquals(callCount, 2);
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), true);
+    assertEquals(streamBody.includes('"type":"tool-output-error"'), false);
+    assertEquals(streamBody.includes('"error":"authentication_required"'), true);
+    assertEquals(streamBody.includes(authenticationRequired.connectUrl), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "completed");
+    assertEquals(finishedResponse.toolCalls[0]?.result, authenticationRequired);
+  });
+
   it("keeps skill file tools hidden after a failed load_skill attempt", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;

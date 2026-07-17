@@ -429,6 +429,76 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(await response?.json(), { TENANT_VALUE: "project-only" });
   });
 
+  it("bypasses project middleware for config-optional control-plane run routes", async () => {
+    const adapter = createAdapter();
+    let loads = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loads++;
+        return Promise.resolve([
+          () => new Response("project-middleware", { status: 418 }),
+        ]);
+      },
+    });
+    const context = createContext(adapter, { releaseId: undefined });
+    let routeCalls = 0;
+    const next = () => {
+      routeCalls++;
+      return Promise.resolve(new Response("route"));
+    };
+    const requests = [
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+      }),
+      new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+        method: "POST",
+      }),
+      new Request("https://example.com/api/control-plane/runs/run_1", {
+        method: "DELETE",
+      }),
+    ];
+
+    for (const request of requests) {
+      const response = await execute(runtime, context, request, next);
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "route");
+    }
+
+    assertEquals(loads, 0);
+    assertEquals(routeCalls, 3);
+  });
+
+  it("keeps project middleware enabled for control-plane run execution", async () => {
+    const adapter = createAdapter();
+    let loads = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loads++;
+        return Promise.resolve([
+          () => new Response("project-middleware", { status: 418 }),
+        ]);
+      },
+    });
+    let routeCalls = 0;
+
+    const response = await execute(
+      runtime,
+      createContext(adapter),
+      new Request("https://example.com/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+      }),
+      () => {
+        routeCalls++;
+        return Promise.resolve(new Response("route"));
+      },
+    );
+
+    assertEquals(response?.status, 418);
+    assertEquals(await response?.text(), "project-middleware");
+    assertEquals(loads, 1);
+    assertEquals(routeCalls, 0);
+  });
+
   it("does not load shared middleware for local, standalone, or unauthenticated context", async () => {
     const adapter = createAdapter();
     let loads = 0;

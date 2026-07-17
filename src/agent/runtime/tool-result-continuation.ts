@@ -1,53 +1,14 @@
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
-import { hasToolExecutionErrorMarker } from "#veryfront/tool/result.ts";
 import type {
   ChatStreamState,
   StreamingToolCall,
   StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { parseToolArgs } from "./tool-helpers.ts";
-import { stringifyToolError } from "./error-utils.ts";
 import type { RuntimeGenerateToolResult, RuntimeToolSet } from "./runtime-tool-types.ts";
 
-function getMcpToolErrorMessage(result: unknown): string | undefined {
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
-    return undefined;
-  }
-
-  const record = result as Record<string, unknown>;
-  if (typeof record.error !== "string" || record.error.length === 0) {
-    return undefined;
-  }
-
-  if (typeof record.message === "string" && record.message.trim().length > 0) {
-    return record.message;
-  }
-
-  return record.error;
-}
-
-export function getToolResultError(result: unknown): string | undefined {
-  if (!hasToolExecutionErrorMarker(result)) {
-    return undefined;
-  }
-
-  const mcpToolErrorMessage = getMcpToolErrorMessage(result);
-  if (mcpToolErrorMessage !== undefined) {
-    return mcpToolErrorMessage;
-  }
-
-  const record = result as Record<string, unknown>;
-  if (typeof record.error === "string") {
-    return stringifyToolError(record.error);
-  }
-
-  if (typeof record.message === "string" && record.message.trim().length > 0) {
-    return record.message;
-  }
-
-  return "Tool execution failed";
-}
+export { getToolResultError } from "#veryfront/tool/result.ts";
 
 export function createToolResultMessage(
   toolCallId: string,

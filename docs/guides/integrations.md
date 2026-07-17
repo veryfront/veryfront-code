@@ -1,96 +1,106 @@
 ---
 title: "Integrations"
-description: "Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog."
+description: "Agent-declared integration tools with optional project policy, first-use OAuth, and remote execution."
 order: 35
 ---
 
 Veryfront integrations let agents call third-party services on behalf of users.
-Enable an integration by adding it to `integrations` in `veryfront.config.ts`.
+Declare the tools an agent can use in agent source. Manage optional project
+integration policy through Studio or the integration policy API. Connection
+inventory records credential readiness independently of both.
+
+Remove any top-level `integrations` block from `veryfront.config.ts`. Veryfront
+rejects that removed key to prevent a silent no-op. Framework configuration no
+longer owns or synchronizes integration policy.
 
 ## Prerequisites
 
 - A Veryfront project with a configured agent (see [Agents](./agents.md)).
-- Provider credentials for each integration you enable: either a Veryfront Cloud
-  token plus a project reference, or per-user OAuth credentials (see
-  [OAuth](./oauth.md)).
-- `veryfront.config.ts` is editable in your repo.
+- The integration tool names the agent needs.
+- A project token or hosted runtime that can reach the Veryfront integration
+  tool endpoints.
+- Project environment credentials only for static-credential connectors or an
+  explicitly selected custom OAuth app override (see [OAuth](./oauth.md)).
 
-## Configuration
+## Declare agent tool access
 
-```ts
-// veryfront.config.ts
-import { defineConfig } from "veryfront";
+List integration tools alongside the agent's other tools:
 
-export default defineConfig({
-  integrations: {
-    // All tools, project-level token
-    github: {},
+```md
+---
+name: Knowledge assistant
+tools:
+  - confluence__search_content
+  - confluence__list_spaces
+---
 
-    // Only specific tools
-    slack: {
-      tools: ["send-message", "list-channels"],
-    },
-
-    // Per-user tokens (each end-user authenticates individually)
-    linear: {
-      perUser: true,
-    },
-  },
-});
+Search Confluence when the user asks about internal documentation.
 ```
+
+The agent source is the capability declaration. Its tool list determines which
+remote integration tools the agent can call. Removing a tool from agent source
+removes it from that agent without changing project-wide policy or credentials.
+
+## Project policy and connection state
+
+Project integration policy is an optional control-plane guardrail. Use Studio
+or the integration policy API when a project must restrict an integration to a
+scope or tool subset. An absent policy means there is no extra project-level
+override. Deleting a policy returns it to that absent state.
+
+These are three independent contracts:
+
+- Agent source controls which tools belong to an agent.
+- Project policy can narrow scope, tools, configuration, or execution mode.
+- Connection inventory records which project or user has authenticated.
+
+Adding a tool does not create policy or credentials. Connecting OAuth does not
+rewrite agent source or create policy.
 
 ## Authentication flow
 
-When an agent calls an integration tool and no valid token exists:
+When an agent calls an OAuth integration tool and no valid connection exists:
 
-1. Tool returns `{ error: "authentication_required", connectUrl: "..." }`
-2. Agent surfaces the connect URL to the user
-3. User selects the connect URL and completes the configured OAuth app, provider
-   consent screen, and callback flow
-4. The backing API layer stores the resulting token according to its configured
-   token store
-5. Subsequent tool calls can use that token automatically
-6. Refresh behavior depends on the provider and the API/service layer you run
-   behind these endpoints
+1. The tool returns an `authentication_required` result with a connect URL.
+2. The agent surfaces the connect action to the user.
+3. The user completes provider consent and the OAuth callback.
+4. The control plane stores the connection for the selected project or user scope.
+5. The run retries the tool with the new connection.
+6. Later calls reuse or refresh that connection according to provider policy.
 
-### OAuth credentials and deployment model
+OAuth connection happens during use. Adding a tool to agent source does not
+require a connection in advance.
 
-The open-core repo exposes provider metadata, OAuth handler building blocks, and
-integration/runtime helpers. Managed OAuth defaults, shared provider apps, and
-token-vault behavior depend on the API/service layer you deploy behind these
-endpoints.
+### Managed OAuth and custom app overrides
 
-### BYO credentials
-
-Enterprise teams can use their own OAuth app credentials by setting environment
-variables:
+Managed OAuth connectors do not require project OAuth client credentials. Set
+client ID and client secret environment variables only when the connector
+supports and the project selects a custom OAuth app override:
 
 ```bash
 GITHUB_CLIENT_ID=<GITHUB_CLIENT_ID>
 GITHUB_CLIENT_SECRET=<GITHUB_CLIENT_SECRET>
 ```
 
-When these are set in the backing API environment, the OAuth handlers use them
-directly.
+The integration catalog metadata identifies these variables as OAuth client
+overrides and reports whether managed OAuth is available.
 
 ### Credential-based integrations
 
-Most catalog connectors authenticate with static credentials instead of a user
-OAuth flow: API keys, HTTP Basic pairs, or OAuth client-credentials apps. These
-read their secrets from the project's environment variables, named by each
-connector's setup guide:
+Some connectors use static credentials instead of interactive OAuth. Store
+those credentials in project environment variables named by the connector
+metadata:
 
 ```bash
-# .env
-STRIPE_SECRET_KEY=sk_test_...
-TELEGRAM_BOT_TOKEN=123456789:ABC...
-PERSONIO_CLIENT_ID=...
-PERSONIO_CLIENT_SECRET=...
+STRIPE_SECRET_KEY=<STRIPE_SECRET_KEY>
+TELEGRAM_BOT_TOKEN=<TELEGRAM_BOT_TOKEN>
+PERSONIO_CLIENT_ID=<PERSONIO_CLIENT_ID>
+PERSONIO_CLIENT_SECRET=<PERSONIO_CLIENT_SECRET>
 ```
 
-No connect step is needed; tools work as soon as the variables are set. Each
-connector declares how its credential is sent (header, query parameter, Basic
-pair, or minted client-credentials token), so agents never handle raw secrets.
+No OAuth connect step is shown for these connectors. The integration runtime
+resolves their credentials during tool execution; agents do not receive raw
+secrets.
 
 ## Available integrations
 
@@ -102,9 +112,9 @@ visible by default in the CLI, MCP catalog tools, and runtime connector list:
 `onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`, and `teams`.
 
 The rest of the catalog ships as feature-gated integrations: the connector
-templates are in the source tree but stay hidden until you enable them with the
+templates are in the source tree but stay hidden until you expose them with the
 `VERYFRONT_EXPERIMENTAL_INTEGRATIONS` environment variable. Set it to a
-comma-separated list of connector names such as `salesforce,stripe` (to enable
+comma-separated list of connector names such as `salesforce,stripe` (to expose
 Salesforce and Stripe), or to `all` for local experimentation.
 
 The supported and feature-gated name lists are defined in
@@ -116,13 +126,9 @@ when you need exact exported names or icon metadata:
 
 ## Verify it worked
 
-After enabling an integration:
-
-1. Restart `veryfront dev`. The dev log lists the integration tools that were
-   registered.
-2. From an agent that includes the integration tools, send a message that
-   exercises one tool. The AG-UI stream should include a tool call event with
-   the integration's tool id and a non-error result.
-3. For per-user OAuth integrations, confirm the user has authorized the provider
-   first (see [OAuth](./oauth.md)). Calls fail with `401` if the user has no
-   token.
+1. Confirm the integration tool name is present in the agent source.
+2. Start a new agent run and request an action that uses the tool.
+3. If an OAuth connection is absent, complete the connect action and callback.
+4. Confirm the run retries the tool and receives a non-error result.
+5. Reload the project and confirm connection inventory still reports the
+   connection independently of the agent's tool list and project policy.

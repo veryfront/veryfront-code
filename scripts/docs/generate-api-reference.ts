@@ -610,8 +610,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MCPServerConfig: "`createMCPServer()` config",
     MCPStats: "Registry statistics",
     MCPTool: "MCP-exposed tool",
-    IntegrationLoaderConfig:
-      "Configuration for loading integration tools into MCP",
   },
 
   "veryfront/middleware": {
@@ -753,8 +751,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
-    IntegrationRuntimeConfig:
-      "Per-user settings and tool allowlist for integration",
     IntegrationTool: "Integration tool with endpoint execution spec",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
