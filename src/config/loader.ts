@@ -7,10 +7,14 @@ import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
-import { buildConfigCacheKey } from "#veryfront/cache/keys.ts";
+import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { CONFIG_PARSE_ERROR, CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
+import {
+  CACHE_INVARIANT_VIOLATION,
+  CONFIG_PARSE_ERROR,
+  CONFIG_VALIDATION_FAILED,
+} from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -18,6 +22,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 const logger = serverLogger.component("config");
 
@@ -172,9 +177,9 @@ function validateCorsConfig(userConfig: unknown): void {
   });
 }
 
-function validateConfigShape(userConfig: unknown): void {
-  validateVeryfrontConfig(userConfig);
-  if (!userConfig || typeof userConfig !== "object") return;
+function validateConfigShape(userConfig: unknown): VeryfrontConfig {
+  const validatedConfig = validateVeryfrontConfig(userConfig) as VeryfrontConfig;
+  if (!userConfig || typeof userConfig !== "object") return validatedConfig;
 
   const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
@@ -182,6 +187,7 @@ function validateConfigShape(userConfig: unknown): void {
       detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
     });
   }
+  return userConfig as VeryfrontConfig;
 }
 
 /** @internal Exported for tests: merges user config over fresh defaults (deep for nested objects). */
@@ -274,7 +280,7 @@ export function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontCon
   return merged;
 }
 
-function validateAndCacheConfig(userConfig: unknown, cacheKey: string): VeryfrontConfig {
+function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
   if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) {
     throw CONFIG_VALIDATION_FAILED.create({
       detail: `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
@@ -282,15 +288,14 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
   }
 
   validateCorsConfig(userConfig);
-  validateConfigShape(userConfig);
+  const normalizedConfig = validateConfigShape(userConfig);
 
-  const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
+  const merged = mergeConfigs(normalizedConfig);
 
   if (merged.react?.version) {
     logger.debug("React version from config", { version: merged.react.version });
   }
 
-  configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
   return merged;
 }
 
@@ -425,7 +430,7 @@ function loadConfigFromVirtualFS(
         configKeys: Object.keys(userConfig as Record<string, unknown>),
       });
 
-      return validateAndCacheConfig(userConfig, cacheKey);
+      return validateAndMergeConfig(userConfig);
     },
     { "config.path": configPath, "config.project_dir": cacheKey, "config.source": "virtual_fs" },
   );
@@ -471,13 +476,13 @@ async function loadAndMergeConfig(
       hasApp: !!(userConfig as Record<string, unknown>)?.app,
       hasRouter: !!(userConfig as Record<string, unknown>)?.router,
     });
-    return validateAndCacheConfig(userConfig, cacheKey);
+    return validateAndMergeConfig(userConfig);
   }
 
   const absolutePath = resolve(configPath);
   const configUrl = `file://${absolutePath}?t=${Date.now()}-${crypto.randomUUID()}`;
   const configModule = await import(configUrl);
-  return validateAndCacheConfig(configModule.default || configModule, cacheKey);
+  return validateAndMergeConfig(configModule.default || configModule);
 }
 
 /**
@@ -490,6 +495,91 @@ export interface GetConfigOptions {
    * This should be a unique project identifier (e.g., projectId or projectSlug).
    */
   cacheKey?: string;
+
+  /**
+   * Exact source selected by the trusted caller for a virtual filesystem read.
+   * The source must match the active request context. Mutable branch sources
+   * are never stored in the process-wide config cache.
+   */
+  sourceContext?: VirtualConfigSourceContext;
+}
+
+function getVirtualConfigSourceContext(): VirtualConfigSourceContext | undefined {
+  const source = getCurrentRequestContext();
+  if (!source) return undefined;
+
+  return {
+    productionMode: source.productionMode,
+    releaseId: source.releaseId,
+    branch: source.branch,
+    environmentName: source.environmentName,
+  };
+}
+
+function describeVirtualConfigSource(context: VirtualConfigSourceContext): string {
+  if (!context.productionMode) return `branch:${context.branch ?? "main"}`;
+  if (context.environmentName) {
+    return `environment:${context.environmentName}:${context.releaseId ?? "missing-release"}`;
+  }
+  return `release:${context.releaseId ?? "missing-release"}`;
+}
+
+type NormalizedVirtualConfigSource =
+  | { productionMode: false; branch: string }
+  | {
+    productionMode: true;
+    releaseId: string | null;
+    environmentName: string | null;
+  };
+
+function normalizeVirtualConfigSource(
+  context: VirtualConfigSourceContext,
+): NormalizedVirtualConfigSource {
+  if (!context.productionMode) {
+    return { productionMode: false, branch: context.branch ?? "main" };
+  }
+
+  return {
+    productionMode: true,
+    releaseId: context.releaseId ?? null,
+    environmentName: context.environmentName ?? null,
+  };
+}
+
+function virtualConfigSourcesMatch(
+  expected: NormalizedVirtualConfigSource,
+  actual: NormalizedVirtualConfigSource,
+): boolean {
+  if (expected.productionMode !== actual.productionMode) return false;
+  if (!expected.productionMode && !actual.productionMode) {
+    return expected.branch === actual.branch;
+  }
+  if (expected.productionMode && actual.productionMode) {
+    return expected.releaseId === actual.releaseId &&
+      expected.environmentName === actual.environmentName;
+  }
+  return false;
+}
+
+function assertMatchingVirtualConfigSource(
+  expected: VirtualConfigSourceContext,
+  actual: VirtualConfigSourceContext | undefined,
+): void {
+  if (!actual) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Explicit virtual config source requires an active request context",
+    });
+  }
+
+  const expectedSource = normalizeVirtualConfigSource(expected);
+  const actualSource = normalizeVirtualConfigSource(actual);
+  if (virtualConfigSourcesMatch(expectedSource, actualSource)) return;
+
+  throw CACHE_INVARIANT_VIOLATION.create({
+    detail: `Explicit virtual config source "${
+      describeVirtualConfigSource(expected)
+    }" does not match the current request context "${describeVirtualConfigSource(actual)}"`,
+  });
 }
 
 export function getConfig(
@@ -506,18 +596,35 @@ export function getConfig(
     SpanNames.CONFIG_LOAD,
     async () => {
       const isVirtualFS = isVirtualFilesystem(adapter.fs);
+      if (options?.sourceContext && (!isVirtualFS || !options.cacheKey)) {
+        throw CACHE_INVARIANT_VIOLATION.create({
+          detail: "Explicit config source requires a virtual filesystem and cacheKey",
+        });
+      }
+
+      const ambientSourceContext = isVirtualFS ? getVirtualConfigSourceContext() : undefined;
+      if (options?.sourceContext) {
+        assertMatchingVirtualConfigSource(options.sourceContext, ambientSourceContext);
+      }
+      const sourceContext = isVirtualFS && options?.cacheKey
+        ? options.sourceContext ?? ambientSourceContext
+        : undefined;
+      const usePersistentCache = !isVirtualFS || sourceContext?.productionMode === true;
       const effectiveCacheKey = buildConfigCacheKey(
         isVirtualFS && options?.cacheKey ? options.cacheKey : projectDir,
         isVirtualFS && !!options?.cacheKey,
+        sourceContext,
       );
 
       logger.debug("Cache key built", {
         effectiveCacheKey,
         isVirtualFS,
         cacheKey: cacheKeyForLog,
+        source: sourceContext ? describeVirtualConfigSource(sourceContext) : undefined,
+        usePersistentCache,
       });
 
-      const cached = configCacheByProject.get(effectiveCacheKey);
+      const cached = usePersistentCache ? configCacheByProject.get(effectiveCacheKey) : undefined;
       if (cached?.revision === cacheRevision) {
         logger.debug("Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
@@ -545,6 +652,12 @@ export function getConfig(
 
         try {
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
+          if (usePersistentCache) {
+            configCacheByProject.set(effectiveCacheKey, {
+              revision: cacheRevision,
+              config: merged,
+            });
+          }
           logger.debug("Successfully loaded config", {
             configFile,
             hasApp: !!merged.app,
@@ -571,10 +684,12 @@ export function getConfig(
       });
 
       const defaultConfig = createFreshDefaults() as VeryfrontConfig;
-      configCacheByProject.set(effectiveCacheKey, {
-        revision: cacheRevision,
-        config: defaultConfig,
-      });
+      if (usePersistentCache) {
+        configCacheByProject.set(effectiveCacheKey, {
+          revision: cacheRevision,
+          config: defaultConfig,
+        });
+      }
       return defaultConfig;
     },
     { "config.project_dir": projectDir, "config.cache_key": options?.cacheKey || "default" },

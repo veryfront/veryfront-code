@@ -160,6 +160,32 @@ export const POST = createAgUiHandler("assistant");
 Use `agent.stream()` directly only when you are building a custom transport or
 non-chat streaming surface.
 
+### Persisting finished conversations
+
+Pass `onComplete` to persist the finalized conversation server-side after a
+successful run — the counterpart to the client-side `useConversationChat` path.
+It fires once, only on success, after the stream is fully flushed and closed, so
+a slow or throwing persistence never delays or corrupts the response:
+
+```ts
+// app/api/ag-ui/route.ts
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler({
+  agent: "assistant",
+  onComplete: async ({ threadId, messages, inputMessages, response }) => {
+    // `messages` is the finalized assistant turn; `inputMessages` is what was
+    // sent. Persist however you like — no need to rebuild it from the stream.
+    await db.saveTurn({ threadId, input: inputMessages, output: messages });
+  },
+});
+```
+
+`onComplete` does **not** fire when the run errors or when the client
+disconnects before the stream finishes. A rejected callback is caught and logged
+rather than rethrown. For `createAgUiRuntimeHandler`, the same finalized
+`messages` (and full `response`) arrive on the `onFinish` lifecycle context.
+
 ### Client-side consumption
 
 The `useChat` hook handles the streaming protocol automatically:

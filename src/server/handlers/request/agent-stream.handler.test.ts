@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
@@ -8,11 +9,12 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
+import type { HandlerContext } from "../types.ts";
 import {
   createAgent,
   createAgentWithConfig,
   createControlPlaneSignature,
-  createCtx,
+  createCtx as createSingleProjectCtx,
   createInjectedToolRuntime,
   encodeDataStreamEvent,
   readRemainingText,
@@ -22,9 +24,14 @@ import {
   createAgentStreamRequestBody,
   createNoopEnvAdapter,
   createNoopFsAdapter,
+  createSourceCapableAgentStreamContext as createCtx,
   TrackingSessionManager,
 } from "./agent-stream.handler.test-helpers.ts";
 import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 function createRuntimeAgentRunInvocationBody() {
   return JSON.stringify({
@@ -49,6 +56,7 @@ function createRuntimeAgentRunInvocationBody() {
         scopes: ["agent:run"],
       },
     },
+    agentSource: { type: "branch", branch: "main" },
     messages: [
       { id: "user-message-1", role: "user", parts: [{ type: "text", text: "Hello" }] },
     ],
@@ -390,57 +398,22 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(runtimeToolNames, ["local_lookup", "studio_focus_component"]);
   });
 
-  it("accepts the canonical runtime AG-UI request shape on the control-plane run stream route", async () => {
-    let streamContext: Record<string, unknown> | undefined;
-
+  it("rejects the removed internal AG-UI request shape on the public stream route", async () => {
+    let discoveryCalls = 0;
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
-      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
-      getAllAgentIds: () => ["assistant-1"],
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
       sessionManager: new AgentRunSessionManager(),
-      createRuntime: () => ({
-        stream: async (_messages, context, callbacks) => {
-          streamContext = context;
-          callbacks?.onFinish?.({
-            text: "hello from runtime",
-            messages: [],
-            toolCalls: [],
-            status: "completed",
-            usage: {
-              promptTokens: 2,
-              completionTokens: 3,
-              totalTokens: 5,
-            },
-            metadata: {
-              finishReason: "stop",
-            },
-          });
-
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(
-                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
-              );
-              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
-              controller.enqueue(
-                encodeDataStreamEvent({
-                  type: "text-delta",
-                  id: "text-1",
-                  delta: "hello from runtime",
-                }),
-              );
-              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
-              controller.close();
-            },
-          });
-        },
-      }),
     });
 
     const body = JSON.stringify({
       agentId: "assistant-1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       parentRunId: "run_parent",
       state: { phase: "draft" },
       messages: [
@@ -475,18 +448,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     );
 
     assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    assertEquals(streamContext, {
-      threadId: "10000000-1000-4000-8000-100000000001",
-      runId: "run_1",
-      parentRunId: "run_parent",
-      state: { phase: "draft" },
-      context: [{
-        description: "Current file",
-        value: "src/main.ts",
-      }],
-      forwardedProps: undefined,
-    });
+    assertEquals(result.response.status, 400);
+    assertEquals(discoveryCalls, 0);
   });
 
   it("accepts canonical runtime invocation payloads from the API executor", async () => {
@@ -568,6 +531,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           runtimeTargetBranchId: "50000000-5000-4000-8000-500000000001",
         },
       },
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "msg_1",
@@ -796,7 +760,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const body = createAgentStreamRequestBody({
       forwardedProps: {
         runtimeOverrides: {
-          allowedTools: ["gmail:list-emails", "gmail:get-email"],
+          allowedTools: ["gmail__list_emails", "gmail__get_email"],
         },
       },
     });
@@ -819,16 +783,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedTools, undefined);
   });
 
-  it("preserves server-resolved integration tool allowlists forwarded by the control plane", async () => {
-    let capturedAllowedTools: string[] | undefined;
+  it("loads and applies integration restrictions from the exact requested source", async () => {
+    let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
+    let discoveryConfig: HandlerContext["config"];
 
     const handler = new AgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
+      ensureProjectDiscovery: async (ctx) => {
+        discoveryConfig = ctx.config;
+      },
       getAgent: (id) =>
         id === "assistant-1"
           ? createAgentWithConfig("assistant-1", {
             tools: {
-              "get-current-date": true,
               gmail__list_emails: true,
               gmail__delete_email: true,
             },
@@ -836,57 +802,135 @@ describe("server/handlers/request/agent-stream.handler", () => {
           : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
-      createRuntime: (agent) => {
-        capturedAllowedTools = (agent.config as typeof agent.config & RuntimeRemoteToolConfig)
-          .__vfAllowedRemoteTools;
+      createRuntime: (agent) => ({
+        stream: async (_messages, _context, callbacks) => {
+          capturedSourcePolicy = getRuntimeSourceIntegrationPolicy(agent.config);
 
-        return {
-          stream: async (_messages, _context, callbacks) => {
-            callbacks?.onFinish?.({
-              text: "ok",
-              messages: [],
-              toolCalls: [],
-              status: "completed",
-              usage: {
-                promptTokens: 1,
-                completionTokens: 1,
-                totalTokens: 2,
-              },
-            });
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: undefined,
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
 
-            return new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            });
-          },
-        };
+    const contextCalls: string[] = [];
+    const configReads: string[] = [];
+    const fs = createNoopFsAdapter([]);
+    Object.assign(fs, {
+      getUnderlyingAdapter: () => fs,
+      isVeryfrontAdapter: () => true,
+      exists: async (path: string) => path === "/veryfront.config.ts",
+      readFile: async () => {
+        const branch = getCurrentRequestContext()?.branch ?? "main";
+        configReads.push(branch);
+        return branch === "restrict-gmail"
+          ? 'export default { integrations: { allow: { gmail: { allowedTools: ["list_emails"] } } } };'
+          : "export default {};";
+      },
+      runWithContext: (
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+        projectId?: string,
+        options?: {
+          productionMode?: boolean;
+          releaseId?: string | null;
+          branch?: string | null;
+          environmentName?: string | null;
+        },
+      ) => {
+        contextCalls.push(options?.branch ?? "main");
+        return runWithRequestContext({ projectSlug, projectId, token, ...options }, fn);
       },
     });
 
     const body = createAgentStreamRequestBody({
-      tools: [{
-        name: "get-current-date",
-        description: "Return the current date",
-        inputSchema: { type: "object", properties: {} },
-      }],
-      forwardedProps: {
-        runtimeOverrides: {
-          allowedTools: [
-            "get-current-date",
-            "gmail__list_emails",
-            "list_emails",
-            "gmail__delete_email",
-          ],
-          serverResolvedIntegrationTools: ["gmail__list_emails"],
-          integrationToolDefinitions: [{
-            name: "gmail__list_emails",
-            description: "List Gmail emails",
-            inputSchema: { type: "object", properties: {} },
-          }],
-        },
-      },
+      agentSource: { type: "branch", branch: "restrict-gmail" },
+      credentials: { authToken: "request-scoped-user-token" },
     });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = {
+      ...ctx.adapter,
+      env: createNoopEnvAdapter(publicKeyPem),
+      fs,
+    };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(contextCalls, ["main", "restrict-gmail"]);
+    assertEquals(configReads, ["restrict-gmail"]);
+    assertEquals(discoveryConfig?.integrations, {
+      allow: { gmail: { allowedTools: ["list_emails"] } },
+    });
+    assertEquals(capturedSourcePolicy, {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+    });
+  });
+
+  it("fails closed before discovery when the runtime cannot select the signed source", async () => {
+    let discoveryCalls = 0;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createSingleProjectCtx(publicKeyPem),
+    );
+
+    assertEquals(result.response?.status, 500);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("rejects a missing source before discovery", async () => {
+    let discoveryCalls = 0;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({ agentSource: undefined });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
@@ -901,9 +945,45 @@ describe("server/handlers/request/agent-stream.handler", () => {
       createCtx(publicKeyPem),
     );
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    assertEquals(capturedAllowedTools, ["get-current-date", "gmail__list_emails"]);
+    assertEquals(result.response?.status, 400);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("does not use an outer config when the exact source config cannot load", async () => {
+    let discoveryCalls = 0;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const fs = createNoopFsAdapter([]);
+    Object.assign(fs, {
+      exists: async (path: string) => path === "/veryfront.config.ts",
+      readFile: async () => "export default { integrations:",
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.config = {};
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 500);
+    assertEquals(discoveryCalls, 0);
   });
 
   it("drops undeclared Studio runtime tool allowlists for untrusted clients", async () => {
@@ -1124,7 +1204,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const body = createAgentStreamRequestBody({
       forwardedProps: {
         runtimeOverrides: {
-          allowedTools: ["gmail:list-emails", 123],
+          allowedTools: ["gmail__list_emails", 123],
         },
       },
     });

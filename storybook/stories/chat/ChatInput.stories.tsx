@@ -376,7 +376,7 @@ function ComposedComposer(): React.ReactElement {
 }
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => <ComposedComposer />,
   parameters: {
     docs: {

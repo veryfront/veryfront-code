@@ -27,6 +27,7 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
+import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { isRuntimeSkillVisibleTo, type RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import {
   applyContextBudget,
@@ -92,7 +93,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
-    providerTools?: unknown;
+    providerTools?: string[];
+    tools?: true | string[];
   };
   projectId: string | null;
   authToken: string;
@@ -134,6 +136,25 @@ function getProviderToolNames(agentConfig: { providerTools?: unknown }): string[
       typeof toolName === "string" && toolName.length > 0
     )
     : [];
+}
+
+function getProviderOwnedToolNames(input: {
+  agentConfig: { providerTools?: unknown };
+  runtimeConfig: ResolvedHostedRuntimeRequestConfig;
+}): string[] {
+  const providerNativeToolNames = new Set(
+    getProviderNativeToolNames({ model: input.runtimeConfig.requestedModel }),
+  );
+  const requestedProviderToolNames = input.runtimeConfig.requestedAllowedProviderTools.filter(
+    (toolName) => providerNativeToolNames.has(toolName),
+  );
+
+  return [
+    ...new Set([
+      ...getProviderToolNames(input.agentConfig),
+      ...requestedProviderToolNames,
+    ]),
+  ];
 }
 
 async function flushRequiredContextCompactionEvent(
@@ -185,7 +206,8 @@ export type HostedChatExecutionPreparationInput<
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
-    providerTools?: unknown;
+    providerTools?: string[];
+    tools?: true | string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 > = {
@@ -319,9 +341,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.requestedMaxSteps !== undefined
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),
-      ...(runtimeConfig.effectiveRuntimeOverrides?.allowedTools
-        ? { allowedTools: runtimeConfig.effectiveRuntimeOverrides.allowedTools }
+      ...(runtimeConfig.requestedAllowedTools !== undefined
+        ? { allowedTools: runtimeConfig.requestedAllowedTools }
         : {}),
+      allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
+      includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
       ...(input.request.allowDelegation !== undefined
         ? { allowDelegation: input.request.allowDelegation }
         : {}),
@@ -374,7 +398,8 @@ export async function prepareHostedChatExecution<
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
-    providerTools?: unknown;
+    providerTools?: string[];
+    tools?: true | string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(
@@ -427,7 +452,10 @@ export async function prepareHostedChatExecution<
       authToken: input.request.authToken,
       apiUrl: input.apiUrl,
       projectId: input.request.projectId,
-      providerOwnedToolNames: getProviderToolNames(input.agentConfig),
+      providerOwnedToolNames: getProviderOwnedToolNames({
+        agentConfig: input.agentConfig,
+        runtimeConfig: runtimePreparation.runtimeConfig,
+      }),
       abortSignal: input.abortSignal,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,

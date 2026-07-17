@@ -1,6 +1,10 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
+import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
+
+const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 
 // Sub-schemas
 const getCorsSchema = defineSchema((v) =>
@@ -595,24 +599,36 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         })
         .partial()
         .optional(),
-      /** Third-party integration configuration (e.g., Slack, GitHub) */
+      /**
+       * Optional source-owned integration restrictions.
+       *
+       * This allowlist only narrows capabilities selected by the agent and
+       * granted by the control plane. It does not enable integrations or
+       * configure credential ownership.
+       */
       integrations: v
-        .record(
-          v.string(),
-          v
-            .object({
-              /** Token scope: "project" (shared) or "endUser" (per-end-user OAuth). */
-              scope: v.enum(["project", "endUser"]).optional(),
-              /** @deprecated Use `scope: "endUser"` instead. */
-              perUser: v.boolean().optional(),
-              /** Allowlist of tool IDs to expose. When set, only these tools are registered.
-               * This keeps the MCP context narrow by excluding unused tools.
-               * @example ["list-issues", "create-issue"] */
-              tools: v.array(v.string()).optional(),
-            })
-            .partial()
-            .optional(),
-        )
+        .object({
+          allow: v.record(
+            v.string().min(1).refine(
+              (name) => integrationNames.has(name),
+              { message: "Expected a canonical integration name from the connector catalog" },
+            ),
+            v
+              .object({
+                /** Exact connector-local tool IDs; omit to allow all tools. */
+                allowedTools: v
+                  .array(
+                    v.string().regex(
+                      /^(?!.*__)[a-z0-9][a-z0-9_-]*$/,
+                      "Expected a canonical connector-local tool ID",
+                    ),
+                  )
+                  .optional(),
+              })
+              .strict(),
+          ),
+        })
+        .strict()
         .optional(),
       /**
        * Extensions registered for this project.
@@ -671,13 +687,22 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
 export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
 // Inferred types
-export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
-export type VeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
+type InferredVeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
+type InferredVeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
+
+/** Validated project configuration with catalog-backed integration authoring. */
+export type VeryfrontConfig = Omit<InferredVeryfrontConfig, "integrations"> & {
+  integrations?: SourceIntegrationPolicyConfig;
+};
+/** User-authored configuration accepted before schema transforms run. */
+export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrations"> & {
+  integrations?: SourceIntegrationPolicyConfig;
+};
 
 // Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   const result = veryfrontConfigSchema.safeParse(input);
-  if (result.success) return result.data;
+  if (result.success) return result.data as VeryfrontConfig;
 
   const issues = result.issues ?? [];
   const first = issues[0];

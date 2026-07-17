@@ -8,16 +8,30 @@
  */
 
 import * as React from "react";
+import type { PromptSuggestion } from "#veryfront/agent/react";
 import { ChatEmptyState } from "./chat-empty-state.tsx";
 import { type QuickAction, QuickActions } from "../components/quick-actions.tsx";
+
+/** Normalize a `string | PromptSuggestion` chip to the `{ label, prompt }` shape. */
+function toPromptSuggestion(suggestion: string | PromptSuggestion): PromptSuggestion {
+  return typeof suggestion === "string" ? { label: suggestion, prompt: suggestion } : suggestion;
+}
 
 /** Props accepted by chat empty. */
 export interface ChatEmptyProps {
   icon?: React.ReactNode;
   title?: string;
   description?: string;
-  suggestions?: string[];
-  onSuggestionClick?: (suggestion: string) => void;
+  /**
+   * Suggestion chips. Plain strings become `{ label, prompt }` where both are
+   * the string; pass `PromptSuggestion` objects to show a short label while
+   * sending a longer prompt (e.g. from `getAgentPromptSuggestionItems`).
+   */
+  suggestions?: Array<string | PromptSuggestion>;
+  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
+  onSuggestionClick?: (prompt: string) => void;
+  /** Receives the selected `{ label, prompt }` object. */
+  onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   quickActions?: QuickAction[];
   onQuickAction?: (action: QuickAction) => void;
   className?: string;
@@ -35,6 +49,7 @@ export function ChatEmpty(
     description,
     suggestions,
     onSuggestionClick,
+    onSuggestionSelect,
     quickActions,
     onQuickAction,
     className,
@@ -56,14 +71,20 @@ export function ChatEmpty(
       )}
       {showSuggestions && (
         <ChatEmptyState.Suggestions>
-          {suggestions?.map((suggestion) => (
-            <ChatEmptyState.Suggestion
-              key={suggestion}
-              onClick={() => onSuggestionClick?.(suggestion)}
-            >
-              {suggestion}
-            </ChatEmptyState.Suggestion>
-          ))}
+          {suggestions?.map((suggestion, index) => {
+            const item = toPromptSuggestion(suggestion);
+            return (
+              <ChatEmptyState.Suggestion
+                key={`${item.label}-${index}`}
+                onClick={() => {
+                  onSuggestionSelect?.(item);
+                  onSuggestionClick?.(item.prompt);
+                }}
+              >
+                {item.label}
+              </ChatEmptyState.Suggestion>
+            );
+          })}
         </ChatEmptyState.Suggestions>
       )}
       {showQuickActions && (

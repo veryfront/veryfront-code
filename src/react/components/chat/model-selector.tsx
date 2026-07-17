@@ -141,6 +141,8 @@ export interface ModelSelectorContextValue {
   /** Selected model value ("provider/model"). */
   value?: string;
   /** The resolved selected option (from `value`, else the first model). */
+  selectedModel?: ModelOption;
+  /** @deprecated Use `selectedModel`. */
   selected?: ModelOption;
   /** Select a model by value (also closes the menu). */
   onSelect: (value: string) => void;
@@ -183,7 +185,7 @@ export interface ModelSelectorTriggerProps {
 function ModelSelectorTrigger(
   { variant = "pill", children, className }: ModelSelectorTriggerProps,
 ): React.ReactElement {
-  const { selected, disabled } = useModelSelector();
+  const { selectedModel, disabled } = useModelSelector();
 
   const trigger = children
     ? (
@@ -196,7 +198,7 @@ function ModelSelectorTrigger(
       <button
         type="button"
         disabled={disabled}
-        aria-label={selected?.label ?? "Select model"}
+        aria-label={selectedModel?.label ?? "Select model"}
         className={cn(
           "flex size-9 items-center justify-center rounded-full text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
@@ -204,7 +206,7 @@ function ModelSelectorTrigger(
           className,
         )}
       >
-        <ProviderLogo provider={providerOf(selected)} className="size-5" />
+        <ProviderLogo provider={providerOf(selectedModel)} className="size-5" />
       </button>
     )
     : (
@@ -215,9 +217,9 @@ function ModelSelectorTrigger(
           className,
         )}
       >
-        <ProviderLogo provider={providerOf(selected)} className="size-4" />
+        <ProviderLogo provider={providerOf(selectedModel)} className="size-4" />
         <span className="min-w-0 truncate">
-          {selected?.label ?? "Select model"}
+          {selectedModel?.label ?? "Select model"}
         </span>
         <ChevronDownIcon className="ml-auto" />
       </Pill>
@@ -290,7 +292,7 @@ export interface ModelSelectorItemProps {
 function ModelSelectorItem(
   { model, selected, className }: ModelSelectorItemProps,
 ): React.ReactElement {
-  const { value, selected: selectedModel, onSelect } = useModelSelector();
+  const { value, selectedModel, onSelect } = useModelSelector();
   const selectedValue = value ?? selectedModel?.value;
   const isSelected = selected ?? model.value === selectedValue;
   return (
@@ -394,6 +396,7 @@ function ModelSelectorRoot({
 
   const context: ModelSelectorContextValue = {
     value,
+    selectedModel: selected,
     selected,
     onSelect: handleSelect,
     open,

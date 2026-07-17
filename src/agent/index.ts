@@ -69,7 +69,7 @@
  *   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
  *   tools: {
  *     Read: true,
- *     "github:list-issues": true,
+ *     github__list_issues: true,
  *   },
  * });
  * ```
@@ -214,7 +214,9 @@ export {
   getProjectAgentRuntimeAgentIdCandidates,
   type ProjectAgentRuntimeAgentIdCandidates,
   type ProjectAgentRuntimeAgentSource,
+  type ProjectAgentRuntimeDiscovery,
   resolveSingleProjectAgentRuntimeAgentId,
+  runWithProjectAgentRuntime,
 } from "./project/agent-runtime.ts";
 
 export {
@@ -588,6 +590,12 @@ export type {
 } from "./hosted/chat-runtime-contract.ts";
 
 export {
+  type HostedRuntimeSourceBindingError,
+  type HostedRuntimeSourceIdentity,
+  snapshotHostedRuntimeSourceIdentity,
+  verifyHostedRuntimeSourceBinding,
+} from "./hosted/runtime-source-binding.ts";
+export {
   createHostedAgentServiceRouteSet,
   createHostedAgentServiceRouteSet as createAgentServiceRouteSet,
   type HostedAgentServiceActiveSpanAttributes,
@@ -645,6 +653,7 @@ export {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     as parseRuntimeAgentRunInvocationAgentServiceChatRequestFromRequest,
+  type ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
 } from "./hosted/chat-request-parser.ts";
 export {
   buildParsedHostedAgUiRequest,
@@ -1707,10 +1716,12 @@ export {
   parseAgUiRequestOrError,
 } from "./ag-ui/host-support.ts";
 export {
+  type AgUiCompletion,
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
   type AgUiHandlerOptions,
   type AgUiInjectedTool,
+  type AgUiOnComplete,
   type AgUiRequest,
   AgUiRequestSchema,
   createAgUiHandler,

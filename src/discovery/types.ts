@@ -73,6 +73,6 @@ export interface DiscoveryHandler<T> {
   typeName: string;
   validate: (item: unknown) => item is T;
   getId: (item: T, file: string, dir: string) => string;
-  register: (id: string, item: T, file: string, dir: string) => T;
+  register: (id: string, item: T, file: string, dir: string, exportName?: string) => T;
   getResultMap: (result: DiscoveryResult) => Map<string, T>;
 }

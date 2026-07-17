@@ -48,21 +48,36 @@ describe("Branch Cache Isolation - Context Verification", () => {
       assertEquals(key, "proxy:test-project:preview:main");
     });
 
-    it("requires releaseId or environmentName in production mode", () => {
+    it("requires releaseId in production mode", () => {
       const releaseKey = buildProxyManagerCacheKey(
         "test-project",
         true,
         "rel_123",
         null,
       );
-      assertEquals(releaseKey, "proxy:test-project:production:rel_123");
+      assertEquals(releaseKey, "proxy:test-project:production:release:rel_123");
+
+      const environmentKey = buildProxyManagerCacheKey(
+        "test-project",
+        true,
+        "rel_123",
+        null,
+        "Development",
+      );
+      assertEquals(
+        environmentKey,
+        "proxy:test-project:production:environment:Development:rel_123",
+      );
 
       let threw = false;
       try {
         buildProxyManagerCacheKey("test-project", true, null, null);
       } catch (e) {
         threw = true;
-        assertEquals((e as Error).message, "Missing releaseId in production for test-project");
+        assertEquals(
+          (e as Error).message,
+          "Missing releaseId in production for test-project",
+        );
       }
       assertEquals(threw, true, "Expected error when releaseId is missing in production mode");
     });
@@ -94,7 +109,7 @@ describe("Branch Cache Isolation - Context Verification", () => {
       );
 
       assertEquals(previewKey, "proxy:test-project:preview:main");
-      assertEquals(prodKey, "proxy:test-project:production:rel_abc123");
+      assertEquals(prodKey, "proxy:test-project:production:release:rel_abc123");
     });
   });
 

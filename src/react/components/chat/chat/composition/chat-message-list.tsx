@@ -19,6 +19,7 @@ import { useStickToBottom } from "../hooks/use-stick-to-bottom.ts";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { PendingMessage } from "./pending-message.tsx";
 import { Message } from "./message.tsx";
+import { useChatContextOptional } from "../contexts/chat-context.tsx";
 
 /** Props accepted by chat message list. */
 export interface ChatMessageListProps {
@@ -103,6 +104,7 @@ function ChatMessageListContent({
     contentRef,
     lastMessage,
   } = useChatMessageList();
+  const chat = useChatContextOptional();
 
   const setContentRef = React.useCallback((node: HTMLDivElement | null) => {
     contentRef.current = node;
@@ -122,9 +124,9 @@ function ChatMessageListContent({
             if (renderMessage) {
               return <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>;
             }
-            const isStreaming = Boolean(
-              isLoading && msg === lastMessage && msg.role === "assistant",
-            );
+            const isStreaming = chat?.status === undefined
+              ? Boolean(isLoading && msg === lastMessage && msg.role === "assistant")
+              : undefined;
             return (
               <Message
                 key={msg.id}

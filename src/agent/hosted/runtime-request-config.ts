@@ -18,7 +18,7 @@ export type HostedRuntimeRequestConfigRequest = Pick<
 /** Public API contract for hosted runtime request config agent. */
 export type HostedRuntimeRequestConfigAgent = Pick<
   RuntimeAgentMarkdownDefinition,
-  "model" | "thinking" | "temperature" | "maxSteps"
+  "model" | "thinking" | "temperature" | "maxSteps" | "tools" | "providerTools"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -39,6 +39,9 @@ export type ResolvedHostedRuntimeRequestConfig = {
   requestedThinking: RuntimeAgentThinkingConfig | undefined;
   requestedTemperature: number | undefined;
   requestedMaxSteps: number | undefined;
+  requestedAllowedTools: string[] | undefined;
+  requestedAllowedProviderTools: string[];
+  includeRuntimeEssentialToolsWhenEmpty: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,6 +98,32 @@ export function resolveHostedRuntimeThinkingOverride(input: {
   };
 }
 
+/** Resolve the explicit request tool selector or fall back to configured agent bindings. */
+export function resolveHostedRuntimeAllowedTools(input: {
+  configuredTools: RuntimeAgentMarkdownDefinition["tools"];
+  requestedTools: string[] | undefined;
+}): string[] | undefined {
+  if (input.requestedTools !== undefined) {
+    return [...new Set(input.requestedTools)];
+  }
+
+  if (input.configuredTools === true) {
+    return undefined;
+  }
+
+  return [...new Set(input.configuredTools ?? [])];
+}
+
+/** Resolve provider-native tool bindings without widening direct tool access. */
+export function resolveHostedRuntimeAllowedProviderTools(input: {
+  configuredProviderTools: RuntimeAgentMarkdownDefinition["providerTools"];
+  requestedTools: string[] | undefined;
+}): string[] {
+  return [
+    ...new Set(input.requestedTools ?? input.configuredProviderTools ?? []),
+  ];
+}
+
 /** Configuration used by resolve hosted runtime request. */
 export function resolveHostedRuntimeRequestConfig(
   input: ResolveHostedRuntimeRequestConfigInput,
@@ -118,5 +147,14 @@ export function resolveHostedRuntimeRequestConfig(
     requestedTemperature: input.agentConfig.temperature,
     requestedMaxSteps: effectiveRuntimeOverrides?.maxSteps ??
       input.agentConfig.maxSteps,
+    requestedAllowedTools: resolveHostedRuntimeAllowedTools({
+      configuredTools: input.agentConfig.tools,
+      requestedTools: effectiveRuntimeOverrides?.allowedTools,
+    }),
+    requestedAllowedProviderTools: resolveHostedRuntimeAllowedProviderTools({
+      configuredProviderTools: input.agentConfig.providerTools,
+      requestedTools: effectiveRuntimeOverrides?.allowedTools,
+    }),
+    includeRuntimeEssentialToolsWhenEmpty: effectiveRuntimeOverrides?.allowedTools === undefined,
   };
 }

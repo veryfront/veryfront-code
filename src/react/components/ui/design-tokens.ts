@@ -10,15 +10,36 @@
  * against — `chat` re-exports `generateTokenCSS` from here (via its `theme.ts`)
  * so there is a single source of truth for the token vocabulary.
  *
- * NOTE (compat contract): the scope selector is `[data-vf-chat]`, a
- * deliberately-retained name inherited from when these primitives lived in
- * `chat/ui`. It is the *shared* theming attribute both layers set, so keeping it
- * avoids a breaking DOM/CSS change for existing chat consumers. A future,
- * separately-versioned change should migrate this to a neutral `[data-vf-ui]`
- * (with a compat alias) — tracked in the chat-composition plan, not here.
+ * NOTE (scope contract): the canonical scope selector is `[data-vf-ui]` — a
+ * neutral name for the shared `veryfront/ui` token layer. The historical
+ * `[data-vf-chat]` (inherited from when these primitives lived in `chat/ui`) is
+ * retained as a **compatibility alias**: every rule below matches BOTH scopes,
+ * and every surface that establishes a scope sets both attributes, so existing
+ * consumers that target `[data-vf-chat]` in their own CSS / DOM queries keep
+ * working. New code should target `[data-vf-ui]`; `[data-vf-chat]` stays
+ * supported until a future major removes it.
  *
  * @module react/components/ui/design-tokens
  */
+
+/**
+ * The token scope attributes, canonical first. `[data-vf-ui]` is the neutral
+ * name new code should use; `[data-vf-chat]` is the retained compat alias.
+ */
+export const UI_SCOPE_ATTRIBUTE = "data-vf-ui";
+export const UI_SCOPE_ALIAS_ATTRIBUTE = "data-vf-chat";
+const SCOPE_SELECTORS = [`[${UI_SCOPE_ATTRIBUTE}]`, `[${UI_SCOPE_ALIAS_ATTRIBUTE}]`] as const;
+/** Selector matching either token scope — e.g. for portal `closest()` lookups. */
+export const UI_SCOPE_SELECTOR = SCOPE_SELECTORS.join(",");
+/**
+ * Attributes to spread onto a token-scope root element — the canonical
+ * `data-vf-ui` plus the `data-vf-chat` compat alias — so every scope establisher
+ * shares one source of truth: `<div {...UI_SCOPE_ATTRS} />`.
+ */
+export const UI_SCOPE_ATTRS = {
+  [UI_SCOPE_ATTRIBUTE]: "",
+  [UI_SCOPE_ALIAS_ATTRIBUTE]: "",
+};
 
 /**
  * Light-mode defaults copied from Veryfront Studio `styles/styles.css`.
@@ -132,13 +153,29 @@ const ANIMATION_CSS =
   ".animate-button-loading{animation:button-loading 1.4s cubic-bezier(0.4,0,0.2,1) infinite}" +
   ".animate-progress-indeterminate{animation:progress-indeterminate 1.2s ease-in-out infinite}";
 
+/** Join a selector template across every scope (canonical + alias). */
+function forEachScope(template: (scope: string) => string): string {
+  return SCOPE_SELECTORS.map(template).join(",");
+}
+
+/** The four dark-mode selectors for one scope (`.dark`/`[data-theme]`, desc + self). */
+function darkScopeSelectors(scope: string): string {
+  return [
+    `.dark ${scope}:not([data-vf-theme])`,
+    `[data-theme="dark"] ${scope}:not([data-vf-theme])`,
+    `.dark${scope}:not([data-vf-theme])`,
+    `[data-theme="dark"]${scope}:not([data-vf-theme])`,
+  ].join(",");
+}
+
 /**
- * Generates the scoped CSS for the design tokens. Uses `[data-vf-chat]` as the
- * scope so tokens don't leak to the page.
+ * Generates the scoped CSS for the design tokens. Every rule matches BOTH the
+ * canonical `[data-vf-ui]` scope and the `[data-vf-chat]` compat alias, so
+ * tokens don't leak to the page and existing consumers keep working.
  *
  * If a host application (e.g. Studio) already defines these CSS custom
  * properties on `:root`, the host values cascade through and our fallbacks are
- * never reached — because we set them on `[data-vf-chat]`, which has lower
+ * never reached — because we set them on the scope element, which has lower
  * specificity for inherited vars. We intentionally only set them on the scope
  * root so parent-defined tokens take precedence.
  *
@@ -148,19 +185,23 @@ export function generateTokenCSS(): string {
   const light = tokensToCSS(TOKENS_LIGHT);
   const dark = tokensToCSS(TOKENS_DARK);
 
-  // The design tokens stay scoped to `[data-vf-chat]`, never `:root`: the
-  // names (`--primary`, `--background`, `--accent`, …) are the same generic
-  // convention host apps use for their own themes, and these style tags render
-  // in the body — after a host's <head> stylesheets — so a `:root` rule here
-  // would override the host's tokens page-wide (and the dark media query would
-  // repaint light-only host pages for OS-dark users). Surfaces that render
-  // their own scope establish `data-vf-chat` and inject the token `<style>`;
-  // portalled content re-anchors via `closest("[data-vf-chat]")`.
+  // The design tokens stay scoped to `[data-vf-ui]` / `[data-vf-chat]`, never
+  // `:root`: the names (`--primary`, `--background`, `--accent`, …) are the same
+  // generic convention host apps use for their own themes, and these style tags
+  // render in the body — after a host's <head> stylesheets — so a `:root` rule
+  // here would override the host's tokens page-wide (and the dark media query
+  // would repaint light-only host pages for OS-dark users). Surfaces that render
+  // their own scope establish both attributes and inject the token `<style>`;
+  // portalled content re-anchors via `closest(UI_SCOPE_SELECTOR)`.
   return [
-    `[data-vf-chat]{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;${light}}`,
-    `[data-vf-chat] button{cursor:pointer;}`,
-    `@media(prefers-color-scheme:dark){[data-vf-chat]:not([data-vf-theme]){${dark}}}`,
-    `.dark [data-vf-chat]:not([data-vf-theme]),[data-theme="dark"] [data-vf-chat]:not([data-vf-theme]),.dark[data-vf-chat]:not([data-vf-theme]),[data-theme="dark"][data-vf-chat]:not([data-vf-theme]){${dark}}`,
+    `${
+      forEachScope((s) => s)
+    }{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;${light}}`,
+    `${forEachScope((s) => `${s} button`)}{cursor:pointer;}`,
+    `@media(prefers-color-scheme:dark){${
+      forEachScope((s) => `${s}:not([data-vf-theme])`)
+    }{${dark}}}`,
+    `${forEachScope(darkScopeSelectors)}{${dark}}`,
     ANIMATION_CSS,
   ].join("");
 }

@@ -32,7 +32,6 @@ import {
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { DEFAULT_PROJECT_DISCOVERY_DIRS } from "../../discovery/index.ts";
-import type { DiscoveryResult } from "../../discovery/types.ts";
 import { nodeAdapter } from "../../platform/adapters/node.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
@@ -70,6 +69,7 @@ import {
   type DefaultHostedChatRuntimeCreationOptions,
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
+import { createHostedRootLocalToolRuntime } from "./root-sandbox-tool-source.ts";
 import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-generator.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
@@ -98,7 +98,9 @@ import {
   doesProjectAgentRuntimeAgentMatchSource,
   getProjectAgentRuntimeAgentIdCandidates,
   type ProjectAgentRuntimeAgentSource,
+  type ProjectAgentRuntimeDiscovery,
   resolveSingleProjectAgentRuntimeAgentId,
+  runWithProjectAgentRuntime,
 } from "../project/agent-runtime.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
@@ -133,7 +135,11 @@ import {
 import { prepareVeryfrontCloudHostedChatExecution } from "./cloud-chat-execution-preparation.ts";
 import type { HostedChatContextBudgetOptions } from "./chat-preparation.ts";
 import { applyAgentProjectContextChange } from "../project/context.ts";
-import { getAgent } from "../composition/index.ts";
+import { getRuntimeAgentSourceContextSchema } from "../runtime/agent-invocation-contract.ts";
+import {
+  type HostedRuntimeSourceIdentity,
+  snapshotHostedRuntimeSourceIdentity,
+} from "./runtime-source-binding.ts";
 
 /** Public API contract for node Veryfront Cloud agent service process target. */
 export type NodeVeryfrontCloudAgentServiceProcessTarget =
@@ -188,6 +194,12 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    * Convenience URL for deriving baseDir from the entry module location.
    */
   entrypointUrl?: AgentServicePathOption;
+  /**
+   * Exact immutable source snapshot contained in this service deployment.
+   * Control-plane invocations are rejected when this is omitted or mismatched.
+   * Mutable branch sources are not supported by standalone agent services.
+   */
+  runtimeSource?: HostedRuntimeSourceIdentity;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   /**
    * Remote MCP servers available to the runtime. Defaults to the Veryfront API
@@ -411,9 +423,25 @@ async function resolveNodeVeryfrontCloudAgentServiceOptions(
   await ensureDefaultNodeTelemetryProvider();
   return {
     ...options,
+    runtimeSource: resolveHostedRuntimeSourceIdentity(options.runtimeSource),
     serviceName: resolveServiceName(options),
     createBashTool: options.createBashTool ?? await loadDefaultCreateBashTool(),
   };
+}
+
+function resolveHostedRuntimeSourceIdentity(
+  input: HostedRuntimeSourceIdentity | undefined,
+): HostedRuntimeSourceIdentity | undefined {
+  if (input === undefined) return undefined;
+
+  const source = getRuntimeAgentSourceContextSchema().parse(input);
+  if (source.type === "branch") {
+    throw new Error(
+      "Agent service runtimeSource must identify an immutable release or environment source.",
+    );
+  }
+
+  return snapshotHostedRuntimeSourceIdentity(source);
 }
 
 async function ensureDefaultSchemaValidator(): Promise<void> {
@@ -512,7 +540,7 @@ function createNodeVeryfrontCloudAgentServiceContext(
     defaultAgentId: null as string | null,
     projectSteeringByAgentId: new Map<string, HostedAgentProjectSteering>(),
     tracker: createDetachedRunTracker<AgUiResumeValue>(),
-    discoveryResult: null as DiscoveryResult | null,
+    discoveryResult: null as ProjectAgentRuntimeDiscovery | null,
     agentConfig: null as RuntimeAgentMarkdownDefinition | null,
     agentConfigs: new Map<string, RuntimeAgentMarkdownDefinition>(),
   };
@@ -542,7 +570,7 @@ async function resolveAgentConfig(
   }
 
   const source = context.options.agentSource ?? "auto";
-  const codeAgent = getAgent(agentId);
+  const codeAgent = getProjectAgentRuntime(context).agents.get(agentId);
 
   if (codeAgent && doesProjectAgentRuntimeAgentMatchSource(codeAgent, source)) {
     const agentConfig = await createRuntimeAgentDefinitionFromAgent(codeAgent);
@@ -566,6 +594,15 @@ function getResolvedAgentConfig(
     throw new Error("Agent service context has not been initialized.");
   }
   return context.agentConfig;
+}
+
+function getProjectAgentRuntime(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): ProjectAgentRuntimeDiscovery {
+  if (!context.discoveryResult) {
+    throw new Error("Agent service context has not been initialized.");
+  }
+  return context.discoveryResult;
 }
 
 async function discoverProjectPrimitives(
@@ -773,17 +810,27 @@ function createAgentRuntime(
   options: DefaultHostedChatRuntimeCreationOptions,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
+  const projectRuntime = getProjectAgentRuntime(context);
   const refreshSystem = createProjectSteeringRefresh(context);
+  const localToolRuntime = createHostedRootLocalToolRuntime({
+    allowedToolNames: options.allowedTools,
+    apiUrl: config.VERYFRONT_API_URL,
+    authToken: options.authToken,
+    createBashTool: context.options.createBashTool,
+    buildBaseTools: (taskContext) => buildLocalTools(context, options, taskContext),
+  });
 
   return createDefaultHostedChatRuntime({
     options,
+    sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
     config: {
       apiUrl: config.VERYFRONT_API_URL,
       apiMcpUrl: config.VERYFRONT_MCP_URL,
       studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
       mcpServers: resolveMcpServers(context.options),
     },
-    buildLocalTools: (taskContext) => buildLocalTools(context, options, taskContext),
+    buildLocalTools: localToolRuntime.buildLocalTools,
+    cleanup: localToolRuntime.cleanup,
     refreshSystem,
     onSteeringMutation: async ({ mutation, taskContext }) => {
       if (mutation.skillsChanged) {
@@ -922,7 +969,7 @@ function createHostedChatContextBudgetOptions(
   };
 }
 
-async function prepareChatExecution(
+async function prepareChatExecutionWithinProjectRuntime(
   context: NodeVeryfrontCloudAgentServiceContext,
   req: ParsedHostedChatRequest,
 ): Promise<NodeVeryfrontCloudAgentServicePreparedExecution> {
@@ -1023,6 +1070,16 @@ async function prepareChatExecution(
   };
 }
 
+async function prepareChatExecution(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  req: ParsedHostedChatRequest,
+): Promise<NodeVeryfrontCloudAgentServicePreparedExecution> {
+  return await runWithProjectAgentRuntime(
+    getProjectAgentRuntime(context),
+    () => prepareChatExecutionWithinProjectRuntime(context, req),
+  );
+}
+
 function createPreparedExecutionRuntimeOptions(
   context: NodeVeryfrontCloudAgentServiceContext,
   config: AgentServiceRuntimeConfig,
@@ -1069,6 +1126,12 @@ async function createControlPlaneRegistrationLifecycle(
     return undefined;
   }
 
+  if (!context.options.runtimeSource) {
+    throw new Error(
+      "runtimeSource is required when agent service control-plane registration is enabled.",
+    );
+  }
+
   try {
     const lifecycle = await createAgentServiceRegistrationLifecycle({
       ...registrationInput,
@@ -1094,6 +1157,7 @@ function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
 ): CreateAgentServiceRuntimeOptions<NodeVeryfrontCloudAgentServicePreparedExecution> {
   return {
     serviceName: context.options.serviceName,
+    runtimeSource: context.options.runtimeSource,
     forwardedConfigNamespace: context.options.forwardedConfigNamespace ??
       DEFAULT_FORWARDED_CONFIG_NAMESPACE,
     getConfig: context.infrastructure.getConfig,

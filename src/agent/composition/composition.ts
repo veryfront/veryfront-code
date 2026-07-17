@@ -13,24 +13,36 @@ import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/trac
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
+import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 
 /** Agent as tool helper. */
-async function runAgentAsStreamingTool(agent: Agent, input: string): Promise<AgentResponse> {
-  let finalResponse: AgentResponse | undefined;
-  const stream = await agent.stream({
-    input,
-    onFinish: (response) => {
-      finalResponse = response;
-    },
-  });
+async function runAgentAsStreamingTool(
+  agent: Agent,
+  input: string,
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined,
+): Promise<AgentResponse> {
+  const execute = async (): Promise<AgentResponse> => {
+    let finalResponse: AgentResponse | undefined;
+    const stream = await agent.stream({
+      input,
+      onFinish: (response) => {
+        finalResponse = response;
+      },
+    });
+    await stream.toDataStreamResponse().arrayBuffer();
 
-  await stream.toDataStreamResponse().arrayBuffer();
+    if (!finalResponse) {
+      throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
+    }
 
-  if (!finalResponse) {
-    throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
-  }
+    return finalResponse;
+  };
 
-  return finalResponse;
+  return sourceIntegrationPolicy
+    ? runWithExactSourceIntegrationPolicy(sourceIntegrationPolicy, execute)
+    : execute();
 }
 
 export function agentAsTool(agent: Agent, description: string): Tool {
@@ -39,11 +51,15 @@ export function agentAsTool(agent: Agent, description: string): Tool {
     type: "function",
     description,
     inputSchema: getAgentToolInputSchema(),
-    execute({ input }) {
+    execute({ input }, context) {
       return withSpan(
         "agent.composition.agentAsTool.execute",
         async () => {
-          const response = await runAgentAsStreamingTool(agent, input);
+          const response = await runAgentAsStreamingTool(
+            agent,
+            input,
+            getRuntimeSourceIntegrationPolicyFromContext(context),
+          );
 
           setActiveSpanAttributes({
             "agent.tool_calls": response.toolCalls.length,

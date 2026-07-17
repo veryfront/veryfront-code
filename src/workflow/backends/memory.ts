@@ -14,9 +14,15 @@ import type {
   WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
-import type { BackendConfig, WorkflowBackend } from "./types.ts";
+import {
+  assertWorkflowRunUpdate,
+  type BackendConfig,
+  type WorkflowBackend,
+  type WorkflowRunUpdate,
+} from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -56,7 +62,13 @@ export class MemoryBackend implements WorkflowBackend {
 
   createRun(run: WorkflowRun): Promise<void> {
     logger.debug(`Creating run: ${run.id}`);
-    this.runs.set(run.id, structuredClone(run));
+    let sourceIntegrationPolicy;
+    try {
+      sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
     return Promise.resolve();
   }
 
@@ -65,12 +77,18 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(run ? structuredClone(run) : null);
   }
 
-  updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+  updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
     const run = this.runs.get(runId);
     // Reject rather than throw synchronously so callers see a rejected Promise
     // consistently (matching the Redis backend's async error paths).
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+
+    try {
+      assertWorkflowRunUpdate(patch);
+    } catch (error) {
+      return Promise.reject(error);
     }
 
     logger.debug(`Updating run: ${runId}`, patch);

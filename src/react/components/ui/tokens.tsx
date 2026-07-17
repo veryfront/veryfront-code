@@ -1,12 +1,13 @@
 /**
- * DesignTokenStyle — injects the `[data-vf-chat]`-scoped design-token
- * stylesheet.
+ * DesignTokenStyle — injects the `[data-vf-ui]`-scoped design-token stylesheet
+ * (also matching the `[data-vf-chat]` compat alias).
  *
  * The tokens (`--primary`, `--accent`, …) are what every primitive's utility
  * classes (`bg-[var(--primary)]`, …) resolve against. They are deliberately
  * NOT on `:root`: the names collide with host apps' own theme variables (see
- * `generateTokenCSS`). A surface renders this AND sets `data-vf-chat` on its
- * root element; the CSS is identical everywhere, so duplicate tags are harmless.
+ * `generateTokenCSS`). A surface renders this AND sets `data-vf-ui` (plus the
+ * `data-vf-chat` alias) on its root element; the CSS is identical everywhere, so
+ * duplicate tags are harmless.
  *
  * `veryfront/chat` re-exports this as `ChatTokens` for back-compat.
  *

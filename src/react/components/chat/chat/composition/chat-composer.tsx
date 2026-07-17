@@ -39,11 +39,8 @@ import { DropZoneOverlay } from "../components/drop-zone.tsx";
 import { useDropZone } from "../hooks/use-drop-zone.ts";
 import { downloadMarkdown } from "../utils/export.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
-import {
-  ComposerContextProvider,
-  type ComposerContextValue,
-  useComposerContext,
-} from "../contexts/composer-context.tsx";
+import { ComposerContextProvider, useComposerContext } from "../contexts/composer-context.tsx";
+import { type ComposerStateProps, useComposerValue } from "./use-composer-value.ts";
 
 /** Microphone glyph for the idle-composer voice button (not in the barrel). */
 function MicGlyph(): React.ReactElement {
@@ -162,6 +159,31 @@ export function ChatInputStop(
   );
 }
 ChatInputStop.displayName = "ChatInput.Stop";
+
+/** Props for the unified {@link ChatInputSubmit} control. */
+export interface ChatInputSubmitProps extends ChatInputActionProps {
+  /**
+   * Icon shown while streaming. Defaults to the stop glyph. The `icon` prop
+   * applies to the idle/send state.
+   */
+  stopIcon?: React.ReactNode;
+}
+
+/**
+ * Unified submit control: renders {@link ChatInputStop} while a turn is
+ * streaming and {@link ChatInputSend} otherwise, so the common case needs one
+ * control instead of wiring `Send` + `Stop` and relying on their internal
+ * visibility. `Send`/`Stop` remain available as low-level escapes.
+ */
+export function ChatInputSubmit(
+  { icon, stopIcon, ...rest }: ChatInputSubmitProps,
+): React.ReactElement | null {
+  const c = useComposerContext();
+  return c.isLoading
+    ? <ChatInputStop icon={stopIcon} {...rest} />
+    : <ChatInputSend icon={icon} {...rest} />;
+}
+ChatInputSubmit.displayName = "ChatInput.Submit";
 
 /** Voice button — shows when the field is empty and voice is available. */
 export function ChatInputVoice(
@@ -405,77 +427,6 @@ export interface ChatInputProps {
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Composer state the context is built from (shared by `ChatInput` + `ChatInput.Root`). */
-export interface ComposerStateProps {
-  input: string;
-  onChange: (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => void;
-  onSubmit?: (e?: React.FormEvent) => void;
-  isLoading?: boolean;
-  stop?: () => void;
-  onVoice?: () => void;
-  isListening?: boolean;
-  transcript?: string;
-  models?: ModelOption[];
-  model?: string;
-  onModelChange?: (model: string) => void;
-  onAttach?: (files: FileList) => void;
-  onSelectAttachment?: () => void;
-  attachAccept?: string;
-  attachments?: AttachmentInfo[];
-  onRemoveAttachment?: (id: string) => void;
-}
-
-/** Build the ComposerContext value from composer state props. */
-function useComposerValue(p: ComposerStateProps): ComposerContextValue {
-  const hasResolvedAttachment = p.attachments?.some((attachment) =>
-    Boolean(attachment.url) &&
-    attachment.state !== "uploading" &&
-    attachment.state !== "processing" &&
-    attachment.state !== "error"
-  ) ?? false;
-
-  return React.useMemo<ComposerContextValue>(() => ({
-    input: p.input,
-    setInput: () => {},
-    onChange: p.onChange,
-    attachments: p.attachments ?? [],
-    onAttach: p.onAttach,
-    onSelectAttachment: p.onSelectAttachment,
-    onRemoveAttachment: p.onRemoveAttachment,
-    attachAccept: p.attachAccept,
-    onSubmit: (e?: React.FormEvent) => p.onSubmit?.(e),
-    isLoading: p.isLoading ?? false,
-    canSubmit: p.input.trim().length > 0 || hasResolvedAttachment,
-    onStop: p.stop,
-    onVoice: p.onVoice,
-    isListening: p.isListening ?? false,
-    transcript: p.transcript,
-    model: p.model,
-    models: p.models ?? [],
-    onModelChange: p.onModelChange,
-  }), [
-    p.input,
-    p.onChange,
-    p.attachments,
-    p.onAttach,
-    p.onSelectAttachment,
-    p.onRemoveAttachment,
-    p.attachAccept,
-    p.onSubmit,
-    p.isLoading,
-    hasResolvedAttachment,
-    p.stop,
-    p.onVoice,
-    p.isListening,
-    p.transcript,
-    p.model,
-    p.models,
-    p.onModelChange,
-  ]);
-}
-
 /** Props accepted by `<ChatInput.Root>`. */
 export interface ChatInputRootProps extends ComposerStateProps {
   className?: string;
@@ -659,6 +610,7 @@ export const ChatInput = Object.assign(ChatInputBase, {
   Field: ChatInputField,
   Send: ChatInputSend,
   Stop: ChatInputStop,
+  Submit: ChatInputSubmit,
   Voice: ChatInputVoice,
   Model: ChatInputModel,
   Attach: ChatInputAttach,

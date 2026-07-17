@@ -8,6 +8,7 @@ import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 
 // Re-export schema types (Checkpoint excluded - defined locally to use WorkflowContext interface)
 export type {
@@ -269,6 +270,8 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   /** Last heartbeat timestamp for liveness detection in distributed workers */
   heartbeatAt?: Date;
   completedAt?: Date;
+  /** Exact source-owned integration restriction captured when this run was created. */
+  readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Worker ID for distributed execution */
   workerId?: string;
   /** Captured tenant context for multi-tenant job execution */

@@ -41,6 +41,19 @@ describe("guide content contracts", () => {
     assertEquals(docs.includes("removed OAuth provider exports"), false);
   });
 
+  it("documents source narrowing without conflating it with activation or credentials", async () => {
+    const guide = await Deno.readTextFile("docs/guides/integrations.md");
+
+    assertStringIncludes(guide, "agent source");
+    assertStringIncludes(guide, "integrations.allow");
+    assertStringIncludes(guide, "source-qualified and monotonic");
+    assertStringIncludes(guide, "Project integration policy");
+    assertStringIncludes(guide, "Connection inventory");
+    assertStringIncludes(guide, "Managed OAuth");
+    assertStringIncludes(guide, "cannot\nenable an integration");
+    assertStringIncludes(guide, "`scope`, `perUser`, and\n`tools` fields are rejected");
+  });
+
   it("does not document caller-provided endUserId as tool context authority", async () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 

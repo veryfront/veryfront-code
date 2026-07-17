@@ -12,6 +12,7 @@ import { CacheKeyPrefix } from "../prefixes.ts";
 import type { QueryParamCacheOptions } from "../prefixes.ts";
 import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { encodeCacheSourceIdentity } from "../source-identity.ts";
 
 export function buildRenderCachePrefix(
   projectId: string,
@@ -98,6 +99,7 @@ export function buildProxyManagerCacheKey(
   productionMode: boolean,
   releaseId: string | null,
   branch: string | null,
+  environmentName?: string | null,
 ): string {
   const mode = productionMode ? "production" : "preview";
 
@@ -107,10 +109,14 @@ export function buildProxyManagerCacheKey(
         detail: `Missing releaseId in production for ${projectSlug}`,
       });
     }
-    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${releaseId}`;
+    const source = environmentName
+      ? encodeCacheSourceIdentity({ type: "environment", environmentName, releaseId })
+      : encodeCacheSourceIdentity({ type: "release", releaseId });
+    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.key}`;
   }
 
-  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${branch ?? "main"}`;
+  const source = encodeCacheSourceIdentity({ type: "branch", branch: branch ?? "main" });
+  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}`;
 }
 
 /**

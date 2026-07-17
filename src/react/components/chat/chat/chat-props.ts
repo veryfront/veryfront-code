@@ -1,5 +1,5 @@
 import type * as React from "react";
-import type { ChatMessage, UseChatResult } from "#veryfront/agent/react";
+import type { ChatMessage, PromptSuggestion, UseChatResult } from "#veryfront/agent/react";
 import type { ChatTheme } from "../theme.ts";
 import type { ModelOption } from "../model-selector.tsx";
 import type { Source } from "./components/sources.tsx";
@@ -70,9 +70,16 @@ export interface ChatProps {
   className?: string;
   theme?: Partial<ChatTheme>;
   renderMessage?: (message: ChatMessage) => React.ReactNode;
-  /** Prompt suggestions for an empty thread. Also fillable via `agent.suggestions`. */
-  suggestions?: string[];
-  onSuggestionClick?: (suggestion: string) => void;
+  /**
+   * Prompt suggestions for an empty thread. Also fillable via
+   * `agent.suggestions`. Strings become `{ label, prompt }`; pass
+   * `PromptSuggestion` objects for a short label + longer prompt.
+   */
+  suggestions?: Array<string | PromptSuggestion>;
+  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
+  onSuggestionClick?: (prompt: string) => void;
+  /** Receives the selected `{ label, prompt }` object. */
+  onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   /**
    * Opt-in idle hero for an empty thread (icon + title + optional blurb, plus
    * `suggestions`). When omitted, an empty thread renders as a blank canvas +

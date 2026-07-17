@@ -7,6 +7,8 @@
  * @module security/sandbox/worker-types
  */
 
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+
 /**
  * Serialized request data that can cross the Worker boundary via postMessage.
  * We cannot send a full Request object (it's not structured-cloneable),
@@ -95,6 +97,8 @@ export interface ExecuteAppRouteRequest {
   request: SerializedRequest;
   params: Record<string, string | string[]>;
   projectDir: string;
+  /** Exact source-owned integration policy for this project execution. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Per-project env var overlay for multi-tenant proxy mode */
   projectEnv?: Record<string, string>;
 }
@@ -106,6 +110,8 @@ export interface ExecutePagesRouteRequest {
   method: string;
   context: SerializedPagesContext;
   projectDir: string;
+  /** Exact source-owned integration policy for this project execution. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Per-project env var overlay for multi-tenant proxy mode */
   projectEnv?: Record<string, string>;
 }
@@ -115,6 +121,8 @@ export interface FetchDataRequest {
   id: string;
   modulePath: string;
   context: SerializedDataContext;
+  /** Exact source-owned integration policy for this project execution. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 }
 
 export interface RenderSSRRequest {
@@ -130,6 +138,8 @@ export interface RenderSSRRequest {
   layoutProps: Record<string, unknown>[];
   /** Rendering delivery mode */
   delivery: "string" | "stream";
+  /** Exact source-owned integration policy for this project execution. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 }
 
 // ---------------------------------------------------------------------------

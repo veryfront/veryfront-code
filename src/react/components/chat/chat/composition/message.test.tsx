@@ -97,6 +97,80 @@ describe("Message.Content — composability contract", () => {
     assertStringIncludes(html, "Runs guide");
   });
 
+  it("Message.Sources maps each citation through a function child", () => {
+    const withSources: ChatMessage = {
+      ...assistantMessage,
+      parts: [
+        { type: "text", text: "See sources." },
+        {
+          type: "tool-result",
+          toolCallId: "tool-search-docs",
+          // deno-lint-ignore no-explicit-any
+          result: { documents: [{ title: "Runs guide", url: "/runs" }] } as any,
+          // deno-lint-ignore no-explicit-any
+        } as any,
+      ],
+    };
+    const html = renderToString(
+      <Message.Root message={withSources}>
+        <Message.Sources>
+          {(source, index) => <span key={index} data-testid="custom-citation">{source.title}</span>}
+        </Message.Sources>
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "custom-citation");
+    assertStringIncludes(html, "Runs guide");
+  });
+
+  it("Message.Text / .Reasoning render narrowed parts via the typed sugar leaves", () => {
+    const reasoning: ChatMessage = {
+      ...assistantMessage,
+      parts: [
+        { type: "reasoning", text: "Thinking about persistence.", state: "done" },
+        { type: "text", text: "Answer body." },
+      ],
+    };
+    const html = renderToString(
+      <Message.Root message={reasoning}>
+        <Message.Content>
+          {(part: PartGroup, i: number) => {
+            if (part.type === "text") return <Message.Text key={i} part={part} />;
+            if (part.type === "reasoning") return <Message.Reasoning key={i} part={part} />;
+            return <Message.Part key={i} part={part} />;
+          }}
+        </Message.Content>
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Answer body.");
+    // The reasoning leaf renders the collapsible `Reasoning` anatomy (its text is
+    // behind the "Thought process" toggle, collapsed by default in SSR).
+    assertStringIncludes(html, "Thought process");
+  });
+
+  it("Message.Source renders a citation and inherits the row click handler", () => {
+    const withSources: ChatMessage = {
+      ...assistantMessage,
+      parts: [
+        { type: "text", text: "See sources." },
+        {
+          type: "tool-result",
+          toolCallId: "tool-search-docs",
+          // deno-lint-ignore no-explicit-any
+          result: { documents: [{ title: "Runs guide", url: "/runs" }] } as any,
+          // deno-lint-ignore no-explicit-any
+        } as any,
+      ],
+    };
+    const html = renderToString(
+      <Message.Root message={withSources}>
+        <Message.Sources>
+          {(source, index) => <Message.Source key={index} source={source} index={index} />}
+        </Message.Sources>
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Runs guide");
+  });
+
   it("does not auto-append sources when the body is composed", () => {
     // In compose mode the caller owns sources — nothing is appended implicitly.
     const withSources: ChatMessage = {

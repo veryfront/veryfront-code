@@ -184,6 +184,18 @@ describe("Storybook UI workbench", () => {
     );
   });
 
+  it("documents the preferred additive chat APIs", async () => {
+    const agentPicker = await readText(
+      "storybook/stories/chat/AgentPicker.stories.tsx",
+    );
+    const chat = await readText("storybook/stories/chat/Chat.stories.tsx");
+
+    assertStringIncludes(agentPicker, 'name: "avatarUrl"');
+    assertEquals(agentPicker.includes('name: "avatarSrc"'), false);
+    assertStringIncludes(chat, "onSuggestionSelect");
+    assertEquals(chat.includes("onSuggestionClick={setInput}"), false);
+  });
+
   it("covers the shipped UI families with Storybook stories that import real components", async () => {
     const requiredStories = [
       {
@@ -442,5 +454,52 @@ describe("Storybook UI workbench", () => {
     );
     assertStringIncludes(aliases, "src/chat/index.ts");
     assertStringIncludes(aliases, "src/react/components/chat/index.ts");
+  });
+
+  // E7: every exported chat component ships the three documentation tiers —
+  // black-box (a render-it Story), props (a DocsPropsTable), compound (a
+  // compositionTree) — plus a one-leaf-override ACID-TEST story ("change the X
+  // on Y without re-implementing Y"), marked with the `acid-test` tag. The
+  // allowlist below MUST stay empty: a component with no honest acid test is a
+  // composition gap, not an exemption.
+  it("every chat component story ships the three tiers + a tagged acid-test story", async () => {
+    // Files temporarily exempt from the acid-test requirement. Keep EMPTY.
+    const ACID_TEST_ALLOWLIST: readonly string[] = [];
+
+    const failures: string[] = [];
+    for await (const path of storyFiles("storybook/stories/chat")) {
+      const name = path.split("/").pop()!;
+      const src = await readText(path);
+      const missing: string[] = [];
+
+      // Compound tier: a composition tree documenting the sub-parts.
+      if (!src.includes("compositionTree") && !src.includes("DocsComposition")) {
+        missing.push("compound tier (compositionTree / DocsComposition)");
+      }
+      // Props tier: the generated props table.
+      if (!src.includes("DocsPropsTable")) missing.push("props tier (DocsPropsTable)");
+      // Black-box tier: at least one render-it story.
+      if (!/export const \w+: Story\b/.test(src)) missing.push("black-box tier (a Story)");
+      // Acid-test: a one-leaf-override story, explicitly tagged.
+      const hasAcid = /tags:\s*\[[^\]]*["']acid-test["']/.test(src);
+      if (!hasAcid && !ACID_TEST_ALLOWLIST.includes(name)) {
+        missing.push('acid-test story (tags: ["acid-test"])');
+      }
+
+      if (missing.length > 0) failures.push(`${name}: missing ${missing.join(", ")}`);
+    }
+
+    assertEquals(
+      failures,
+      [],
+      `Chat stories missing E7 three-tier + acid-test coverage:\n${failures.join("\n")}`,
+    );
+
+    // The allowlist is a ratchet: it may only shrink. Guard it stays empty.
+    assertEquals(
+      ACID_TEST_ALLOWLIST.length,
+      0,
+      "The acid-test allowlist must stay empty — author the missing acid test, don't exempt it.",
+    );
   });
 });

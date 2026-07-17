@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { MiddlewareContext } from "#veryfront/middleware/core/context.ts";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env";
@@ -45,7 +46,7 @@ function resolvedBranch(ctx: HandlerContext): string | null {
   return ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
 }
 
-/** Request-scoped root middleware loader for the shared multi-project runtime. */
+/** Request-scoped root middleware loader for every project runtime. */
 export class ProjectMiddlewareRuntime {
   readonly #cache: LRUCache<string, Promise<readonly MiddlewareFunction[]>>;
   readonly #loadMiddleware: MiddlewareLoader;
@@ -84,35 +85,45 @@ export class ProjectMiddlewareRuntime {
 
   async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
     const { handlerContext: ctx, isSharedProxy, next, request } = input;
-    const fs = ctx.adapter.fs;
 
     if (
-      !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !ctx.proxyToken ||
-      !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
+      isConfigOptionalControlPlaneRunRequest(
+        request.method,
+        new URL(request.url).pathname,
+      )
     ) {
       return next();
     }
 
     const environment = resolvedEnvironment(ctx);
     const branch = resolvedBranch(ctx);
+    const executeMiddleware = async (): Promise<Response | undefined> => {
+      const middleware = await this.#getMiddleware(ctx, environment, branch);
+      if (middleware.length === 0) return next();
+
+      const pipeline = new MiddlewarePipeline();
+      for (const handler of middleware) pipeline.use(handler);
+
+      const composed = pipeline.compose();
+      const middlewareContext = new MiddlewareContext(
+        request,
+        getProjectEnvSnapshot() ?? {},
+      );
+      return await composed(middlewareContext, next);
+    };
+
+    const fs = ctx.adapter.fs;
+    if (
+      !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !ctx.proxyToken ||
+      !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
+    ) {
+      return await executeMiddleware();
+    }
 
     return fs.runWithContext(
       ctx.projectSlug,
       ctx.proxyToken,
-      async () => {
-        const middleware = await this.#getMiddleware(ctx, environment, branch);
-        if (middleware.length === 0) return next();
-
-        const pipeline = new MiddlewarePipeline();
-        for (const handler of middleware) pipeline.use(handler);
-
-        const composed = pipeline.compose();
-        const middlewareContext = new MiddlewareContext(
-          request,
-          getProjectEnvSnapshot() ?? {},
-        );
-        return await composed(middlewareContext, next);
-      },
+      executeMiddleware,
       ctx.projectId,
       {
         productionMode: environment === "production",
@@ -167,7 +178,8 @@ export class ProjectMiddlewareRuntime {
 
   async #load(ctx: HandlerContext): Promise<readonly MiddlewareFunction[]> {
     try {
-      return await this.#loadMiddleware(ctx.projectDir, ctx.adapter);
+      const fileMiddleware = await this.#loadMiddleware(ctx.projectDir, ctx.adapter);
+      return [...fileMiddleware, ...(ctx.config?.middleware?.custom ?? [])];
     } catch (error) {
       logger.error("Failed to load project middleware", {
         projectSlug: ctx.projectSlug,

@@ -154,7 +154,7 @@ function AgentPickerDocsPage() {
               description: "Display name (also the search keyword)",
             },
             {
-              name: "avatarSrc",
+              name: "avatarUrl",
               type: "string",
               description: "Avatar image URL; initials shown when absent",
             },
@@ -244,7 +244,7 @@ export const InputStyle: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => {
     const [value, setValue] = React.useState(agents[0].id);
     return (

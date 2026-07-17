@@ -19,7 +19,10 @@ Message.Root  <- or compose it: context (message, branch state)
   +-- Message.Header  <- agent avatar + name + timestamp (assistant)
   +-- Message.Content  <- body; no children = default loop, or a function child
   |     +-- Message.Part  <- default rendering for one grouped part
+  |     +-- Message.Text  <- typed sugar: render a text part
+  |     +-- Message.Reasoning  <- typed sugar: render a reasoning part
   |     +-- Message.Sources  <- inline citation sources
+  |     |     +-- Message.Source  <- typed sugar: render a single citation
   +-- Message.Continuing  <- "Continuing…" shimmer while streaming
   +-- Message.Actions  <- copy / regenerate
   +-- Message.Tokens  <- token-usage popover (Model / Input / Output / Total)
@@ -174,7 +177,7 @@ export const RenderPair: Story = {
 };
 
 export const CompoundAssistant: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {
@@ -218,6 +221,52 @@ export const CompoundAssistant: Story = {
           <Message.Actions />
           <Message.Tokens />
         </div>
+      </Message.Root>
+    </StoryFrame>
+  ),
+};
+
+export const TypedPartLeaves: Story = {
+  name: "Typed part leaves (Text / Reasoning / Source)",
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Message } from "veryfront/chat";
+
+// Compose the body from typed sugar leaves instead of switching on part.type:
+// Message.Text / .Reasoning render a narrowed part; Message.Source renders one
+// citation and inherits the row's onSourceClick.
+<Message.Root message={assistantMessage}>
+  <Message.Header />
+  <Message.Content>
+    {(part) => {
+      if (part.type === "text") return <Message.Text part={part} />;
+      if (part.type === "reasoning") return <Message.Reasoning part={part} />;
+      return <Message.Part part={part} />;
+    }}
+  </Message.Content>
+  <Message.Sources>
+    {(source, index) => <Message.Source source={source} index={index} />}
+  </Message.Sources>
+</Message.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="760px">
+      <Message.Root message={chatMessages[1]}>
+        <Message.Header />
+        <Message.Content>
+          {(part) => {
+            if (part.type === "text") return <Message.Text part={part} />;
+            if (part.type === "reasoning") return <Message.Reasoning part={part} />;
+            return <Message.Part part={part} />;
+          }}
+        </Message.Content>
+        <Message.Sources>
+          {(source, index) => <Message.Source source={source} index={index} />}
+        </Message.Sources>
       </Message.Root>
     </StoryFrame>
   ),

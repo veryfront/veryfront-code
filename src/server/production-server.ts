@@ -2,8 +2,6 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { loadMiddlewareFile } from "./dev-server/middleware.ts";
-import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -264,28 +262,7 @@ export function startProductionServer(
           localProjects,
         });
 
-        // Shared proxy filesystems need tenant context from the request, so
-        // startup cannot discover a root middleware file. Standalone runtimes
-        // load project middleware with the same semantics as the dev server.
-        const isProxyMode = bootstrap.config.fs?.veryfront?.proxyMode === true;
-        const projectMiddleware = isProxyMode
-          ? []
-          : await loadMiddlewareFile(projectDir, adapter, { throwOnError: true });
-        let coreHandler = baseHandler;
-        if (projectMiddleware.length > 0) {
-          const pipeline = new MiddlewarePipeline();
-          for (const middleware of projectMiddleware) {
-            pipeline.use(middleware);
-          }
-          pipeline.use((c) => baseHandler(c.req));
-          coreHandler = Object.assign(
-            (req: Request) => pipeline.execute(req, adapter.env.toObject()),
-            { ready: baseHandler.ready },
-          );
-          logger.info("Registered project middleware", {
-            count: projectMiddleware.length,
-          });
-        }
+        const coreHandler = baseHandler;
 
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor

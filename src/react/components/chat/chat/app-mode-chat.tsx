@@ -1,6 +1,9 @@
 import * as React from "react";
-import { useAgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
-import type { AgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
+import {
+  getAgentPromptSuggestionItems,
+  useAgentMetadata,
+} from "#veryfront/agent/react/use-agent-metadata.ts";
+import type { PromptSuggestion } from "#veryfront/agent/react/use-agent-metadata.ts";
 import { AgentAvatar } from "./composition/agent-avatar.tsx";
 import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
 import { useUpload } from "./hooks/use-upload.ts";
@@ -15,32 +18,6 @@ import { attachmentsToFileParts, hasPendingAttachments } from "./chat-attachment
 // consumer writes only `<Chat agentId="…" api="…" />`.
 // ---------------------------------------------------------------------------
 
-interface AgentSuggestionItem {
-  /** Short chip label — the agent's `title`, falling back to the prompt. */
-  label: string;
-  /** Full text sent to the agent when the chip is clicked. */
-  prompt: string;
-}
-
-/**
- * Map agent-metadata suggestions to `{ label, prompt }`. The chip shows the
- * short `title` ("Triage login issue") while the click sends the full `prompt`
- * ("Triage a customer who cannot sign in after a release.") — so the empty
- * state stays scannable without truncating what the agent actually receives.
- */
-function agentSuggestionItems(
-  suggestions: AgentMetadata["suggestions"] | undefined,
-): AgentSuggestionItem[] {
-  const list = suggestions?.suggestions;
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((s) => {
-    if (s.type !== "prompt" || !("prompt" in s) || !s.prompt) return [];
-    const title = (s as { title?: unknown }).title;
-    const label = typeof title === "string" && title.length > 0 ? title : s.prompt;
-    return [{ label, prompt: s.prompt }];
-  });
-}
-
 function UncontrolledChat(
   {
     agentId,
@@ -51,6 +28,7 @@ function UncontrolledChat(
     agent: userAgent,
     suggestions: suggestionsProp,
     onSuggestionClick,
+    onSuggestionSelect,
     emptyState,
     // Attachments: default-wired through `useUpload` unless the caller
     // controls them. With no `uploadApi`, files inline as base64 `data:` URLs
@@ -106,11 +84,11 @@ function UncontrolledChat(
 
   // Chips show the short `title`; the click sends the full `prompt`.
   const suggestionItems = React.useMemo(
-    () => agentSuggestionItems(agent?.suggestions),
+    () => getAgentPromptSuggestionItems(agent),
     [agent],
   );
   const derivedSuggestions = suggestionsProp ??
-    (suggestionItems.length > 0 ? suggestionItems.map((s) => s.label) : undefined);
+    (suggestionItems.length > 0 ? suggestionItems : undefined);
 
   const resolvedAgent = agent || userAgent
     ? {
@@ -125,10 +103,9 @@ function UncontrolledChat(
     }
     : undefined;
 
-  const handleSuggestion = onSuggestionClick ??
-    ((label: string) => {
-      const item = suggestionItems.find((s) => s.label === label);
-      void chat.sendMessage({ text: item?.prompt ?? label });
+  const handleSuggestionSelect = onSuggestionSelect ??
+    (onSuggestionClick ? undefined : (suggestion: PromptSuggestion) => {
+      void chat.sendMessage({ text: suggestion.prompt });
     });
 
   // Batteries-included attachments: unless the caller controls them, files
@@ -166,7 +143,8 @@ function UncontrolledChat(
       agent={resolvedAgent}
       initializing={agentInitializing}
       suggestions={derivedSuggestions}
-      onSuggestionClick={handleSuggestion}
+      onSuggestionClick={onSuggestionClick}
+      onSuggestionSelect={handleSuggestionSelect}
       onAttach={manageAttachments ? upload.upload : userOnAttach}
       onDrop={manageAttachments ? upload.upload : userOnDrop}
       attachments={manageAttachments ? upload.attachments : userAttachments}
@@ -185,15 +163,15 @@ UncontrolledChat.displayName = "UncontrolledChat";
  */
 export function ConversationBoundChat(props: ChatProps): React.ReactElement {
   const conversations = useConversationsContextOptional();
-  if (!conversations || conversations.activeId == null) {
+  if (!conversations || conversations.activeConversationId == null) {
     return <UncontrolledChat ref={props.ref} {...props} />;
   }
-  const { active, activeId } = conversations;
+  const { activeConversation, activeConversationId } = conversations;
   // Wait for the active thread's messages before mounting, so `useChat` seeds
   // from the right thread rather than a still-loading one.
-  if (active?.id !== activeId) {
+  if (activeConversation?.id !== activeConversationId) {
     return <>{props.skeleton ?? <ChatMessagesSkeleton />}</>;
   }
-  return <UncontrolledChat key={activeId} ref={props.ref} {...props} />;
+  return <UncontrolledChat key={activeConversationId} ref={props.ref} {...props} />;
 }
 ConversationBoundChat.displayName = "ConversationBoundChat";

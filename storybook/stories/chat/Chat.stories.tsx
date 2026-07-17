@@ -358,7 +358,7 @@ function ChatReview({
             "Draft a test plan",
             "Summarize the run",
           ]}
-          onSuggestionClick={setInput}
+          onSuggestionSelect={(suggestion) => setInput(suggestion.prompt)}
         />
       </div>
     </div>
@@ -427,7 +427,7 @@ function ChatComposedReview(): React.ReactElement {
 }
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => <ChatComposedReview />,
   parameters: {
     docs: {

@@ -11,7 +11,9 @@ function createMockAdapter(): RuntimeAdapter {
     id: "test",
     name: "test",
     capabilities: {},
-    fs: {} as RuntimeAdapter["fs"],
+    fs: {
+      exists: () => Promise.resolve(false),
+    } as RuntimeAdapter["fs"],
     env: {
       get: (_key: string) => undefined,
       set: () => {},
@@ -137,7 +139,11 @@ describe("server/runtime-handler/index", () => {
   it("skips the proxy header guard for lightweight module requests", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(new Request("http://localhost/_vf_modules/_dnt.shims.js"));
+    const response = await handler(
+      new Request("http://localhost/_veryfront/hydration-runtime.js", {
+        headers: { "x-release-id": "rel_123" },
+      }),
+    );
 
     assertEquals(response.status === 502, false);
     const body = await response.text();

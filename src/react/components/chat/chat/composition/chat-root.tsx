@@ -9,10 +9,16 @@
 
 import * as React from "react";
 import { ChatContainer } from "#veryfront/react/primitives/index.ts";
-import type { ChatMessage } from "#veryfront/agent/react";
+import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import { getDocumentNonce } from "../../../ui/csp-nonce.ts";
-import { cn, defaultChatTheme, generateTokenCSS, mergeThemes } from "../../theme.ts";
+import {
+  cn,
+  defaultChatTheme,
+  generateTokenCSS,
+  mergeThemes,
+  UI_SCOPE_ATTRS,
+} from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
@@ -31,6 +37,10 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   // Messages
   messages: ChatMessage[];
   isLoading?: boolean;
+  /** Streaming lifecycle of the current turn (`useChat().status`). */
+  status?: ChatStatus;
+  /** Id of the assistant message currently streaming (`useChat().streamingMessageId`). */
+  streamingMessageId?: string | null;
   error?: Error | null;
 
   // Input
@@ -47,8 +57,10 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   models?: ModelOption[];
   onModelChange?: (modelId: string) => void;
 
-  // Agent identity — fallback for assistant message headers.
-  agent?: { name?: string; avatarUrl?: string };
+  // Agent identity — fallback for assistant message headers. Accepts
+  // `AgentMetadata` structurally, so a `useAgentMetadata()` object passes
+  // through without narrowing (`avatarUrl: string | null`).
+  agent?: { name?: string; avatarUrl?: string | null };
 
   // Attachments
   attachments?: AttachmentInfo[];
@@ -77,6 +89,8 @@ export function ChatRoot(
     children,
     messages,
     isLoading = false,
+    status,
+    streamingMessageId,
     error = null,
     input,
     setInput,
@@ -120,6 +134,8 @@ export function ChatRoot(
     () => ({
       messages,
       isLoading,
+      status,
+      streamingMessageId,
       error,
       input,
       setInput: setInput ?? (() => {}),
@@ -146,6 +162,8 @@ export function ChatRoot(
     [
       messages,
       isLoading,
+      status,
+      streamingMessageId,
       error,
       input,
       setInput,
@@ -175,7 +193,7 @@ export function ChatRoot(
       <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
       <ChatContainer
         ref={ref}
-        data-vf-chat=""
+        {...UI_SCOPE_ATTRS}
         className={cn(theme.container, "relative", className)}
         style={{ maxHeight, ...style }}
         {...containerProps}

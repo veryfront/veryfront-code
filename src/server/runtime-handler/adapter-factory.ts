@@ -76,28 +76,11 @@ interface AdapterResolutionOptions {
   cache?: ProjectDiscoveryCache;
 }
 
-function shouldFallbackOnProxyConfigError(opts: AdapterResolutionOptions): boolean {
+function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
   return opts.isProxyMode &&
     !!opts.projectSlug &&
     !!opts.proxyToken &&
     isConfigOptionalControlPlaneRunRequest(opts.req.method, opts.pathname);
-}
-
-function isRecoverableProxyConfigLoadError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const configError = error as Error & {
-    slug?: unknown;
-    detail?: unknown;
-    context?: unknown;
-  };
-  if (configError.slug !== "config-parse-error") return false;
-  if (typeof configError.detail !== "string") return false;
-  if (!configError.detail.startsWith("Failed to load veryfront.config.")) return false;
-
-  const context = configError.context;
-  if (!context || typeof context !== "object") return false;
-  const configFile = (context as { configFile?: unknown }).configFile;
-  return typeof configFile === "string" && configFile.startsWith("veryfront.config.");
 }
 
 /**
@@ -161,8 +144,9 @@ export async function resolveAdapter(
 
     effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
 
-    // Load project-specific config
-    try {
+    if (usesExactSourceConfig(opts)) {
+      effectiveConfig = undefined;
+    } else {
       effectiveConfig = await timeAsync(
         "config:load-project",
         () => getConfig(effectiveProjectDir, effectiveAdapter),
@@ -174,14 +158,23 @@ export async function resolveAdapter(
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
-    } catch (error) {
-      logger.warn("Failed to load project config, using defaults", {
-        projectSlug: opts.projectSlug,
-        projectDir: effectiveProjectDir,
-        error: getErrorMessage(error),
-      });
     }
   } else if (opts.isProxyMode && opts.projectSlug && opts.proxyToken) {
+    if (usesExactSourceConfig(opts)) {
+      logger.debug("Skipping outer config load for exact-source control-plane request", {
+        projectSlug: opts.projectSlug,
+        projectId: opts.projectId,
+        pathname: opts.pathname,
+      });
+      effectiveConfig = undefined;
+      return {
+        projectDir: effectiveProjectDir,
+        adapter: effectiveAdapter,
+        config: effectiveConfig,
+        isLocalProject,
+      };
+    }
+
     // Load config via proxy mode with project context.
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.
@@ -218,25 +211,6 @@ export async function resolveAdapter(
         router: effectiveConfig?.router,
       });
     } catch (error) {
-      if (
-        shouldFallbackOnProxyConfigError(opts) &&
-        isRecoverableProxyConfigLoadError(error)
-      ) {
-        logger.warn("Failed to load project config for control-plane request, using defaults", {
-          projectSlug: opts.projectSlug,
-          projectId: opts.projectId,
-          releaseId: opts.releaseId,
-          proxyEnv: opts.proxyEnv,
-          pathname: opts.pathname,
-          error: getErrorMessage(error),
-        });
-        return {
-          projectDir: effectiveProjectDir,
-          adapter: effectiveAdapter,
-          config: effectiveConfig,
-          isLocalProject,
-        };
-      }
       // Log at error level — this is a real failure that will affect rendering.
       // Config loading failure in proxy mode means the project's routes, layouts,
       // and settings won't be available, leading to 404s for valid pages.

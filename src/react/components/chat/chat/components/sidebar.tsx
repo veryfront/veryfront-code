@@ -2,11 +2,9 @@
  * ChatSidebar — a conversation rail, available as a one-shot preset or as a
  * composable compound (mirroring `Chat` / `Message`).
  *
- * Conversation-native: it lists {@link ConversationSummary} rows and, inside a
- * {@link ConversationsProvider}, needs **no props at all** — it reads the list,
- * the active id, and select/new/delete/rename straight from context. Pass props
- * to override any of them (controlled), or drop to the compound parts for a
- * custom layout.
+ * Conversation-native: inside a {@link ConversationsProvider} it needs **no
+ * props** — the list, active id, and select/new/delete/rename come from context.
+ * Pass props to override (controlled), or use the compound parts for a custom layout.
  *
  * @example Zero-config inside a provider
  * ```tsx
@@ -41,7 +39,7 @@
  */
 import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
-import { cn } from "../../theme.ts";
+import { cn, UI_SCOPE_ATTRS } from "../../theme.ts";
 import { PencilIcon, TrashIcon } from "../../../ui/icons/index.ts";
 import { Button } from "../../../ui/button.tsx";
 import {
@@ -156,7 +154,9 @@ function useResolvedSidebar(props: ChatSidebarControlProps): {
   const ctx = useConversationsContextOptional();
 
   const conversations = props.conversations ?? ctx?.conversations ?? [];
-  const activeId = props.activeId !== undefined ? props.activeId : ctx?.activeId ?? null;
+  const activeId = props.activeId !== undefined
+    ? props.activeId
+    : ctx?.activeConversationId ?? null;
   const onSelect = props.onSelect ?? ctx?.select ?? noop;
   const onDelete = props.onDelete ?? ctx?.remove ?? noop;
   const onRename = props.onRename ?? ctx?.rename;
@@ -212,20 +212,11 @@ function groupConversations(
 
 /** Props accepted by {@link ChatSidebarRoot}. */
 export interface ChatSidebarRootProps extends ChatSidebarControlProps {
-  /** Override any of the sidebar icons. */
-  /**
-   * Show the loading skeleton instead of the list — e.g. while conversations
-   * are being fetched. When omitted, the auto {@link ChatSidebarList} shows a
-   * skeleton on its own until the client mounts.
-   */
+  /** Show the loading skeleton while conversations are being fetched. */
   loading?: boolean;
   /** When `false`, the rail renders nothing. Default `true`. */
   isOpen?: boolean;
-  /**
-   * Fill the parent instead of owning a fixed width + mobile overlay chrome.
-   * Set when embedding inside a layout container (e.g. `AppShell.Sidebar`) that
-   * already provides width and the off-canvas overlay. Default `false`.
-   */
+  /** @deprecated The root fills its parent by default. */
   fill?: boolean;
   className?: string;
   children: React.ReactNode;
@@ -256,15 +247,10 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
     <ChatSidebarContext.Provider value={value}>
       <ChatTokens />
       <div
-        data-vf-chat=""
-        className={cn(
-          "flex flex-col h-full",
-          fill
-            ? "w-full"
-            : "shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
-          className,
-        )}
-        style={fill ? undefined : { width: 240 }}
+        {...UI_SCOPE_ATTRS}
+        // Fills its parent by default (a composed layout container provides
+        // width + overlay); the standalone preset supplies its own rail chrome.
+        className={cn("flex flex-col h-full", fill && "w-full", className)}
       >
         {children}
       </div>
@@ -690,12 +676,22 @@ ChatSidebarList.displayName = "ChatSidebar.List";
 export interface ChatSidebarProps extends Omit<ChatSidebarRootProps, "children"> {}
 
 /** The one-shot preset — composes Root + NewButton + auto List. */
+/**
+ * Fixed-width rail chrome (240px `w-60`, off-canvas overlay on small screens)
+ * for the standalone `<ChatSidebar>` preset. `ChatSidebar.Root` is width-agnostic.
+ */
+export const STANDALONE_SIDEBAR_CHROME =
+  "w-60 shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]";
+
 function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
   // Show the "new" button whenever an action is available (explicit or context).
   const ctx = useConversationsContextOptional();
   const hasNew = props.onNew !== undefined || ctx !== null;
   return (
-    <ChatSidebarRoot {...props}>
+    <ChatSidebarRoot
+      {...props}
+      className={cn(props.fill ? "w-full" : STANDALONE_SIDEBAR_CHROME, props.className)}
+    >
       {hasNew && <ChatSidebarNewButton />}
       <ChatSidebarList />
     </ChatSidebarRoot>

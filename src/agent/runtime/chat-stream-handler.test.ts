@@ -285,6 +285,61 @@ describe("chat-stream-handler", () => {
       ]);
     });
 
+    it("preserves integration reconnect actions as structured tool output", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const reconnectRequired = {
+        error: "reconnect_required",
+        integration: "gmail",
+        connectUrl: "https://api.example.test/oauth/connect/gmail?projectId=project-1",
+        message: "Reconnect Gmail to continue.",
+      };
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-gmail-auth",
+          toolName: "gmail__list_emails",
+          input: {},
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tc-gmail-auth",
+          toolName: "gmail__list_emails",
+          output: reconnectRequired,
+          isError: true,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "text-1", undefined);
+
+      assertEquals(state.toolResults, [
+        {
+          toolCallId: "tc-gmail-auth",
+          toolName: "gmail__list_emails",
+          output: reconnectRequired,
+        },
+      ]);
+      assertEquals(events, [
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-gmail-auth",
+          toolName: "gmail__list_emails",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-gmail-auth",
+          toolName: "gmail__list_emails",
+          input: {},
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-gmail-auth",
+          output: reconnectRequired,
+        },
+      ]);
+    });
+
     it("accumulates streamed reasoning text with Anthropic signatures", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

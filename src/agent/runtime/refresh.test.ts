@@ -2,10 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
-import { tool } from "#veryfront/tool";
+import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
-import type { Message, RuntimeStateRequest, ToolExecutionResultRequest } from "../types.ts";
+import type {
+  AgentConfig,
+  AgentResponse,
+  Message,
+  RuntimeStateRequest,
+  ToolExecutionResultRequest,
+} from "../types.ts";
+import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -205,6 +212,154 @@ describe("agent runtime refresh hooks", () => {
       projectId: "project-generate",
     });
     assertEquals(toolResults[0]?.context?.projectId, "project-generate");
+  });
+
+  it("classifies structured errors returned during generate()", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "update-agent-generate-error-1",
+              toolName: "update_agent",
+              input: '{"id":"jira-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "I can retry with the required input." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const updateError = {
+      error: "tool_error",
+      message: "Invalid input - system: system or system_prompt is required",
+    };
+    const updateAgent = tool({
+      id: "update_agent",
+      description: "Update a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: () => updateError,
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Update agents and recover from failed tool calls.",
+      tools: { update_agent: updateAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({
+      input: "Attach the project skill to my Jira agent",
+    });
+
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertEquals(response.toolCalls[0]?.error, updateError.message);
+    assertEquals(response.toolCalls[0]?.result, updateError);
+  });
+
+  it("forces a final response after create_agent succeeds during generate()", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-generate-1",
+              toolName: "create_agent",
+              input: '{"id":"gmail-assistant-e2e"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "Created Gmail Assistant." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const createAgent = tool({
+      id: "create_agent",
+      description: "Create a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: async ({ id }) => ({
+        id,
+        name: "Gmail Assistant",
+        source_path: `agents/${id}.ts`,
+      }),
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Create agents and summarize successful tool results.",
+      tools: { create_agent: createAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Create a Gmail agent" });
+
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
+    assertEquals(toolNamesByStep[1], []);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {
@@ -534,6 +689,195 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[1]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+  });
+
+  it("keeps tools available after update_agent returns a structured error", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "update-agent-error-1",
+                toolName: "update_agent",
+                input: '{"id":"jira-agent"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "I can retry with the required input." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const updateError = {
+      error: "tool_error",
+      message: "Invalid input - system: system or system_prompt is required",
+    };
+    const updateAgent = tool({
+      id: "update_agent",
+      description: "Update a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: () => updateError,
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Update agents and recover from failed tool calls.",
+      tools: { update_agent: updateAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Attach the project skill to my Jira agent",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+
+    const streamBody = await response.text();
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(streamBody.includes('"type":"tool-output-error"'), true);
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), false);
+    assertEquals(streamBody.includes(updateError.message), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "error");
+    assertEquals(finishedResponse.toolCalls[0]?.error, updateError.message);
+    assertEquals(finishedResponse.toolCalls[0]?.result, updateError);
+  });
+
+  it("streams integration authentication actions without flattening their structured output", async () => {
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "gmail-list-emails-auth-1",
+                toolName: "gmail__list_emails",
+                input: {},
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Connect Gmail to continue." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const authenticationRequired = {
+      error: "authentication_required",
+      integration: "gmail",
+      connectUrl: "https://api.example.test/oauth/connect/gmail?projectId=project-1",
+      message: "Authentication required for Gmail.",
+    };
+    const gmailSource: RemoteToolSource = {
+      id: "gmail",
+      listTools: () =>
+        Promise.resolve([{
+          name: "gmail__list_emails",
+          description: "List Gmail messages",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: () => Promise.resolve(authenticationRequired),
+    };
+    const assistant = agent(
+      {
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Use Gmail when requested.",
+        tools: { gmail__list_emails: true },
+        __vfRemoteToolSources: [gmailSource],
+        __vfAllowedRemoteTools: ["gmail__list_emails"],
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      } as AgentConfig & RuntimeRemoteToolConfig,
+    );
+
+    const response = (await assistant.stream({
+      input: "Summarize my inbox",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const streamBody = await response.text();
+
+    assertEquals(callCount, 2);
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), true);
+    assertEquals(streamBody.includes('"type":"tool-output-error"'), false);
+    assertEquals(streamBody.includes('"error":"authentication_required"'), true);
+    assertEquals(streamBody.includes(authenticationRequired.connectUrl), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "completed");
+    assertEquals(finishedResponse.toolCalls[0]?.result, authenticationRequired);
   });
 
   it("keeps skill file tools hidden after a failed load_skill attempt", async () => {

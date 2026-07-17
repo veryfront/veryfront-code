@@ -24,6 +24,18 @@ describe("tool factory", () => {
       assertEquals(t.description, "A test tool");
     });
 
+    it("should preserve delegated integration tool dependencies", () => {
+      const t = tool({
+        id: "github-list-issues",
+        description: "List GitHub issues through a bounded wrapper",
+        delegatedIntegrationTools: ["github__list_issues"],
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => [],
+      });
+
+      assertEquals(t.delegatedIntegrationTools, ["github__list_issues"]);
+    });
+
     it("should auto-generate id when not provided", () => {
       const t = tool({
         description: "auto-id",

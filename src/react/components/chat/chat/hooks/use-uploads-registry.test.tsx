@@ -3,7 +3,11 @@ import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { useUploadsRegistry, type UseUploadsRegistryResult } from "./use-uploads-registry.ts";
+import {
+  useAttachments,
+  useUploadsRegistry,
+  type UseUploadsRegistryResult,
+} from "./use-uploads-registry.ts";
 
 function installDom(): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -108,6 +112,10 @@ function fakeFile(name: string): File {
 }
 
 describe("react/components/chat/hooks/useUploadsRegistry", () => {
+  it("useUploadsRegistry is a back-compat alias of useAttachments", () => {
+    assert(useUploadsRegistry === useAttachments);
+  });
+
   it("uploads a file, captures the server id, and persists it", async () => {
     const restoreDom = installDom();
     const fetchStub = stubFetch();
