@@ -4,7 +4,7 @@ import {
   RunAlreadyExistsError,
   type RunResumeSessionManager,
 } from "../runtime/index.ts";
-import type { Agent, AgentResponse } from "../types.ts";
+import type { Agent, AgentResponse, Message } from "../types.ts";
 import {
   type AgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
@@ -33,6 +33,14 @@ export interface AgUiRuntimeLifecycleContext {
   request: AgUiRuntimeRequest;
   toolCallId?: string;
   error?: unknown;
+  /**
+   * The finalized messages this run produced (assistant + tool turns). Present
+   * on the `onFinish` context after a successful run that produced a response;
+   * omitted for `onError` / `onToolCallSeen` and bodyless runs.
+   */
+  messages?: Message[];
+  /** The full finalized response, alongside `messages`, on `onFinish`. */
+  response?: AgentResponse;
 }
 
 function invokeLifecycleCallback(
@@ -114,7 +122,7 @@ async function createAgUiRuntimeStreamResponse(
     upstreamStatus: number;
     upstreamStatusText?: string;
     getCompletedResponse?: () => AgentResponse | null;
-    onFinish?: () => void;
+    onFinish?: (response: AgentResponse | null) => void;
     onError?: (error: unknown) => void;
     onToolCallSeen?: (toolCallId: string) => void;
   },
@@ -183,7 +191,7 @@ async function createAgUiRuntimeStreamResponse(
               return;
             }
           }
-          onFinish?.();
+          onFinish?.(null);
           closeController(controller);
           return;
         }
@@ -204,7 +212,7 @@ async function createAgUiRuntimeStreamResponse(
             return;
           }
         }
-        onFinish?.();
+        onFinish?.(getCompletedResponse?.() ?? null);
       } catch (error) {
         onError?.(error);
         enqueueEvent(controller, "RunError", {
@@ -228,7 +236,7 @@ async function createAgUiRuntimeDirectStreamResponse(
   request: AgUiRuntimeRequest,
   baseContext: Record<string, unknown>,
   lifecycle?: {
-    onFinish?: () => Promise<void> | void;
+    onFinish?: (response: AgentResponse | null) => Promise<void> | void;
     onError?: (error: unknown) => Promise<void> | void;
     onToolCallSeen?: (toolCallId: string) => Promise<void> | void;
   },
@@ -274,7 +282,7 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
   lifecycle?: {
-    onFinish?: () => Promise<void> | void;
+    onFinish?: (response: AgentResponse | null) => Promise<void> | void;
     onError?: (error: unknown) => Promise<void> | void;
     onToolCallSeen?: (toolCallId: string) => Promise<void> | void;
   },
@@ -320,9 +328,9 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
     upstreamBody,
     upstreamStatus: 200,
     getCompletedResponse: () => completedResponse,
-    onFinish: () => {
+    onFinish: (response) => {
       sessionManager.completeRun(request.runId);
-      void lifecycle?.onFinish?.();
+      void lifecycle?.onFinish?.(response);
     },
     onError: (error) => {
       sessionManager.failRun(request.runId);
@@ -470,7 +478,10 @@ export function createAgUiRuntimeHandler(
                 context,
                 config.sessionManager,
                 {
-                  onFinish: () => invokeLifecycle("onFinish"),
+                  onFinish: (response) =>
+                    invokeLifecycle("onFinish", {
+                      ...(response ? { messages: response.messages, response } : {}),
+                    }),
                   onError: (error) => invokeLifecycle("onError", { error }),
                   onToolCallSeen: (toolCallId) => invokeLifecycle("onToolCallSeen", { toolCallId }),
                 },
@@ -482,7 +493,10 @@ export function createAgUiRuntimeHandler(
               parsed,
               context,
               {
-                onFinish: () => invokeLifecycle("onFinish"),
+                onFinish: (response) =>
+                  invokeLifecycle("onFinish", {
+                    ...(response ? { messages: response.messages, response } : {}),
+                  }),
                 onError: (error) => invokeLifecycle("onError", { error }),
                 onToolCallSeen: (toolCallId) => invokeLifecycle("onToolCallSeen", { toolCallId }),
               },

@@ -1716,10 +1716,12 @@ export {
   parseAgUiRequestOrError,
 } from "./ag-ui/host-support.ts";
 export {
+  type AgUiCompletion,
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
   type AgUiHandlerOptions,
   type AgUiInjectedTool,
+  type AgUiOnComplete,
   type AgUiRequest,
   AgUiRequestSchema,
   createAgUiHandler,
