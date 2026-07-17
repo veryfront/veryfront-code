@@ -17,6 +17,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { cx as cn } from "./cva.ts";
 import { Slot } from "./slot.tsx";
+import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
 
 type Side = "top" | "bottom" | "left" | "right";
 
@@ -163,10 +164,10 @@ export function TooltipContent(
 
   if (!open) return null;
 
-  // Portal into the nearest chat root, not <body>: the design tokens live on
-  // `[data-vf-chat]`, so a surface under <body> resolves every `var(--…)` to
-  // nothing (transparent, wrong colors).
-  const container = anchorRef?.current?.closest<HTMLElement>("[data-vf-chat]") ??
+  // Portal into the nearest scope root, not <body>: the design tokens live on
+  // `[data-vf-ui]` / `[data-vf-chat]`, so a surface under <body> resolves every
+  // `var(--…)` to nothing (transparent, wrong colors).
+  const container = anchorRef?.current?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
     document.body;
 
   return createPortal(
