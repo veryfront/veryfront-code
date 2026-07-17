@@ -47,6 +47,12 @@ export {
   sanitizeQueryParamsForCacheKey,
 } from "./utils.ts";
 
+export {
+  type CacheSourceIdentity,
+  encodeCacheSourceIdentity,
+  type EncodedCacheSourceIdentity,
+} from "./source-identity.ts";
+
 // File/dir/stat cache key builders
 export {
   buildConfigCacheKey,
@@ -55,6 +61,7 @@ export {
   buildFileListCacheKey,
   buildFileOperationCacheKey,
   buildStatCacheKeyPrefix,
+  type VirtualConfigSourceContext,
 } from "./builders/file.ts";
 
 // GitHub adapter cache key builders

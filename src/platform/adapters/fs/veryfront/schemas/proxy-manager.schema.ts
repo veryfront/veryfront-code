@@ -10,6 +10,14 @@ export const getGetAdapterParamsSchema = defineSchema((v) =>
     releaseId: v.string().nullable().optional(),
     environmentName: v.string().nullable().optional(),
     branch: v.string().nullable().optional(),
+  }).superRefine((input, ctx) => {
+    if (input.productionMode && !input.releaseId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["releaseId"],
+        message: "releaseId is required in production mode",
+      });
+    }
   })
 );
 

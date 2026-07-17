@@ -10,6 +10,8 @@ import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { __resetLoggerConfigForTests } from "../../utils/logger/index.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
@@ -904,6 +906,42 @@ describe("routing/api/route-executor", () => {
         !(body.detail ?? "").includes("too large"),
         "should not reject malformed Content-Length",
       );
+    });
+  });
+
+  describe("source policy propagation (isolated execution)", () => {
+    afterEach(() => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+    });
+
+    it("restores the exact source integration policy inside the worker", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const policy = normalizeSourceIntegrationPolicy({
+        allow: { confluence: { allowedTools: ["get_page"] } },
+      });
+      const modulePath = new URL("./fixtures/source-policy-route.ts", import.meta.url).pathname;
+      const projectDir = new URL("../../../", import.meta.url).pathname;
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        policy,
+        () =>
+          executeAppRoute(
+            { GET: () => Response.json({ unreachable: true }) },
+            new Request("http://localhost/api/source-policy", { method: "GET" }),
+            makeMatch("/api/source-policy", modulePath),
+            "/api/source-policy",
+            makeAdapter(),
+            { modulePath, projectDir, isLocalProject: true },
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), policy);
     });
   });
 });

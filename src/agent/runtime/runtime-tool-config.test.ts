@@ -6,6 +6,8 @@ import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
+  getRuntimeSourceIntegrationPolicy,
+  getRuntimeSourceIntegrationPolicyFromContext,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -40,6 +42,43 @@ describe("agent/runtime-tool-config", () => {
           __vfAllowedRemoteTools: ["search_docs", 42],
         })),
         [],
+      );
+    });
+  });
+
+  describe("getRuntimeSourceIntegrationPolicy", () => {
+    it("preserves a valid manifest and fails malformed internal state closed", () => {
+      const policy = {
+        schemaVersion: 1 as const,
+        mode: "allowlist" as const,
+        integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+      };
+
+      assertEquals(
+        getRuntimeSourceIntegrationPolicy(runtimeConfig({
+          __vfSourceIntegrationPolicy: policy,
+        })),
+        policy,
+      );
+      assertEquals(
+        getRuntimeSourceIntegrationPolicy(runtimeConfig({
+          __vfSourceIntegrationPolicy: {
+            schemaVersion: 1,
+            mode: "allowlist",
+            integrations: { gmail: { allowedToolIds: "list_emails" } },
+          },
+        })),
+        { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      );
+    });
+
+    it("reads the same fail-closed manifest contract from child tool context", () => {
+      assertEquals(getRuntimeSourceIntegrationPolicyFromContext(undefined), undefined);
+      assertEquals(
+        getRuntimeSourceIntegrationPolicyFromContext({
+          __vfSourceIntegrationPolicy: { schemaVersion: 2, mode: "unrestricted" },
+        }),
+        { schemaVersion: 1, mode: "allowlist", integrations: {} },
       );
     });
   });

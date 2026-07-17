@@ -6,14 +6,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontConfigInput } from "#veryfront/config/schemas/index.ts";
 
 const configInputHasIntegrations: "integrations" extends keyof VeryfrontConfigInput ? true : false =
-  false;
+  true;
 
-describe("integration config removal", () => {
-  it("does not expose integration configuration in veryfront.config", () => {
-    assertEquals(configInputHasIntegrations, false);
+describe("source integration policy cutover", () => {
+  it("keeps the canonical narrowing policy in veryfront.config", () => {
+    assertEquals(configInputHasIntegrations, true);
   });
 
-  it("does not expose integration config sync", () => {
+  it("does not restore integration config sync or MCP loader state", () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },

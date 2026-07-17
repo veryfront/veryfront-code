@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { toolRegistry } from "#veryfront/tool";
+import { tool, toolRegistry } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
 
@@ -25,5 +27,26 @@ describe("agent factory", () => {
     });
     assertEquals(toolRegistry.has("load_skill"), true);
     assertEquals(toolRegistry.has("load-skill"), false);
+  });
+
+  it("rejects inline local tools in the reserved integration namespace", () => {
+    const localIntegrationShadow = tool({
+      id: "gmail__list_emails",
+      description: "Local integration shadow",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => [],
+    });
+
+    assertThrows(
+      () =>
+        agent({
+          id: "integration-shadow-agent",
+          model: "auto",
+          system: "Test.",
+          tools: { gmail__list_emails: localIntegrationShadow },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
   });
 });

@@ -12,6 +12,11 @@ import {
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
 
+const unrestrictedSourceIntegrationPolicy = {
+  schemaVersion: 1,
+  mode: "unrestricted",
+} as const;
+
 function localTool(description: string) {
   return {
     description,
@@ -33,6 +38,7 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
 
   const runtime = await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     options: {
       projectId: "project-1",
       branchId: "branch-1",
@@ -80,6 +86,7 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
   try {
     const createRuntime = (description: string) =>
       createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
         options: {
           projectId: "project-1",
           branchId: "branch-1",
@@ -113,6 +120,7 @@ Deno.test("createDefaultHostedChatRuntime resolves configured owner tool selecto
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
 
   await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     options: {
       projectId: "project-1",
       authToken: "token-1",
@@ -149,6 +157,7 @@ Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes 
   let cleanupCalls = 0;
 
   const runtime = await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     options: {
       projectId: "project-1",
       authToken: "token-1",
@@ -185,6 +194,7 @@ Deno.test("createDefaultHostedChatRuntime cleans up after partial per-run tool s
   await assertRejects(
     () =>
       createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
         options: {
           projectId: "project-1",
           authToken: "token-1",
@@ -218,6 +228,7 @@ Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup al
   await assertRejects(
     () =>
       createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
         options: {
           projectId: "project-1",
           authToken: "token-1",

@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { API_CLIENT_ERROR } from "#veryfront/errors";
-import { getPushRefFallbackBranch, ProxyFSAdapterManager } from "./proxy-manager.ts";
+import { VeryfrontFSAdapter } from "./adapter.ts";
+import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 
 const baseConfig = {
   veryfront: {
@@ -36,8 +42,8 @@ async function assertGetAdapterRejects(
 }
 
 describe("ProxyFSAdapterManager", () => {
-  describe("getPushRefFallbackBranch", () => {
-    it("returns main for orphaned push ref branch-file 404s", () => {
+  describe("exact preview source", () => {
+    it("propagates a missing push branch without loading main", async () => {
       const branch = "push-20260324t121046";
       const error = API_CLIENT_ERROR.create({
         detail: "API request failed: 404 Not Found",
@@ -52,62 +58,145 @@ describe("ProxyFSAdapterManager", () => {
           },
         },
       });
-
-      assertEquals(getPushRefFallbackBranch(error, branch), "main");
-    });
-
-    it("does not fall back for non-push branches", () => {
-      const branch = "feature-x";
-      const error = API_CLIENT_ERROR.create({
-        detail: "API request failed: 404 Not Found",
-        status: 404,
-        context: {
-          details: {
-            responseText: JSON.stringify({ detail: `Branch '${branch}' not found` }),
-            url:
-              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&branch=${
-                encodeURIComponent(branch)
-              }`,
-          },
+      const attemptedBranches: Array<string | null | undefined> = [];
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async () => {
+            const context = adapter.getContentContext();
+            attemptedBranches.push(context?.sourceType === "branch" ? context.branch : null);
+            throw error;
+          };
+          return adapter;
         },
       });
 
-      assertEquals(getPushRefFallbackBranch(error, branch), null);
+      try {
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "my-project",
+              "test-token",
+              undefined,
+              false,
+              null,
+              null,
+              branch,
+            ),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+        assertEquals(attemptedBranches, [branch]);
+        assertEquals(manager.hasAdapter("my-project", false, null, "main"), false);
+      } finally {
+        manager.dispose();
+      }
+    });
+  });
+
+  describe("exact production source", () => {
+    it("rejects mutable environment selection without an immutable release", async () => {
+      const manager = createManager();
+      try {
+        await assertGetAdapterRejects(
+          manager,
+          ["my-project", "test-token", undefined, true, null, "Production", null],
+          "releaseId is required in production mode",
+        );
+      } finally {
+        manager.dispose();
+      }
     });
 
-    it("does not fall back for project lookup 404s", () => {
-      const branch = "push-20260324t121046";
-      const error = API_CLIENT_ERROR.create({
-        detail: "API request failed: 404 Not Found",
-        status: 404,
-        context: {
-          details: {
-            responseText: JSON.stringify({ detail: "Project 'my-project' not found" }),
-            url: "https://api.example.com/projects/my-project",
-          },
+    it("keeps environment name and release id in the resolved context", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
         },
       });
+      try {
+        const adapter = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          "Production",
+          null,
+        );
 
-      assertEquals(getPushRefFallbackBranch(error, branch), null);
+        assertEquals(adapter.getContentContext(), {
+          sourceType: "environment",
+          projectSlug: "my-project",
+          environmentName: "Production",
+          releaseId: "release-42",
+        });
+      } finally {
+        manager.dispose();
+      }
     });
 
-    it("does not fall back outside preview mode", () => {
-      const branch = "push-20260324t121046";
-      const error = API_CLIENT_ERROR.create({
-        detail: "API request failed: 404 Not Found",
-        status: 404,
-        context: {
-          details: {
-            responseText: JSON.stringify({ detail: `Branch '${branch}' not found` }),
-            url:
-              `https://api.example.com/projects/my-project/files?limit=100&sort_by=updated_at&sort_order=desc&branch=${
-                encodeURIComponent(branch)
-              }`,
-          },
+    it("keeps a release-only source distinct from the production environment", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
         },
       });
+      try {
+        const adapter = await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          null,
+          null,
+        );
 
-      assertEquals(getPushRefFallbackBranch(error, branch, true), null);
+        assertEquals(adapter.getContentContext(), {
+          sourceType: "release",
+          projectSlug: "my-project",
+          releaseId: "release-42",
+        });
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("uses the release-only identity for lookup and eviction", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      try {
+        await manager.getAdapter(
+          "my-project",
+          "test-token",
+          undefined,
+          true,
+          "release-42",
+          null,
+          null,
+        );
+
+        assertEquals(manager.hasAdapter("my-project", true, "release-42"), true);
+        assertEquals(
+          manager.hasAdapter("my-project", true, "release-42", null, "Production"),
+          false,
+        );
+
+        manager.evictAdapter("my-project", true, "release-42");
+        assertEquals(manager.hasAdapter("my-project", true, "release-42"), false);
+      } finally {
+        manager.dispose();
+      }
     });
   });
 
@@ -216,43 +305,17 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
-    it("should differentiate release-less production adapters by environment", () => {
+    it("rejects release-less production cache lookups", () => {
       const manager = createManager();
-      const disposed: string[] = [];
-      const adapters = (manager as unknown as {
-        adapters: Map<
-          string,
-          { adapter: { dispose: () => void }; lastAccessed: number }
-        >;
-      }).adapters;
-      adapters.set("proxy:project:production:environment:production", {
-        adapter: { dispose: () => disposed.push("production") },
-        lastAccessed: Date.now(),
-      });
-      adapters.set("proxy:project:production:environment:Development", {
-        adapter: { dispose: () => disposed.push("Development") },
-        lastAccessed: Date.now(),
-      });
-
-      assertEquals(
-        manager.hasAdapter("project", true, null),
-        true,
+      assertThrows(
+        () => manager.hasAdapter("project", true, null, null, "Production"),
+        Error,
+        "Missing releaseId in production",
       );
-      assertEquals(
-        manager.hasAdapter("project", true, null, null, "Development"),
-        true,
-      );
-
-      manager.evictAdapter("project", true, null);
-      assertEquals(disposed, ["production"]);
-      assertEquals(manager.hasAdapter("project", true, null), false);
-      assertEquals(manager.hasAdapter("project", true, null, null, "Development"), true);
-
-      manager.evictAdapter("project", true, null, null, "Development");
-      assertEquals(disposed, ["production", "Development"]);
-      assertEquals(
-        manager.hasAdapter("project", true, null, null, "Development"),
-        false,
+      assertThrows(
+        () => manager.evictAdapter("project", true, null, null, "Production"),
+        Error,
+        "Missing releaseId in production",
       );
       manager.dispose();
     });

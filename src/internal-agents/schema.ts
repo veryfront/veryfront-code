@@ -15,9 +15,7 @@ import {
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
-  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   getRuntimeAgentCredentialsSchema,
-  getRuntimeAgentRunInvocationSchema,
   getRuntimeAgentSourceContextSchema,
   type RuntimeAgentSourceContext,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
@@ -75,7 +73,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => isWithinJsonSizeLimit(value, 65_536),
       { message: "context must be less than 64 KB total" },
     ),
-    agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
       { message: "agentConfig must be less than 64 KB" },
@@ -96,17 +94,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
   })
 );
 
-export const getInternalAgentStreamRequestSchema = defineSchema((v) => {
-  const controlPlaneStreamRequestSchema = getInternalAgentControlPlaneStreamRequestSchema();
-
-  return v.union([
-    controlPlaneStreamRequestSchema,
-    getRuntimeAgentRunInvocationSchema()
-      .strict()
-      .transform(buildRuntimeAgentControlPlaneStreamRequestFromInvocation)
-      .pipe(controlPlaneStreamRequestSchema),
-  ]);
-});
+export const getInternalAgentStreamRequestSchema = getInternalAgentControlPlaneStreamRequestSchema;
 
 type RuntimeMessage = AgUiRuntimeMessage;
 type InternalAgentCompatibilityMessage = InferSchema<

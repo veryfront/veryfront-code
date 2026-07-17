@@ -21,6 +21,10 @@ import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "
 import { createRequestAuthCache } from "./request-auth-cache.ts";
 import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
+import {
+  type HostedRuntimeSourceIdentity,
+  snapshotHostedRuntimeSourceIdentity,
+} from "../hosted/runtime-source-binding.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -82,6 +86,8 @@ export type AgentServiceDetachedCleanupInput<TExecution extends object> =
 /** Options accepted by hosted agent service route set. */
 export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   forwardedConfigNamespace?: string;
+  /** Exact immutable source snapshot served by control-plane runtime invocations. */
+  runtimeSource?: HostedRuntimeSourceIdentity;
   authenticateRequest: (
     request: Request,
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
@@ -192,6 +198,9 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 ): HostedAgentServiceRouteSet<TExecution> {
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
+  const runtimeSource = options.runtimeSource
+    ? snapshotHostedRuntimeSourceIdentity(options.runtimeSource)
+    : undefined;
   const requestAuthCache = createRequestAuthCache<HostedServiceAuthenticatedRequest>({
     authenticate: (request) => trace("agui.verifyJwt", () => options.authenticateRequest(request)),
   });
@@ -321,6 +330,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
           options.verifyProjectAccess(projectId, authToken),
+        runtimeSource,
       });
       if (req instanceof Response) {
         return req;

@@ -19,6 +19,9 @@ import type { Checkpoint, WorkflowContext, WorkflowNode, WorkflowRun } from "../
 import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 class MockStepExecutor extends StepExecutor {
   constructor(
@@ -96,6 +99,8 @@ function createTestRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     pendingApprovals: [],
     createdAt: new Date(),
     ...overrides,
+    sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+      UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 

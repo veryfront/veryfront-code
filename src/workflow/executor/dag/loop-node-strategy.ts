@@ -9,6 +9,7 @@ import { parseDuration } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 interface ExecuteLoopNodeStrategyInput {
   node: WorkflowNode;
@@ -95,6 +96,7 @@ export async function executeLoopNodeStrategy(
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     });
     runtime.abortSignal?.throwIfAborted();
 

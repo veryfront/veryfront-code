@@ -1,4 +1,7 @@
-import { discoverProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
+import {
+  discoverProjectAgentRuntime,
+  type ProjectAgentRuntimeDiscovery,
+} from "#veryfront/agent/project/agent-runtime.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -27,7 +30,7 @@ export function formatProjectRuntimeDiscoveryErrors(
 
 export async function discoverProjectTaskRuntime(
   options: ProjectTaskRuntimeOptions,
-): Promise<DiscoveryResult> {
+): Promise<ProjectAgentRuntimeDiscovery> {
   const discovery = await discoverProjectAgentRuntime({
     projectDir: options.projectDir,
     adapter: options.adapter,
