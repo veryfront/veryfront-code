@@ -13,6 +13,7 @@
  */
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
 
 /** Props accepted by `<Floating>`. */
 export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -106,12 +107,12 @@ export function Floating({
   }, [open, align, matchTriggerWidth, anchorRef]);
 
   if (!open) return null;
-  // Portal into the nearest chat root rather than <body>: the design tokens are
-  // scoped to `[data-vf-chat]`, so a surface under <body> would resolve every
-  // `var(--…)` to nothing (transparent background, wrong text color). The root
-  // still sits above the composer's `overflow-hidden`, so we keep the clipping
-  // escape while staying inside the token scope.
-  const container = anchorRef.current?.closest<HTMLElement>("[data-vf-chat]") ??
+  // Portal into the nearest scope root rather than <body>: the design tokens are
+  // scoped to `[data-vf-ui]` / `[data-vf-chat]`, so a surface under <body> would
+  // resolve every `var(--…)` to nothing (transparent background, wrong text
+  // color). The root still sits above the composer's `overflow-hidden`, so we
+  // keep the clipping escape while staying inside the token scope.
+  const container = anchorRef.current?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
     document.body;
   return createPortal(
     <div ref={ref} style={{ ...pos, ...style }} {...rest}>{children}</div>,
