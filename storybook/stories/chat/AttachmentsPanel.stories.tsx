@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { AttachmentsPanel } from "veryfront/chat";
+import { AttachmentPill, AttachmentsPanel } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -20,6 +20,10 @@ AttachmentsPanel.Root  <- or compose it: context (uploads, callbacks, file picke
   +-- AttachmentsPanel.Header <- "Attachments" title + close button (when onClose set)
   +-- AttachmentsPanel.List   <- flex-gap column of attachment cards
   |     +-- AttachmentsPanel.Item    <- composes <AttachmentPill> and an overflow menu
+  |     |     +-- AttachmentsPanel.Item.Icon     <- file-type icon square
+  |     |     +-- AttachmentsPanel.Item.Preview  <- image thumbnail (image files)
+  |     |     +-- AttachmentsPanel.Item.Remove   <- delete control (onRemoveUpload)
+  |     |     (name / size: use AttachmentPill.Label or read useAttachments)
   +-- AttachmentsPanel.Empty  <- empty state (heading, hint, upload action)
   +-- AttachmentsPanel.Action <- upload/attach button (opens the native picker)`;
 
@@ -224,9 +228,9 @@ export const Loading: Story = {
     docs: {
       source: {
         code:
-          `import { AttachmentsPanel, useUploadsRegistry } from "veryfront/chat";
+          `import { AttachmentsPanel, useAttachments } from "veryfront/chat";
 
-const uploads = useUploadsRegistry({ url: "/api/uploads" });
+const uploads = useAttachments({ url: "/api/uploads" });
 
 <AttachmentsPanel
   uploads={uploads.items}
@@ -242,6 +246,56 @@ const uploads = useUploadsRegistry({ url: "/api/uploads" });
       <ReviewSurface label="Loading">
         <div className="h-[280px]">
           <AttachmentsPanel uploads={[]} loading onAttach={() => undefined} />
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const ComposedRow: Story = {
+  name: "Composed row (Item leaves)",
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { AttachmentPill, AttachmentsPanel } from "veryfront/chat";
+
+// Own the row: compose it from the domain leaves (.Icon derives pill state,
+// .Remove wires to onRemoveUpload) + AttachmentPill.Label for name/size. Plain
+// text isn't a leaf — read useAttachments() or use .Label.
+<AttachmentsPanel.Root uploads={uploads} onRemoveUpload={remove}>
+  <div className="flex-1 overflow-y-auto px-4 py-4">
+    <AttachmentsPanel.List>
+      {uploads.map((file) => (
+        <AttachmentsPanel.Item key={file.id} file={file}>
+          <AttachmentsPanel.Item.Icon />
+          <AttachmentPill.Label />
+          <AttachmentsPanel.Item.Remove />
+        </AttachmentsPanel.Item>
+      ))}
+    </AttachmentsPanel.List>
+  </div>
+</AttachmentsPanel.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ReviewSurface label="Composed row">
+        <div className="h-[280px]">
+          <AttachmentsPanel.Root uploads={uploads} onRemoveUpload={() => undefined}>
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <AttachmentsPanel.List>
+                {uploads.map((file) => (
+                  <AttachmentsPanel.Item key={file.id} file={file}>
+                    <AttachmentsPanel.Item.Icon />
+                    <AttachmentPill.Label />
+                    <AttachmentsPanel.Item.Remove />
+                  </AttachmentsPanel.Item>
+                ))}
+              </AttachmentsPanel.List>
+            </div>
+          </AttachmentsPanel.Root>
         </div>
       </ReviewSurface>
     </StoryFrame>

@@ -187,7 +187,13 @@ export {
   ToolStatusBadge,
   type UploadedFile,
   useAttachmentPill,
+  useAttachments,
+  useAttachments as useUploadsRegistry,
+  type UseAttachmentsOptions,
+  type UseAttachmentsOptions as UseUploadsRegistryOptions,
   useAttachmentsPanel,
+  type UseAttachmentsResult,
+  type UseAttachmentsResult as UseUploadsRegistryResult,
   useReasoning,
   useSources,
   useStepIndicator,
@@ -198,9 +204,6 @@ export {
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,
-  useUploadsRegistry,
-  type UseUploadsRegistryOptions,
-  type UseUploadsRegistryResult,
 } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
