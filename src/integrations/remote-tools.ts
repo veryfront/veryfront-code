@@ -5,7 +5,7 @@
  * via the API's /integrations/tools/call endpoint.
  *
  * Design: NO global registration. Tools are fetched per-request because
- * different projects have different enabled integrations. The agent runtime
+ * different projects expose different authorized integration tools. The agent runtime
  * calls these functions at tool-enumeration and tool-execution time.
  */
 
@@ -13,7 +13,6 @@ import { logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
-import type { IntegrationScope } from "./types.ts";
 
 /**
  * Default timeout for outbound integration API calls. Without it, a hung remote
@@ -38,11 +37,6 @@ interface CallToolTextContent {
 type RemoteIntegrationToolExecutionContext = {
   runId?: string;
   agentId?: string;
-};
-
-type IntegrationConfigSyncInput = {
-  scope: IntegrationScope;
-  tools?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -122,8 +116,8 @@ async function fetchToolList(
   });
 
   if (!response.ok) {
-    // Throw so callers can distinguish a fetch failure from "no integrations
-    // configured" (which returns an empty tools array with status 200).
+    // Throw so callers can distinguish a fetch failure from "no remote tools
+    // available" (which returns an empty tools array with status 200).
     throw new Error(
       `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
     );
@@ -196,7 +190,7 @@ async function callRemoteTool(
  * available tools. Returns empty array if no API config or no tools.
  *
  * Called per agent loop iteration — results are scoped to the current
- * project's enabled integrations via the per-request API token.
+ * project's authorized integration tools via the per-request API token.
  */
 export async function getRemoteIntegrationToolDefinitions(): Promise<
   ToolDefinition[]
@@ -255,40 +249,4 @@ export async function executeRemoteIntegrationTool(
     args,
     context,
   );
-}
-
-/**
- * Sync integration config from veryfront.config.ts to the API.
- * This is a full-replace operation. Called by the MCP server path
- * which has access to the validated, canonical config.
- */
-export async function syncIntegrationConfig(
-  apiBaseUrl: string,
-  apiToken: string,
-  integrations: Record<string, IntegrationConfigSyncInput>,
-): Promise<void> {
-  try {
-    const response = await fetch(`${apiBaseUrl}/integrations/config`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ integrations }),
-      signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
-    });
-
-    if (!response.ok) {
-      logger.error("Failed to sync integration config to API", {
-        status: response.status,
-      });
-    } else {
-      const data = (await response.json()) as { synced: number };
-      logger.info("Synced integration config to API", { synced: data.synced });
-    }
-  } catch (err) {
-    logger.error("Failed to sync integration config", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }

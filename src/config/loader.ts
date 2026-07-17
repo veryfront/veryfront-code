@@ -173,8 +173,8 @@ function validateCorsConfig(userConfig: unknown): void {
 }
 
 function validateConfigShape(userConfig: unknown): VeryfrontConfig {
-  const normalizedConfig = validateVeryfrontConfig(userConfig) as VeryfrontConfig;
-  if (!userConfig || typeof userConfig !== "object") return normalizedConfig;
+  const validatedConfig = validateVeryfrontConfig(userConfig) as VeryfrontConfig;
+  if (!userConfig || typeof userConfig !== "object") return validatedConfig;
 
   const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
@@ -182,10 +182,7 @@ function validateConfigShape(userConfig: unknown): VeryfrontConfig {
       detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
     });
   }
-  return {
-    ...(userConfig as VeryfrontConfig),
-    integrations: normalizedConfig.integrations,
-  };
+  return userConfig as VeryfrontConfig;
 }
 
 /** @internal Exported for tests: merges user config over fresh defaults (deep for nested objects). */

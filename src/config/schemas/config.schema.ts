@@ -1,7 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import type { IntegrationRuntimeConfigInput } from "#veryfront/integrations/types.ts";
 
 // Sub-schemas
 const getCorsSchema = defineSchema((v) =>
@@ -596,28 +595,6 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         })
         .partial()
         .optional(),
-      /** Third-party integration configuration (e.g., Slack, GitHub) */
-      integrations: v
-        .record(
-          v.string(),
-          v
-            .object({
-              /** Token scope. Legacy "endUser" input is normalized to "user". */
-              scope: v
-                .enum(["user", "project", "endUser"])
-                .transform((scope): "user" | "project" => scope === "project" ? "project" : "user")
-                .optional(),
-              /** @deprecated Use `scope: "user"` instead. */
-              perUser: v.boolean().optional(),
-              /** Allowlist of tool IDs to expose. When set, only these tools are registered.
-               * This keeps the MCP context narrow by excluding unused tools.
-               * @example ["list-issues", "create-issue"] */
-              tools: v.array(v.string()).optional(),
-            })
-            .partial()
-            .optional(),
-        )
-        .optional(),
       /**
        * Extensions registered for this project.
        *
@@ -676,14 +653,8 @@ export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
 // Inferred types
 export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
-type InferredVeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
-/**
- * User-authored configuration accepted before schema transforms run.
- * `endUser` remains a deprecated integration scope input and normalizes to `user`.
- */
-export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrations"> & {
-  integrations?: Record<string, IntegrationRuntimeConfigInput | undefined>;
-};
+/** User-authored configuration accepted before schema transforms run. */
+export type VeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
 
 // Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
@@ -744,7 +715,6 @@ const knownConfigKeys = new Set([
   "client",
   "generate",
   "tailwind",
-  "integrations",
   "extensions",
   "openapi",
 ]);
