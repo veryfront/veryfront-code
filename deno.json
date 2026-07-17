@@ -430,6 +430,7 @@
     "typecheck:consumer": "deno run --allow-read --allow-run --allow-env --allow-write scripts/typecheck/run-consumer-typecheck.ts",
     "codemod:chat": "deno run --frozen --config=scripts/codemods/deno.json --allow-read --allow-write --allow-env=BABEL_TYPES_8_BREAKING scripts/codemods/migrate-chat-composition.ts",
     "lint:chat-ratchets": "deno run --allow-read scripts/lint/ban-chat-antipatterns.ts && deno check --no-config --frozen --lock=deno.lock scripts/codemods/migrate-chat-composition.ts && deno check --config=deno.json --frozen --lock=deno.lock src/react/chat-barrels.check.ts && deno test --frozen --config=scripts/codemods/deno.json --no-check --allow-read --allow-write --allow-env=BABEL_TYPES_8_BREAKING scripts/codemods/migrate-chat-composition.test.ts",
+    "lint:test-typecheck": "deno run --allow-read --allow-run scripts/lint/check-test-typecheck-baseline.ts",
     "docs": "deno run --allow-read --allow-write --allow-run --allow-env scripts/docs/generate-api-reference.ts",
     "docs:coverage": "deno run --allow-read scripts/docs/docs-coverage.ts",
     "docs:copy": "rm -rf ../../docs/docs/code/api-reference && cp -r docs/api-reference/ ../../docs/docs/code/api-reference/",
