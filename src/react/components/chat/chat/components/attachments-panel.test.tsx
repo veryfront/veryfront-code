@@ -3,6 +3,7 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd";
 import type { UploadedFile } from "./attachments-panel.tsx";
 import { AttachmentsPanel, useAttachmentsPanel } from "./attachments-panel.tsx";
+import { AttachmentPill } from "./attachment-pill.tsx";
 
 const uploads: UploadedFile[] = [
   { id: "upload-1", name: "run-analysis.csv", size: 24424, type: "text/csv" },
@@ -86,6 +87,57 @@ describe("AttachmentsPanel — composability contract", () => {
       </AttachmentsPanel>,
     );
     assertStringIncludes(html, "vf-custom-list-class");
+  });
+
+  it("recomposes the row from Item leaves (Icon + Remove) + AttachmentPill.Label", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads} onRemoveUpload={() => undefined}>
+        <AttachmentsPanel.List>
+          {uploads.map((file) => (
+            <AttachmentsPanel.Item key={file.id} file={file}>
+              <AttachmentsPanel.Item.Icon />
+              {/* Name + size are plain text — reuse the pill's Label leaf. */}
+              <AttachmentPill.Label />
+              <AttachmentsPanel.Item.Remove />
+            </AttachmentsPanel.Item>
+          ))}
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    // Name + formatted size come through the Label leaf...
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(html, "24 KB");
+    // ...and the composed row uses the pill's ✕ Remove (wired to onRemoveUpload),
+    // not the default overflow menu.
+    assertStringIncludes(html, 'aria-label="Remove run-analysis.csv"');
+    assert(!html.includes('aria-label="Actions for run-analysis.csv"'));
+  });
+
+  it("Item.Remove renders nothing when no onRemoveUpload is set", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={uploads[0]!}>
+            <AttachmentsPanel.Item.Icon />
+            <AttachmentsPanel.Item.Remove />
+          </AttachmentsPanel.Item>
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    assert(!html.includes('aria-label="Remove run-analysis.csv"'));
+  });
+
+  it("Item leaves read the file from context; used outside an Item they throw", () => {
+    function Orphan() {
+      return <AttachmentsPanel.Item.Icon />;
+    }
+    let threw = false;
+    try {
+      renderToString(<Orphan />);
+    } catch {
+      threw = true;
+    }
+    assertEquals(threw, true);
   });
 
   it("useAttachmentsPanel throws outside an AttachmentsPanel", () => {
