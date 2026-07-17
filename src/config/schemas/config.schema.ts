@@ -595,25 +595,6 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         })
         .partial()
         .optional(),
-      /** Third-party integration configuration (e.g., Slack, GitHub) */
-      integrations: v
-        .record(
-          v.string(),
-          v
-            .object({
-              /** Token scope: "project" (shared) or "endUser" (per-end-user OAuth). */
-              scope: v.enum(["project", "endUser"]).optional(),
-              /** @deprecated Use `scope: "endUser"` instead. */
-              perUser: v.boolean().optional(),
-              /** Allowlist of tool IDs to expose. When set, only these tools are registered.
-               * This keeps the MCP context narrow by excluding unused tools.
-               * @example ["list-issues", "create-issue"] */
-              tools: v.array(v.string()).optional(),
-            })
-            .partial()
-            .optional(),
-        )
-        .optional(),
       /**
        * Extensions registered for this project.
        *
@@ -672,6 +653,7 @@ export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
 // Inferred types
 export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
+/** User-authored configuration accepted before schema transforms run. */
 export type VeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
 
 // Validation function
@@ -733,7 +715,6 @@ const knownConfigKeys = new Set([
   "client",
   "generate",
   "tailwind",
-  "integrations",
   "extensions",
   "openapi",
 ]);
