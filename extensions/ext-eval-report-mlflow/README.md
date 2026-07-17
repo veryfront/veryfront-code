@@ -2,10 +2,10 @@
 
 > **Category:** Eval export | **Requires:** `EvalReportExporterRegistry` | **Optional**
 
-Registers the `mlflow` eval report exporter by default. Use
-`VERYFRONT_EVAL_MLFLOW_EXPORTER_ID` or extension config when a project needs a
-different exporter id. Use this extension when completed Veryfront `EvalReport`
-payloads should be written to MLflow Tracking as one run per eval execution.
+Registers the `mlflow` eval report exporter. The exporter id is fixed to
+`mlflow` so CLI selection via `VERYFRONT_EVAL_EXPORTERS` / `--export` stays
+predictable. Use this extension when completed Veryfront `EvalReport` payloads
+should be written to MLflow Tracking as one run per eval execution.
 
 > **npm packaging note:** CLI usage is bundled into the root `veryfront`
 > package, so `veryfront eval --export mlflow` works without installing a
@@ -60,7 +60,6 @@ legacy singular fallback when `VERYFRONT_EVAL_EXPORTERS` is unset.
 | `MLFLOW_TRACKING_PASSWORD`                      | No       | Password for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_USERNAME`.                               |
 | `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids selected by the CLI when `--export` is omitted. Use `mlflow` for this extension.  |
 | `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter env var used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                          |
-| `VERYFRONT_EVAL_MLFLOW_EXPORTER_ID`             | No       | Exporter id registered by this extension. Defaults to `mlflow`; keep `VERYFRONT_EVAL_EXPORTERS` or `--export` in sync.        |
 | `VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE` | No       | CLI redaction opt-in for metric evidence. Leave unset or false unless evidence contains only safe labels or aggregates.       |
 
 `MLFLOW_TRACKING_URI` must be an HTTP(S) URI without embedded username/password
@@ -169,9 +168,15 @@ v1 artifact transport supports:
   `http://localhost:5600/api/2.0/mlflow-artifacts/artifacts`.
 
 After upload, the exporter calls MLflow `artifacts/list` for the
-`veryfront-eval` path and includes a sanitized verification receipt with the
-listed artifact paths. This validates retrieval through the tracking API
-without exporting artifact contents in receipts, logs, or issue evidence.
+`veryfront-eval` path and includes a sanitized verification receipt
+(`verified` plus any `missing` paths) recording which uploaded paths the
+tracking API reported. The uploads themselves are the source of truth for
+success: because `artifacts/list` responses vary across MLflow deployments
+(path prefixing, pagination, artifact-store backends), a mismatch — or a
+listing endpoint that errors — is logged as a warning and reflected in the
+receipt and the run's `artifacts.verified` tag, but never fails an export that
+otherwise succeeded. Artifact contents are never exported in receipts, logs, or
+issue evidence.
 
 It does not upload directly to local filesystem artifact roots or vendor storage
 schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar backend-specific

@@ -26,8 +26,7 @@
           "MLFLOW_TRACKING_PASSWORD",
           "MLFLOW_TRACKING_TOKEN",
           "MLFLOW_TRACKING_URI",
-          "MLFLOW_TRACKING_USERNAME",
-          "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID"
+          "MLFLOW_TRACKING_USERNAME"
         ]
       }
     ],

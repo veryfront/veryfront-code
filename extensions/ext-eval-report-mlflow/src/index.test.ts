@@ -24,7 +24,6 @@ const MLFLOW_ENV_KEYS = [
   "MLFLOW_TRACKING_TOKEN",
   "MLFLOW_TRACKING_URI",
   "MLFLOW_TRACKING_USERNAME",
-  "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
 ] as const;
 
 const originalMlflowEnv = new Map(
@@ -292,7 +291,6 @@ describe("ext-eval-report-mlflow", () => {
           "MLFLOW_TRACKING_TOKEN",
           "MLFLOW_TRACKING_URI",
           "MLFLOW_TRACKING_USERNAME",
-          "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
         ],
       },
     ]);
@@ -336,7 +334,10 @@ describe("ext-eval-report-mlflow", () => {
     assertEquals(registry.list(), []);
   });
 
-  it("uses the configured MLflow exporter id from config and unregisters it during teardown", async () => {
+  it("keeps the fixed 'mlflow' exporter id even when config supplies an id", async () => {
+    // The exporter id is deliberately fixed (see #2918): CLI selection via
+    // VERYFRONT_EVAL_EXPORTERS=mlflow resolves by this id, so an extra `id`
+    // field on config must be ignored rather than renaming the exporter.
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "http://mlflow.test");
     const registry = createEvalReportExporterRegistry();
@@ -344,30 +345,16 @@ describe("ext-eval-report-mlflow", () => {
     const extension = factory({
       id: "custom-config",
       fetch: fetchImpl,
-    });
+    } as Record<string, unknown>);
 
     await extension.setup?.(createContext(registry));
 
-    assertEquals(registry.list().map((exporter) => exporter.id), ["custom-config"]);
-    assertExists(registry.get("custom-config"));
-    assertEquals(registry.get("mlflow"), undefined);
+    assertEquals(registry.list().map((exporter) => exporter.id), ["mlflow"]);
+    assertExists(registry.get("mlflow"));
+    assertEquals(registry.get("custom-config"), undefined);
 
     await extension.teardown?.();
-    assertEquals(registry.get("custom-config"), undefined);
-  });
-
-  it("uses VERYFRONT_EVAL_MLFLOW_EXPORTER_ID when config does not set an id", async () => {
-    clearMlflowEnv();
-    Deno.env.set("MLFLOW_TRACKING_URI", "http://mlflow.test");
-    Deno.env.set("VERYFRONT_EVAL_MLFLOW_EXPORTER_ID", "databricks-mlflow");
-    const registry = createEvalReportExporterRegistry();
-    const { fetchImpl } = createMlflowFetchRecorder();
-    const extension = factory({ fetch: fetchImpl });
-
-    await extension.setup?.(createContext(registry));
-
-    assertEquals(registry.list().map((exporter) => exporter.id), ["databricks-mlflow"]);
-    assertExists(registry.get("databricks-mlflow"));
+    assertEquals(registry.get("mlflow"), undefined);
   });
 
   it("rejects non-HTTP tracking URIs before making MLflow REST calls", async () => {
@@ -474,6 +461,7 @@ describe("ext-eval-report-mlflow", () => {
         "veryfront-eval/summary.json",
         "veryfront-eval/results.jsonl",
       ],
+      missing: [],
     });
 
     const createRun = requests.find((request) =>
@@ -638,6 +626,134 @@ describe("ext-eval-report-mlflow", () => {
         "http://mlflow.test:5600/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/results.jsonl",
       ],
     );
+  });
+
+  it("verifies artifacts against a real-shaped artifacts/list response with extra siblings", async () => {
+    // MLflow lists every file under the queried path, including artifacts we did
+    // not write. Verification must still pass as long as our three are present.
+    const { fetchImpl } = createMlflowFetchRecorder({
+      artifactListPaths: [
+        "veryfront-eval/report.json",
+        "veryfront-eval/summary.json",
+        "veryfront-eval/results.jsonl",
+        "veryfront-eval/unrelated-other-tool.json",
+      ],
+    });
+    const exporter = createEvalReportMlflowExporter({
+      trackingUri: "http://mlflow.test",
+    }, fetchImpl);
+
+    const receipt = await exporter.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    assertEquals(receipt.metadata?.artifactVerification, {
+      method: "artifacts/list",
+      verified: true,
+      artifacts: [
+        "veryfront-eval/report.json",
+        "veryfront-eval/summary.json",
+        "veryfront-eval/results.jsonl",
+      ],
+      missing: [],
+    });
+  });
+
+  it("treats a mismatched artifacts/list response as non-fatal (export still succeeds)", async () => {
+    // Some MLflow deployments prefix or paginate artifacts/list differently, so a
+    // listing that does not echo every uploaded path must NOT fail the export.
+    const { requests, fetchImpl } = createMlflowFetchRecorder({
+      artifactListPaths: ["veryfront-eval/report.json"],
+    });
+    const exporter = createEvalReportMlflowExporter({
+      trackingUri: "http://mlflow.test",
+    }, fetchImpl);
+
+    const receipt = await exporter.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    assertEquals(receipt.metadata?.artifactVerification, {
+      method: "artifacts/list",
+      verified: false,
+      artifacts: [
+        "veryfront-eval/report.json",
+        "veryfront-eval/summary.json",
+        "veryfront-eval/results.jsonl",
+      ],
+      missing: [
+        "veryfront-eval/summary.json",
+        "veryfront-eval/results.jsonl",
+      ],
+    });
+
+    // The run is still FINISHED and the verification tag reflects the mismatch.
+    const finalUpdate = requests.filter((request) =>
+      request.url.endsWith("/api/2.0/mlflow/runs/update")
+    ).at(-1);
+    assertExists(finalUpdate);
+    assertEquals(JSON.parse(String(finalUpdate.body)).status, "FINISHED");
+
+    const verifiedTagBatch = requests.find((request) =>
+      request.url.endsWith("/api/2.0/mlflow/runs/log-batch") &&
+      String(request.body).includes("artifacts.verified")
+    );
+    assertExists(verifiedTagBatch);
+    const tags = JSON.parse(String(verifiedTagBatch.body)).tags as Array<
+      { key: string; value: string }
+    >;
+    assertEquals(tags.find((tag) => tag.key === "artifacts.verified")?.value, "false");
+    assertEquals(tags.find((tag) => tag.key === "artifacts.verified_count")?.value, "1");
+  });
+
+  it("treats an artifacts/list endpoint failure as non-fatal (export still succeeds)", async () => {
+    const { fetchImpl } = createMlflowFetchRecorder();
+    const failingListFetch = (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/api/2.0/mlflow/artifacts/list")) {
+        return Promise.reject(new Error("artifacts/list not supported"));
+      }
+      return fetchImpl(input, init);
+    };
+    const exporter = createEvalReportMlflowExporter({
+      trackingUri: "http://mlflow.test",
+    }, failingListFetch);
+
+    const receipt = await exporter.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    assertEquals(receipt.metadata?.artifactVerification, {
+      method: "artifacts/list",
+      verified: false,
+      artifacts: [
+        "veryfront-eval/report.json",
+        "veryfront-eval/summary.json",
+        "veryfront-eval/results.jsonl",
+      ],
+      missing: [],
+    });
+  });
+
+  it("rejects invalid MLFLOW_ARTIFACTS_PORT values before making REST calls", async () => {
+    const { fetchImpl } = createMlflowFetchRecorder();
+    for (const badPort of ["not-a-port", "0", "70000", "-1", "5001.5"]) {
+      assertThrows(
+        () =>
+          createEvalReportMlflowExporter({
+            trackingUri: "http://mlflow.test:5001",
+            artifactsPort: badPort,
+          }, fetchImpl),
+        Error,
+        "MLflow artifactsPort must be a TCP port",
+      );
+    }
   });
 
   it("uses only sanitized classification evidence keys for classification metrics", async () => {

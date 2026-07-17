@@ -27,7 +27,6 @@ const ENV_ARTIFACTS_URI = "MLFLOW_ARTIFACTS_URI";
 const ENV_TRACKING_TOKEN = "MLFLOW_TRACKING_TOKEN";
 const ENV_TRACKING_USERNAME = "MLFLOW_TRACKING_USERNAME";
 const ENV_TRACKING_PASSWORD = "MLFLOW_TRACKING_PASSWORD";
-const ENV_EXPORTER_ID = "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID";
 
 const EXTENSION_METADATA = {
   contracts: {
@@ -46,7 +45,6 @@ const EXTENSION_METADATA = {
         "MLFLOW_TRACKING_TOKEN",
         "MLFLOW_TRACKING_URI",
         "MLFLOW_TRACKING_USERNAME",
-        "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
       ],
     },
   ],
@@ -102,7 +100,6 @@ interface ClassificationMetricSet {
 }
 
 export interface EvalReportMlflowExtensionConfig {
-  id?: string;
   trackingUri?: string;
   artifactsPort?: string | number;
   artifactsUri?: string;
@@ -121,8 +118,12 @@ export interface MlflowArtifactUploadResult {
 
 interface MlflowArtifactVerification {
   method: "artifacts/list";
-  verified: true;
+  /** Whether every uploaded artifact was confirmed present by `artifacts/list`. */
+  verified: boolean;
+  /** The artifact paths the upload calls reported writing. */
   artifacts: string[];
+  /** Uploaded paths that `artifacts/list` did not report (empty when fully verified). */
+  missing: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,7 +142,6 @@ function readEnv(name: string): string | undefined {
 function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {
   if (!isRecord(config)) return {};
   return {
-    ...(typeof config.id === "string" ? { id: config.id } : {}),
     ...(typeof config.trackingUri === "string" ? { trackingUri: config.trackingUri } : {}),
     ...(typeof config.artifactsPort === "string" || typeof config.artifactsPort === "number"
       ? { artifactsPort: config.artifactsPort }
@@ -177,11 +177,6 @@ function normalizeHttpUri(uri: string, label: string): string {
     // Use the consistent message below.
   }
   throw new Error(`MLflow ${label} must be an HTTP(S) URI: ${uri}`);
-}
-
-function normalizeExporterId(value: string | undefined): string {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : DEFAULT_EXPORTER_ID;
 }
 
 function normalizeArtifactsPort(value: string | number | undefined): string | undefined {
@@ -265,7 +260,7 @@ function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
   return {
-    id: normalizeExporterId(config.id ?? readEnv(ENV_EXPORTER_ID)),
+    id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
     artifactsPort: config.artifactsPort ?? readEnv(ENV_ARTIFACTS_PORT),
     artifactsUri: config.artifactsUri ?? readEnv(ENV_ARTIFACTS_URI),
@@ -1127,6 +1122,16 @@ function artifactPathsFromListResponse(payload: unknown): string[] {
     .filter((path): path is string => path !== undefined);
 }
 
+/**
+ * Best-effort confirmation that the uploaded artifacts show up under the run's
+ * `artifacts/list`. This is intentionally NON-FATAL: the upload PUT/POST calls
+ * are the source of truth for success, and `artifacts/list` responses vary
+ * across MLflow deployments (path prefixing, pagination, artifact-store
+ * backends), so a listing that does not echo every path must not fail an export
+ * that otherwise succeeded. A mismatch — or a listing endpoint that errors — is
+ * surfaced as a warning and reflected in the returned `verified`/`missing`
+ * fields (and the run's `artifacts.verified` tag) for observability.
+ */
 async function verifyUploadedArtifacts(input: {
   fetchImpl: EvalReportMlflowFetch;
   trackingUri: string;
@@ -1134,23 +1139,42 @@ async function verifyUploadedArtifacts(input: {
   runId: string;
   artifacts: string[];
 }): Promise<MlflowArtifactVerification> {
-  const response = await mlflowGet(
-    input.fetchImpl,
-    input.trackingUri,
-    input.authHeaders,
-    "artifacts/list",
-    { run_id: input.runId, path: "veryfront-eval" },
-  );
-  const listedArtifacts = new Set(artifactPathsFromListResponse(response));
-  const missing = input.artifacts.filter((artifact) => !listedArtifacts.has(artifact));
-  if (missing.length > 0) {
-    throw new Error(`MLflow artifact verification failed: missing ${missing.join(", ")}`);
+  try {
+    const response = await mlflowGet(
+      input.fetchImpl,
+      input.trackingUri,
+      input.authHeaders,
+      "artifacts/list",
+      { run_id: input.runId, path: "veryfront-eval" },
+    );
+    const listedArtifacts = new Set(artifactPathsFromListResponse(response));
+    const missing = input.artifacts.filter((artifact) => !listedArtifacts.has(artifact));
+    if (missing.length > 0) {
+      console.warn(
+        `[ext-eval-report-mlflow] artifact verification: run ${input.runId} uploaded ` +
+          `${input.artifacts.length} artifact(s) but artifacts/list did not report ` +
+          `${missing.join(", ")}; treating as non-fatal (uploads returned success).`,
+      );
+    }
+    return {
+      method: "artifacts/list",
+      verified: missing.length === 0,
+      artifacts: input.artifacts,
+      missing,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[ext-eval-report-mlflow] artifact verification skipped for run ${input.runId}: ` +
+        `artifacts/list failed (${reason}); treating as non-fatal (uploads returned success).`,
+    );
+    return {
+      method: "artifacts/list",
+      verified: false,
+      artifacts: input.artifacts,
+      missing: [],
+    };
   }
-  return {
-    method: "artifacts/list",
-    verified: true,
-    artifacts: input.artifacts,
-  };
 }
 
 async function uploadReportArtifacts(input: {
@@ -1277,8 +1301,13 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
         tags: [
           { key: "artifacts.logged", value: "true" },
           { key: "artifacts.count", value: String(artifacts.length) },
-          { key: "artifacts.verified", value: "true" },
-          { key: "artifacts.verified_count", value: String(artifactVerification.artifacts.length) },
+          { key: "artifacts.verified", value: String(artifactVerification.verified) },
+          {
+            key: "artifacts.verified_count",
+            value: String(
+              artifactVerification.artifacts.length - artifactVerification.missing.length,
+            ),
+          },
         ],
       });
 
@@ -1311,13 +1340,12 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
 
 export function createEvalReportMlflowExporter(
   config: EvalReportMlflowExtensionConfig & {
-    id?: string;
     trackingUri: string;
   },
   fetchImpl?: EvalReportMlflowFetch,
 ): EvalReportMlflowExporter {
   return new EvalReportMlflowExporter(
-    { ...config, id: normalizeExporterId(config.id) },
+    { ...config, id: DEFAULT_EXPORTER_ID },
     fetchImpl,
   );
 }

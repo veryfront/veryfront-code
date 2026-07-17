@@ -654,9 +654,9 @@ veryfront eval deep-research
 
 `--export` wins over `VERYFRONT_EVAL_EXPORTERS` when both are set. The legacy
 singular `VERYFRONT_EVAL_EXPORT` is used only when
-`VERYFRONT_EVAL_EXPORTERS` is unset. If a project sets
-`VERYFRONT_EVAL_MLFLOW_EXPORTER_ID`, select that same id with `--export` or
-`VERYFRONT_EVAL_EXPORTERS`.
+`VERYFRONT_EVAL_EXPORTERS` is unset. The MLflow exporter always registers under
+the fixed id `mlflow`, so select it with `--export mlflow` or
+`VERYFRONT_EVAL_EXPORTERS=mlflow`.
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
@@ -678,9 +678,12 @@ roots, configure an explicit HTTP(S) MLflow artifact server URI with
 another, set `MLFLOW_ARTIFACTS_PORT` to derive the artifact URI from
 `MLFLOW_TRACKING_URI`. v1 does not upload directly to local filesystem roots or
 backend-specific schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar
-URIs. After upload, the exporter verifies retrieval through MLflow
-`artifacts/list` for the `veryfront-eval` path and stores only the sanitized
-artifact paths in the export receipt.
+URIs. After upload, the exporter makes a best-effort retrieval check through
+MLflow `artifacts/list` for the `veryfront-eval` path and stores only the
+sanitized `verified`/`missing` paths in the export receipt. The check is
+non-fatal: because `artifacts/list` responses vary across MLflow deployments, a
+mismatch or a failing listing endpoint is logged as a warning rather than
+failing an export whose uploads already succeeded.
 
 The MLflow exporter logs generic aggregate metrics from the normalized
 `EvalReport`; it does not know project-specific label formats. If a project
