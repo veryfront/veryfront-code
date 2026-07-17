@@ -21,7 +21,6 @@
 import * as React from "react";
 import type { BranchInfo, ChatMessage } from "#veryfront/agent/react";
 import { cn, defaultChatTheme } from "../../theme.ts";
-import { Markdown } from "../../markdown.tsx";
 import type { CodeBlockProps, Components } from "../../markdown.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 import { MessageItem } from "#veryfront/react/primitives/index.ts";
@@ -34,16 +33,26 @@ import { Slot } from "../../../ui/slot.tsx";
 import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
-import { Reasoning } from "../components/reasoning.tsx";
 import { Shimmer } from "../../../ui/shimmer.tsx";
-import { ToolCall } from "../components/tool-ui.tsx";
-import { StepIndicator } from "../components/step-indicator.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
 import type { Source } from "../components/sources.tsx";
 import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../ui/popover.tsx";
 import { MessageSources } from "./message-sources.tsx";
 export type { MessageSourcesProps } from "./message-sources.tsx";
+import {
+  MessagePart,
+  MessageReasoning,
+  MessageSource,
+  MessageText,
+  renderAnswerPart,
+} from "./message-body.tsx";
+export type {
+  MessagePartProps,
+  MessageReasoningProps,
+  MessageSourceProps,
+  MessageTextProps,
+} from "./message-body.tsx";
 import {
   getAnswerPartsForRendering,
   getTextContentFromParts,
@@ -374,76 +383,6 @@ function groupKey(group: PartGroup, index: number): string {
   }
 }
 
-/** Options shared by the default part renderer and `Message.Part`. */
-interface RenderPartOptions {
-  stepCount: number;
-  /** Forwarded to the answer `Markdown` — swap the code block. */
-  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  /** Forwarded to the answer `Markdown` — override element renderers. */
-  markdownComponents?: Components;
-}
-
-/**
- * Render one grouped assistant part with the default anatomy. Extracted so both
- * the default `Message.Content` loop and the `Message.Part` sub-part share one
- * source of truth — the composed path never drifts from the preset.
- */
-function renderAnswerPart(
-  group: PartGroup,
-  opts: RenderPartOptions,
-): React.ReactNode {
-  if (group.type === "text") {
-    // `my-2` gives the answer text extra breathing room from an adjacent tool
-    // card. In the flex-col container the gap doesn't collapse with margins, so
-    // this widens text↔tool boundaries while tool↔tool stays at the base gap.
-    return (
-      <Markdown
-        className="my-2 text-[15px] leading-7"
-        renderCodeBlock={opts.codeBlock}
-        components={opts.markdownComponents}
-      >
-        {group.content}
-      </Markdown>
-    );
-  }
-  if (group.type === "reasoning") {
-    return <Reasoning text={group.text} isStreaming={group.isStreaming} />;
-  }
-  if (group.type === "step") {
-    return opts.stepCount > 1
-      ? (
-        <StepIndicator
-          stepIndex={group.stepIndex}
-          isComplete={group.isComplete}
-        />
-      )
-      : null;
-  }
-  if (group.type === "file") {
-    const isImage = group.file.mediaType.startsWith("image/");
-    return (
-      <div className="my-1.5">
-        <AttachmentPill
-          className="w-[200px]"
-          attachment={{
-            id: "file",
-            name: group.file.filename ?? "Attachment",
-            type: group.file.mediaType,
-            url: group.file.url,
-            // No lifecycle `state`: this is a sent, read-only attachment, so
-            // the pill shows the file type/size rather than an "Uploaded" badge.
-            ...(group.file.size != null ? { size: group.file.size } : {}),
-            preview: isImage ? group.file.url : undefined,
-          }}
-        />
-      </div>
-    );
-  }
-  // ToolCall renders the compact skill row for skill tools and the full
-  // params/result card for everything else — one component either way.
-  return <ToolCall tool={group.tool} />;
-}
-
 export interface MessageContentProps {
   className?: string;
   /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
@@ -536,40 +475,6 @@ function MessageContent({
   );
 }
 MessageContent.displayName = "Message.Content";
-
-// ---------------------------------------------------------------------------
-// Message.Part / Message.Sources — the body sub-parts used inside a composed
-// `Message.Content`. `Message.Part` renders any grouped part with the default
-// anatomy (so composition never drifts from the preset); special-case a part by
-// checking `part.type` and rendering your own node instead.
-// ---------------------------------------------------------------------------
-
-/** Props for `Message.Part`. */
-export interface MessagePartProps {
-  part: PartGroup;
-  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  markdownComponents?: Components;
-}
-
-/** Render a single grouped part with the default `Message.Content` anatomy. */
-function MessagePart({
-  part,
-  codeBlock,
-  markdownComponents,
-}: MessagePartProps): React.ReactElement {
-  const { parts } = useMessageContext();
-  const stepCount = parts.filter((g) => g.type === "step").length;
-  return (
-    <>
-      {renderAnswerPart(part, {
-        stepCount,
-        codeBlock,
-        markdownComponents,
-      })}
-    </>
-  );
-}
-MessagePart.displayName = "Message.Part";
 
 // ---------------------------------------------------------------------------
 // Message.Actions — the reference render-or-compose pattern.
@@ -974,6 +879,9 @@ export const Message = Object.assign(MessageComponent, {
   Header: MessageHeaderCompound,
   Content: MessageContent,
   Part: MessagePart,
+  Text: MessageText,
+  Reasoning: MessageReasoning,
+  Source: MessageSource,
   Sources: MessageSources,
   Actions: MessageActionsWrapper,
   CopyAction: MessageCopyAction,
