@@ -22,6 +22,8 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -327,21 +329,14 @@ export function createVeryfrontHandler(
 
   let config: VeryfrontConfig | undefined = opts.config;
   const configPromise = (async () => {
-    try {
-      const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
-      config = c;
-      if (c?.security?.csrf === undefined) {
-        logger.info(
-          "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
-        );
-      }
-      return c;
-    } catch (error) {
-      logger.warn("Failed to load config, using defaults", {
-        error: getErrorMessage(error),
-      });
-      return undefined;
+    const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
+    config = c;
+    if (c?.security?.csrf === undefined) {
+      logger.info(
+        "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
+      );
     }
+    return c;
   })();
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
@@ -667,13 +662,21 @@ export function createVeryfrontHandler(
 
           await incrementRequestMetrics();
 
-          const executeRoute = () =>
+          const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
+            adapterRes.config?.integrations,
+          );
+          const executeProjectRoute = () =>
             projectMiddlewareRuntime.execute({
               request: req,
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
               next: async () => (await registry.execute(req, ctx)) ?? undefined,
             });
+          const executeRoute = () =>
+            runWithExactSourceIntegrationPolicy(
+              sourceIntegrationPolicy,
+              executeProjectRoute,
+            );
           // Only activate env isolation in proxy mode (multi-tenant).
           // reqCtx.token indicates the request came through the proxy with auth.
           // Without it (standalone / test), host env must remain accessible.

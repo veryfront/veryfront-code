@@ -87,6 +87,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       messages: [],
       forwardedProps,
     });
@@ -101,6 +102,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          agentSource: { type: "branch", branch: "main" },
           messages: [],
           forwardedProps: {
             runtimeOverrides: {
@@ -134,6 +136,15 @@ describe("internal-agents/schema", () => {
   });
 
   it("uses the shared runtime agent source context contract", () => {
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        messages: [],
+      })
+    );
+
     const parsed = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
@@ -213,77 +224,26 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
   });
 
-  it("accepts canonical runtime invocation payloads posted by the API executor", () => {
-    const internalRequest = getInternalAgentStreamRequestSchema().parse({
-      run: {
-        agentServiceId: "veryfront-platform-agent",
-        agentId: "incident-responder",
-        conversationId: "10000000-1000-4000-8000-100000000001",
-        runId: "run_1",
-        messageId: "10000000-1000-4000-8000-100000000002",
-        inputAnchorMessageId: "10000000-1000-4000-8000-100000000002",
-        requestedByUserId: "10000000-1000-4000-8000-100000000003",
-        project: {
-          projectId: "10000000-1000-4000-8000-100000000004",
-          projectSlug: "incident-responder-cwy27d",
-          runtimeTargetKind: "preview_branch",
-          runtimeTargetEnvironmentId: null,
-          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000005",
+  it("does not dual-read the runtime invocation transport as an internal request", () => {
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        run: {
+          agentServiceId: "veryfront-platform-agent",
+          agentId: "incident-responder",
+          conversationId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          messageId: "10000000-1000-4000-8000-100000000002",
+          inputAnchorMessageId: "10000000-1000-4000-8000-100000000002",
+          requestedByUserId: "10000000-1000-4000-8000-100000000003",
+          project: {
+            projectId: "10000000-1000-4000-8000-100000000004",
+            projectSlug: "incident-responder-cwy27d",
+            runtimeTargetKind: "main_branch",
+          },
         },
-        validatedClaims: {
-          subject: "10000000-1000-4000-8000-100000000003",
-          projectId: "10000000-1000-4000-8000-100000000004",
-          projectSlug: "incident-responder-cwy27d",
-          scopes: [],
-        },
-      },
-      messages: [{
-        id: "msg_1",
-        role: "user",
-        parts: [{ type: "text", text: "hi" }],
-      }],
-      tools: [{
-        name: "studio_search_files",
-        description: "Search files",
-        inputSchema: { type: "object", properties: { query: { type: "string" } } },
-      }],
-      context: [{ type: "text", text: "Current project context" }],
-      agentSource: { type: "branch", branch: "main" },
-      agentConfig: {
-        id: "incident-responder",
-        name: "Incident Responder",
-        description: "Triages incidents.",
-        instructions: "Use the project incident-response skills.",
-        skills: ["incident-triage"],
-        tools: ["search_knowledge", "get_file"],
-      },
-      forwardedProps: { runtimeOverrides: { allowedTools: ["studio_search_files"] } },
-    });
-
-    assertEquals(internalRequest.agentId, "incident-responder");
-    assertEquals(internalRequest.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(internalRequest.runId, "run_1");
-    assertEquals(internalRequest.messages, [{
-      id: "msg_1",
-      role: "user",
-      parts: [{ type: "text", text: "hi" }],
-    }]);
-    assertEquals(internalRequest.tools[0], {
-      name: "studio_search_files",
-      description: "Search files",
-      inputSchema: { type: "object", properties: { query: { type: "string" } } },
-    });
-    assertEquals(internalRequest.agentConfig, {
-      id: "incident-responder",
-      name: "Incident Responder",
-      description: "Triages incidents.",
-      instructions: "Use the project incident-response skills.",
-      skills: ["incident-triage"],
-      tools: ["search_knowledge", "get_file"],
-    });
-    assertEquals(
-      toRuntimeRunAgentInput(internalRequest).threadId,
-      "10000000-1000-4000-8000-100000000001",
+        messages: [],
+        agentSource: { type: "branch", branch: "main" },
+      })
     );
   });
 
@@ -294,6 +254,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          agentSource: { type: "branch", branch: "main" },
           messages: [],
           agentConfig: {
             id: "agent_2",
@@ -312,6 +273,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "user_1",
@@ -369,6 +331,7 @@ describe("internal-agents/schema", () => {
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        agentSource: { type: "branch", branch: "main" },
         endUserId: "10000000-1000-4000-8000-100000000004",
         messages: [],
         context: [],
@@ -401,6 +364,7 @@ describe("internal-agents/schema", () => {
             scopes: [],
           },
         },
+        agentSource: { type: "branch", branch: "main" },
         endUserId: "10000000-1000-4000-8000-100000000004",
         messages: [],
         context: [],
@@ -413,6 +377,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",
@@ -460,6 +425,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",
@@ -505,6 +471,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",
@@ -560,6 +527,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",

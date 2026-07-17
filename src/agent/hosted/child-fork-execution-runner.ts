@@ -53,6 +53,7 @@ import {
   type ResolveHostedChildForkRuntimeConfigInput,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -120,6 +121,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   instrumentation?: HostedChildForkExecutionInstrumentation<TAttributes>;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   maxContinuationSteps?: number;
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
   buildInstructions?: () => string;
@@ -353,6 +355,7 @@ export async function executeHostedChildForkWithPreparedTools<
       abortSignal: input.abortSignal,
       forkTools: input.toolAssembly.forkTools,
       forkToolNames: input.toolAssembly.availableToolNames,
+      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       providerOptions: input.providerOptions,
       reasoning: input.reasoning,
       buildInstructions,

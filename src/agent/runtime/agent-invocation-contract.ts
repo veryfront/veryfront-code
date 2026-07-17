@@ -133,7 +133,7 @@ export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
     v.object({
       type: v.literal("environment"),
       environmentName: v.string().min(1).max(255),
-      releaseId: v.string().min(1).max(255).optional(),
+      releaseId: v.string().min(1).max(255),
     }),
     v.object({
       type: v.literal("release"),
@@ -314,7 +314,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
       { message: "context must be less than 64 KB total" },
     ),
-    agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
       { message: "agentConfig must be less than 64 KB" },
@@ -381,7 +381,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
-  agentSource?: RuntimeAgentRunInvocation["agentSource"];
+  agentSource: RuntimeAgentRunInvocation["agentSource"];
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
 };
@@ -399,7 +399,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     tools: input.tools,
     context: input.context,
     ...(input.credentials ? { credentials: input.credentials } : {}),
-    ...(input.agentSource ? { agentSource: input.agentSource } : {}),
+    agentSource: input.agentSource,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
   };

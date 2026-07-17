@@ -1,16 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgentResponse } from "veryfront/agent";
+import type { Agent, AgentResponse } from "veryfront/agent";
 import {
   compareEvalReports,
   type DiscoveredEval,
   EVAL_REPORT_SCHEMA_VERSION,
+  evalAgent,
   type EvalReport,
+  evalTool,
 } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
 import type { Tool } from "veryfront/tool";
+import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
+import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
+import {
+  normalizeSourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "../../../src/integrations/source-policy.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import {
   applyGatewayBillingGroupFinalization,
@@ -40,6 +48,7 @@ import {
   resolveEvalExporterIds,
   resolveEvalExportRedactionFromEnv,
   resolveToolTargetId,
+  runEvalCommand,
   runEvalWithGatewayBillingGroup,
   summarizeReportForCli,
   writeEvalArtifacts,
@@ -216,6 +225,25 @@ function createReport(): EvalReport {
         checks: [],
       },
     ],
+  };
+}
+
+function createProjectRuntimeDiscovery(
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest,
+): ProjectAgentRuntimeDiscovery {
+  return {
+    tools: new Map(),
+    agents: new Map(),
+    skills: new Map(),
+    resources: new Map(),
+    prompts: new Map(),
+    workflows: new Map(),
+    tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
+    evals: new Map(),
+    errors: [],
+    sourceIntegrationPolicy,
   };
 }
 
@@ -584,6 +612,142 @@ describe("eval CLI command helpers", () => {
       runId: "evalrun_lookup",
       projectSlug: "support-app",
     });
+  });
+
+  it("keeps the exact source policy active while a tool eval executes", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-policy-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-policy-auth-" });
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { confluence: { allowedTools: ["search_content"] } },
+    });
+    const observedPolicies: Array<SourceIntegrationPolicyManifest | undefined> = [];
+    const observePolicyTool = {
+      id: "observe_policy",
+      type: "function",
+      description: "Observe the source policy during eval execution.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: async () => {
+        await Promise.resolve();
+        const policy = getActiveSourceIntegrationPolicy();
+        observedPolicies.push(policy);
+        return { policy };
+      },
+    } as Tool;
+    const definition = evalTool({
+      id: "eval:source-policy",
+      target: "tool:observe_policy",
+      dataset: [{ id: "policy", input: {} }],
+    });
+    definition.source = {
+      filePath: `${projectDir}/evals/source-policy.eval.ts`,
+      exportName: "default",
+    };
+    const runtime = createProjectRuntimeDiscovery(sourceIntegrationPolicy);
+    runtime.tools.set(observePolicyTool.id, observePolicyTool);
+    runtime.evals.set(definition.id, definition);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const exitCode = await runEvalCommand(
+        {
+          id: "source-policy",
+          list: false,
+          exporters: [],
+          debug: false,
+          candidateModels: [],
+          projectDir,
+          reportDir: `${projectDir}/report`,
+        },
+        {
+          discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+        },
+      );
+
+      assertEquals(exitCode, 0);
+      assertEquals(observedPolicies, [sourceIntegrationPolicy]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps the exact source policy active across every model comparison run", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-model-policy-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-model-policy-auth-" });
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { github: { allowedTools: ["list_repos"] } },
+    });
+    const observations: Array<{
+      model: string | undefined;
+      policy: SourceIntegrationPolicyManifest | undefined;
+    }> = [];
+    const observePolicyAgent = {
+      id: "observe_policy",
+      config: {},
+      generate: async (input: { model?: string }) => {
+        await Promise.resolve();
+        observations.push({
+          model: input.model,
+          policy: getActiveSourceIntegrationPolicy(),
+        });
+        return {
+          text: "ok",
+          messages: [],
+          status: "completed",
+          toolCalls: [],
+        } satisfies AgentResponse;
+      },
+    } as unknown as Agent;
+    const definition = evalAgent({
+      id: "eval:model-source-policy",
+      target: "agent:observe_policy",
+      dataset: [{ id: "policy", input: "observe" }],
+    });
+    definition.source = {
+      filePath: `${projectDir}/evals/model-source-policy.eval.ts`,
+      exportName: "default",
+    };
+    const runtime = createProjectRuntimeDiscovery(sourceIntegrationPolicy);
+    runtime.agents.set(observePolicyAgent.id, observePolicyAgent);
+    runtime.evals.set(definition.id, definition);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const exitCode = await runEvalCommand(
+        {
+          id: "model-source-policy",
+          list: false,
+          exporters: [],
+          debug: false,
+          baselineModel: "test/baseline",
+          candidateModels: ["test/candidate"],
+          projectDir,
+          reportDir: `${projectDir}/report`,
+        },
+        {
+          discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+        },
+      );
+
+      assertEquals(exitCode, 0);
+      assertEquals(observations, [
+        { model: "test/baseline", policy: sourceIntegrationPolicy },
+        { model: "test/candidate", policy: sourceIntegrationPolicy },
+      ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
   });
 
   it("marks CLI tool adapter error-marker outputs as failed", async () => {

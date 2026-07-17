@@ -3,6 +3,10 @@ import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
 import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";
+import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
+import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
+
+const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
 function createDevToken(payload: Record<string, unknown>): string {
   const header = btoa(JSON.stringify({ alg: "none", typ: "JWT" }));
@@ -50,19 +54,22 @@ function createRuntimeAgentInvocationBody(): Record<string, unknown> {
     messages: [],
     tools: [],
     context: [],
+    agentSource: runtimeSource,
   };
 }
 
 function createRouteSet(input: {
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
+  runtimeSource?: HostedRuntimeSourceIdentity | null;
 } = {}) {
-  const tracker = createDetachedRunTracker();
+  const tracker = createDetachedRunTracker<AgUiResumeValue>();
   const preparedRequests: ParsedHostedChatRequest[] = [];
   const streamInputs: Array<{ executionId: string; agUiRunId: string }> = [];
 
-  const routeSet = createHostedAgentServiceRouteSet({
+  const routeSet = createHostedAgentServiceRouteSet<{ executionId: string }>({
     tracker,
+    runtimeSource: input.runtimeSource === null ? undefined : input.runtimeSource ?? runtimeSource,
     authenticateRequest: async (request): Promise<HostedServiceAuthenticatedRequest | Response> => {
       const authorization = request.headers.get("authorization");
       if (!authorization?.startsWith("Bearer ")) {
@@ -158,6 +165,38 @@ Deno.test("agent service routes preserve control-plane target agent ids", async 
   assertEquals(response.status, 202);
   assertEquals(preparedRequests.length, 1);
   assertEquals(preparedRequests[0]?.agentId, "builder");
+});
+
+Deno.test("agent service routes reject unbound control-plane source selection", async () => {
+  const { routeSet, preparedRequests } = createRouteSet({ runtimeSource: null });
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      createRuntimeAgentInvocationBody(),
+    ),
+    runId: "run-1",
+  });
+
+  assertEquals(response.status, 503);
+  assertEquals(await response.json(), { errorCode: "CONTROL_PLANE_AGENT_SOURCE_UNBOUND" });
+  assertEquals(preparedRequests.length, 0);
+});
+
+Deno.test("agent service routes reject control-plane source mismatches", async () => {
+  const { routeSet, preparedRequests } = createRouteSet({
+    runtimeSource: { type: "release", releaseId: "release-43" },
+  });
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      createRuntimeAgentInvocationBody(),
+    ),
+    runId: "run-1",
+  });
+
+  assertEquals(response.status, 409);
+  assertEquals(await response.json(), { errorCode: "CONTROL_PLANE_AGENT_SOURCE_MISMATCH" });
+  assertEquals(preparedRequests.length, 0);
 });
 
 Deno.test("agent service routes enforce durable root lineage", async () => {

@@ -2,8 +2,11 @@ import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
-import { discoverProjectAgentRuntime } from "../../../src/agent/project/agent-runtime.ts";
-import type { DiscoveryResult } from "../../../src/discovery/types.ts";
+import {
+  discoverProjectAgentRuntime,
+  type ProjectAgentRuntimeDiscovery,
+  runWithProjectAgentRuntime,
+} from "../../../src/agent/project/agent-runtime.ts";
 import { toolRegistry } from "../../../src/tool/registry.ts";
 import type { WorkflowClientConfig } from "../../../src/workflow/api/workflow-client.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
@@ -162,7 +165,7 @@ export async function runWorkflowCommand(
 
   const discoverRuntime: (
     input: Parameters<typeof discoverProjectAgentRuntime>[0],
-  ) => Promise<DiscoveryResult> = dependencies.discoverProjectAgentRuntime ??
+  ) => Promise<ProjectAgentRuntimeDiscovery> = dependencies.discoverProjectAgentRuntime ??
     discoverProjectAgentRuntime;
 
   await withProjectSourceContext(projectDir, async (context) => {
@@ -214,18 +217,20 @@ export async function runWorkflowCommand(
       return;
     }
 
-    const client = await createWorkflowClient({ debug: options.debug });
+    await runWithProjectAgentRuntime(discovery, async () => {
+      const client = await createWorkflowClient({ debug: options.debug });
 
-    try {
-      client.register(workflow.definition);
-      cliLogger.info(`Running workflow: ${workflow.id}`);
-      cliLogger.info("");
+      try {
+        client.register(workflow.definition);
+        cliLogger.info(`Running workflow: ${workflow.id}`);
+        cliLogger.info("");
 
-      const handle = await client.start(workflow.id, input);
-      await waitForWorkflowExit(client, handle.runId);
-    } finally {
-      await client.destroy();
-    }
+        const handle = await client.start(workflow.id, input);
+        await waitForWorkflowExit(client, handle.runId);
+      } finally {
+        await client.destroy();
+      }
+    });
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     cliLogger.error(message);
