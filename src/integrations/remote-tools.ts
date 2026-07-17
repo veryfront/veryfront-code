@@ -116,8 +116,8 @@ async function fetchToolList(
   });
 
   if (!response.ok) {
-    // Throw so callers can distinguish a fetch failure from "no integrations
-    // configured" (which returns an empty tools array with status 200).
+    // Throw so callers can distinguish a fetch failure from "no remote tools
+    // available" (which returns an empty tools array with status 200).
     throw new Error(
       `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
     );

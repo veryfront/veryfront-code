@@ -23,26 +23,39 @@ Primary source areas:
 ```mermaid
 flowchart TD
   catalog[Connector catalog] --> schema[Integration schemas]
+  source[Agent source tool list] --> capabilities[Resolve agent capabilities]
+  policy[Optional control-plane project policy] --> narrowing[Apply runtime narrowing]
+  connections[Connection inventory] --> readiness[Select a ready project or user credential]
 
-  request[Agent request context] --> inventory[Agent tool inventory]
-  inventory --> token[Resolve project or request token]
-  token --> list[Fetch remote tool definitions]
-  list --> call[Model calls configured integration tool]
-  call --> execute[Execute via integrations tools API]
-  execute --> result[Structured tool result or sanitized error]
+  request[Agent request context] --> list[Fetch remote tool definitions]
+  list --> capabilities
+  capabilities --> call[Model requests integration tool]
+  call --> execute[Authorize and execute requested tool]
+  narrowing --> execute
+  readiness --> execute
+  execute --> api[Integrations tools API]
+  api --> result[Structured tool result or sanitized error]
 ```
 
 1. Connector metadata defines supported providers, auth requirements, tools,
    prompts, icons, and environment requirements.
 2. Schema helpers validate connector metadata.
-3. Remote tool helpers resolve request-scoped or environment API credentials.
-4. Tool definitions are fetched per request for the active agent tool inventory.
-5. Tool execution is delegated to the configured API layer and normalized for
+3. Agent source declares which integration tools belong to the agent.
+4. Optional project policy narrows runtime access without redefining agent
+   capabilities.
+5. Connection inventory remains control-plane data and determines credential
+   readiness independently of agent source and project policy.
+6. Remote tool helpers resolve request-scoped or environment API credentials.
+7. Tool definitions are fetched per request so source-declared integration
+   requests remain project-scoped.
+8. Tool execution is delegated to the configured API layer and normalized for
    the agent runtime.
 
 ## Boundaries
 
 - Integration runtime owns connector metadata and remote tool bridge behavior.
+- Agent source owns the agent's integration tool declaration.
+- The control plane owns optional project policy and connection inventory.
 - OAuth runtime owns provider redirects, callbacks, and token storage.
 - Local project tools belong in [agent runtime](./05-agent-runtime.md) and the
   public [Tools](../guides/tools.md) guide.
@@ -54,9 +67,10 @@ flowchart TD
   metadata.
 - Add remote-tool tests when changing request-scoped token resolution, tool
   listing, call payloads, or result normalization.
-- Keep tool visibility scoped to the active agent and request credentials.
-- Update [Integrations](../guides/integrations.md) when catalog behavior or
-  public runtime behavior changes.
+- Keep per-project tool visibility scoped to the active request or environment
+  token.
+- Update [Integrations](../guides/integrations.md) when catalog, policy, or
+  connection behavior changes.
 
 ## Related guides
 

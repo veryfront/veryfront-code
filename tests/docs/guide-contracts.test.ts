@@ -495,8 +495,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "guides/integrations.md": {
     references: ["../api-reference/veryfront/integrations.md"],
     snippets: [
-      "integrations",
-      "does not synchronize integration configuration",
+      "agent source",
+      "Project integration policy",
+      "Connection inventory",
+      "veryfront.config.ts",
+      "Managed OAuth",
       "Available integrations",
     ],
   },
