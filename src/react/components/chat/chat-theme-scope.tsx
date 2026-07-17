@@ -1,6 +1,7 @@
 /**
- * ChatThemeScope — establishes the `[data-vf-chat]` token scope that the chat
- * UI's `[var(--token)]` classes resolve against. `<Chat>` injects this scope
+ * ChatThemeScope — establishes the `[data-vf-ui]` token scope (with the
+ * `[data-vf-chat]` compat alias) that the chat UI's `[var(--token)]` classes
+ * resolve against. `<Chat>` injects this scope
  * for itself, but when you compose the chat primitives *around* it — a sidebar,
  * header tabs, an uploads panel in your own shell — those live outside `<Chat>`
  * and would render unstyled. Wrap your shell in one `ChatThemeScope` so every
@@ -16,7 +17,7 @@
  */
 import * as React from "react";
 import { getDocumentNonce } from "../ui/csp-nonce.ts";
-import { cn, generateTokenCSS } from "./theme.ts";
+import { cn, generateTokenCSS, UI_SCOPE_ATTRS } from "./theme.ts";
 
 /** Props accepted by {@link ChatThemeScope}. */
 export interface ChatThemeScopeProps {
@@ -25,7 +26,7 @@ export interface ChatThemeScopeProps {
   className?: string;
 }
 
-/** Wrap chat primitives in the `[data-vf-chat]` token scope so they're themed. */
+/** Wrap chat primitives in the `[data-vf-ui]` token scope so they're themed. */
 export function ChatThemeScope(
   { children, className }: ChatThemeScopeProps,
 ): React.ReactElement {
@@ -33,7 +34,7 @@ export function ChatThemeScope(
   const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
   return (
     <div
-      data-vf-chat=""
+      {...UI_SCOPE_ATTRS}
       className={cn("bg-[var(--background)] text-[var(--foreground)]", className)}
     >
       <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />

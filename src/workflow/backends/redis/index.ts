@@ -16,10 +16,11 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../../types.ts";
-import type { WorkflowBackend } from "../types.ts";
+import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
 import { agentLogger } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import { getRedisModule, NodeRedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -30,6 +31,12 @@ export type { RedisBackendConfig } from "./types.ts";
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
 
 const logger = agentLogger.component("redis-backend");
+const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
+const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
+
+function appendStorageSchemaVersion(base: string): string {
+  return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
+}
 
 /**
  * Atomic compare-and-delete: delete the lock only if it still holds our token.
@@ -86,7 +93,7 @@ export class RedisBackend implements WorkflowBackend {
   private pendingMessageIds = new Map<string, string[]>();
 
   constructor(config: RedisBackendConfig = {}) {
-    this.config = {
+    const resolvedConfig: RedisBackendInternalConfig = {
       prefix: "vf:workflow:",
       streamKey: "vf:workflow:stream",
       groupName: "vf:workflow:workers",
@@ -94,28 +101,37 @@ export class RedisBackend implements WorkflowBackend {
       debug: false,
       ...config,
     };
+    this.config = {
+      ...resolvedConfig,
+      streamKey: appendStorageSchemaVersion(resolvedConfig.streamKey),
+      groupName: appendStorageSchemaVersion(resolvedConfig.groupName),
+    };
 
     if (config.client) this.client = config.client;
   }
 
+  private storagePrefix(): string {
+    return `${this.config.prefix}${REDIS_STORAGE_SCHEMA_NAMESPACE}`;
+  }
+
   private runKey(runId: string): string {
-    return `${this.config.prefix}run:${runId}`;
+    return `${this.storagePrefix()}run:${runId}`;
   }
 
   private checkpointsKey(runId: string): string {
-    return `${this.config.prefix}checkpoints:${runId}`;
+    return `${this.storagePrefix()}checkpoints:${runId}`;
   }
 
   private approvalsKey(runId: string): string {
-    return `${this.config.prefix}approvals:${runId}`;
+    return `${this.storagePrefix()}approvals:${runId}`;
   }
 
   private statusIndexKey(status: WorkflowStatus): string {
-    return `${this.config.prefix}index:status:${status}`;
+    return `${this.storagePrefix()}index:status:${status}`;
   }
 
   private workflowIndexKey(workflowId: string): string {
-    return `${this.config.prefix}index:workflow:${workflowId}`;
+    return `${this.storagePrefix()}index:workflow:${workflowId}`;
   }
 
   /**
@@ -124,39 +140,24 @@ export class RedisBackend implements WorkflowBackend {
    * KEYS scan (which blocks the Redis event loop).
    */
   private allRunsIndexKey(): string {
-    return `${this.config.prefix}index:runs`;
+    return `${this.storagePrefix()}index:runs`;
   }
 
-  /**
-   * Enumerate every run id. Prefers the maintained all-runs index (avoids a
-   * blocking KEYS scan on the hot path), but falls back to a one-time KEYS
-   * enumeration when the index is empty — so a backend upgraded from a version
-   * that predates `index:runs` still lists pre-existing runs — and backfills
-   * the index so subsequent calls use the fast path. An empty result when there
-   * genuinely are no runs is cheap (KEYS on a no-match pattern returns quickly).
-   */
-  private async enumerateAllRunIds(client: RedisAdapter): Promise<string[]> {
-    const indexed = await client.smembers(this.allRunsIndexKey());
-    if (indexed.length > 0) return indexed;
-
-    const prefix = `${this.config.prefix}run:`;
-    const keys = await client.keys(`${prefix}*`);
-    const runIds = keys.map((k) => k.replace(prefix, ""));
-    if (runIds.length > 0) {
-      await client.sadd(this.allRunsIndexKey(), ...runIds);
-    }
-    return runIds;
+  /** Enumerate only runs explicitly indexed in the current storage schema. */
+  private enumerateAllRunIds(client: RedisAdapter): Promise<string[]> {
+    return client.smembers(this.allRunsIndexKey());
   }
 
   private lockKey(runId: string): string {
-    return `${this.config.prefix}lock:${runId}`;
+    return `${this.storagePrefix()}lock:${runId}`;
   }
 
   private claimKey(runId: string): string {
-    return `${this.config.prefix}claim:${runId}`;
+    return `${this.storagePrefix()}claim:${runId}`;
   }
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
+    const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -164,6 +165,7 @@ export class RedisBackend implements WorkflowBackend {
       status: run.status,
       workerId: run.workerId || "",
       tenant: run._tenant ? JSON.stringify(run._tenant) : "",
+      sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
       nodeStates: JSON.stringify(run.nodeStates),
@@ -186,6 +188,12 @@ export class RedisBackend implements WorkflowBackend {
         detail: `Invalid workflow run data for run "${data.id}": missing 'workflowId' field`,
       });
     }
+    if (!data.sourceIntegrationPolicy) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Invalid workflow run data for run "${data.id}": missing 'sourceIntegrationPolicy' field`,
+      });
+    }
 
     const validStatuses: WorkflowStatus[] = [
       "pending",
@@ -205,13 +213,11 @@ export class RedisBackend implements WorkflowBackend {
       });
     }
 
-    function safeJsonParse<T>(
+    function parseJson<T>(
       runId: string,
       field: string,
-      value: string | undefined,
-      defaultValue: T,
+      value: string,
     ): T {
-      if (!value) return defaultValue;
       try {
         return JSON.parse(value) as T;
       } catch (e) {
@@ -224,21 +230,40 @@ export class RedisBackend implements WorkflowBackend {
       }
     }
 
+    function parseJsonOr<T>(
+      runId: string,
+      field: string,
+      value: string | undefined,
+      defaultValue: T,
+    ): T {
+      return value ? parseJson<T>(runId, field, value) : defaultValue;
+    }
+
+    const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy({
+      id: data.id,
+      sourceIntegrationPolicy: parseJson<WorkflowRun["sourceIntegrationPolicy"]>(
+        data.id,
+        "sourceIntegrationPolicy",
+        data.sourceIntegrationPolicy,
+      ),
+    });
+
     return {
       id: data.id,
       workflowId: data.workflowId,
       version: data.version || undefined,
       status: status ?? "pending",
       workerId: data.workerId || undefined,
-      _tenant: safeJsonParse(data.id, "tenant", data.tenant, undefined),
-      input: safeJsonParse(data.id, "input", data.input, undefined),
-      output: safeJsonParse(data.id, "output", data.output, undefined),
-      nodeStates: safeJsonParse(data.id, "nodeStates", data.nodeStates, {}),
-      currentNodes: safeJsonParse(data.id, "currentNodes", data.currentNodes, []),
-      context: safeJsonParse(data.id, "context", data.context, { input: undefined }),
+      _tenant: parseJsonOr(data.id, "tenant", data.tenant, undefined),
+      sourceIntegrationPolicy,
+      input: parseJsonOr(data.id, "input", data.input, undefined),
+      output: parseJsonOr(data.id, "output", data.output, undefined),
+      nodeStates: parseJsonOr(data.id, "nodeStates", data.nodeStates, {}),
+      currentNodes: parseJsonOr(data.id, "currentNodes", data.currentNodes, []),
+      context: parseJsonOr(data.id, "context", data.context, { input: undefined }),
       checkpoints: [],
       pendingApprovals: [],
-      error: safeJsonParse(data.id, "error", data.error, undefined),
+      error: parseJsonOr(data.id, "error", data.error, undefined),
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
       heartbeatAt: data.heartbeatAt ? new Date(data.heartbeatAt) : undefined,
@@ -309,11 +334,12 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async createRun(run: WorkflowRun): Promise<void> {
+    const serializedRun = this.serializeRun(run);
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Creating run: ${run.id}`);
 
-    await client.hset(this.runKey(run.id), this.serializeRun(run));
+    await client.hset(this.runKey(run.id), serializedRun);
     await client.sadd(this.statusIndexKey(run.status), run.id);
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
     await client.sadd(this.allRunsIndexKey(), run.id);
@@ -331,7 +357,8 @@ export class RedisBackend implements WorkflowBackend {
     return run;
   }
 
-  async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+  async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
+    assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
@@ -340,9 +367,6 @@ export class RedisBackend implements WorkflowBackend {
     // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
     // move), so it is deliberately excluded from this plain hset.
     if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
-    if (patch._tenant !== undefined) {
-      fields.tenant = patch._tenant ? JSON.stringify(patch._tenant) : "";
-    }
     if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
@@ -359,7 +383,7 @@ export class RedisBackend implements WorkflowBackend {
       await client.eval(
         MOVE_STATUS_SCRIPT,
         [this.runKey(runId)],
-        [runId, patch.status, `${this.config.prefix}index:status:`],
+        [runId, patch.status, `${this.storagePrefix()}index:status:`],
       );
     }
 
@@ -568,10 +592,11 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const result: Array<{ runId: string; approval: PendingApproval }> = [];
 
-    const keys = await client.keys(`${this.config.prefix}approvals:*`);
+    const approvalsPrefix = `${this.storagePrefix()}approvals:`;
+    const keys = await client.keys(`${approvalsPrefix}*`);
 
     for (const key of keys) {
-      const runId = key.replace(`${this.config.prefix}approvals:`, "");
+      const runId = key.replace(approvalsPrefix, "");
 
       if (filter?.workflowId) {
         const run = await this.getRun(runId);

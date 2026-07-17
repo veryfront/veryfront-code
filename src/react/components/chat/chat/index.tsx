@@ -218,9 +218,9 @@ export {
   type UseConversationChatResult,
 } from "./hooks/use-conversation-chat.ts";
 export {
-  useUploadsRegistry,
-  type UseUploadsRegistryOptions,
-  type UseUploadsRegistryResult,
+  useAttachments,
+  type UseAttachmentsOptions,
+  type UseAttachmentsResult,
 } from "./hooks/use-uploads-registry.ts";
 export {
   useStickToBottom,

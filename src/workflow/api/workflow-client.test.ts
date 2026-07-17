@@ -13,6 +13,9 @@ import { workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
 import { waitForApproval } from "../dsl/wait.ts";
 import type { WorkflowRun } from "../types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 function createMockTool(name: string, output: unknown): Tool {
   return {
@@ -282,6 +285,7 @@ describe("WorkflowClient", () => {
           checkpoints: [],
           pendingApprovals: [],
           createdAt: new Date(),
+          sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
           _tenant: {
             projectSlug: "acme",
             token: "tenant-token",
@@ -366,6 +370,7 @@ describe("WorkflowClient", () => {
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
       });
 
       await backend.savePendingApproval(runId, {

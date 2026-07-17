@@ -22,7 +22,6 @@ import type {
   EvalToolCall,
   EvalUsage,
 } from "veryfront/eval";
-import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
 import { orchestrateExtensions } from "veryfront/extensions";
 import {
   createEvalReportExporterRegistry,
@@ -36,7 +35,6 @@ import {
   compareEvalReports,
   createEvalModelComparisonMarkdown,
   createEvalRunId,
-  discoverEvals,
   EVAL_REPORT_SCHEMA_VERSION,
   exportEvalReport,
   resolveEvalRunProvenance,
@@ -50,6 +48,11 @@ import {
 import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
+  discoverProjectAgentRuntime,
+  type ProjectAgentRuntimeDiscovery,
+  runWithProjectAgentRuntime,
+} from "../../../src/agent/project/agent-runtime.ts";
+import {
   createErrorEnvelope,
   createSuccessEnvelope,
   isJsonMode,
@@ -59,7 +62,13 @@ import { withProjectSourceContext } from "../../shared/project-source-context.ts
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
 
-export interface EvalOptions extends EvalArgs {}
+export interface EvalOptions extends EvalArgs {
+  projectDir?: string;
+}
+
+interface EvalCommandDependencies {
+  discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
+}
 
 type CliEvalSummary = {
   runId: string;
@@ -1123,6 +1132,22 @@ function listEvals(evals: DiscoveredEval[], projectDir: string) {
   }));
 }
 
+function getDiscoveredEvals(runtime: ProjectAgentRuntimeDiscovery): DiscoveredEval[] {
+  return [...runtime.evals.entries()].map(([id, definition]) => {
+    if (!definition.source) {
+      throw new Error(`Discovered eval "${id}" is missing source metadata.`);
+    }
+
+    return {
+      id,
+      name: definition.name,
+      filePath: definition.source.filePath,
+      exportName: definition.source.exportName,
+      definition,
+    };
+  });
+}
+
 function printReport(report: EvalReport, baseline?: EvalReportComparison): void {
   cliLogger.info(`Eval ${report.definitionId}`);
   cliLogger.info(`Target: ${report.target}`);
@@ -1516,34 +1541,53 @@ async function outputEvalUsageError(message: string): Promise<2> {
   return 2;
 }
 
-export async function evalCommand(options: EvalOptions): Promise<void> {
-  const projectDir = Deno.cwd();
+export async function runEvalCommand(
+  options: EvalOptions,
+  dependencies: EvalCommandDependencies = {},
+): Promise<number | undefined> {
+  const projectDir = options.projectDir ?? Deno.cwd();
+  const discoverRuntime = dependencies.discoverProjectAgentRuntime ?? discoverProjectAgentRuntime;
 
-  const exitCode = await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
+  return await withProjectSourceContext(projectDir, async (context) => {
+    const { adapter, config, configCacheKey } = context;
     await hydrateEvalRuntimeAuth(projectDir, config);
 
-    const evalDiscovery = await discoverEvals({ projectDir, adapter, config });
+    const projectRuntime = await discoverRuntime({
+      projectDir,
+      adapter,
+      config,
+      fsAdapter: adapter.fs,
+      cacheKey: configCacheKey,
+      verbose: options.debug,
+    });
+    const evals = getDiscoveredEvals(projectRuntime);
 
     if (options.debug) {
-      for (const error of evalDiscovery.errors) {
-        cliLogger.warn(`Eval discovery warning: ${error.filePath}: ${error.error}`);
+      for (const error of projectRuntime.errors) {
+        cliLogger.warn(`Eval discovery warning: ${error.file}: ${error.error.message}`);
       }
     }
 
     if (options.list) {
-      const evals = listEvals(evalDiscovery.evals, projectDir);
+      const listedEvals = listEvals(evals, projectDir);
       if (isJsonMode()) {
-        await outputJson(createSuccessEnvelope("eval", { evals, errors: evalDiscovery.errors }));
+        await outputJson(createSuccessEnvelope("eval", {
+          evals: listedEvals,
+          errors: projectRuntime.errors.map((error) => ({
+            filePath: error.file,
+            error: error.error.message,
+          })),
+        }));
         return undefined;
       }
 
-      if (evals.length === 0) {
+      if (listedEvals.length === 0) {
         cliLogger.info("No evals found.");
         return undefined;
       }
 
       cliLogger.info("Evals:");
-      for (const item of evals) {
+      for (const item of listedEvals) {
         cliLogger.info(`  - ${item.id} (${item.target})`);
       }
       return undefined;
@@ -1563,14 +1607,17 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
     }
 
     const evalId = normalizeEvalCliId(options.id);
-    const evalItem = findEvalForCliId(evalDiscovery.evals, options.id);
+    const evalItem = findEvalForCliId(evals, options.id);
     if (!evalItem) {
-      return await outputEvalNotFound(evalId, evalDiscovery.evals);
+      return await outputEvalNotFound(evalId, evals);
     }
 
     let modelComparisonConfig: ResolvedEvalModelComparisonConfig | undefined;
     try {
-      modelComparisonConfig = await createResolvedEvalModelComparisonConfig(projectDir, options);
+      modelComparisonConfig = await createResolvedEvalModelComparisonConfig(
+        projectDir,
+        options,
+      );
     } catch (error) {
       return await outputEvalUsageError(error instanceof Error ? error.message : String(error));
     }
@@ -1589,24 +1636,21 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
     }
 
     const selectedExporterIds = resolveEvalExporterIds(options);
-    const extensionSetup = await setupEvalCliExtensions(projectDir, config, selectedExporterIds);
+    const extensionSetup = await setupEvalCliExtensions(
+      projectDir,
+      config,
+      selectedExporterIds,
+    );
 
     try {
-      const discoveryConfig = createProjectDiscoveryConfig({
-        projectDir,
-        config,
-        fsAdapter: adapter.fs,
-        verbose: options.debug,
-      });
-      const projectDiscovery = await discoverAll(discoveryConfig);
       const agentId = evalItem.definition.targetKind === "agent"
         ? resolveAgentTargetId(evalItem.definition.target)
         : undefined;
       const toolId = evalItem.definition.targetKind === "tool"
         ? resolveToolTargetId(evalItem.definition.target)
         : undefined;
-      const agent = agentId ? projectDiscovery.agents.get(agentId) : undefined;
-      const tool = toolId ? projectDiscovery.tools.get(toolId) : undefined;
+      const agent = agentId ? projectRuntime.agents.get(agentId) : undefined;
+      const tool = toolId ? projectRuntime.tools.get(toolId) : undefined;
 
       if (agentId && !agent) {
         return await outputAgentNotFound(agentId);
@@ -1616,16 +1660,20 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       }
 
       if (modelComparisonConfig) {
-        return await runEvalModelComparison({
-          evalItem,
-          agent: agent!,
-          options,
-          projectDir,
-          config: modelComparisonConfig.config,
-          policy: modelComparisonConfig.policy,
-          exporterRegistry: extensionSetup.exporterRegistry,
-          projectReference: resolveEvalRuntimeProjectSlug(config),
-        });
+        return await runWithProjectAgentRuntime(
+          projectRuntime,
+          () =>
+            runEvalModelComparison({
+              evalItem,
+              agent: agent!,
+              options,
+              projectDir,
+              config: modelComparisonConfig.config,
+              policy: modelComparisonConfig.policy,
+              exporterRegistry: extensionSetup.exporterRegistry,
+              projectReference: resolveEvalRuntimeProjectSlug(config),
+            }),
+        );
       }
 
       const runId = createEvalRunId();
@@ -1647,20 +1695,24 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
         extensionSetup.exporterRegistry,
         config,
       );
-      const finalizedReport = await runEvalWithGatewayBillingGroup(
-        billingGroupId,
+      const finalizedReport = await runWithProjectAgentRuntime(
+        projectRuntime,
         () =>
-          runEval(evalItem.definition, {
-            baseDir: options.datasetBase ?? projectDir,
-            runId,
-            adapters: evalItem.definition.targetKind === "tool"
-              ? { tool: createToolAdapter(tool!, createEvalToolExecutionContext(config)) }
-              : { agent: createAgentAdapter(agent!, options) },
-            metadata: {
-              provenance,
-              ...(options.model ? { model: options.model } : {}),
-            },
-          }),
+          runEvalWithGatewayBillingGroup(
+            billingGroupId,
+            () =>
+              runEval(evalItem.definition, {
+                baseDir: options.datasetBase ?? projectDir,
+                runId,
+                adapters: evalItem.definition.targetKind === "tool"
+                  ? { tool: createToolAdapter(tool!, createEvalToolExecutionContext(config)) }
+                  : { agent: createAgentAdapter(agent!, options) },
+                metadata: {
+                  provenance,
+                  ...(options.model ? { model: options.model } : {}),
+                },
+              }),
+          ),
       );
       const report = await exportEvalReportForCli(finalizedReport, exportConfig);
 
@@ -1704,7 +1756,10 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       await extensionSetup.loader.teardownAll();
     }
   });
+}
 
+export async function evalCommand(options: EvalOptions): Promise<void> {
+  const exitCode = await runEvalCommand(options);
   if (typeof exitCode === "number") {
     exitProcess(exitCode);
   }

@@ -77,6 +77,15 @@ describe("veryfront/adapter-content-context", () => {
     );
     assertEquals(
       toClientContext({
+        sourceType: "environment",
+        projectSlug: "demo",
+        environmentName: "production",
+        releaseId: "env-rel-123",
+      }),
+      { type: "release", version: "env-rel-123" },
+    );
+    assertEquals(
+      toClientContext({
         sourceType: "release",
         projectSlug: "demo",
         releaseId: "rel-123",
@@ -194,11 +203,22 @@ describe("veryfront/adapter-content-context", () => {
       environmentName: "preview",
     });
     await fetchFileListForContext(fileListClient, {
+      sourceType: "environment",
+      projectSlug: "demo",
+      environmentName: "production",
+      releaseId: "env-rel-1",
+    });
+    await fetchFileListForContext(fileListClient, {
       sourceType: "release",
       projectSlug: "demo",
       releaseId: "rel-1",
     });
 
-    assertEquals(calls, ["branch", "environment:preview", "release:rel-1"]);
+    assertEquals(calls, [
+      "branch",
+      "environment:preview",
+      "release:env-rel-1",
+      "release:rel-1",
+    ]);
   });
 });

@@ -8,6 +8,7 @@ import type { WorkerPermissions } from "./worker-permissions.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 
 const testSuite = isDeno ? describe : describe.skip;
+const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 
 const TEST_PERMISSIONS: WorkerPermissions = {
   read: true,
@@ -152,6 +153,7 @@ testSuite("ProjectWorker - error handling", () => {
         },
         params: {},
         projectDir: Deno.cwd(),
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       assertEquals(true, false, "Should have thrown");
     } catch (error) {
@@ -216,6 +218,78 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
+  it("rejects every project execution without an exact-source policy manifest", async () => {
+    const worker = new ProjectWorker({
+      projectId: "test-missing-source-policy",
+      permissions: REAL_WORKER_PERMISSIONS,
+      requestTimeoutMs: 10_000,
+    });
+    const projectDir = Deno.cwd();
+    const modulePath = `${projectDir}/missing-project-module.ts`;
+    const serializedRequest = {
+      url: "http://localhost/test",
+      method: "GET",
+      headers: [] as [string, string][],
+      body: null,
+    };
+    const requests = [
+      {
+        type: "execute-app-route",
+        id: "app-route",
+        modulePath,
+        method: "GET",
+        request: serializedRequest,
+        params: {},
+        projectDir,
+      },
+      {
+        type: "execute-pages-route",
+        id: "pages-route",
+        modulePath,
+        method: "GET",
+        context: { request: serializedRequest, params: {}, cookies: {} },
+        projectDir,
+      },
+      {
+        type: "fetch-data",
+        id: "server-data",
+        modulePath,
+        context: {
+          params: {},
+          query: "",
+          request: serializedRequest,
+          url: serializedRequest.url,
+        },
+      },
+      {
+        type: "render-ssr",
+        id: "ssr",
+        pageModulePath: modulePath,
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "string",
+      },
+    ];
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      for (const request of requests) {
+        const response = await worker.execute(
+          request as unknown as Parameters<ProjectWorker["execute"]>[0],
+        );
+        assertEquals(response.type, "error");
+        if (response.type !== "error") throw new Error("expected error response");
+        assertEquals(response.id, request.id);
+        assertEquals(response.error.name, "TypeError");
+        assertEquals(response.error.message, "Invalid source integration policy manifest");
+      }
+    } finally {
+      worker.terminate();
+    }
+  });
+
   it("does not leak projectEnv overlays across requests in the same worker", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
@@ -253,6 +327,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { VERYFRONT_TEST_TENANT_SECRET: "tenant-a" },
       });
 
@@ -276,6 +351,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(second.type, "result");
@@ -341,6 +417,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [requestAKey]: "tenant-a" },
       });
 
@@ -357,6 +434,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [requestBKey]: "tenant-b" },
       });
 
@@ -446,6 +524,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [projectKey]: "project-secret" },
       });
 
@@ -508,6 +587,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "error");
@@ -565,6 +645,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "error");
@@ -626,6 +707,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "error");
@@ -687,6 +769,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "result");
@@ -721,6 +804,7 @@ testSuite("ProjectWorker - executeStream", () => {
         pageProps: {},
         layoutProps: [],
         delivery: "stream",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
     } catch {
       threw = true;
@@ -740,6 +824,7 @@ testSuite("ProjectWorker - executeStream", () => {
         pageProps: {},
         layoutProps: [],
         delivery: "stream",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       assert(stream instanceof ReadableStream, "should return a ReadableStream");
       // Cancel the stream to clean up

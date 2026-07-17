@@ -174,6 +174,30 @@ import { Message } from "veryfront/chat";
 </Message.Root>;
 ```
 
+## Theming and the token scope
+
+The chat and `veryfront/ui` primitives resolve their `var(--token)` styles
+against a **scoped** design-token stylesheet, so the tokens never leak to the
+rest of your page. The canonical scope attribute is **`data-vf-ui`**;
+`data-vf-chat` is kept as a **compatibility alias** (both are set on every scope
+element, and every token rule matches both), so existing selectors keep working.
+
+`<Chat>` establishes the scope for itself. When you compose the primitives
+_around_ `<Chat>` — a sidebar, header, or uploads panel in your own shell — wrap
+that shell in one `ChatThemeScope` so everything inside it is themed:
+
+```tsx
+import { ChatThemeScope } from "veryfront/chat";
+
+<ChatThemeScope className="h-screen">
+  <AppShell>{/* sidebar + <Chat /> + panels */}</AppShell>
+</ChatThemeScope>;
+```
+
+If you target the scope from your own CSS or DOM queries, prefer `[data-vf-ui]`.
+`[data-vf-chat]` remains supported and will only be removed in a future major
+release.
+
 ## Add conversation navigation
 
 Wrap the chat and sidebar in a `ConversationsProvider`.

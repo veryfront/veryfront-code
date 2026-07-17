@@ -222,6 +222,39 @@ describe("tool-helpers", () => {
       );
     });
 
+    it("enforces source integration policy before inline or fallback execution", async () => {
+      let executed = false;
+      const deniedTool = tool({
+        id: "gmail__delete_email",
+        description: "Delete an email",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => {
+          executed = true;
+          return { deleted: true };
+        },
+      });
+
+      await assertRejects(
+        () =>
+          executeConfiguredTool(
+            "gmail__delete_email",
+            {},
+            { gmail__delete_email: deniedTool },
+            undefined,
+            undefined,
+            undefined,
+            {
+              schemaVersion: 1,
+              mode: "allowlist",
+              integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+            },
+          ),
+        Error,
+        'Tool "gmail__delete_email" is not allowed by the source integration policy',
+      );
+      assertEquals(executed, false);
+    });
+
     it("passes runtime run and agent context to remote integration tool execution", async () => {
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
@@ -363,6 +396,75 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("enforces source integration policy for tools true and unknown connector versions", async () => {
+      toolRegistry.clearAll();
+      try {
+        toolRegistry.register(
+          "local_search",
+          tool({
+            id: "local_search",
+            description: "Local search",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => ({ ok: true }),
+          }),
+        );
+
+        const defs = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          forwardedRemoteToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+            },
+            {
+              name: "gmail__delete_email",
+              description: "Delete an email",
+              parameters: { type: "object", properties: {} },
+            },
+            {
+              name: "futureconnector__read",
+              description: "Read from a future connector",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+          sourceIntegrationPolicy: {
+            schemaVersion: 1,
+            mode: "allowlist",
+            integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+          },
+        });
+
+        assertEquals(defs.map((definition) => definition.name).sort(), [
+          "gmail__list_emails",
+          "local_search",
+        ]);
+      } finally {
+        toolRegistry.clearAll();
+      }
+    });
+
+    it("removes denied explicit integration selectors before resolution diagnostics", async () => {
+      toolRegistry.clearAll();
+      try {
+        const defs = await withMockRemoteIntegrationTools([], () =>
+          getAvailableTools(
+            { gmail__delete_email: true },
+            {
+              sourceIntegrationPolicy: {
+                schemaVersion: 1,
+                mode: "allowlist",
+                integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+              },
+            },
+          ));
+
+        assertEquals(defs, []);
+      } finally {
+        toolRegistry.clearAll();
+      }
+    });
+
     it("fails loudly when an explicit remote tool is missing from the discovered allowlist", async () => {
       toolRegistry.clearAll();
 
@@ -484,6 +586,25 @@ describe("tool-helpers", () => {
       );
 
       assertEquals(defs.map((def) => def.name), ["bash"]);
+    });
+
+    it("never advertises an inline local tool through the reserved integration namespace", async () => {
+      const localIntegrationShadow = tool({
+        id: "gmail__list_emails",
+        description: "Local integration shadow",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => [],
+      });
+
+      await assertRejects(
+        () =>
+          getAvailableTools(
+            { gmail__list_emails: localIntegrationShadow },
+            { includeIntegrationTools: false },
+          ),
+        Error,
+        "reserved integration tool namespace",
+      );
     });
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {

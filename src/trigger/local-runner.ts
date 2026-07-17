@@ -1,4 +1,5 @@
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { runWithProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
@@ -55,12 +56,16 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
     throw new Error(`Task target "${options.target.id}" not found.`);
   }
 
-  const result = await runTask({
-    task,
-    config: toRecordInput(options.input),
-    projectId: options.projectId,
-    debug: options.debug,
-  });
+  const result = await runWithProjectAgentRuntime(
+    discovery,
+    () =>
+      runTask({
+        task,
+        config: toRecordInput(options.input),
+        projectId: options.projectId,
+        debug: options.debug,
+      }),
+  );
 
   if (!result.success) {
     throw new Error(result.error ?? `Task target "${options.target.id}" failed.`);
@@ -85,29 +90,31 @@ async function runWorkflowTarget(
     throw new Error(`Workflow target "${options.target.id}" not found.`);
   }
 
-  const client = createWorkflowClient({
-    debug: options.debug,
-    executor: {
-      stepExecutor: {
-        agentRegistry,
-        toolRegistry,
+  return await runWithProjectAgentRuntime(discovery, async () => {
+    const client = createWorkflowClient({
+      debug: options.debug,
+      executor: {
+        stepExecutor: {
+          agentRegistry,
+          toolRegistry,
+        },
       },
-    },
-  });
+    });
 
-  try {
-    client.register(workflow.definition);
-    const handle = await client.start(options.target.id, options.input ?? {});
-    const output = await handle.result();
-    return {
-      kind: "workflow",
-      id: options.target.id,
-      output,
-      durationMs: Date.now() - start,
-    };
-  } finally {
-    await client.destroy();
-  }
+    try {
+      client.register(workflow.definition);
+      const handle = await client.start(options.target.id, options.input ?? {});
+      const output = await handle.result();
+      return {
+        kind: "workflow",
+        id: options.target.id,
+        output,
+        durationMs: Date.now() - start,
+      };
+    } finally {
+      await client.destroy();
+    }
+  });
 }
 
 export async function runTriggerTarget(

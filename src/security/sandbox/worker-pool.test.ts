@@ -14,6 +14,7 @@ import { MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
+const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 
 testSuite("WorkerPool", () => {
   let pool: WorkerPool;
@@ -128,6 +129,7 @@ testSuite("WorkerPool", () => {
           request: { url: "http://localhost/api/test", method: "GET", headers: [], body: null },
           params: {},
           projectDir: "/allowed/path",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         }),
       VeryfrontError,
       "outside allowed read paths",
@@ -230,6 +232,7 @@ testSuite("WorkerPool - warm recycling", () => {
       },
       params: {},
       projectDir: "/tmp",
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
     });
 
     // Create initial worker
@@ -286,6 +289,7 @@ testSuite("WorkerPool - warm recycling", () => {
       },
       params: {},
       projectDir: "/tmp",
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
     });
 
     // First request: increments requestCount to 1

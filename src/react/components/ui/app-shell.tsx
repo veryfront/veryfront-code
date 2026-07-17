@@ -20,6 +20,7 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { DesignTokenStyle } from "./tokens.tsx";
+import { UI_SCOPE_ATTRS } from "./design-tokens.ts";
 import { PanelLeftIcon, PanelRightIcon } from "./icons/index.ts";
 import { Button, type ButtonProps } from "./button.tsx";
 
@@ -217,7 +218,7 @@ function AppShellRoot({
         ref={ref}
         className={cn("flex h-full w-full", className)}
         data-vf-appshell=""
-        data-vf-chat=""
+        {...UI_SCOPE_ATTRS}
         {...props}
       >
         {children}

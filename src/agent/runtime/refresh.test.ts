@@ -2,15 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
-import { tool } from "#veryfront/tool";
+import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
 import type {
+  AgentConfig,
   AgentResponse,
   Message,
   RuntimeStateRequest,
   ToolExecutionResultRequest,
 } from "../types.ts";
+import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -838,19 +840,27 @@ describe("agent runtime refresh hooks", () => {
       connectUrl: "https://api.example.test/oauth/connect/gmail?projectId=project-1",
       message: "Authentication required for Gmail.",
     };
-    const listEmails = tool({
-      id: "gmail__list_emails",
-      description: "List Gmail messages",
-      inputSchema: defineSchema((v) => v.object({}))(),
-      execute: () => authenticationRequired,
-    });
-    const assistant = agent({
-      model: "anthropic/claude-sonnet-4-6",
-      system: "Use Gmail when requested.",
-      tools: { gmail__list_emails: listEmails },
-      maxSteps: 2,
-      resolveModelTransport: async () => ({ model }),
-    });
+    const gmailSource: RemoteToolSource = {
+      id: "gmail",
+      listTools: () =>
+        Promise.resolve([{
+          name: "gmail__list_emails",
+          description: "List Gmail messages",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: () => Promise.resolve(authenticationRequired),
+    };
+    const assistant = agent(
+      {
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Use Gmail when requested.",
+        tools: { gmail__list_emails: true },
+        __vfRemoteToolSources: [gmailSource],
+        __vfAllowedRemoteTools: ["gmail__list_emails"],
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      } as AgentConfig & RuntimeRemoteToolConfig,
+    );
 
     const response = (await assistant.stream({
       input: "Summarize my inbox",

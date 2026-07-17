@@ -122,6 +122,37 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
   });
 
+  it("requires an immutable release for environment agent sources", () => {
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        agentSource: {
+          type: "environment",
+          environmentName: "Production",
+        },
+      }))
+    );
+
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-1",
+      },
+    }));
+
+    assertEquals(parsed.agentSource, {
+      type: "environment",
+      environmentName: "Production",
+      releaseId: "release-1",
+    });
+  });
+
+  it("requires an exact source for every runtime invocation", () => {
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({ agentSource: undefined }))
+    );
+  });
+
   it("enforces child-run lineage before invoking a runtime agent service", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       run: {

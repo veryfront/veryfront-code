@@ -39,7 +39,7 @@
  */
 import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
-import { cn } from "../../theme.ts";
+import { cn, UI_SCOPE_ATTRS } from "../../theme.ts";
 import { PencilIcon, TrashIcon } from "../../../ui/icons/index.ts";
 import { Button } from "../../../ui/button.tsx";
 import {
@@ -247,7 +247,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
     <ChatSidebarContext.Provider value={value}>
       <ChatTokens />
       <div
-        data-vf-chat=""
+        {...UI_SCOPE_ATTRS}
         // Fills its parent by default (a composed layout container provides
         // width + overlay); the standalone preset supplies its own rail chrome.
         className={cn("flex flex-col h-full", fill && "w-full", className)}
