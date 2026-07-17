@@ -107,18 +107,36 @@ function isToolListResponse(value: unknown): value is { tools: RemoteToolDefinit
     value.tools.every(isRemoteToolDefinition);
 }
 
-async function fetchToolList(
+/**
+ * Issue an authenticated POST to the integration tools API with a bounded
+ * timeout. The two endpoints have different response contracts — tools/list
+ * throws on failure while tools/call maps failures into a structured result —
+ * so callers own response handling; this centralizes the auth headers and the
+ * timeout AbortSignal that both share. No retry: tools/call is not idempotent
+ * (a retried call could re-send an email or re-create a record).
+ */
+async function postIntegrationApi(
   baseUrl: string,
+  path: string,
   token: string,
-): Promise<RemoteToolDefinition[]> {
-  const response = await fetch(`${baseUrl}/integrations/tools/list`, {
+  body?: unknown,
+): Promise<Response> {
+  return await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
   });
+}
+
+async function fetchToolList(
+  baseUrl: string,
+  token: string,
+): Promise<RemoteToolDefinition[]> {
+  const response = await postIntegrationApi(baseUrl, "/integrations/tools/list", token);
 
   if (!response.ok) {
     // Throw so callers can distinguish a fetch failure from "no remote tools
@@ -142,19 +160,11 @@ async function callRemoteTool(
   args: Record<string, unknown>,
   context?: RemoteIntegrationToolExecutionContext,
 ): Promise<unknown> {
-  const response = await fetch(`${baseUrl}/integrations/tools/call`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name: toolName,
-      arguments: args,
-      run_id: context?.runId,
-      agent_id: context?.agentId,
-    }),
-    signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
+  const response = await postIntegrationApi(baseUrl, "/integrations/tools/call", token, {
+    name: toolName,
+    arguments: args,
+    run_id: context?.runId,
+    agent_id: context?.agentId,
   });
 
   if (!response.ok) {
