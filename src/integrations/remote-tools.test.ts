@@ -8,7 +8,6 @@ import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
   isRemoteIntegrationTool,
-  syncIntegrationConfig,
 } from "./remote-tools.ts";
 
 const ENV_KEYS = [
@@ -286,31 +285,5 @@ describe("integrations/remote-tools", () => {
       }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, "plain result");
-  });
-
-  it("posts integration config as a full replace payload", async () => {
-    let requestBody: Record<string, unknown> | undefined;
-
-    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(input, init);
-      requestBody = await request.json();
-
-      return Response.json({ synced: 2 });
-    }, async () =>
-      await syncIntegrationConfig(
-        "https://api.test",
-        "sync-token",
-        {
-          github: { scope: "project", tools: ["list-repos"] },
-          slack: { scope: "endUser" },
-        },
-      ));
-
-    assertEquals(requestBody, {
-      integrations: {
-        github: { scope: "project", tools: ["list-repos"] },
-        slack: { scope: "endUser" },
-      },
-    });
   });
 });

@@ -72,11 +72,5 @@ export {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
   isRemoteIntegrationTool,
-  syncIntegrationConfig,
 } from "./remote-tools.ts";
-export type {
-  IntegrationConnector,
-  IntegrationRuntimeConfig,
-  IntegrationScope,
-  IntegrationTool,
-} from "./types.ts";
+export type { IntegrationConnector, IntegrationTool } from "./types.ts";
