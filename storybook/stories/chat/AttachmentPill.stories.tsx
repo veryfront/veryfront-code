@@ -281,7 +281,7 @@ export const WithPreview: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Recomposed chip">

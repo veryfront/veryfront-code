@@ -303,7 +303,7 @@ export const ComposedRow: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {
