@@ -41,6 +41,17 @@ describe("guide content contracts", () => {
     assertEquals(docs.includes("removed OAuth provider exports"), false);
   });
 
+  it("documents integration ownership without restoring config-driven policy", async () => {
+    const guide = await Deno.readTextFile("docs/guides/integrations.md");
+
+    assertStringIncludes(guide, "agent source");
+    assertStringIncludes(guide, "Project integration policy");
+    assertStringIncludes(guide, "Connection inventory");
+    assertStringIncludes(guide, "Managed OAuth");
+    assertStringIncludes(guide, "Remove any top-level `integrations` block");
+    assertEquals(guide.includes("perUser"), false);
+  });
+
   it("does not document caller-provided endUserId as tool context authority", async () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 

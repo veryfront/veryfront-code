@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { MiddlewareContext } from "#veryfront/middleware/core/context.ts";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env";
@@ -84,6 +85,16 @@ export class ProjectMiddlewareRuntime {
 
   async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
     const { handlerContext: ctx, isSharedProxy, next, request } = input;
+
+    if (
+      isConfigOptionalControlPlaneRunRequest(
+        request.method,
+        new URL(request.url).pathname,
+      )
+    ) {
+      return next();
+    }
+
     const fs = ctx.adapter.fs;
 
     if (
