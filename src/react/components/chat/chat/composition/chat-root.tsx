@@ -12,7 +12,13 @@ import { ChatContainer } from "#veryfront/react/primitives/index.ts";
 import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import { getDocumentNonce } from "../../../ui/csp-nonce.ts";
-import { cn, defaultChatTheme, generateTokenCSS, mergeThemes } from "../../theme.ts";
+import {
+  cn,
+  defaultChatTheme,
+  generateTokenCSS,
+  mergeThemes,
+  UI_SCOPE_ATTRS,
+} from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
@@ -187,7 +193,7 @@ export function ChatRoot(
       <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
       <ChatContainer
         ref={ref}
-        data-vf-chat=""
+        {...UI_SCOPE_ATTRS}
         className={cn(theme.container, "relative", className)}
         style={{ maxHeight, ...style }}
         {...containerProps}
