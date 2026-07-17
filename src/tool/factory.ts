@@ -137,6 +137,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
     id,
     type: "function" as const,
     description: config.description,
+    ...(config.delegatedIntegrationTools
+      ? { delegatedIntegrationTools: [...config.delegatedIntegrationTools] }
+      : {}),
     inputSchema: config.inputSchema as Schema<TInput>,
     inputSchemaJson,
     outputSchema: config.outputSchema as Schema<TOutput> | undefined,
