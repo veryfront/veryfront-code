@@ -99,11 +99,9 @@ when you need exact exported names or icon metadata:
 
 After an integration is available to an agent:
 
-1. Restart `veryfront dev`. The dev log lists the integration tools that were
-   registered.
-2. From an agent that includes the integration tools, send a message that
+1. From an agent that includes the integration tools, send a message that
    exercises one tool. The AG-UI stream should include a tool call event with
    the integration's tool id and a non-error result.
-3. For per-user OAuth integrations, confirm the user has authorized the provider
+2. For per-user OAuth integrations, confirm the user has authorized the provider
    first (see [OAuth](./oauth.md)). Calls fail with `401` if the user has no
    token.
