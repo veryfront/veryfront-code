@@ -154,6 +154,11 @@ Deno.test("executeHostedChildForkWithPreparedTools executes a prepared child for
 
 Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime starter", async () => {
   let startRuntimeCalls = 0;
+  const sourceIntegrationPolicy = {
+    schemaVersion: 1 as const,
+    mode: "allowlist" as const,
+    integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+  };
   const result = await executeHostedChildForkWithPreparedTools({
     authToken: "token",
     apiUrl: "https://api.example.com",
@@ -163,6 +168,7 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime 
     forkModel: "anthropic/claude-sonnet-4",
     maxSteps: 4,
     effectivePrompt: "Do the work.",
+    sourceIntegrationPolicy,
     toolAssembly: {
       ok: true,
       forkTools: {},
@@ -171,6 +177,7 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime 
     startRuntime: (input) => {
       startRuntimeCalls += 1;
       assertEquals(input.forkModel, "anthropic/claude-sonnet-4");
+      assertEquals(input.sourceIntegrationPolicy, sourceIntegrationPolicy);
       return {
         forkStreamAbortController: new AbortController(),
         childRunMonitorAbortController: null,

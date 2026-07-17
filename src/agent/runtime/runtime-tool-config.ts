@@ -1,6 +1,10 @@
 import type { ToolDefinition } from "#veryfront/tool";
 import type { AgentConfig } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
+import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+
+export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
@@ -18,6 +22,24 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
     return [];
   }
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+/** Return trusted run-scoped source policy; malformed internal state fails closed. */
+export function getRuntimeSourceIntegrationPolicy(
+  config: AgentConfig,
+): SourceIntegrationPolicyManifest | undefined {
+  return resolveEffectiveSourceIntegrationPolicy(
+    (config as RuntimeToolFilterConfig).__vfSourceIntegrationPolicy,
+  );
+}
+
+/** Read source policy stamped by the parent runtime into a tool execution context. */
+export function getRuntimeSourceIntegrationPolicyFromContext(
+  context: Record<string, unknown> | undefined,
+): SourceIntegrationPolicyManifest | undefined {
+  return resolveEffectiveSourceIntegrationPolicy(
+    context?.[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY],
+  );
 }
 
 export function getRuntimeProviderTools(config: AgentConfig): string[] {

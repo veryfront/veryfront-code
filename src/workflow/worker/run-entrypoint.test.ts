@@ -9,6 +9,10 @@ import { dependsOn, step, workflow } from "../dsl/index.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowRun } from "../types.ts";
 import { EXIT_CODES, runWorkflowRun } from "./run-entrypoint.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 const ENV_KEYS = [
   "WORKFLOW_RUN_ID",
@@ -50,9 +54,100 @@ function createMockTool(name: string, handler: (input: unknown) => unknown): Too
   };
 }
 
+class MissingPolicyOnReadBackend extends MemoryBackend {
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await super.getRun(runId);
+    if (!run) return null;
+    const { sourceIntegrationPolicy: _sourceIntegrationPolicy, ...missingSnapshot } = run;
+    return missingSnapshot as unknown as WorkflowRun;
+  }
+}
+
 describe("runWorkflowRun", () => {
   afterEach(() => {
     restoreEnv();
+  });
+
+  it("restores the persisted source integration policy for the static entrypoint", async () => {
+    rememberEnv();
+
+    const backend = new MemoryBackend();
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["search_content"] },
+      },
+    });
+    const run = {
+      id: "run-source-policy",
+      workflowId: "test-workflow",
+      status: "pending",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy,
+    } as unknown as WorkflowRun;
+    await backend.createRun(run);
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+
+    let observedPolicy: unknown;
+    const exitCode = await runWorkflowRun({
+      backend,
+      executor: {
+        resume: async (runId: string) => {
+          observedPolicy = getActiveSourceIntegrationPolicy();
+          await backend.updateRun(runId, { status: "completed" });
+        },
+      } as never,
+    });
+
+    assertEquals(exitCode, EXIT_CODES.SUCCESS);
+    assertEquals(observedPolicy, sourceIntegrationPolicy);
+  });
+
+  it("fails closed without invoking the static entrypoint executor when the snapshot is missing", async () => {
+    rememberEnv();
+
+    const backend = new MissingPolicyOnReadBackend();
+    const run = {
+      id: "run-missing-source-policy",
+      workflowId: "test-workflow",
+      status: "pending",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    } as unknown as WorkflowRun;
+    await backend.createRun(run);
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+
+    let resumed = false;
+    const exitCode = await runWorkflowRun({
+      backend,
+      executor: {
+        resume: () => {
+          resumed = true;
+          return Promise.resolve();
+        },
+      } as never,
+    });
+
+    const storedRun = await backend.getRun(run.id);
+    assertEquals(exitCode, EXIT_CODES.WORKFLOW_FAILED);
+    assertEquals(resumed, false);
+    assertExists(storedRun);
+    assertEquals(storedRun.status, "failed");
+    assertEquals(
+      storedRun.error?.message.includes("source integration policy snapshot"),
+      true,
+    );
   });
 
   it("hydrates the workflow run context env from injected project env before resume", async () => {
@@ -70,6 +165,7 @@ describe("runWorkflowRun", () => {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
     };
     await backend.createRun(run);
 
@@ -120,6 +216,7 @@ describe("runWorkflowRun", () => {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
       _tenant: {
         projectSlug: "acme",
         token: "tenant-token",
@@ -171,6 +268,7 @@ describe("runWorkflowRun", () => {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
     };
     await backend.createRun(run);
 
@@ -219,6 +317,7 @@ describe("runWorkflowRun", () => {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
       startedAt: new Date(),
       workerId: "run-execution:run-exec-1",
     };
@@ -285,6 +384,7 @@ describe("runWorkflowRun", () => {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
       startedAt: new Date(),
       workerId: "run-execution:run-exec-2",
     };

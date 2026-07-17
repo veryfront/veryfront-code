@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ApprovalManager } from "./approval-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowContext, WorkflowRun } from "../types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 describe("ApprovalManager", () => {
   let backend: MemoryBackend;
@@ -22,6 +25,8 @@ describe("ApprovalManager", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       ...overrides,
+      sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+        UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
     };
   }
 

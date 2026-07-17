@@ -6,6 +6,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
 import {
+  getActiveSourceIntegrationPolicy,
+  runWithExactSourceIntegrationPolicy,
+} from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import {
   ProjectMiddlewareRuntime,
   type ProjectMiddlewareRuntimeContext,
 } from "./project-middleware.ts";
@@ -499,7 +504,7 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(routeCalls, 0);
   });
 
-  it("does not load shared middleware for local, standalone, or unauthenticated context", async () => {
+  it("uses the same middleware runtime for local, standalone, and unauthenticated contexts", async () => {
     const adapter = createAdapter();
     let loads = 0;
     const runtime = new ProjectMiddlewareRuntime({
@@ -523,7 +528,34 @@ describe("ProjectMiddlewareRuntime", () => {
     await execute(runtime, createContext(adapter, { isLocalProject: true }), undefined, next);
     await execute(runtime, createContext(adapter, { proxyToken: undefined }), undefined, next);
 
-    assertEquals(loads, 0);
+    assertEquals(loads, 1);
     assertEquals(routeCalls, 3);
+  });
+
+  it("keeps middleware execution inside the exact source policy scope", async () => {
+    const adapter = createAdapter();
+    const policy = normalizeSourceIntegrationPolicy({
+      allow: { confluence: { allowedTools: ["get_page"] } },
+    });
+    let observedPolicy: unknown;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          async (_context, next) => {
+            observedPolicy = getActiveSourceIntegrationPolicy();
+            return await next();
+          },
+        ]),
+    });
+
+    await runWithExactSourceIntegrationPolicy(policy, () =>
+      runtime.execute({
+        request: new Request("https://example.com"),
+        handlerContext: createContext(adapter),
+        isSharedProxy: false,
+        next: () => Promise.resolve(new Response("route")),
+      }));
+
+    assertEquals(observedPolicy, policy);
   });
 });

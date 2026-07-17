@@ -198,7 +198,7 @@ export default agent({
   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
   tools: {
     Read: true,
-    "github:list-issues": true,
+    github__list_issues: true,
   },
 });
 ```

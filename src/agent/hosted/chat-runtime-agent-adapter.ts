@@ -6,6 +6,8 @@ import type {
 } from "./chat-runtime-contract.ts";
 import { createToolExecutionDataEventBridgeStream } from "../streaming/tool-execution-data-event-bridge.ts";
 import type { Agent } from "../types.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 /** Public API contract for hosted chat runtime agent adapter runner. */
 export type HostedChatRuntimeAgentAdapterRunner = <TResult>(
@@ -21,6 +23,7 @@ export type HostedChatRuntimeAgentAdapterWarning = {
 /** Input payload for hosted chat runtime agent adapter. */
 export type HostedChatRuntimeAgentAdapterInput = {
   runtimeAgent: Pick<Agent, "stream">;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runId?: string;
   agentId?: string;
   authToken?: string;
@@ -44,20 +47,25 @@ export function createHostedChatRuntimeAgentAdapter(
   return {
     stream: async (streamInput): Promise<HostedChatRuntimeStreamResult> => {
       let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
-      const response = await runStream(() =>
-        input.runtimeAgent.stream({
-          messages: streamInput.messages,
-          context: {
-            ...(input.runId ? { runId: input.runId } : {}),
-            ...(input.agentId ? { agentId: input.agentId } : {}),
-            ...(input.authToken ? { authToken: input.authToken } : {}),
-            abortSignal: streamInput.abortSignal,
-            publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
+      const streamResponse = await runStream(() =>
+        runWithEffectiveSourceIntegrationPolicy(
+          input.sourceIntegrationPolicy,
+          async () => {
+            const response = await input.runtimeAgent.stream({
+              messages: streamInput.messages,
+              context: {
+                ...(input.runId ? { runId: input.runId } : {}),
+                ...(input.agentId ? { agentId: input.agentId } : {}),
+                ...(input.authToken ? { authToken: input.authToken } : {}),
+                abortSignal: streamInput.abortSignal,
+                publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
+              },
+            });
+            return response.toDataStreamResponse();
           },
-        })
+        )
       );
 
-      const streamResponse = response.toDataStreamResponse();
       if (!streamResponse.body) {
         throw new Error("Agent runtime returned an empty stream body");
       }

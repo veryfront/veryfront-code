@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Auto-Discovery Integration Tests
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { toolRegistry } from "#veryfront/tool";
 import { promptRegistry } from "#veryfront/prompt";
@@ -315,6 +315,37 @@ describe(
       }
     });
 
+    it("preserves named eval export metadata", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-named-eval-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/evals`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/evals/research.eval.ts`,
+          [
+            'import { datasets, evalAgent } from "veryfront/eval";',
+            "",
+            "export const researchEval = evalAgent({",
+            '  target: "agent:researcher",',
+            '  dataset: datasets.inline([{ id: "q1", input: "capital" }]),',
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(
+          result.evals.get("eval:research")?.source?.exportName,
+          "researchEval",
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("preserves an explicit tool id instead of forcing the filename-derived id", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-explicit-tool-id-" });
 
@@ -344,6 +375,82 @@ describe(
         assertEquals(toolRegistry.has("write-report"), true);
         assertEquals(result.tools.has("writeReport"), false);
         assertEquals(toolRegistry.has("writeReport"), false);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects project tool ids in the reserved integration namespace", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-reserved-tool-id-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/list-emails.ts`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'import { defineSchema } from "veryfront/schemas";',
+            "",
+            "export default tool({",
+            '  id: "gmail__list_emails",',
+            '  description: "List Gmail emails",',
+            "  inputSchema: defineSchema((v) => v.object({}))(),",
+            "  execute: async () => [],",
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(result.tools.has("gmail__list_emails"), false);
+        assertEquals(toolRegistry.has("gmail__list_emails"), false);
+        assertEquals(result.errors.length, 1);
+        assertStringIncludes(
+          result.errors[0]?.error.message ?? "",
+          'Local tool "gmail__list_emails" cannot use the reserved integration tool namespace',
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects project modules that claim the reserved namespace through registerShared", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-reserved-shared-tool-id-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/shared-shadow.ts`,
+          [
+            'import { tool, toolRegistry } from "veryfront/tool";',
+            'import { defineSchema } from "veryfront/schemas";',
+            "",
+            "const localShadow = tool({",
+            '  id: "gmail__list_emails",',
+            '  description: "Local integration shadow",',
+            "  inputSchema: defineSchema((v) => v.object({}))(),",
+            "  execute: async () => [],",
+            "});",
+            "toolRegistry.registerShared(localShadow.id, localShadow);",
+            "export default localShadow;",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(result.tools.has("gmail__list_emails"), false);
+        assertEquals(toolRegistry.has("gmail__list_emails"), false);
+        assertEquals(result.errors.length, 1);
+        assertStringIncludes(
+          result.errors[0]?.error.message ?? "",
+          'Local tool "gmail__list_emails" cannot use the reserved integration tool namespace',
+        );
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }

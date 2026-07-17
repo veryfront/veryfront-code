@@ -14,8 +14,15 @@ import {
   doesProjectAgentRuntimeAgentMatchSource,
   getProjectAgentRuntimeAgentIdCandidates,
   resolveSingleProjectAgentRuntimeAgentId,
+  runWithProjectAgentRuntime,
 } from "./agent-runtime.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "../runtime/agent-markdown-adapter.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import {
+  intersectSourceIntegrationPolicies,
+  normalizeSourceIntegrationPolicy,
+} from "#veryfront/integrations/source-policy.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
@@ -127,6 +134,139 @@ Deno.test("discoverProjectAgentRuntime clears stale runtime registries before re
     assertEquals(getMCPRegistry().prompts.has("stale-prompt"), false);
     assertEquals(workflowRegistry.has("stale-workflow"), false);
   });
+});
+
+Deno.test({
+  name: "project runtime returns and explicitly applies its exact source integration restriction",
+  fn: async () => {
+    let observedPolicy: ReturnType<typeof getActiveSourceIntegrationPolicy>;
+    const observeKey = "__vfObserveDiscoveredAgentSourcePolicy";
+    Object.defineProperty(globalThis, observeKey, {
+      configurable: true,
+      value: () => {
+        observedPolicy = getActiveSourceIntegrationPolicy();
+      },
+    });
+
+    try {
+      await withTempDir(async (rootDir) => {
+        const agentsDir = resolve(rootDir, "agents");
+        Deno.mkdirSync(agentsDir, { recursive: true });
+        Deno.writeTextFileSync(
+          resolve(agentsDir, "observer.ts"),
+          [
+            "const observe = (globalThis as Record<string, unknown>)",
+            `  [${JSON.stringify(observeKey)}] as () => void;`,
+            "export default {",
+            '  id: "observer",',
+            '  config: { id: "observer", model: "auto", system: "Observe." },',
+            "  async generate() {",
+            "    observe();",
+            '    return { text: "ok", messages: [], toolCalls: [], status: "completed" };',
+            "  },",
+            '  async stream() { throw new Error("not used"); },',
+            '  async respond() { throw new Error("not used"); },',
+            '  getMemory() { throw new Error("not used"); },',
+            '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+            "  async clearMemory() {},",
+            "};",
+            "",
+          ].join("\n"),
+        );
+
+        const config: VeryfrontConfig = {
+          integrations: {
+            allow: { gmail: { allowedTools: ["list_emails"] } },
+          },
+        };
+        const discovery = await discoverProjectAgentRuntime({
+          projectDir: rootDir,
+          adapter: nodeAdapter,
+          config,
+        });
+
+        const expectedPolicy = normalizeSourceIntegrationPolicy(config.integrations);
+        assertEquals(discovery.sourceIntegrationPolicy, expectedPolicy);
+        const discoveredAgent = discovery.agents.get("observer")!;
+        const originalGenerate = discoveredAgent.generate;
+
+        await runWithProjectAgentRuntime(
+          discovery,
+          () => discoveredAgent.generate({ input: "Observe policy." }),
+        );
+        assertEquals(observedPolicy, expectedPolicy);
+        assertEquals(discoveredAgent.generate, originalGenerate);
+      });
+    } finally {
+      delete (globalThis as Record<string, unknown>)[observeKey];
+    }
+  },
+});
+
+Deno.test({
+  name: "project discovery cannot widen an immutable run policy while importing a reloaded source",
+  fn: async () => {
+    let observedPolicy: ReturnType<typeof getActiveSourceIntegrationPolicy>;
+    const observeKey = "__vfObserveWorkflowDiscoveryPolicy";
+    Object.defineProperty(globalThis, observeKey, {
+      configurable: true,
+      value: () => {
+        observedPolicy = getActiveSourceIntegrationPolicy();
+      },
+    });
+
+    try {
+      await withTempDir(async (rootDir) => {
+        const agentsDir = resolve(rootDir, "agents");
+        Deno.mkdirSync(agentsDir, { recursive: true });
+        Deno.writeTextFileSync(
+          resolve(agentsDir, "observer.ts"),
+          [
+            "const observe = (globalThis as Record<string, unknown>)",
+            `  [${JSON.stringify(observeKey)}] as () => void;`,
+            "observe();",
+            "export default {",
+            '  id: "observer",',
+            '  config: { id: "observer", model: "auto", system: "Observe." },',
+            '  async generate() { throw new Error("not used"); },',
+            '  async stream() { throw new Error("not used"); },',
+            '  async respond() { throw new Error("not used"); },',
+            '  getMemory() { throw new Error("not used"); },',
+            '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+            "  async clearMemory() {},",
+            "};",
+            "",
+          ].join("\n"),
+        );
+
+        const persistedPolicy = normalizeSourceIntegrationPolicy({
+          allow: { confluence: { allowedTools: ["get_page"] } },
+        });
+        const reloadedConfig: VeryfrontConfig = {
+          integrations: {
+            allow: { gmail: { allowedTools: ["list_emails"] } },
+          },
+        };
+        const reloadedPolicy = normalizeSourceIntegrationPolicy(reloadedConfig.integrations);
+        const expectedPolicy = intersectSourceIntegrationPolicies(
+          persistedPolicy,
+          reloadedPolicy,
+        );
+
+        const discovery = await discoverProjectAgentRuntime({
+          projectDir: rootDir,
+          adapter: nodeAdapter,
+          config: reloadedConfig,
+          sourceIntegrationPolicy: persistedPolicy,
+        });
+
+        assertEquals(observedPolicy, expectedPolicy);
+        assertEquals(discovery.sourceIntegrationPolicy, expectedPolicy);
+      });
+    } finally {
+      delete (globalThis as Record<string, unknown>)[observeKey];
+    }
+  },
 });
 
 async function assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint(): Promise<void> {

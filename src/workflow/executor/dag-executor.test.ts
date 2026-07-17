@@ -11,6 +11,13 @@ import { dependsOn } from "../dsl/workflow.ts";
 import type { WorkflowContext, WorkflowNode, WorkflowRun } from "../types.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { StepExecutor } from "./step-executor.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import {
+  getActiveSourceIntegrationPolicy,
+  runWithExactSourceIntegrationPolicy,
+} from "#veryfront/integrations/source-policy-context.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 function createMockStepExecutor(
   executionOrder: string[] = [],
@@ -51,6 +58,7 @@ function createTestRun(): WorkflowRun {
     checkpoints: [],
     pendingApprovals: [],
     createdAt: new Date(),
+    sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
@@ -61,6 +69,43 @@ describe("DAGExecutor", () => {
     executor = new DAGExecutor({
       stepExecutor: createMockStepExecutor(),
     });
+  });
+
+  it("restores and narrows the run policy for direct DAG consumers", async () => {
+    const persistedPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["get_page", "search_content"] },
+      },
+    });
+    const activePolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["get_page"] },
+        github: {},
+      },
+    });
+    const expectedPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["get_page"] },
+      },
+    });
+    let observedPolicy: unknown;
+    const stepExecutor = createMockStepExecutor();
+    stepExecutor.execute = () => {
+      observedPolicy = getActiveSourceIntegrationPolicy();
+      return Promise.resolve({ success: true, output: {}, executionTime: 0 });
+    };
+    executor = new DAGExecutor({ stepExecutor });
+
+    await runWithExactSourceIntegrationPolicy(
+      activePolicy,
+      () =>
+        executor.execute(
+          [step("observe", { agent: "a" })],
+          { ...createTestRun(), sourceIntegrationPolicy: persistedPolicy },
+        ),
+    );
+
+    assertEquals(observedPolicy, expectedPolicy);
   });
 
   describe("Topological Sorting", () => {

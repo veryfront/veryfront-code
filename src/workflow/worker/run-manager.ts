@@ -16,6 +16,10 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
+import {
+  requireWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
 import { generateId } from "../types.ts";
 import type { RunExecutionConfig, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
@@ -444,6 +448,8 @@ export class WorkflowRunManager {
     };
 
     try {
+      requireWorkflowSourceIntegrationPolicy(run);
+
       // Mark running BEFORE spawning the execution. If we spawned first and then
       // crashed before this update, a live process would sit behind a "pending"
       // run that the next poll would execute again (duplicate execution). With
@@ -457,7 +463,10 @@ export class WorkflowRunManager {
         workerId: `run-execution:${executionId}`,
       });
 
-      await this.config.executor.createRunExecution(executionConfig);
+      await runWithWorkflowSourceIntegrationPolicy(
+        run,
+        () => this.config.executor.createRunExecution(executionConfig),
+      );
 
       const tracked: TrackedExecution = {
         executionId,
