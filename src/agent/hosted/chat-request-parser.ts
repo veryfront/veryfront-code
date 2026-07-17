@@ -11,6 +11,10 @@ import {
 } from "./chat-request.ts";
 import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import {
+  type HostedRuntimeSourceIdentity,
+  verifyHostedRuntimeSourceBinding,
+} from "./runtime-source-binding.ts";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -61,6 +65,13 @@ export type ParseHostedChatRequestOptions = {
     authToken: string;
   }) => Promise<HostedChatProjectAccessResult>;
 };
+
+/** Options accepted when parsing a signed control-plane runtime invocation. */
+export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
+  & ParseHostedChatRequestOptions
+  & {
+    runtimeSource: HostedRuntimeSourceIdentity | undefined;
+  };
 
 async function parseRequestJson(request: Request): Promise<unknown> {
   return await request.json().catch((): null => null);
@@ -196,7 +207,7 @@ export async function parseHostedChatRequestFromRequest(
 /** Request payload for parse runtime agent run invocation hosted chat request from. */
 export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
   request: Request,
-  options: ParseHostedChatRequestOptions,
+  options: ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
 ): Promise<ParsedHostedChatRequest | Response> {
   const authenticatedRequest = await options.authenticate(request);
   if (authenticatedRequest instanceof Response) {
@@ -221,7 +232,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
-  return await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
@@ -229,4 +240,20 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     agentConfig: invocation.data.agentConfig,
     verifyProjectAccess: options.verifyProjectAccess,
   });
+  if (parsedRequest instanceof Response) {
+    return parsedRequest;
+  }
+
+  const sourceBindingError = verifyHostedRuntimeSourceBinding(
+    options.runtimeSource,
+    invocation.data.agentSource,
+  );
+  if (sourceBindingError) {
+    return Response.json(
+      { errorCode: sourceBindingError.errorCode },
+      { status: sourceBindingError.status },
+    );
+  }
+
+  return parsedRequest;
 }

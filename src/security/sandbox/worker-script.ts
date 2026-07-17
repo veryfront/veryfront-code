@@ -31,6 +31,8 @@ import type {
 } from "./worker-types.ts";
 import { installWorkerEgressGuard } from "./worker-egress-guard.ts";
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
@@ -273,30 +275,46 @@ async function ensureAgentDiscovery(projectDir: string): Promise<void> {
 // Request Handlers
 // ---------------------------------------------------------------------------
 
+function runWithWorkerSourceIntegrationPolicy<T>(
+  policy: unknown,
+  fn: () => T,
+): T {
+  return runWithExactSourceIntegrationPolicy(
+    parseSourceIntegrationPolicyManifest(policy),
+    fn,
+  );
+}
+
 async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedResponse> {
-  return await withProjectEnv(req.projectEnv, async () => {
-    await ensureAgentDiscovery(req.projectDir);
-    const mod = await loadModule(req.modulePath);
+  return await runWithWorkerSourceIntegrationPolicy(
+    req.sourceIntegrationPolicy,
+    () =>
+      withProjectEnv(req.projectEnv, async () => {
+        await ensureAgentDiscovery(req.projectDir);
+        const mod = await loadModule(req.modulePath);
 
-    const handlerFn = (getMethodExport(mod, req.method) ?? mod.default) as
-      | ((
-        request: Request,
-        context: { params: Record<string, string | string[]> },
-      ) => Promise<Response> | Response)
-      | undefined;
+        const handlerFn = (getMethodExport(mod, req.method) ?? mod.default) as
+          | ((
+            request: Request,
+            context: { params: Record<string, string | string[]> },
+          ) => Promise<Response> | Response)
+          | undefined;
 
-    if (!handlerFn) {
-      return {
-        status: 405,
-        statusText: "Method Not Allowed",
-        headers: [["content-type", "application/json"]],
-        body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
-      };
-    }
+        if (!handlerFn) {
+          return {
+            status: 405,
+            statusText: "Method Not Allowed",
+            headers: [["content-type", "application/json"]],
+            body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
+          };
+        }
 
-    const response = await handlerFn(deserializeRequest(req.request), { params: req.params ?? {} });
-    return serializeResponse(response);
-  });
+        const response = await handlerFn(deserializeRequest(req.request), {
+          params: req.params ?? {},
+        });
+        return serializeResponse(response);
+      }),
+  );
 }
 
 function deserializeDataContext(
@@ -321,103 +339,112 @@ function deserializeDataContext(
 }
 
 async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataResult> {
-  const mod = await loadModule(req.modulePath);
-  const getServerData = mod.getServerData as
-    | ((ctx: unknown) => unknown | Promise<unknown>)
-    | undefined;
+  return await runWithWorkerSourceIntegrationPolicy(
+    req.sourceIntegrationPolicy,
+    async () => {
+      const mod = await loadModule(req.modulePath);
+      const getServerData = mod.getServerData as
+        | ((ctx: unknown) => unknown | Promise<unknown>)
+        | undefined;
 
-  if (typeof getServerData !== "function") {
-    return { props: {} };
-  }
+      if (typeof getServerData !== "function") {
+        return { props: {} };
+      }
 
-  const context = deserializeDataContext(req.context);
-  const result = (await getServerData(context)) as SerializedDataResult;
+      const context = deserializeDataContext(req.context);
+      const result = (await getServerData(context)) as SerializedDataResult;
 
-  // Normalize the result shape
-  if (result.redirect) return { redirect: result.redirect };
-  if (result.notFound) return { notFound: true };
-  return { props: result.props ?? {}, revalidate: result.revalidate };
+      // Normalize the result shape
+      if (result.redirect) return { redirect: result.redirect };
+      if (result.notFound) return { notFound: true };
+      return { props: result.props ?? {}, revalidate: result.revalidate };
+    },
+  );
 }
 
 async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<SerializedResponse> {
-  return await withProjectEnv(req.projectEnv, async () => {
-    await ensureAgentDiscovery(req.projectDir);
-    const mod = await loadModule(req.modulePath);
+  return await runWithWorkerSourceIntegrationPolicy(
+    req.sourceIntegrationPolicy,
+    () =>
+      withProjectEnv(req.projectEnv, async () => {
+        await ensureAgentDiscovery(req.projectDir);
+        const mod = await loadModule(req.modulePath);
 
-    const handlerFn = (getMethodExport(mod, req.method) ?? mod.default) as
-      | ((ctx: unknown) => Promise<Response> | Response)
-      | undefined;
+        const handlerFn = (getMethodExport(mod, req.method) ?? mod.default) as
+          | ((ctx: unknown) => Promise<Response> | Response)
+          | undefined;
 
-    if (!handlerFn) {
-      return {
-        status: 405,
-        statusText: "Method Not Allowed",
-        headers: [["content-type", "application/json"]],
-        body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
-      };
-    }
-
-    const { request, params, cookies } = deserializePagesRequest(req.context);
-    const url = new URL(request.url);
-
-    // Build a minimal read-only fs adapter scoped to the project directory.
-    // Every path is validated against the project root before it reaches a
-    // Deno API so user route handlers cannot read arbitrary host files.
-    const assertContained = makeProjectPathGuard(req.projectDir);
-    const workerFs = {
-      readTextFile: async (path: string) => Deno.readTextFile(await assertContained(path)),
-      readFile: async (path: string) => Deno.readFile(await assertContained(path)),
-      exists: async (path: string) => {
-        try {
-          await Deno.stat(await assertContained(path));
-          return true;
-        } catch {
-          return false;
+        if (!handlerFn) {
+          return {
+            status: 405,
+            statusText: "Method Not Allowed",
+            headers: [["content-type", "application/json"]],
+            body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
+          };
         }
-      },
-      stat: async (path: string) => {
-        const info = await Deno.stat(await assertContained(path));
-        return {
-          isFile: info.isFile,
-          isDirectory: info.isDirectory,
-          isSymlink: info.isSymlink,
-          size: info.size,
-          mtime: info.mtime,
+
+        const { request, params, cookies } = deserializePagesRequest(req.context);
+        const url = new URL(request.url);
+
+        // Build a minimal read-only fs adapter scoped to the project directory.
+        // Every path is validated against the project root before it reaches a
+        // Deno API so user route handlers cannot read arbitrary host files.
+        const assertContained = makeProjectPathGuard(req.projectDir);
+        const workerFs = {
+          readTextFile: async (path: string) => Deno.readTextFile(await assertContained(path)),
+          readFile: async (path: string) => Deno.readFile(await assertContained(path)),
+          exists: async (path: string) => {
+            try {
+              await Deno.stat(await assertContained(path));
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          stat: async (path: string) => {
+            const info = await Deno.stat(await assertContained(path));
+            return {
+              isFile: info.isFile,
+              isDirectory: info.isDirectory,
+              isSymlink: info.isSymlink,
+              size: info.size,
+              mtime: info.mtime,
+            };
+          },
+          readDir: async function* (path: string) {
+            const safePath = await assertContained(path);
+            for await (const entry of Deno.readDir(safePath)) {
+              yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+            }
+          },
         };
-      },
-      readDir: async function* (path: string) {
-        const safePath = await assertContained(path);
-        for await (const entry of Deno.readDir(safePath)) {
-          yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
-        }
-      },
-    };
 
-    // Build a minimal APIContext (subset of the full context)
-    const ctx = {
-      request,
-      req: request,
-      params,
-      query: url.searchParams,
-      cookies,
-      headers: request.headers,
-      url,
-      json: (data: unknown, init?: ResponseInit): Response =>
-        new Response(JSON.stringify(data), {
-          ...init,
-          headers: { "Content-Type": "application/json", ...init?.headers },
-        }),
-      text: (data: string, init?: ResponseInit): Response =>
-        new Response(data, {
-          ...init,
-          headers: { "Content-Type": "text/plain", ...init?.headers },
-        }),
-      fs: workerFs,
-    };
+        // Build a minimal APIContext (subset of the full context)
+        const ctx = {
+          request,
+          req: request,
+          params,
+          query: url.searchParams,
+          cookies,
+          headers: request.headers,
+          url,
+          json: (data: unknown, init?: ResponseInit): Response =>
+            new Response(JSON.stringify(data), {
+              ...init,
+              headers: { "Content-Type": "application/json", ...init?.headers },
+            }),
+          text: (data: string, init?: ResponseInit): Response =>
+            new Response(data, {
+              ...init,
+              headers: { "Content-Type": "text/plain", ...init?.headers },
+            }),
+          fs: workerFs,
+        };
 
-    const response = await handlerFn(ctx);
-    return serializeResponse(response);
-  });
+        const response = await handlerFn(ctx);
+        return serializeResponse(response);
+      }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +462,15 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
  * self-contained (no hydration mismatch concern).
  */
 async function handleRenderSSR(
+  req: RenderSSRRequest,
+): Promise<{ html: string } | "streaming"> {
+  return await runWithWorkerSourceIntegrationPolicy(
+    req.sourceIntegrationPolicy,
+    async () => await renderSSR(req),
+  );
+}
+
+async function renderSSR(
   req: RenderSSRRequest,
 ): Promise<{ html: string } | "streaming"> {
   // Load React only for SSR workers. API-only workers and health checks should

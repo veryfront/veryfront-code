@@ -9,6 +9,7 @@ import {
   MAX_WORKER_BODY_BYTES,
   type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
+import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -157,6 +158,7 @@ export class ServerDataFetcher {
           },
           url: context.url?.toString() ?? "http://localhost",
         },
+        sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
       },
     );
 

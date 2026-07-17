@@ -14,7 +14,7 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
-import { toolRegistry } from "#veryfront/tool";
+import { assertLocalToolId, toolRegistry } from "#veryfront/tool/registry.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
 import {
@@ -75,6 +75,8 @@ export function agent(config: AgentConfig): Agent {
   if (config.tools && config.tools !== true) {
     for (const [name, entry] of Object.entries(config.tools)) {
       if (!entry || typeof entry !== "object") continue;
+      assertLocalToolId(name);
+      assertLocalToolId(entry.id);
       if (isRuntimeLocalTool(entry)) continue;
 
       const normalizedTool = entry.id === name ? entry : { ...entry, id: name };

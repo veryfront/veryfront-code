@@ -10,6 +10,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { NodeExecutionResult } from "./types.ts";
 import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -97,6 +98,7 @@ export async function executeMapNodeStrategy(
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     },
     config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
   );

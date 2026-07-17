@@ -35,6 +35,7 @@ import {
   startNodeAgentServiceServer,
 } from "./server.ts";
 import type { VeryfrontServiceServerLogger } from "../../server/service-server.ts";
+import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 
 /** Configuration used by hosted agent service runtime. */
 export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
@@ -69,6 +70,8 @@ export type CreateHostedAgentServiceRuntimeOptions<
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 > = {
   serviceName: string;
+  /** Exact immutable source snapshot served by control-plane runtime invocations. */
+  runtimeSource?: HostedRuntimeSourceIdentity;
   getConfig: () => TConfig;
   getAgentConfig: () => RuntimeAgentMarkdownDefinition;
   forwardedConfigNamespace?: string;
@@ -219,6 +222,7 @@ export function createAgentServiceRuntime<
   });
   const routeSet = createAgentServiceRouteSet({
     forwardedConfigNamespace: options.forwardedConfigNamespace,
+    runtimeSource: options.runtimeSource,
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),
     tracker,

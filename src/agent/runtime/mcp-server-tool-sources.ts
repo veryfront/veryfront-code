@@ -6,10 +6,12 @@ import type {
   AgentMcpServerConfig,
 } from "../types.ts";
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 
 export type RuntimeRemoteToolConfig = {
   __vfRemoteToolSources?: RemoteToolSource[];
   __vfAllowedRemoteTools?: string[];
+  __vfSourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
 };
 
 async function resolveValue<T>(

@@ -6,7 +6,7 @@
  */
 
 import "../../_helpers/contract-init.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { ProxyFSAdapterManager } from "#veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 
@@ -84,7 +84,11 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
       assertEquals(manager.hasAdapter("my-project", true, "release-1"), false);
       assertEquals(manager.hasAdapter("my-project", true, "release-2"), false);
 
-      assertEquals(manager.hasAdapter("my-project", true, null), false);
+      assertThrows(
+        () => manager.hasAdapter("my-project", true, null),
+        Error,
+        "Missing releaseId in production",
+      );
 
       assertEquals(
         manager.hasAdapter("my-project", false, null),
