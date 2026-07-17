@@ -313,7 +313,8 @@ describe("ServerDataFetcher", () => {
       // GET request with no body
       const request = new Request("http://localhost/test", { method: "GET" });
 
-      // This will fail at worker execution, but should NOT fail at body size guard
+      // The worker boundary is strict: isolated project code cannot run without
+      // the exact source policy established by request middleware.
       await assertRejects(
         () =>
           fetcher.fetch(
@@ -322,6 +323,7 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
+        "requires an exact source integration policy",
       );
     });
   });

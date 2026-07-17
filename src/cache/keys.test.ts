@@ -8,6 +8,7 @@ import {
 } from "#veryfront/testing/assert";
 import {
   buildConfigCacheKey,
+  buildProxyManagerCacheKey,
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
@@ -199,6 +200,61 @@ describe("cache/keys", () => {
       assertMatch(buildConfigCacheKey("example-project", true), /^vf:example-project:.+$/);
     });
 
+    it("separates virtual config caches by exact source target", () => {
+      const main = buildConfigCacheKey("example-project", true, {
+        productionMode: false,
+        branch: "main",
+      });
+      const preview = buildConfigCacheKey("example-project", true, {
+        productionMode: false,
+        branch: "feature/integrations",
+      });
+      const release = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        releaseId: "release-1",
+      });
+      const environment = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        releaseId: "release-1",
+        environmentName: "Production",
+      });
+
+      assertNotEquals(main, preview);
+      assertNotEquals(main, release);
+      assertNotEquals(release, environment);
+      assertEquals(
+        main.includes("source:branch:main"),
+        true,
+      );
+      assertEquals(
+        preview.includes("source:branch:feature%2Fintegrations"),
+        true,
+      );
+      assertEquals(
+        release.includes("source:release:release-1"),
+        true,
+      );
+      assertEquals(
+        environment.includes("source:environment:Production:release-1"),
+        true,
+      );
+    });
+
+    it("uses injective structured encoding for environment config sources", () => {
+      const left = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        environmentName: "Production:release-1",
+        releaseId: "release-2",
+      });
+      const right = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        environmentName: "Production",
+        releaseId: "release-1:release-2",
+      });
+
+      assertNotEquals(left, right);
+    });
+
     it("should build key for local filesystem", () => {
       // Should use hashed path with folder name, not absolute path
       // Format: config:local-{hash}-{folderName}:{version}
@@ -206,6 +262,36 @@ describe("cache/keys", () => {
         buildConfigCacheKey("/path/to/project", false),
         /^config:local-[a-f0-9]+-project:.+$/,
       );
+    });
+  });
+
+  describe("buildProxyManagerCacheKey", () => {
+    it("requires an immutable release for production environments", () => {
+      assertThrows(
+        () => buildProxyManagerCacheKey("example-project", true, null, null, "Production"),
+        Error,
+        "Missing releaseId in production",
+      );
+    });
+
+    it("separates production environment and release identities", () => {
+      const environment = buildProxyManagerCacheKey(
+        "example-project",
+        true,
+        "release-1",
+        null,
+        "Production",
+      );
+      const release = buildProxyManagerCacheKey(
+        "example-project",
+        true,
+        "release-1",
+        null,
+      );
+
+      assertNotEquals(environment, release);
+      assertEquals(environment.includes("environment:Production:release-1"), true);
+      assertEquals(release.includes("release:release-1"), true);
     });
   });
 

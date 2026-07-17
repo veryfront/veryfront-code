@@ -3,6 +3,8 @@ import type { AgentConfig, Message } from "../types.ts";
 import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skill/allowed-tools.ts";
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { SOURCE_INTEGRATION_POLICY_CONTEXT_KEY } from "./runtime-tool-config.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -15,6 +17,7 @@ export type RuntimeStepToolLoader = (
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -45,6 +48,7 @@ export interface PrepareAgentRuntimeStepInput {
   messages: Message[];
   mode: AgentRuntimeStepMode;
   remoteToolSources: RemoteToolSource[] | undefined;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   resolveRuntimeState: RuntimeStepStateResolver;
   runtimeContext: Record<string, unknown> | undefined;
   step: number;
@@ -71,6 +75,10 @@ export async function prepareAgentRuntimeStep(
     input.systemPrompt,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  delete toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY];
+  if (input.sourceIntegrationPolicy !== undefined) {
+    toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY] = input.sourceIntegrationPolicy;
+  }
   if (input.activeSkillId !== undefined) {
     toolContext.activeSkillId = input.activeSkillId;
   }
@@ -85,6 +93,7 @@ export async function prepareAgentRuntimeStep(
     forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
     remoteToolSources: input.remoteToolSources,
     remoteToolContext: toolContext,
+    sourceIntegrationPolicy: input.sourceIntegrationPolicy,
   });
 
   if (input.activeSkillPolicy || input.activeSkillToolAvailability) {

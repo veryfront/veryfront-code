@@ -227,8 +227,6 @@ export class DevServer {
       this.pipeline,
       this.appConfig!,
       (req) => requestHandler.handleRequest(req),
-      this.options.projectDir,
-      this.adapter,
     );
 
     // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor

@@ -220,31 +220,12 @@ export async function setupMiddleware(
   pipeline: MiddlewarePipeline,
   config: VeryfrontConfig,
   requestHandler: (req: Request) => Promise<Response>,
-  projectDir?: string,
-  adapter?: RuntimeAdapter,
 ): Promise<void> {
   pipeline.use(createRequestLoggerMiddleware());
 
   const corsConfig = config.security?.cors;
   if (corsConfig) {
     pipeline.use(cors(corsConfig === true ? {} : corsConfig));
-  }
-
-  if (config.fs?.veryfront?.proxyMode === true) {
-    logger.debug("Skipping file middleware in proxy mode");
-  } else if (projectDir && adapter) {
-    const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);
-    for (const middleware of fileMiddlewares) {
-      logger.debug("Registered middleware from file");
-      pipeline.use(middleware);
-    }
-  }
-
-  const custom = config.middleware?.custom;
-  if (custom) {
-    for (const middleware of custom) {
-      pipeline.use(middleware);
-    }
   }
 
   pipeline.use((c) => requestHandler(c.req));

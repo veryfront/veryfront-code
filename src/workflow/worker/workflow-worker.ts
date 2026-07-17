@@ -11,6 +11,7 @@ import { hasWorkerSupport } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 import { CONFIG_INVALID, ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { runWithWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("workflow-worker");
 
@@ -312,7 +313,10 @@ export class WorkflowWorker {
           logger.info(`Resuming stalled run ${run.id}`);
         }
 
-        await this.config.resumeFn(run.id);
+        await runWithWorkflowSourceIntegrationPolicy(
+          run,
+          () => this.config.resumeFn(run.id),
+        );
 
         this.stats.resumeCount++;
 

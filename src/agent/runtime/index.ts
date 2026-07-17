@@ -81,7 +81,12 @@ import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
+  getRuntimeSourceIntegrationPolicy,
 } from "./runtime-tool-config.ts";
+import {
+  applySourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
 
@@ -351,6 +356,7 @@ async function traceConfiguredToolExecution(input: {
   context: ToolExecutionContext;
   allowedRemoteToolNames: string[] | undefined;
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined;
 }): Promise<unknown> {
   const inputSizeBytes = estimateSerializedSizeBytes(input.args);
   return await withSpan(
@@ -376,6 +382,7 @@ async function traceConfiguredToolExecution(input: {
           input.context,
           input.allowedRemoteToolNames,
           input.remoteToolSources,
+          input.sourceIntegrationPolicy,
         );
         const resultError = getToolResultError(result);
         if (resultError !== undefined) {
@@ -850,9 +857,13 @@ export class AgentRuntime {
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
-      const providerTools = getRuntimeProviderTools(this.config);
       const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
       const remoteToolSources = getRuntimeRemoteToolSources(this.config);
+      const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
+      const configuredProviderTools = getRuntimeProviderTools(this.config);
+      const providerTools = sourceIntegrationPolicy
+        ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
+        : configuredProviderTools;
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
       let agentWriteFinalResponseToolGuardEnabled = false;
@@ -877,6 +888,7 @@ export class AgentRuntime {
           messages: currentMessages,
           mode: "generate",
           remoteToolSources,
+          sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
           runtimeContext: stepRuntimeContext,
           step,
@@ -1152,6 +1164,7 @@ export class AgentRuntime {
                 context: executionContext,
                 allowedRemoteToolNames,
                 remoteToolSources,
+                sourceIntegrationPolicy,
               });
               await this.notifyToolResult({
                 mode: "generate",
@@ -1311,9 +1324,13 @@ export class AgentRuntime {
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
-    const providerTools = getRuntimeProviderTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config);
+    const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
+    const configuredProviderTools = getRuntimeProviderTools(this.config);
+    const providerTools = sourceIntegrationPolicy
+      ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
+      : configuredProviderTools;
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
@@ -1339,6 +1356,7 @@ export class AgentRuntime {
         messages: currentMessages,
         mode: "stream",
         remoteToolSources,
+        sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
         runtimeContext: stepRuntimeContext,
         step,
@@ -1714,6 +1732,7 @@ export class AgentRuntime {
             context: executionContext,
             allowedRemoteToolNames,
             remoteToolSources,
+            sourceIntegrationPolicy,
           });
           throwIfAborted(abortSignal);
           await this.notifyToolResult({

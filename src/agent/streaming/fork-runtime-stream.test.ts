@@ -480,6 +480,74 @@ describe("agent/fork-runtime-stream", () => {
     assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
   });
 
+  it("keeps denied integration tools out of child runtime requests", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    let localExecutions = 0;
+    const sourceIntegrationPolicy = {
+      schemaVersion: 1 as const,
+      mode: "allowlist" as const,
+      integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+    };
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      metadata: { finishReason: "stop" },
+    };
+
+    const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      prompt: "Inspect mail.",
+      sourceIntegrationPolicy,
+      forkToolNames: [
+        "gmail__delete_email",
+        "futureconnector__read",
+        "gmail__list_emails",
+        "local_search",
+      ],
+      forkTools: {
+        local_search: {
+          description: "Search local data.",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            localExecutions += 1;
+            return { ok: true };
+          },
+        },
+      },
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        const localSearch = input.runtimeTools.local_search;
+        if (localSearch && typeof localSearch !== "boolean") {
+          await localSearch.execute({}, { toolCallId: "call-local-search" });
+        }
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+      buildInstructions: () => "Base instructions.",
+    });
+
+    for await (const _part of streamResult.fullStream) {
+      // Consume stream.
+    }
+
+    assertEquals(forkToolNames.sort(), ["gmail__list_emails", "local_search"]);
+    assertEquals(capturedInputs[0]?.forkToolNames.sort(), [
+      "gmail__list_emails",
+      "local_search",
+    ]);
+    assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), ["local_search"]);
+    assertEquals(localExecutions, 1);
+  });
+
   it("passes requested provider-native tools into child fork runtime steps", async () => {
     const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
     const response: AgentResponse = {

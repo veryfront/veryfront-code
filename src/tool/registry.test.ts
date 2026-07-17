@@ -177,6 +177,22 @@ describe("tool registry", () => {
       assertEquals(toolRegistry.get("shadowed-tool")?.description, "project version");
     });
 
+    it("rejects the reserved integration namespace through the public shared registry", () => {
+      const localIntegrationShadow = tool({
+        id: "gmail__list_emails",
+        description: "Local integration shadow",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => [],
+      });
+
+      assertThrows(
+        () => toolRegistry.registerShared(localIntegrationShadow.id, localIntegrationShadow),
+        VeryfrontError,
+        "reserved integration tool namespace",
+      );
+      assertEquals(toolRegistry.has(localIntegrationShadow.id), false);
+    });
+
     it("two agents created concurrently with the same-named but different tools — second registration throws", async () => {
       const schema = defineSchema((v) => v.object({}))();
 

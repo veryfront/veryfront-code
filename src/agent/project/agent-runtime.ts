@@ -17,6 +17,14 @@ import {
   isRuntimeAgentMarkdownAgent,
 } from "../runtime/agent-markdown-adapter.ts";
 import type { Agent, AgentConfig } from "../types.ts";
+import {
+  normalizeSourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
+import {
+  getActiveSourceIntegrationPolicy,
+  runWithEffectiveSourceIntegrationPolicy,
+} from "#veryfront/integrations/source-policy-context.ts";
 
 /** Public API contract for project agent runtime agent source. */
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";
@@ -35,7 +43,22 @@ export type DiscoverProjectAgentRuntimeInput = {
   fsAdapter?: FileSystemAdapter;
   cacheKey?: string;
   verbose?: boolean;
+  /** Immutable outer restriction to preserve while loading and discovering this source. */
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
 };
+
+/** Project discovery plus the normalized policy owned by that exact source. */
+export type ProjectAgentRuntimeDiscovery = DiscoveryResult & {
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+};
+
+/** Execute a project-runtime lifetime without allowing an outer policy to widen. */
+export function runWithProjectAgentRuntime<T>(
+  runtime: Pick<ProjectAgentRuntimeDiscovery, "sourceIntegrationPolicy">,
+  fn: () => T,
+): T {
+  return runWithEffectiveSourceIntegrationPolicy(runtime.sourceIntegrationPolicy, fn);
+}
 
 function resolveAgentSystem(system: AgentConfig["system"]): Promise<string> | string {
   return typeof system === "function" ? system() : system;
@@ -70,23 +93,37 @@ export function clearProjectAgentRuntimeRegistries(): void {
 /** Discover project agent runtime helper. */
 export async function discoverProjectAgentRuntime(
   input: DiscoverProjectAgentRuntimeInput,
-): Promise<DiscoveryResult> {
-  clearProjectAgentRuntimeRegistries();
+): Promise<ProjectAgentRuntimeDiscovery> {
+  return await runWithEffectiveSourceIntegrationPolicy(
+    input.sourceIntegrationPolicy,
+    async () => {
+      clearProjectAgentRuntimeRegistries();
 
-  const config = input.config ??
-    await getConfig(
-      input.projectDir,
-      input.adapter,
-      input.cacheKey ? { cacheKey: input.cacheKey } : undefined,
-    );
-  const discoveryOptions = createProjectDiscoveryConfig({
-    projectDir: input.projectDir,
-    config,
-    fsAdapter: input.fsAdapter,
-    verbose: input.verbose,
-  });
+      const config = input.config ??
+        await getConfig(
+          input.projectDir,
+          input.adapter,
+          input.cacheKey ? { cacheKey: input.cacheKey } : undefined,
+        );
+      const discoveryOptions = createProjectDiscoveryConfig({
+        projectDir: input.projectDir,
+        config,
+        fsAdapter: input.fsAdapter,
+        verbose: input.verbose,
+      });
 
-  return await discoverAll(discoveryOptions);
+      const currentSourcePolicy = normalizeSourceIntegrationPolicy(config.integrations);
+      return await runWithEffectiveSourceIntegrationPolicy(
+        currentSourcePolicy,
+        async () => {
+          const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy() ??
+            currentSourcePolicy;
+          const discovery = await discoverAll(discoveryOptions);
+          return { ...discovery, sourceIntegrationPolicy };
+        },
+      );
+    },
+  );
 }
 
 /** Does project agent runtime agent match source helper. */

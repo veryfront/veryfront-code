@@ -30,6 +30,9 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
     await import(
       "../../../src/task/project-runtime.ts"
     );
+  const { runWithProjectAgentRuntime } = await import(
+    "../../../src/agent/project/agent-runtime.ts"
+  );
   const { runTask } = await import(
     "../../../src/task/runner.ts"
   );
@@ -99,12 +102,16 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
       cliLogger.info(`Running task: ${task.name} (${task.id})`);
       cliLogger.info("");
 
-      const result = await runTask({
-        task,
-        config: taskConfig,
-        projectId,
-        debug: options.debug,
-      });
+      const result = await runWithProjectAgentRuntime(
+        discovery,
+        () =>
+          runTask({
+            task,
+            config: taskConfig,
+            projectId,
+            debug: options.debug,
+          }),
+      );
 
       cliLogger.info("");
       if (result.success) {

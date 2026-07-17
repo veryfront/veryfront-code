@@ -23,6 +23,8 @@ intentionally run the standalone Agent Service process described in this guide.
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG`, and a publicly
   reachable `VERYFRONT_AGENT_SERVICE_URL`. See
   [Configuration](./configuration.md) for the full list.
+- Immutable deployment metadata for `runtimeSource` when the control plane
+  invokes the service.
 
 ## Create a service entrypoint
 
@@ -87,7 +89,8 @@ For non-standard project layouts, configure discovery paths in
 
 Control-plane registration is convention-first. In `auto` mode, the service
 registers only when `VERYFRONT_API_TOKEN` and
-`VERYFRONT_AGENT_SERVICE_URL` are present.
+`VERYFRONT_AGENT_SERVICE_URL` are present. Registration also requires the
+immutable `runtimeSource` binding described below.
 
 ```bash
 VERYFRONT_API_URL=https://api.example.com
@@ -104,6 +107,42 @@ control-plane registration.
 The service name resolves from `VERYFRONT_AGENT_SERVICE_NAME`, then the nearest
 `package.json` or `deno.json` `name`, then `veryfront-agent-service`. Pass
 `serviceName` only when code should override that convention.
+
+## Bind control-plane runs to the deployed source
+
+A standalone agent service discovers one local project snapshot at startup. It
+cannot select another project branch or release for an individual request. Bind
+the service to deployment-owned immutable metadata when it accepts signed
+control-plane runtime invocations:
+
+```ts
+import { startAgentService } from "veryfront/agent";
+
+const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
+const releaseId = process.env.DEPLOYED_RELEASE_ID;
+if (!environmentName || !releaseId) {
+  throw new Error("Missing immutable agent service deployment identity");
+}
+
+await startAgentService({
+  runtimeSource: {
+    type: "environment",
+    environmentName,
+    releaseId,
+  },
+});
+```
+
+The service accepts a control-plane invocation only when its `agentSource`
+exactly matches `runtimeSource`. An unbound service returns
+`CONTROL_PLANE_AGENT_SOURCE_UNBOUND`. A different release or environment
+returns `CONTROL_PLANE_AGENT_SOURCE_MISMATCH`. Branch sources are mutable and
+return `CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED`.
+
+Do not resolve `runtimeSource` from the latest deployment at request time. Pass
+the environment and release identifiers that produced the running service
+artifact. Direct `/api/runs` requests do not select project source and do not
+require this binding.
 
 ## Add remote MCP tools
 
