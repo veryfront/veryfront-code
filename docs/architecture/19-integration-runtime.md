@@ -6,9 +6,8 @@ handlers or local tool definitions.
 
 ## Responsibility
 
-Integration code exposes connector metadata, icons, schema-backed integration
-configuration, and per-request remote tools fetched from the configured API
-layer.
+Integration code exposes connector metadata, icons, and per-request remote tools
+fetched from the configured API layer.
 
 Primary source areas:
 
@@ -24,23 +23,20 @@ Primary source areas:
 ```mermaid
 flowchart TD
   catalog[Connector catalog] --> schema[Integration schemas]
-  schema --> config[Project integration config]
-  config --> sync[Config sync to API]
 
-  request[Agent request context] --> token[Resolve project or request token]
+  request[Agent request context] --> inventory[Agent tool inventory]
+  inventory --> token[Resolve project or request token]
   token --> list[Fetch remote tool definitions]
-  list --> inventory[Merge into agent tool inventory]
-  inventory --> call[Model calls integration tool]
+  list --> call[Model calls configured integration tool]
   call --> execute[Execute via integrations tools API]
   execute --> result[Structured tool result or sanitized error]
 ```
 
 1. Connector metadata defines supported providers, auth requirements, tools,
    prompts, icons, and environment requirements.
-2. Schema helpers validate integration config and connector metadata.
+2. Schema helpers validate connector metadata.
 3. Remote tool helpers resolve request-scoped or environment API credentials.
-4. Tool definitions are fetched per request so enabled integrations remain
-   project-scoped.
+4. Tool definitions are fetched per request for the active agent tool inventory.
 5. Tool execution is delegated to the configured API layer and normalized for
    the agent runtime.
 
@@ -58,10 +54,9 @@ flowchart TD
   metadata.
 - Add remote-tool tests when changing request-scoped token resolution, tool
   listing, call payloads, or result normalization.
-- Keep per-project tool visibility scoped to the active request or environment
-  token.
+- Keep tool visibility scoped to the active agent and request credentials.
 - Update [Integrations](../guides/integrations.md) when catalog behavior or
-  public config changes.
+  public runtime behavior changes.
 
 ## Related guides
 

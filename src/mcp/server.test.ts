@@ -1213,88 +1213,6 @@ describe("mcp/server", () => {
     assertEquals(server.clientSupportsElicitation("url", sessionB), true);
   });
 
-  it("syncs integration config to API on first tools/list call", async () => {
-    const server = createMCPServer({
-      enabled: true,
-      auth: { type: "none", allowUnauthenticated: true },
-    });
-    server.setIntegrationLoader({
-      integrations: { github: {} },
-      apiBaseUrl: "https://api.example.com",
-      apiToken: "test-token",
-    });
-
-    let configSyncCalled = false;
-    globalThis.fetch = async (input: string | URL | Request) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "https://api.example.com/integrations/config") {
-        configSyncCalled = true;
-        return new Response(JSON.stringify({ synced: 1 }), {
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("Not Found", { status: 404 });
-    };
-
-    await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-    assertEquals(configSyncCalled, true);
-  });
-
-  it("syncs an empty integration config as a field-free full replacement", async () => {
-    const server = createMCPServer({
-      enabled: true,
-      auth: { type: "none", allowUnauthenticated: true },
-    });
-    server.setIntegrationLoader({
-      integrations: {},
-      apiBaseUrl: "https://api.example.com",
-      apiToken: "test-token",
-    });
-
-    let requestBody: unknown;
-    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(input, init);
-      if (request.url === "https://api.example.com/integrations/config") {
-        requestBody = await request.json();
-        return Response.json({ synced: 0 });
-      }
-      return new Response("Not Found", { status: 404 });
-    };
-
-    await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-
-    assertEquals(requestBody, { integrations: {} });
-  });
-
-  it("syncs integration config only once", async () => {
-    const server = createMCPServer({
-      enabled: true,
-      auth: { type: "none", allowUnauthenticated: true },
-    });
-    server.setIntegrationLoader({
-      integrations: { github: {} },
-      apiBaseUrl: "https://api.example.com",
-      apiToken: "test-token",
-    });
-
-    let configSyncCalls = 0;
-    globalThis.fetch = async (input: string | URL | Request) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "https://api.example.com/integrations/config") {
-        configSyncCalls += 1;
-        return new Response(JSON.stringify({ synced: 1 }), {
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("Not Found", { status: 404 });
-    };
-
-    await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-    await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-
-    assertEquals(configSyncCalls, 1);
-  });
-
   describe("Streamable HTTP session management", () => {
     it("returns MCP-Session-Id header on initialize response", async () => {
       const server = createMCPServer({
@@ -2258,40 +2176,6 @@ describe("mcp/server", () => {
         auth: { type: "none", allowUnauthenticated: true },
       });
       server.notifyToolsChanged(); // should not throw
-    });
-
-    it("emits tools/list_changed when loadRemoteIntegrationTools succeeds", async () => {
-      const server = createMCPServer({
-        enabled: true,
-        auth: { type: "none", allowUnauthenticated: true },
-      });
-      server.setIntegrationLoader({
-        integrations: { github: {} },
-        apiBaseUrl: "https://api.example.com",
-        apiToken: "test-token",
-      });
-
-      const notifications: Array<{ method: string }> = [];
-      server.onNotification = (notification) => {
-        notifications.push(notification as { method: string });
-      };
-
-      globalThis.fetch = async (input: string | URL | Request) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://api.example.com/integrations/config") {
-          return new Response(JSON.stringify({ synced: 1 }), {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        return new Response("Not Found", { status: 404 });
-      };
-
-      await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-
-      const toolsChanged = notifications.find(
-        (n) => n.method === "notifications/tools/list_changed",
-      );
-      assertExists(toolsChanged);
     });
   });
 

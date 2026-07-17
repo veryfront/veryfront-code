@@ -8,7 +8,6 @@ import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import type { IntegrationRuntimeConfig, IntegrationScope } from "#veryfront/integrations/types.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { createMCPHTTPHandler } from "./http-transport.ts";
 import { SessionManager } from "./session.ts";
@@ -105,21 +104,6 @@ function isLoopbackOrigin(origin: string): boolean {
     hostname === "[::1]";
 }
 
-/** Configuration used by integration loader. */
-export interface IntegrationLoaderConfig {
-  integrations: Record<string, IntegrationRuntimeConfig | undefined>;
-  apiBaseUrl: string;
-  apiToken?: string;
-}
-
-function normalizeIntegrationScope(
-  config: IntegrationRuntimeConfig | undefined,
-): IntegrationScope {
-  if (config?.scope === "user") return "user";
-  if (config?.scope === "project") return "project";
-  return config?.perUser ? "user" : "project";
-}
-
 const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
 
 /** Implement mcpserver. */
@@ -136,8 +120,6 @@ export class MCPServer {
   ] as const;
   private logLevel: typeof MCPServer.LOG_LEVELS[number] = "warning";
   private config: MCPServerConfig;
-  private integrationLoader?: IntegrationLoaderConfig;
-  private integrationsLoaded = false;
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
   private pendingTasks = new Map<string, PendingTaskRun>();
@@ -222,14 +204,6 @@ export class MCPServer {
 
   notifyPromptsChanged(): void {
     this.onNotification?.({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
-  }
-
-  /**
-   * Configure API-backed integration tool loading.
-   */
-  setIntegrationLoader(config: IntegrationLoaderConfig): void {
-    this.integrationLoader = config;
-    this.integrationsLoaded = false;
   }
 
   clientSupportsElicitation(mode: "form" | "url", sessionId?: string): boolean {
@@ -356,22 +330,6 @@ export class MCPServer {
   }
 
   private async listTools(_params?: JSONRPCParams): Promise<{ tools: ToolListEntry[] }> {
-    // Sync integration config to API on first tools/list call
-    if (this.integrationLoader && !this.integrationsLoaded) {
-      try {
-        this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
-      } catch (error) {
-        // Config sync failed — non-fatal, but integration tools from API won't reflect config.
-        const errMsg = error instanceof Error ? error.message : String(error);
-        logger.warn("Failed to sync integration config to API during tools/list", {
-          error: errMsg,
-        });
-        this.emitLogNotification("warning", "Failed to sync integration config to API", {
-          error: errMsg,
-        });
-      }
-    }
-
     const registry = getMCPRegistry();
     const tools: ToolListEntry[] = [];
 
@@ -885,41 +843,6 @@ export class MCPServer {
       "Access-Control-Allow-Headers": "Content-Type, Authorization, MCP-Session-Id, X-Project-Id",
       "Vary": "Origin",
     };
-  }
-
-  private async loadRemoteIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
-    const { apiBaseUrl, apiToken } = config;
-    if (!apiToken) return false; // No token means we can't call the API
-
-    const { syncIntegrationConfig } = await import(
-      "../integrations/remote-tools.ts"
-    );
-
-    // Sync config to API as a full replacement. Omitted integrations have their
-    // project policy removed; this path never sends an enabled/disabled flag.
-    // This is the only responsibility of the MCP server path.
-    // Actual tool discovery happens per-request in the agent runtime (getAvailableTools)
-    // and the API's MCP tools/list handler.
-    const integrationConfigs: Record<
-      string,
-      { scope: IntegrationScope; tools?: string[] }
-    > = {};
-    for (const [name, cfg] of Object.entries(config.integrations)) {
-      integrationConfigs[name] = {
-        scope: normalizeIntegrationScope(cfg),
-        tools: cfg?.tools,
-      };
-    }
-    await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
-    try {
-      this.notifyToolsChanged();
-    } catch (error) {
-      // Notification delivery failure is non-fatal — sync already succeeded
-      logger.debug("Failed to notify clients of tools/list_changed after integration sync", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return true;
   }
 }
 

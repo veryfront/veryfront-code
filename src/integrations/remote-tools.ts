@@ -13,7 +13,6 @@ import { logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
-import type { IntegrationScope } from "./types.ts";
 
 /**
  * Default timeout for outbound integration API calls. Without it, a hung remote
@@ -38,11 +37,6 @@ interface CallToolTextContent {
 type RemoteIntegrationToolExecutionContext = {
   runId?: string;
   agentId?: string;
-};
-
-type IntegrationConfigSyncInput = {
-  scope: IntegrationScope;
-  tools?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -255,41 +249,4 @@ export async function executeRemoteIntegrationTool(
     args,
     context,
   );
-}
-
-/**
- * Sync integration config from veryfront.config.ts to the API.
- * This is a full-replace operation. Integrations omitted from the payload have
- * their project policy removed by the API; no separate enabled/disabled state
- * is sent. The MCP server calls this with validated, canonical config.
- */
-export async function syncIntegrationConfig(
-  apiBaseUrl: string,
-  apiToken: string,
-  integrations: Record<string, IntegrationConfigSyncInput>,
-): Promise<void> {
-  try {
-    const response = await fetch(`${apiBaseUrl}/integrations/config`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ integrations }),
-      signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
-    });
-
-    if (!response.ok) {
-      logger.error("Failed to sync integration config to API", {
-        status: response.status,
-      });
-    } else {
-      const data = (await response.json()) as { synced: number };
-      logger.info("Synced integration config to API", { synced: data.synced });
-    }
-  } catch (err) {
-    logger.error("Failed to sync integration config", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }

@@ -208,7 +208,7 @@ export default config as const;
       }
     });
 
-    it("normalizes legacy integration scope while loading config", async () => {
+    it("rejects removed integration configuration", async () => {
       const adapter = setup();
       Object.assign(adapter.fs, {
         getUnderlyingAdapter: () => adapter.fs,
@@ -224,8 +224,11 @@ export default config as const;
 
       adapter.fs.files.set(configPath, source);
 
-      const config = await getConfig(projectDir, adapter);
-      assertEquals(config.integrations?.linear?.scope, "user");
+      await assertRejects(
+        () => getConfig(projectDir, adapter),
+        VeryfrontError,
+        "Unknown config keys: integrations",
+      );
     });
 
     it("should try multiple config file names", async () => {

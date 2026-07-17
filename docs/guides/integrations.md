@@ -1,53 +1,24 @@
 ---
 title: "Integrations"
-description: "Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog."
+description: "Agent-authorized integration tools with OAuth, token management, and API execution across the built-in connector catalog."
 order: 35
 ---
 
 Veryfront integrations let agents call third-party services on behalf of users.
-Enable an integration by adding it to `integrations` in `veryfront.config.ts`.
+Integration availability comes from the agent's tool configuration and current
+connection state. Veryfront Code does not synchronize integration configuration
+to the API or enable and disable integrations from `veryfront.config.ts`.
+
+Remove any top-level `integrations` block from `veryfront.config.ts`. Veryfront
+rejects that removed key to prevent a silent no-op. Assign tools to agents and
+manage provider connections through Studio or the backing API instead.
 
 ## Prerequisites
 
 - A Veryfront project with a configured agent (see [Agents](./agents.md)).
-- Provider credentials for each integration you enable: either a Veryfront Cloud
+- Provider credentials for each integration you use: either a Veryfront Cloud
   token plus a project reference, or per-user OAuth credentials (see
   [OAuth](./oauth.md)).
-- `veryfront.config.ts` is editable in your repo.
-
-## Configuration
-
-```ts
-// veryfront.config.ts
-import { defineConfig } from "veryfront";
-
-export default defineConfig({
-  integrations: {
-    // All tools, project-level token
-    github: {},
-
-    // Only specific tools
-    slack: {
-      tools: ["send-message", "list-channels"],
-    },
-
-    // Private user token (each user authenticates individually)
-    linear: {
-      scope: "user",
-    },
-  },
-});
-```
-
-Use `scope: "user"` for a private connection owned by the current user, or
-`scope: "project"` for a connection shared with the project. The legacy
-`scope: "endUser"` value and `perUser: true` remain accepted during migration,
-but Veryfront normalizes both to `user` and only syncs `user | project` to the
-API.
-
-Before deploying clients that write the canonical `user` scope, fully deploy
-the Phase 1 API compatibility release. During the migration, that API release
-must accept both canonical `user` writes and legacy `endUser` writes.
 
 ## Authentication flow
 
@@ -112,9 +83,9 @@ visible by default in the CLI, MCP catalog tools, and runtime connector list:
 `onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`, and `teams`.
 
 The rest of the catalog ships as feature-gated integrations: the connector
-templates are in the source tree but stay hidden until you enable them with the
+templates are in the source tree but stay hidden until you expose them with the
 `VERYFRONT_EXPERIMENTAL_INTEGRATIONS` environment variable. Set it to a
-comma-separated list of connector names such as `salesforce,stripe` (to enable
+comma-separated list of connector names such as `salesforce,stripe` (to expose
 Salesforce and Stripe), or to `all` for local experimentation.
 
 The supported and feature-gated name lists are defined in
@@ -126,7 +97,7 @@ when you need exact exported names or icon metadata:
 
 ## Verify it worked
 
-After enabling an integration:
+After an integration is available to an agent:
 
 1. Restart `veryfront dev`. The dev log lists the integration tools that were
    registered.
