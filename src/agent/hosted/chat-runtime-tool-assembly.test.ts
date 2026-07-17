@@ -13,6 +13,11 @@ import {
   prepareHostedChatRuntimeToolAssembly,
 } from "./chat-runtime-tool-assembly.ts";
 
+const unrestrictedSourceIntegrationPolicy = {
+  schemaVersion: 1,
+  mode: "unrestricted",
+} as const;
+
 function localTool(description: string) {
   return {
     description,
@@ -65,6 +70,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skil
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -96,6 +102,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools but keeps del
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -124,6 +131,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as exp
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -151,6 +159,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -179,6 +188,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps config-derived empty non-s
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -213,6 +223,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   };
   const traceSpans: string[] = [];
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -254,6 +265,56 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertEquals(traceSpans, ["tool.sleep"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly removes source-denied integration tools from execution and inventory", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: {
+        confluence: { allowedToolIds: ["search_content"] },
+      },
+    },
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      sleep: localTool("Sleep"),
+      confluence__create_page: localTool("Create a Confluence page"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    allowedToolNames: [
+      "sleep",
+      "confluence__search_content",
+      "confluence__create_page",
+      "gmail__list_emails",
+    ],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool("confluence__search_content", "Search Confluence"),
+          remoteTool("confluence__create_page", "Create a Confluence page"),
+          remoteTool("gmail__list_emails", "List Gmail emails"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(toolAssembly.remoteToolNames, ["confluence__search_content"]);
+  assertEquals(taskContext.availableToolNames, ["confluence__search_content", "sleep"]);
+  assertStringIncludes(toolAssembly.systemInstructions, "confluence__search_content");
+  assertEquals(toolAssembly.systemInstructions.includes("confluence__create_page"), false);
+  assertEquals(toolAssembly.systemInstructions.includes("gmail__list_emails"), false);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly applies configured tools before the OpenAI cap", async () => {
   const availableConfiguredToolNames = ["get_agent", "get_agent_source", "update_agent"];
   const configuredToolNames = ["bash", ...availableConfiguredToolNames];
@@ -271,6 +332,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly applies configured tools before 
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {},
@@ -300,6 +362,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's configured s
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -329,6 +392,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {},
@@ -358,6 +422,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates matching direct and pr
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -391,6 +456,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly does not let provider bindings a
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -428,6 +494,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps source provider tools insi
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
     localTools: {
@@ -474,6 +541,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifa
       parentRunId: "run-1",
     };
     await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
       taskContext,
       instructions: "Base instructions",
       localTools: {},

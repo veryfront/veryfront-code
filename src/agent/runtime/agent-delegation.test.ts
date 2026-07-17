@@ -6,6 +6,13 @@ import {
   isProviderSafeDelegateId,
 } from "./agent-delegation.ts";
 import type { Agent } from "../types.ts";
+import {
+  getRuntimeSourceIntegrationPolicy,
+  SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
+} from "./runtime-tool-config.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { getAvailableTools } from "./tool-helpers.ts";
 
 Deno.test("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
   const tools = buildAgentDelegateTools({
@@ -19,7 +26,7 @@ Deno.test("buildAgentDelegateTools exposes one tool per delegate, excluding self
     `${AGENT_DELEGATE_TOOL_PREFIX}writer`,
   ]);
   assertEquals(
-    tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`].id,
+    tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`]!.id,
     `${AGENT_DELEGATE_TOOL_PREFIX}writer`,
   );
 });
@@ -59,7 +66,9 @@ Deno.test("delegate tool runs the resolved specialist agent and returns its resu
     resolveAgent: (id) => (id === "writer" ? writer : undefined),
   });
 
-  const result = await tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`].execute({ input: "Draft it." });
+  const result = await tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`]!.execute({
+    input: "Draft it.",
+  });
 
   assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
 });
@@ -70,11 +79,92 @@ Deno.test("delegate tool reports an error when the target agent is unavailable",
     resolveAgent: () => undefined,
   });
 
-  const result = await tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`].execute({ input: "Draft it." });
+  const result = await tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`]!.execute({
+    input: "Draft it.",
+  });
 
   assertEquals(result, {
     text: 'Delegate agent "writer" is not available.',
     toolCalls: 0,
     status: "error",
   });
+});
+
+Deno.test("delegate agent execution inherits the exact project source restriction", async () => {
+  let observedPolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
+  let observedToolNames: string[] | undefined;
+  const writer = {
+    id: "writer",
+    config: {},
+    stream: async (input: { onFinish?: (response: unknown) => void }) => {
+      observedPolicy = getRuntimeSourceIntegrationPolicy({
+        model: "auto",
+        system: "writer",
+      });
+      observedToolNames = (await getAvailableTools(
+        { gmail__delete_email: true },
+        {
+          includeIntegrationTools: false,
+          sourceIntegrationPolicy: observedPolicy,
+        },
+      )).map((definition) => definition.name);
+      input.onFinish?.({ text: "drafted copy", toolCalls: [], status: "completed" });
+      return { toDataStreamResponse: () => new Response("") };
+    },
+  } as unknown as Agent;
+  const tools = buildAgentDelegateTools({
+    delegates: ["writer"],
+    resolveAgent: () => writer,
+  });
+  const policy = normalizeSourceIntegrationPolicy({
+    allow: { gmail: { allowedTools: ["list_emails"] } },
+  });
+
+  await runWithExactSourceIntegrationPolicy(
+    policy,
+    () => tools.agent_writer!.execute({ input: "Draft it." }),
+  );
+
+  assertEquals(observedPolicy, policy);
+  assertEquals(observedToolNames, []);
+});
+
+Deno.test("delegate agent execution preserves an explicit process-boundary restriction", async () => {
+  let observedPolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
+  let observedDuringStreamConsumption: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
+  const writer = {
+    id: "writer",
+    config: {},
+    stream: async (input: { onFinish?: (response: unknown) => void }) => {
+      observedPolicy = getRuntimeSourceIntegrationPolicy({
+        model: "auto",
+        system: "writer",
+      });
+      input.onFinish?.({ text: "drafted copy", toolCalls: [], status: "completed" });
+      return {
+        toDataStreamResponse: () => {
+          observedDuringStreamConsumption = getRuntimeSourceIntegrationPolicy({
+            model: "auto",
+            system: "writer",
+          });
+          return new Response("");
+        },
+      };
+    },
+  } as unknown as Agent;
+  const tools = buildAgentDelegateTools({
+    delegates: ["writer"],
+    resolveAgent: () => writer,
+  });
+  const policy = normalizeSourceIntegrationPolicy({
+    allow: { gmail: { allowedTools: ["list_emails"] } },
+  });
+
+  await tools.agent_writer!.execute(
+    { input: "Draft it." },
+    { [SOURCE_INTEGRATION_POLICY_CONTEXT_KEY]: policy },
+  );
+
+  assertEquals(observedPolicy, policy);
+  assertEquals(observedDuringStreamConsumption, policy);
 });

@@ -36,6 +36,11 @@ import {
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
 import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
+import {
+  applySourceIntegrationPolicy,
+  isIntegrationToolAllowedBySourcePolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -56,6 +61,8 @@ export type HostedChatRuntimeAllowedToolNames = HostedRuntimeAllowedToolNames;
 
 /** Result returned from hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyResult = {
+  /** Exact project-source restriction captured for this runtime assembly. */
+  readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runtimeTools: ToolSet;
   remoteToolSources: RemoteToolSource[];
   localToolNames: string[];
@@ -99,6 +106,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    * tools become executable without re-creating the sources.
    */
   toolDiscoveryContext?: RuntimeToolDiscoveryContext;
+  /** Exact project-source restriction applied before tool inventory is exposed. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 };
 
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
@@ -205,11 +214,16 @@ export async function prepareHostedChatRuntimeToolAssembly<
     availableSkillIds: input.taskContext.availableSkillIds,
     includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
   });
-  const sortedLocalTools = filterHostedChatRuntimeLocalTools({
+  const selectedLocalTools = filterHostedChatRuntimeLocalTools({
     tools: filterPostFormInputLocalTools(input.localTools, input.taskContext),
     allowedToolNames,
     sourceProviderToolNames: input.sourceProviderToolNames,
   });
+  const sortedLocalTools = Object.fromEntries(
+    Object.entries(selectedLocalTools).filter(([toolName]) =>
+      isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy)
+    ),
+  );
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
     : sortedLocalTools;
@@ -235,10 +249,14 @@ export async function prepareHostedChatRuntimeToolAssembly<
     onSteeringMutation: input.onSteeringMutation,
     onStudioProjectSwitch: input.onStudioProjectSwitch,
   });
-  const remoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
+  const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
+  const remoteToolNames = applySourceIntegrationPolicy(
+    listedRemoteToolNames,
+    input.sourceIntegrationPolicy,
+  );
   const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
   const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
     input.allowedProviderToolNames,
@@ -247,7 +265,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const localProviderToolNames = new Set(
     Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
   );
-  const providerToolNames = providerNativeToolNames.filter(
+  const selectedProviderToolNames = providerNativeToolNames.filter(
     (toolName) =>
       !localProviderToolNames.has(toolName) &&
       (allowedProviderToolNames
@@ -255,6 +273,10 @@ export async function prepareHostedChatRuntimeToolAssembly<
         : allowedToolNames
         ? allowedToolNames.has(toolName)
         : sourceProviderToolNames.has(toolName)),
+  );
+  const providerToolNames = applySourceIntegrationPolicy(
+    selectedProviderToolNames,
+    input.sourceIntegrationPolicy,
   );
   const localToolNames = Object.keys(localHostTools);
   // Initial inventory = configured-binding remote tools + local + provider-native.
@@ -293,6 +315,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
   }
 
   return {
+    sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     runtimeTools: createToolsFromHostDefinitions(localHostTools),
     remoteToolSources,
     localToolNames,

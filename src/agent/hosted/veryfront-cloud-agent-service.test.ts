@@ -17,6 +17,7 @@ import {
   veryfrontStudioMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 
 async function withTempDir(
   fn: (dir: string) => Promise<void> | void,
@@ -158,6 +159,33 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     const liveness = await bundle.runtime.request("http://localhost/liveness");
     assertEquals(liveness.status, 200);
     assertEquals(await liveness.text(), "OK");
+  });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime rejects mutable branch source bindings", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir);
+
+    await assertRejects(
+      () =>
+        createNodeVeryfrontCloudAgentServiceRuntime({
+          serviceName: "veryfront-agent-test",
+          agentId: "veryfront",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          runtimeSource: {
+            type: "branch",
+            branch: "main",
+          } as unknown as HostedRuntimeSourceIdentity,
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            PORT: "3141",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        }),
+      Error,
+      "runtimeSource must identify an immutable release or environment source",
+    );
   });
 });
 
@@ -405,6 +433,7 @@ Deno.test("startNodeVeryfrontCloudAgentService registers the service with the co
       const bundle = await startNodeVeryfrontCloudAgentService({
         serviceName: "registered-service-test",
         agentId: "support",
+        runtimeSource: { type: "release", releaseId: "release-42" },
         entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
         signals: [],
         env: {
@@ -429,6 +458,35 @@ Deno.test("startNodeVeryfrontCloudAgentService registers the service with the co
     assertEquals(calls[0]?.url, "https://api.example.com/agent-runtimes/push-services");
     assertEquals(new Headers(calls[0]?.init?.headers).get("Authorization"), "Bearer token-1");
     assertEquals(JSON.parse(String(calls[0]?.init?.body)).scope_kind, "project");
+  });
+});
+
+Deno.test("startNodeVeryfrontCloudAgentService rejects registration without an immutable source binding", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+
+    await assertRejects(
+      () =>
+        startNodeVeryfrontCloudAgentService({
+          serviceName: "unbound-service-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: [],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_API_TOKEN: "token-1",
+            VERYFRONT_PROJECT_ID: "11111111-1111-4111-a111-111111111111",
+            VERYFRONT_AGENT_SERVICE_URL: "https://agent.example.com",
+            VERYFRONT_AGENT_SERVICE_KEY: "unbound-service-test:key",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        }),
+      Error,
+      "runtimeSource is required when agent service control-plane registration is enabled",
+    );
   });
 });
 

@@ -8,6 +8,16 @@ import { branch, step, workflow } from "../dsl/index.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
+import {
+  getActiveSourceIntegrationPolicy,
+  runWithExactSourceIntegrationPolicy,
+} from "#veryfront/integrations/source-policy-context.ts";
+import {
+  normalizeSourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 function createTool(id: string, execute: (input: unknown) => unknown | Promise<unknown>): Tool {
   return {
@@ -31,6 +41,7 @@ function createRun(workflowId: string): WorkflowRun {
     checkpoints: [],
     pendingApprovals: [],
     createdAt: new Date(),
+    sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
@@ -109,6 +120,102 @@ class CleanupTrackingBackend extends MemoryBackend {
 }
 
 describe("workflow/executor/workflow-executor", () => {
+  it("persists the exact source integration policy when a run starts", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const activeSourceIntegrationPolicy = {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: {
+        confluence: { allowedToolIds: ["search_content", "get_page"] },
+      },
+    } satisfies SourceIntegrationPolicyManifest;
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["search_content", "get_page"] },
+      },
+    });
+    let observedPolicy: unknown;
+
+    executor.register(
+      workflow({
+        id: "source-policy-start",
+        steps: [
+          step("observe", {
+            tool: createTool("observe", () => {
+              observedPolicy = getActiveSourceIntegrationPolicy();
+              return { ok: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await runWithExactSourceIntegrationPolicy(
+      activeSourceIntegrationPolicy,
+      () => executor.start("source-policy-start", {}),
+    );
+    await handle.settled();
+
+    const storedRun = await backend.getRun(handle.runId);
+    assertExists(storedRun);
+    assertEquals(
+      (storedRun as WorkflowRun & { sourceIntegrationPolicy: unknown })
+        .sourceIntegrationPolicy,
+      sourceIntegrationPolicy,
+    );
+    assertEquals(observedPolicy, sourceIntegrationPolicy);
+  });
+
+  it("restores the persisted source policy on resume and intersects a narrower reload", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const persistedPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["get_page", "search_content"] },
+      },
+    });
+    const reloadedPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["get_page"] },
+        github: {},
+      },
+    });
+    const expectedPolicy = normalizeSourceIntegrationPolicy({
+      allow: {
+        confluence: { allowedTools: ["get_page"] },
+      },
+    });
+    let observedPolicy: unknown;
+
+    executor.register(
+      workflow({
+        id: "source-policy-resume",
+        steps: [
+          step("observe", {
+            tool: createTool("observe", () => {
+              observedPolicy = getActiveSourceIntegrationPolicy();
+              return { ok: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    await backend.createRun({
+      ...createRun("source-policy-resume"),
+      status: "waiting",
+      ...{ sourceIntegrationPolicy: persistedPolicy },
+    });
+
+    await runWithExactSourceIntegrationPolicy(
+      reloadedPolicy,
+      () => executor.resume("run-source-policy-resume"),
+    );
+
+    assertEquals(observedPolicy, expectedPolicy);
+  });
+
   it("acquires and releases the backend lock around successful execution", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, lockDuration: 5_000 });

@@ -271,6 +271,18 @@ const worker = new WorkflowWorker({
 worker.start();
 ```
 
+### Redis schema cutovers
+
+`RedisBackend` preserves the configured key, stream, and consumer-group values as deployment base
+names and appends a versioned storage namespace (currently `schema-v1`) to run, index, checkpoint,
+approval, lock, claim, queue, and consumer-group state. Readers and workers inspect only their exact
+schema namespace. They do not read, migrate, or backfill unversioned rows or queue entries.
+
+Before releasing a storage-schema change, stop new workflow intake, let the old workers drain every
+pending or running workflow in the old namespace, and then stop those workers. Deploy all Redis
+workflow readers and writers together only after that drain completes. Old rows remain intentionally
+invisible to the new release and may be removed later according to the deployment's retention policy.
+
 ### Run Executors
 
 The `WorkflowRunManager` uses a `RunExecutor` interface for isolated local process execution. In Veryfront Cloud, task and workflow runs execute through the project runtime target via the canonical Runs API.
@@ -386,6 +398,16 @@ On recovery, the workflow resumes from the last checkpoint:
 - Completed steps are skipped
 - Failed steps can be retried
 - Waiting steps (approval) continue waiting
+
+### Source integration policy snapshots
+
+Every new workflow run stores the normalized source integration policy that was active when the
+run started. Resume, worker, and process entrypoints require this snapshot and restore it before
+executing workflow code.
+
+If dynamic discovery reloads a narrower source policy, the runtime intersects it with the stored
+snapshot. A reload cannot widen the run's original integration or tool access. Runs without a
+snapshot are rejected; missing state never implies unrestricted access.
 
 ### Heartbeat & Stalled Detection
 

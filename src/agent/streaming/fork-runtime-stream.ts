@@ -32,6 +32,10 @@ import {
   getForkRuntimeProgressUsage,
   shouldContinueForkRuntimeStep,
 } from "./fork-runtime-step-progress.ts";
+import {
+  applySourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 
 export {
   buildRecoveredStepParts,
@@ -195,6 +199,7 @@ export type StartAgentRuntimeForkInput = {
   forkToolNames: string[];
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
   buildInstructions: () => string;
@@ -235,13 +240,16 @@ export function startAgentRuntimeForkWithHostTools<
     ? traceHostTools(input.forkTools, input.traceTools)
     : input.forkTools;
   const runtimeTools = createToolsFromHostDefinitions(forkTools);
-  const forkToolNames = input.forkToolNames
+  const requestedForkToolNames = input.forkToolNames
     ? [...input.forkToolNames]
     : getForkRuntimeAllowedToolNames({
       provider: input.provider,
       forkModel: input.forkModel,
-      forkTools: input.forkTools,
+      forkTools,
     });
+  const forkToolNames = input.sourceIntegrationPolicy
+    ? applySourceIntegrationPolicy(requestedForkToolNames, input.sourceIntegrationPolicy)
+    : requestedForkToolNames;
   const providerNativeToolNames = new Set(
     getProviderNativeToolNames({
       provider: input.provider,
@@ -265,6 +273,7 @@ export function startAgentRuntimeForkWithHostTools<
       forkToolNames,
       providerToolNames,
       runtimeTools,
+      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       providerOptions: input.providerOptions,
       reasoning: input.reasoning,
       buildInstructions: input.buildInstructions,
@@ -330,6 +339,7 @@ export type RunAgentRuntimeForkStepInput = {
   forkToolNames: string[];
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
 };
@@ -380,6 +390,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       }
       : {}),
     __vfAllowedRemoteTools: input.forkToolNames,
+    ...(input.sourceIntegrationPolicy
+      ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
   };
   const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 
@@ -437,6 +450,9 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     forkToolNames: input.forkToolNames,
     ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
     runtimeTools: input.frameworkTools,
+    ...(input.sourceIntegrationPolicy
+      ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
     ...(input.reasoning ? { reasoning: input.reasoning } : {}),
   });
@@ -570,6 +586,9 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             forkToolNames: effectiveForkToolNames,
             ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
             runtimeTools: input.runtimeTools,
+            ...(input.sourceIntegrationPolicy
+              ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+              : {}),
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
             ...(input.reasoning ? { reasoning: input.reasoning } : {}),
           });

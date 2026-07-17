@@ -61,6 +61,8 @@ import { prepareDefaultHostedChildForkToolAssembly } from "./child-requested-too
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
 
 /** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
@@ -340,6 +342,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   execution: {
     toolCallId: string;
     abortSignal?: AbortSignal;
+    sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   },
   runtimeOptions: {
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
@@ -397,6 +400,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     startRuntime: startHostedChildForkRuntimeWithHostTools,
     shouldRethrowError: options.shouldRethrowError,
     instrumentation,
+    sourceIntegrationPolicy: execution.sourceIntegrationPolicy,
   });
 }
 
@@ -425,6 +429,7 @@ export async function executeDefaultHostedInvokeAgentTool<
   const config = options.getConfig();
   const toolCallId = getToolCallId(executionContext);
   const abortSignal = getAbortSignal(executionContext);
+  const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
   const forkInput = withHostedChildInvocationContext(input, {
     conversationId: options.context.conversationId,
     parentRunId: options.context.parentRunId,
@@ -449,6 +454,7 @@ export async function executeDefaultHostedInvokeAgentTool<
       {
         toolCallId,
         abortSignal,
+        sourceIntegrationPolicy,
       },
       {
         onSettled: (snapshot) => {

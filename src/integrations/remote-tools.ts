@@ -11,6 +11,13 @@
 
 import { logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import {
+  isIntegrationToolAllowedBySourcePolicy,
+  parseIntegrationToolIdentity,
+} from "#veryfront/integrations/source-policy.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 import type { ToolDefinition } from "#veryfront/tool";
 
@@ -43,36 +50,24 @@ type RemoteIntegrationToolExecutionContext = {
 // Per-request token resolution
 // ---------------------------------------------------------------------------
 
+function isValidApiToken(token: unknown): token is string {
+  return typeof token === "string" && token.length > 0 && token === token.trim();
+}
+
 /**
- * Resolve the API token for the current request context.
- * In multi-tenant mode, different projects have different tokens.
- * Falls back to the environment token for single-project mode.
+ * Resolve the API token for the active runtime mode.
+ * Proxy mode requires a valid request-scoped project token. Single-project
+ * runtimes may use their process-wide environment token.
  */
 function resolveRequestToken(): string | undefined {
-  try {
-    const raw = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
-    if (raw === undefined) {
-      // Not in multi-project mode — fall through to env token.
-    } else if (
-      typeof raw !== "object" ||
-      raw === null ||
-      typeof (raw as Record<string, unknown>).getCurrentRequestContext !== "function"
-    ) {
-      // Adapter exists but doesn't match the expected shape. Warn so that a
-      // shape change doesn't silently fall back to the wrong project's token.
-      logger.warn(
-        "__vf_multi_project_adapter has unexpected shape — falling back to env token",
-        { actualType: typeof raw },
-      );
-    } else {
-      const mod = raw as { getCurrentRequestContext: () => { token?: string } | null };
-      const reqToken = mod.getCurrentRequestContext()?.token;
-      if (reqToken) return reqToken;
-    }
-  } catch {
-    // Not in multi-project mode
+  const requestContext = getCurrentRequestContext();
+  if (requestContext) {
+    return isValidApiToken(requestContext.token) ? requestContext.token : undefined;
   }
-  return getApiTokenEnv();
+  if (getEnvironmentConfig().proxyMode) return undefined;
+
+  const environmentToken = getApiTokenEnv();
+  return isValidApiToken(environmentToken) ? environmentToken : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,12 +89,22 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRemoteToolDefinition(value: unknown): value is RemoteToolDefinition {
+  return isRecord(value) &&
+    typeof value.name === "string" &&
+    isRemoteIntegrationTool(value.name) &&
+    typeof value.description === "string" &&
+    isRecord(value.inputSchema);
+}
+
 function isToolListResponse(value: unknown): value is { tools: RemoteToolDefinition[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as Record<string, unknown>).tools)
-  );
+  return isRecord(value) &&
+    Array.isArray(value.tools) &&
+    value.tools.every(isRemoteToolDefinition);
 }
 
 async function fetchToolList(
@@ -201,7 +206,11 @@ export async function getRemoteIntegrationToolDefinitions(): Promise<
 
   try {
     const remoteDefs = await fetchToolList(baseUrl, token);
-    return remoteDefs.map((def) => ({
+    const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
+    return remoteDefs.filter((def) =>
+      sourceIntegrationPolicy === undefined ||
+      isIntegrationToolAllowedBySourcePolicy(def.name, sourceIntegrationPolicy)
+    ).map((def) => ({
       name: def.name,
       description: def.description,
       parameters: def.inputSchema && Object.keys(def.inputSchema).length > 0
@@ -221,10 +230,7 @@ export async function getRemoteIntegrationToolDefinitions(): Promise<
  * Integration tools use "integration__tool_id" format (double underscore separator).
  */
 export function isRemoteIntegrationTool(toolName: string): boolean {
-  const separatorIndex = toolName.indexOf("__");
-  return separatorIndex > 0 &&
-    separatorIndex === toolName.lastIndexOf("__") &&
-    separatorIndex + 2 < toolName.length;
+  return parseIntegrationToolIdentity(toolName) !== null;
 }
 
 /**
@@ -236,6 +242,20 @@ export async function executeRemoteIntegrationTool(
   args: Record<string, unknown>,
   context?: RemoteIntegrationToolExecutionContext,
 ): Promise<unknown> {
+  if (!isRemoteIntegrationTool(toolName)) {
+    throw new Error(
+      `Remote integration tool "${toolName}" must use the canonical integration__tool_id name`,
+    );
+  }
+
+  const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
+  if (
+    sourceIntegrationPolicy !== undefined &&
+    !isIntegrationToolAllowedBySourcePolicy(toolName, sourceIntegrationPolicy)
+  ) {
+    throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
+  }
+
   const baseUrl = getApiBaseUrlEnv();
   const token = resolveRequestToken();
   if (!baseUrl || !token) {

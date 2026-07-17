@@ -19,6 +19,10 @@ import type {
   WorkflowRun,
 } from "../../types.ts";
 import { generateId } from "../../types.ts";
+import {
+  captureWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../../source-integration-policy.ts";
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
@@ -48,6 +52,18 @@ export class DAGExecutor {
   }
 
   async execute(
+    nodes: WorkflowNode[],
+    run: WorkflowRun,
+    startFromNode?: string,
+    abortSignal?: AbortSignal,
+  ): Promise<DAGExecutionResult> {
+    return await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.executeUnwrapped(nodes, run, startFromNode, abortSignal),
+    );
+  }
+
+  private async executeUnwrapped(
     nodes: WorkflowNode[],
     run: WorkflowRun,
     startFromNode?: string,
@@ -328,7 +344,7 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
 
-    const result = await this.execute(
+    const result = await this.executeUnwrapped(
       config.nodes,
       {
         id: `${node.id}_parallel`,
@@ -343,6 +359,7 @@ export class DAGExecutor {
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
+        sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
       undefined,
       abortSignal,
@@ -397,7 +414,7 @@ export class DAGExecutor {
       return { state, contextUpdates: {}, waiting: false };
     }
 
-    const result = await this.execute(
+    const result = await this.executeUnwrapped(
       branchNodes,
       {
         id: `${node.id}_branch`,
@@ -412,6 +429,7 @@ export class DAGExecutor {
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
+        sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
       undefined,
       abortSignal,
@@ -502,7 +520,7 @@ export class DAGExecutor {
 
     const subRunId = `${node.id}_sub_${generateId()}`;
 
-    const result = await this.execute(
+    const result = await this.executeUnwrapped(
       steps,
       {
         id: subRunId,
@@ -515,6 +533,7 @@ export class DAGExecutor {
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
+        sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
       undefined,
       abortSignal,
@@ -574,7 +593,7 @@ export class DAGExecutor {
     abortSignal?: AbortSignal,
   ): Promise<DAGExecutionResult> {
     if (!options?.maxConcurrency) {
-      return await this.execute(nodes, run, undefined, abortSignal);
+      return await this.executeUnwrapped(nodes, run, undefined, abortSignal);
     }
 
     // Run the child graph on a scoped executor rather than mutating
@@ -585,6 +604,6 @@ export class DAGExecutor {
       ...this.config,
       maxConcurrency: options.maxConcurrency,
     });
-    return await childExecutor.execute(nodes, run, undefined, abortSignal);
+    return await childExecutor.executeUnwrapped(nodes, run, undefined, abortSignal);
   }
 }

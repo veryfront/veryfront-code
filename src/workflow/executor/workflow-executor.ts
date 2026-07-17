@@ -32,6 +32,10 @@ import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
+import {
+  captureWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -226,6 +230,7 @@ export class WorkflowExecutor {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       _tenant: tenant,
     };
 
@@ -244,6 +249,15 @@ export class WorkflowExecutor {
   async resume(runId: string, fromCheckpoint?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.resumeRun(run, fromCheckpoint),
+    );
+  }
+
+  private async resumeRun(run: WorkflowRun, fromCheckpoint?: string): Promise<void> {
+    const runId = run.id;
 
     if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
       throw ORCHESTRATION_ERROR.create({
@@ -287,6 +301,15 @@ export class WorkflowExecutor {
   async executeAsync(runId: string, startFromNode?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.executeRun(run, startFromNode),
+    );
+  }
+
+  private async executeRun(run: WorkflowRun, startFromNode?: string): Promise<void> {
+    const runId = run.id;
 
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
