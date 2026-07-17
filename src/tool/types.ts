@@ -18,6 +18,13 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   description: string;
 
   /**
+   * Native integration tools this local wrapper may call through the platform.
+   * Hosts use this metadata for connection binding and least-privilege runtime
+   * authorization. These dependencies are not exposed to the model as tools.
+   */
+  delegatedIntegrationTools?: readonly string[];
+
+  /**
    * Input schema produced via `defineSchema((v) => …)` (or any
    * `SchemaValidator`-backed builder), or a raw JSON Schema object for
    * dynamic/project-authored tools. Schema validators parse before `execute`;
@@ -153,6 +160,9 @@ export interface Tool<TInput = any, TOutput = any> {
 
   /** Tool description */
   description: string;
+
+  /** Native integration tools this local wrapper may call through the platform. */
+  delegatedIntegrationTools?: readonly string[];
 
   /** Input schema produced by `defineSchema` (or any SchemaValidator-backed builder). */
   inputSchema: Schema<TInput>;
