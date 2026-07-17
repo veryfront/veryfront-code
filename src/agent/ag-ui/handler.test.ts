@@ -1029,4 +1029,175 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
     assertEquals(response.status, 200);
     assertStringIncludes(body, "event: RunFinished");
   });
+
+  it("fires once for a resumable injected-tool run after the tool round-trip", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const seen: AgUiCompletion[] = [];
+    const done = deferred();
+    const originalStream = AgentRuntime.prototype.stream;
+
+    // The injected-tools path drives an AgentRuntime, not agent.stream: the tool
+    // blocks inline on the session signal, then the run finalizes in the same
+    // stream. onComplete must fire exactly once, after the round-trip.
+    AgentRuntime.prototype.stream = async function (
+      _messages,
+      _context,
+      callbacks,
+    ): Promise<ReadableStream<Uint8Array>> {
+      const runtimeConfig = this as unknown as {
+        config: {
+          tools?: Record<string, {
+            execute: (
+              input: Record<string, unknown>,
+              context?: { toolCallId?: string },
+            ) => Promise<unknown>;
+          }>;
+        };
+      };
+      const injectedTool = runtimeConfig.config.tools?.client_confirm;
+      if (!injectedTool) {
+        throw new Error("Expected injected tool to be merged into the runtime config");
+      }
+
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          void (async () => {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-start",
+                toolCallId: "tool-call-1",
+                toolName: "client_confirm",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "tool-input-available", toolCallId: "tool-call-1" }),
+            );
+            const result = await injectedTool.execute(
+              { approved: true },
+              { toolCallId: "tool-call-1" },
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-output-available",
+                toolCallId: "tool-call-1",
+                output: result,
+              }),
+            );
+            // The run finalizes server-side once the tool result is in.
+            callbacks?.onFinish?.(FINALIZED_RESPONSE);
+            controller.close();
+          })();
+        },
+      });
+    };
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createFinishingAgent(),
+        sessionManager,
+        onComplete: (completion) => {
+          seen.push(completion);
+          done.resolve();
+        },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_persist_1",
+            threadId: crypto.randomUUID(),
+            messages: [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+      assertEquals(response.status, 200);
+
+      const bodyPromise = response.text();
+      const submitOutcome = sessionManager.submitSignal("run_persist_1", {
+        waitKey: "tool-call-1",
+        value: { result: { approved: true }, isError: false },
+      });
+      assertEquals(submitOutcome, { accepted: true });
+
+      const body = await bodyPromise;
+      await done.promise;
+
+      // The whole tool round-trip completed inside one stream => one persistence.
+      assertStringIncludes(body, "event: RunFinished");
+      assertEquals(seen.length, 1);
+      const completion = seen[0]!;
+      assertEquals(completion.runId, "run_persist_1");
+      assertEquals(completion.messages, FINALIZED_RESPONSE.messages);
+      assertEquals(completion.inputMessages[0]?.role, "user");
+      assertEquals(completion.response.text, FINALIZED_RESPONSE.text);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("does not fire when the client disconnects before the final flush", async () => {
+    let completeCalls = 0;
+    const gateOpen = deferred();
+
+    // Finalizes server-side (onFinish fires, completedResponse is set) but holds
+    // the stream open until the test lets it close — so the terminal RunFinished
+    // flush is what lands on a dropped connection.
+    const agent: Agent = {
+      ...createFinishingAgent(),
+      stream: async (_input) => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "hello" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            void gateOpen.promise.then(() => {
+              try {
+                controller.close();
+              } catch {
+                // Upstream may already be torn down by the aborted downstream.
+              }
+            });
+          },
+        });
+        // The run finalizes server-side regardless of client delivery.
+        _input.onFinish?.(FINALIZED_RESPONSE);
+        return {
+          toDataStreamResponse: () =>
+            new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+        };
+      },
+    } as Agent;
+
+    const handler = createAgUiHandler({
+      agent,
+      onComplete: () => {
+        completeCalls += 1;
+      },
+    });
+
+    const response = await handler(agUiRequest());
+    const reader = response.body!.getReader();
+    // Receive the streamed head, then simulate the client dropping the socket.
+    await reader.read();
+    await reader.cancel();
+    // Now let the run reach its terminal flush against the closed connection.
+    gateOpen.resolve();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Persistence is coupled to clean client delivery: the server finalized, but
+    // because the client never received the completed run, onComplete must NOT
+    // fire. This pins the documented persist-on-clean-delivery semantic.
+    assertEquals(completeCalls, 0);
+  });
 });
