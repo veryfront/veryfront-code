@@ -1,5 +1,5 @@
 import * as React from "react";
-import { cn } from "../../theme.ts";
+import { cn, UI_SCOPE_ATTRS } from "../../theme.ts";
 import { ChatTokens } from "../../chat-tokens-style.tsx";
 import {
   FileTextIcon,
@@ -130,7 +130,11 @@ function AttachmentsPanelRoot(
   return (
     <AttachmentsPanelContext.Provider value={context}>
       <ChatTokens />
-      <div ref={ref} data-vf-chat="" className={cn("flex flex-col h-full", className)}>
+      <div
+        ref={ref}
+        {...UI_SCOPE_ATTRS}
+        className={cn("flex flex-col h-full", className)}
+      >
         {children ?? (
           <>
             {onClose && <AttachmentsPanelHeader />}
