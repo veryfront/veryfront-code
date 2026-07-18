@@ -1,4 +1,4 @@
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import {
   isRequestBodyTooLargeError,
   readBodyWithLimit,
@@ -43,6 +43,10 @@ function isSchemaValidationError(
     "issues" in error &&
     Array.isArray((error as Record<string, unknown>).issues)
   );
+}
+
+function isInputValidationError(error: unknown): error is VeryfrontError {
+  return error instanceof VeryfrontError && error.slug === "input-validation-failed";
 }
 
 export function isRequest(value: unknown): value is Request {
@@ -94,7 +98,9 @@ export async function parseAgUiJsonRequestOrError<T>(
       );
     }
 
-    if (error instanceof SyntaxError || error instanceof TypeError) {
+    if (
+      error instanceof SyntaxError || error instanceof TypeError || isInputValidationError(error)
+    ) {
       return Response.json(
         {
           error: errorLabel,
