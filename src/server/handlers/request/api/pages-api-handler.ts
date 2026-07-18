@@ -9,6 +9,7 @@
 
 import { APIRouteHandler } from "#veryfront/routing";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   extractCacheKeyContext,
   tryGetCacheKeyContext,
@@ -26,7 +27,34 @@ export interface HandlerCache<T> {
   values(): IterableIterator<T>;
 }
 
-const apiHandlerCache = new Map<string, Promise<APIRouteHandler>>();
+// LRU-backed implementation of HandlerCache so entries evict naturally in
+// long-lived / multi-tenant processes instead of growing without bound.
+class LRUHandlerCache<T> implements HandlerCache<T> {
+  private readonly lru = new LRUCacheAdapter({ maxEntries: 1000 });
+
+  get(key: string): T | undefined {
+    return this.lru.get<T>(key);
+  }
+  set(key: string, value: T): void {
+    this.lru.set(key, value);
+  }
+  delete(key: string): boolean {
+    const had = this.lru.has(key);
+    this.lru.delete(key);
+    return had;
+  }
+  clear(): void {
+    this.lru.clear();
+  }
+  entries(): IterableIterator<[string, T]> {
+    return this.lru.entries<T>();
+  }
+  *values(): IterableIterator<T> {
+    for (const [, v] of this.lru.entries<T>()) yield v;
+  }
+}
+
+const apiHandlerCache = new LRUHandlerCache<Promise<APIRouteHandler>>();
 let injectedCache: HandlerCache<Promise<APIRouteHandler>> | null = null;
 
 function getCache(): HandlerCache<Promise<APIRouteHandler>> {

@@ -1,5 +1,6 @@
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -19,7 +20,7 @@ interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
 }
 
-const discoveredProjects = new Map<string, DiscoveryRecord>();
+const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
 
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
@@ -62,7 +63,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   const key = discoveryKey(ctx);
   const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
 
-  const existing = discoveredProjects.get(key);
+  const existing = discoveredProjects.get<DiscoveryRecord>(key);
   if (existing) return existing.promise;
 
   const discovery = {

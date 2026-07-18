@@ -189,6 +189,11 @@ export async function monitorHostedChildRunStatus(
           `[monitorHostedChildRunStatus] Aborting status monitor after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures for run ${input.identifiers.childRunId}`,
           error,
         );
+        // Poll retries are exhausted: drive the parent fork to abort now via a
+        // terminal failure state instead of leaving it to hit its idle timeout.
+        input.onTerminal(
+          new HostedChildTerminalStateError("failed", input.identifiers),
+        );
         return;
       }
     }

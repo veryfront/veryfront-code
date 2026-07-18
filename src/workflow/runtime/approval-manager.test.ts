@@ -10,9 +10,10 @@ class CancelOnApprovalDecisionBackend extends MemoryBackend {
     runId: string,
     approvalId: string,
     decision: Parameters<MemoryBackend["updateApproval"]>[2],
-  ): Promise<void> {
-    await super.updateApproval(runId, approvalId, decision);
+  ): Promise<boolean> {
+    const applied = await super.updateApproval(runId, approvalId, decision);
     await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
+    return applied;
   }
 }
 

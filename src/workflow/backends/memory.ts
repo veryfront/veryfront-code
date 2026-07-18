@@ -319,7 +319,7 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const approvals = this.approvals.get(runId);
     if (!approvals) {
       throw RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` });
@@ -330,12 +330,19 @@ export class MemoryBackend implements WorkflowBackend {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
+    // Pending-precondition gate: only the first decision wins. A concurrent
+    // decision on an already-resolved approval is reported as skipped so callers
+    // can treat this return value as the authoritative gate.
+    if (approval.status !== "pending") {
+      return Promise.resolve(false);
+    }
+
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
     approval.comment = decision.comment;
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   listPendingApprovals(filter?: {

@@ -79,14 +79,35 @@ export class DAGExecutor {
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
+      // Give every node in the batch an isolated shallow snapshot of the shared
+      // context and nodeStates. Compound nodes (parallel/branch/map/loop) mutate
+      // these in place mid-flight (Object.assign), so without isolation a
+      // sibling's async input()/skip() could observe another sibling's partial
+      // state. Changes are merged back sequentially, in node-index order, after
+      // the whole batch settles (see below).
+      const contextSnapshots = batch.map(() => ({ ...context }));
+      const nodeStateSnapshots = batch.map(() => ({ ...nodeStates }));
+
       const results = await Promise.allSettled(
-        batch.map((nodeId) =>
-          this.executeNode(nodeMap.get(nodeId)!, context, nodeStates, abortSignal, ownership)
+        batch.map((nodeId, i) =>
+          this.executeNode(
+            nodeMap.get(nodeId)!,
+            contextSnapshots[i]!,
+            nodeStateSnapshots[i]!,
+            abortSignal,
+            ownership,
+          )
         ),
       );
       // Wait for the full in-flight batch to settle before propagating abort so
       // the caller keeps its lock until cooperative cleanup has completed.
       abortSignal?.throwIfAborted();
+
+      // Immutable batch-start baselines used to detect which keys each node's
+      // snapshot actually changed, so merging one node's changes never clobbers
+      // another node's freshly-merged results.
+      const baseContext = { ...context };
+      const baseNodeStates = { ...nodeStates };
 
       // Record the state of EVERY node in the batch before deciding the batch's
       // outcome. The whole batch already ran (Promise.allSettled), so returning
@@ -118,6 +139,24 @@ export class DAGExecutor {
         }
 
         const nodeResult = result.value;
+
+        // Merge back only the keys this node's snapshot actually changed
+        // (compound nodes accumulate child states / context in place). Reference
+        // inequality against the batch-start baseline isolates this node's own
+        // namespaced changes and leaves sibling entries — including ones merged
+        // earlier in this loop — untouched.
+        const nodeStateSnapshot = nodeStateSnapshots[i]!;
+        for (const key of Object.keys(nodeStateSnapshot)) {
+          if (nodeStateSnapshot[key] !== baseNodeStates[key]) {
+            nodeStates[key] = nodeStateSnapshot[key]!;
+          }
+        }
+        const contextSnapshot = contextSnapshots[i]!;
+        for (const key of Object.keys(contextSnapshot)) {
+          if (contextSnapshot[key] !== baseContext[key]) {
+            context[key] = contextSnapshot[key];
+          }
+        }
 
         nodeStates[nodeId] = nodeResult.state;
         Object.assign(context, nodeResult.contextUpdates);

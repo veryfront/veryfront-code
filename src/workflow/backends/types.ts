@@ -78,11 +78,17 @@ export interface WorkflowBackend {
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null>;
+  /**
+   * Apply an approval decision atomically, but only while the approval is still
+   * pending. Atomic backends resolve `true` when the decision was written and
+   * `false` after losing a concurrent decision race. Legacy custom backends may
+   * continue to resolve without a value.
+   */
   updateApproval(
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
-  ): Promise<void>;
+  ): Promise<boolean | void>;
   listPendingApprovals?(filter?: {
     workflowId?: string;
     approver?: string;

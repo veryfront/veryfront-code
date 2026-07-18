@@ -115,6 +115,74 @@ if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
 redis.call('rpush', ARGV[expectedCount + 3], ARGV[expectedCount + 4])
 return 1`;
 
+/**
+ * Atomically patch metadata on the approval whose parsed `.id` matches, located
+ * by scanning the list inside the script. This replaces the previous
+ * lrange -> findIndex -> lset sequence, which was non-atomic: a concurrent
+ * rpush/lset could shift the list between the read and the positional write, so
+ * the LSET would clobber the wrong element.
+ *
+ * KEYS[1] = approvals list key
+ * ARGV[1] = approval id
+ * ARGV[2] = patch, JSON-encoded (date fields already ISO strings via toJSON)
+ *
+ * Returns 1 when the approval was found and patched, 0 when the id is absent.
+ */
+const UPDATE_PENDING_APPROVAL_SCRIPT = `-- conditional-approval-patch
+local approvalId = ARGV[1]
+local patch = cjson.decode(ARGV[2])
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      for k, v in pairs(patch) do approval[k] = v end
+      approval.id = approvalId
+      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      return 1
+    end
+  end
+end
+return 0`;
+
+/**
+ * Atomically apply an approval decision, located by scanning the list for the
+ * element whose parsed `.id` matches, and only while that element is still
+ * `pending`. Same TOCTOU protection as the patch script above, plus a status
+ * precondition so a second concurrent decision cannot overwrite the first.
+ *
+ * KEYS[1] = approvals list key
+ * ARGV[1] = approval id
+ * ARGV[2] = new status ("approved" | "rejected")
+ * ARGV[3] = decidedBy
+ * ARGV[4] = decidedAt (ISO string, computed by the caller for determinism)
+ * ARGV[5] = "1" when a comment is provided, "0" otherwise
+ * ARGV[6] = comment (ignored unless ARGV[5] == "1")
+ *
+ * Returns 1 when applied, 2 when the approval was found but no longer pending
+ * (a lost race), 0 when the id is absent.
+ */
+const UPDATE_APPROVAL_SCRIPT = `-- conditional-approval-decision
+local approvalId = ARGV[1]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      if approval.status ~= 'pending' then return 2 end
+      approval.status = ARGV[2]
+      approval.decidedBy = ARGV[3]
+      approval.decidedAt = ARGV[4]
+      if ARGV[5] == '1' then approval.comment = ARGV[6] else approval.comment = nil end
+      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      return 1
+    end
+  end
+end
+return 0`;
+
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
@@ -691,53 +759,48 @@ export class RedisBackend implements WorkflowBackend {
     patch: Partial<PendingApproval>,
   ): Promise<void> {
     const client = await this.ensureClient();
-    const key = this.approvalsKey(runId);
-    const rawList = await client.lrange(key, 0, -1);
-    const targetIndex = rawList.findIndex((raw) => JSON.parse(raw).id === approvalId);
-    if (targetIndex === -1) {
+    // Locate-and-write in a single Lua step so a concurrent append/decision
+    // cannot shift the list between a positional read and write. JSON.stringify
+    // converts any Date fields on the patch to ISO strings via toJSON, matching
+    // serializeApproval.
+    const result = await client.eval(
+      UPDATE_PENDING_APPROVAL_SCRIPT,
+      [this.approvalsKey(runId)],
+      [approvalId, JSON.stringify(patch)],
+    );
+    if (Number(result) !== 1) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
-
-    const current = this.parseApproval(rawList[targetIndex]!);
-    await client.lset(
-      key,
-      targetIndex,
-      this.serializeApproval({ ...current, ...patch, id: approvalId }),
-    );
   }
 
   async updateApproval(
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const client = await this.ensureClient();
-    const key = this.approvalsKey(runId);
-
-    const rawList = await client.lrange(key, 0, -1);
-
-    const targetIndex = rawList.findIndex((raw) => {
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      return data.id === approvalId;
-    });
-
-    if (targetIndex === -1) {
+    const hasComment = decision.comment !== undefined;
+    // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
+    // decidedAt is computed here so the stored value is deterministic and does
+    // not depend on the Redis server clock.
+    const result = await client.eval(
+      UPDATE_APPROVAL_SCRIPT,
+      [this.approvalsKey(runId)],
+      [
+        approvalId,
+        decision.approved ? "approved" : "rejected",
+        decision.approver,
+        new Date().toISOString(),
+        hasComment ? "1" : "0",
+        hasComment ? decision.comment! : "",
+      ],
+    );
+    const code = Number(result);
+    if (code === 0) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
-
-    const rawTarget = rawList[targetIndex];
-    if (!rawTarget) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Approval data not found: ${approvalId}` });
-    }
-
-    const data = JSON.parse(rawTarget);
-    data.status = decision.approved ? "approved" : "rejected";
-    data.decidedBy = decision.approver;
-    data.decidedAt = new Date().toISOString();
-    data.comment = decision.comment;
-
-    await client.lset(key, targetIndex, JSON.stringify(data));
+    // 1 = applied; 2 = found but already decided (lost race).
+    return code === 1;
   }
 
   async listPendingApprovals(filter?: {

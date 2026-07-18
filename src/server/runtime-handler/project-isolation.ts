@@ -57,8 +57,7 @@ export class ProjectIsolationManager {
         if (
           state.inFlight === 0 &&
           state.failures.length === 0 &&
-          state.circuitOpenedAt === 0 &&
-          state.totalRequests === 0
+          state.circuitOpenedAt === 0
         ) {
           this.projects.delete(slug);
         }

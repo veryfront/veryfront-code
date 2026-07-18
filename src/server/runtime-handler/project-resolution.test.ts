@@ -83,44 +83,78 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.environmentId, "env-1");
     });
 
-    it("derives project slug from x-forwarded-host when proxy header is absent", () => {
+    // x-forwarded-host is client-controlled and only honoured behind a trusted
+    // proxy (VERYFRONT_TRUST_FORWARDED_HEADERS=1). The following cases exercise
+    // the trusted-proxy contract; the untrusted-default case is asserted below.
+    it("derives project slug from x-forwarded-host when proxy is trusted and slug header absent", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("derives project slug from x-forwarded-host when proxy is trusted and x-project-slug is blank", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: {
+            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-project-slug": "   ",
+          },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("derives project slug from x-forwarded-host when proxy is trusted and x-project-slug is empty string", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: {
+            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-project-slug": "",
+          },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("takes the first entry from a comma-separated x-forwarded-host when proxy is trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: {
+            "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
+          },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("ignores x-forwarded-host for slug derivation when proxy is untrusted (default)", () => {
+      // No VERYFRONT_TRUST_FORWARDED_HEADERS: a direct-access client cannot spoof
+      // the project slug via x-forwarded-host; resolution falls back to the Host
+      // header (127.0.0.1 here), which does not parse to the spoofed slug.
       const req = new Request("http://127.0.0.1:3001/", {
         headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
-    });
-
-    it("derives project slug from x-forwarded-host when x-project-slug is blank", () => {
-      const req = new Request("http://127.0.0.1:3001/", {
-        headers: {
-          "x-forwarded-host": "my-project.preview.lvh.me",
-          "x-project-slug": "   ",
-        },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
-    });
-
-    it("derives project slug from x-forwarded-host when x-project-slug is empty string", () => {
-      const req = new Request("http://127.0.0.1:3001/", {
-        headers: {
-          "x-forwarded-host": "my-project.preview.lvh.me",
-          "x-project-slug": "",
-        },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
-    });
-
-    it("takes the first entry from a comma-separated x-forwarded-host", () => {
-      const req = new Request("http://127.0.0.1:3001/", {
-        headers: {
-          "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
-        },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
+      assertEquals(headers.projectSlug !== "my-project", true);
     });
 
     it("extracts content-source-id from header", () => {
@@ -394,7 +428,39 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.proxyEnv, "production");
     });
 
-    it("uses x-forwarded-host for domain resolution", async () => {
+    it("uses x-forwarded-host for domain resolution when proxy is trusted", async () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        let capturedHost = "";
+        __injectDepsForTests({
+          parseProjectDomain: (host: string) => {
+            capturedHost = host;
+            return defaultParsedDomain;
+          },
+          lookupProjectByDomain: () => Promise.resolve(null),
+          getEnvironmentType: () => undefined,
+        });
+
+        const req = new Request("http://localhost/", {
+          headers: { "x-forwarded-host": "forwarded.example.com" },
+        });
+        const url = new URL(req.url);
+        const headers = extractRequestHeaders(req, url);
+        await resolveProject(req, url, headers, {
+          config: undefined,
+          reqCtx: { slug: "s", mode: undefined, branch: null, token: undefined },
+          defaultProjectSlug: undefined,
+          defaultProjectId: undefined,
+          wsSlugOverride: undefined,
+        });
+
+        assertEquals(capturedHost, "forwarded.example.com");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("ignores x-forwarded-host for domain resolution when proxy is untrusted (default)", async () => {
       let capturedHost = "";
       __injectDepsForTests({
         parseProjectDomain: (host: string) => {
@@ -418,7 +484,8 @@ describe("server/runtime-handler/project-resolution", () => {
         wsSlugOverride: undefined,
       });
 
-      assertEquals(capturedHost, "forwarded.example.com");
+      // Untrusted: forwarded host is not honoured; the Host header wins instead.
+      assertEquals(capturedHost !== "forwarded.example.com", true);
     });
 
     it("returns parsedDomain in result", async () => {

@@ -55,6 +55,7 @@ import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
@@ -104,13 +105,13 @@ const _agentEnvVarCache = new EnvironmentVariableCache(
 );
 
 // Cache: projectSlug → production environmentId (stable across restarts)
-const _productionEnvIdCache = new Map<string, string>();
+const _productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
 
 async function _resolveProductionEnvironmentId(
   projectSlug: string,
   token: string,
 ): Promise<string | null> {
-  const cached = _productionEnvIdCache.get(projectSlug);
+  const cached = _productionEnvIdCache.get<string>(projectSlug);
   if (cached) return cached;
   const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   try {

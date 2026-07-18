@@ -144,8 +144,8 @@ describe("rateLimit middleware", () => {
     assertEquals(capturedKey, "my-api-key");
   });
 
-  it("should track different IPs separately", async () => {
-    const middleware = rateLimit({ maxRequests: 1, windowMs: 60000 });
+  it("should track different IPs separately when proxy is trusted", async () => {
+    const middleware = rateLimit({ maxRequests: 1, windowMs: 60000, trustProxy: true });
 
     await middleware(createContext("ip-1"), () => Promise.resolve(new Response("OK")));
 
@@ -162,8 +162,23 @@ describe("rateLimit middleware", () => {
     assertEquals(response2?.status, 200);
   });
 
-  it("should use the rightmost forwarded IP from a proxy chain", async () => {
+  it("ignores X-Forwarded-For by default so it cannot be used to bypass limits", async () => {
+    // Untrusted default: forwarded IPs are not honoured, so rotating
+    // X-Forwarded-For does NOT mint a fresh bucket. Both requests share the
+    // stable fallback key and the second is blocked.
     const middleware = rateLimit({ maxRequests: 1, windowMs: 60000 });
+
+    await middleware(createContext("ip-1"), () => Promise.resolve(new Response("OK")));
+
+    const response = await middleware(
+      createContext("ip-2"),
+      () => Promise.resolve(new Response("OK")),
+    );
+    assertEquals(response?.status, 429);
+  });
+
+  it("should use the rightmost forwarded IP from a proxy chain when trusted", async () => {
+    const middleware = rateLimit({ maxRequests: 1, windowMs: 60000, trustProxy: true });
 
     await middleware(
       createContext("198.51.100.1, 203.0.113.8"),

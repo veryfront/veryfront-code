@@ -7,6 +7,7 @@ import { serverLogger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
@@ -99,12 +100,12 @@ const ERROR_PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 /** Special value to indicate "not found" in cache (distinguishes from cache miss) */
 const CACHE_NOT_FOUND = "__NOT_FOUND__";
 
-const errorPagePathCache = new Map<string, string | null>();
+const errorPagePathCache = new LRUCacheAdapter({ maxEntries: 1000 });
 
 async function getCachedPath(
   cacheKey: string,
 ): Promise<string | null | undefined> {
-  if (!injectedCacheRepo) return errorPagePathCache.get(cacheKey);
+  if (!injectedCacheRepo) return errorPagePathCache.get<string | null>(cacheKey);
 
   const cached = await injectedCacheRepo.get(cacheKey);
   if (cached === CACHE_NOT_FOUND) return null;

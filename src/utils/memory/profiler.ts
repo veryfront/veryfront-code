@@ -302,15 +302,14 @@ export function getMemoryMonitoringState(): MemoryMonitoringState {
 }
 
 export async function forceGC(): Promise<boolean> {
-  try {
-    const buffer = new Uint8Array(100 * 1024 * 1024);
-    buffer.fill(0);
-    await new Promise<void>((resolve) => setTimeout(resolve, 100)); // no cleanup needed: one-shot
+  // deno-lint-ignore no-explicit-any
+  const gc = (globalThis as any).gc;
+  if (typeof gc === "function") {
+    gc();
     return true;
-  } catch (error) {
-    logger.debug("forceGC allocation failed", { error });
-    return false;
   }
+  // GC not exposed; pass --v8-flags=--expose-gc to enable
+  return false;
 }
 
 export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS): void {
@@ -390,14 +389,6 @@ export function stopMemoryMonitoring(): void {
 
 export function setHeapWarningThreshold(threshold: number): void {
   heapGrowthWarningThreshold = Math.max(0.1, Math.min(0.99, threshold));
-}
-
-export function clearAllCaches(): void {
-  logger.warn("Clearing all registered caches");
-
-  for (const cache of getCacheStats()) {
-    logger.info(`Cache to clear: ${cache.name} (${cache.entries} entries)`);
-  }
 }
 
 /**

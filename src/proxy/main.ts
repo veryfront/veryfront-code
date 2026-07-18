@@ -548,8 +548,10 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
       lifecycle.end(500, error as Error);
       return withProxyTiming(
         jsonErrorResponse(500, {
+          // Real error logged above via proxyLogger.error; keep body generic so
+          // internal hostnames/paths in error.message are not leaked to clients.
           error: "Internal Proxy Error",
-          message: error instanceof Error ? error.message : "Unknown error",
+          message: "Internal Proxy Error",
         }),
       );
     }
@@ -620,8 +622,10 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
     });
   } catch (error) {
     proxyLogger.error("API proxy error", error as Error);
+    // Real error logged above; keep body generic so internal hostnames/paths in
+    // error.message are not leaked to clients.
     return jsonErrorResponse(502, {
-      error: error instanceof Error ? error.message : "API request failed",
+      error: "Bad Gateway",
     });
   }
 }

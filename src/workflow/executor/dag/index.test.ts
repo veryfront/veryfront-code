@@ -148,6 +148,52 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["b"]!.status, "completed");
       assertEquals(result.nodeStates["c"]!.status, "completed");
     });
+
+    it("isolates sibling context while a compound node is running", async () => {
+      let releaseReader!: () => void;
+      const loopAdvanced = new Promise<void>((resolve) => {
+        releaseReader = resolve;
+      });
+
+      const isolatedStepExecutor = new MockStepExecutor(new Map(), async (node, context) => {
+        if (node.id === "reader") {
+          await loopAdvanced;
+          return {
+            success: true,
+            output: { sawWriter: "writer" in context },
+            executionTime: 1,
+          };
+        }
+
+        return { success: true, output: "written", executionTime: 1 };
+      });
+      const isolatedExecutor = new DAGExecutor({ stepExecutor: isolatedStepExecutor });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "loop",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: (_context: WorkflowContext, loop) => {
+              if (loop.iteration === 1) {
+                releaseReader();
+                return false;
+              }
+              return true;
+            },
+            steps: [{ id: "writer", config: { type: "step" } as any }],
+          } as any,
+        },
+        { id: "reader", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const result = await isolatedExecutor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["reader"]!.output, { sawWriter: false });
+      assertEquals(result.context.writer, "written");
+    });
   });
 
   describe("error handling", () => {

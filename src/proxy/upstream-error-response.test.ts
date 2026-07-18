@@ -17,24 +17,25 @@ describe("proxy upstream error responses", () => {
     });
   });
 
-  it("creates a proxy failure response from an upstream error", async () => {
-    const response = createUpstreamFailureResponse(new Error("connection refused"));
+  it("returns a generic body that does not leak the upstream error message", async () => {
+    const response = createUpstreamFailureResponse(new Error("connection refused to internal-host:5432"));
 
     assertEquals(response.status, 502);
     assertEquals(response.headers.get("Content-Type"), "application/json");
+    // The real error is logged server-side; the client body must stay generic.
     assertEquals(await response.json(), {
-      error: "Proxy Error",
-      message: "connection refused",
+      error: "Bad Gateway",
+      message: "Bad Gateway",
     });
   });
 
-  it("uses a stable fallback message for non-Error upstream failures", async () => {
+  it("uses the same generic body for non-Error upstream failures", async () => {
     const response = createUpstreamFailureResponse("bad failure");
 
     assertEquals(response.status, 502);
     assertEquals(await response.json(), {
-      error: "Proxy Error",
-      message: "Unknown error",
+      error: "Bad Gateway",
+      message: "Bad Gateway",
     });
   });
 });

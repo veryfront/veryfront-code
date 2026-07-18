@@ -18,6 +18,7 @@ import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -73,7 +74,13 @@ interface RequestHeaders {
 }
 
 function getEffectiveHost(req: Request, url: URL): string {
-  return getEffectiveRequestHost(req, url);
+  // x-forwarded-host is client-controlled and only trustworthy behind a trusted
+  // upstream proxy. Honour it only when the operator has opted in, matching
+  // createRequestContext; otherwise fall back to Host (which the edge proxy also
+  // sets). The async dispatch-JWS trust path is intentionally not consulted here
+  // since slug resolution is synchronous.
+  const trustProxy = getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+  return getEffectiveRequestHost(req, url, trustProxy);
 }
 
 /**

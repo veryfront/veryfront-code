@@ -701,8 +701,8 @@ export function createVeryfrontHandler(
           return errorToRFC9457Response(noHandlerError, ctx, req);
         };
 
-        const { response, error } = await withRequestTimeout(
-          () =>
+        const { response, error, settled } = await withRequestTimeout(
+          (_signal) =>
             runWithRequestProfiling(
               {
                 category: profileCategory,
@@ -740,7 +740,12 @@ export function createVeryfrontHandler(
           isTimeout,
           requestProfileRecord,
         );
-        completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
+        // Decrement isolation in-flight count only after the handler actually
+        // settles so graceful drain doesn't observe work still running after a
+        // timeout response has already been sent to the client.
+        settled.then(() => {
+          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
+        });
 
         return withServerTimingHeader(response, requestProfileRecord);
       } finally {

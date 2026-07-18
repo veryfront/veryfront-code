@@ -1,4 +1,5 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /** Public API contract for conversation run mirror snapshot. */
 export interface ConversationRunMirrorSnapshot {
@@ -315,6 +316,18 @@ export function createConversationRunMirror(input: {
     dispose() {
       clearFlushTimer();
       clearRetryTimer();
+      // A retry scheduled after an escaped flush error is cancelled above; if
+      // events are still queued they will never be flushed, so surface the
+      // loss loudly instead of dropping it silently.
+      if (escapedFlushError !== null) {
+        const { pendingEventCount } = getSnapshot();
+        if (pendingEventCount > 0) {
+          agentLogger.warn(
+            "Conversation run mirror disposed with unflushed events after an escaped flush error; dropping queued events",
+            { pendingEventCount, error: escapedFlushError.error },
+          );
+        }
+      }
     },
   };
 }

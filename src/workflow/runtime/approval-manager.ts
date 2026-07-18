@@ -197,6 +197,11 @@ export class ApprovalManager {
       approved: decision.approved,
     });
 
+    // Fast-path read: fetch the approval to validate expiry and approver
+    // authorization before mutating anything. The pending-status check here is
+    // only an early-out for the common already-decided case — it is NOT the
+    // authoritative gate, because a concurrent decision could slip in between
+    // this read and the write below.
     const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
@@ -215,7 +220,14 @@ export class ApprovalManager {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
-    await this.config.backend.updateApproval(runId, approvalId, decision);
+    // Authoritative gate: the backend applies the decision only while the
+    // approval is still pending and reports whether it won the race. If another
+    // decision resolved this approval first, `applied` is false and we must not
+    // proceed to touch the run.
+    const applied = await this.config.backend.updateApproval(runId, approvalId, decision);
+    if (applied === false) {
+      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
+    }
 
     const run = await this.config.backend.getRun(runId);
     if (!run) {
@@ -352,11 +364,16 @@ export class ApprovalManager {
         approvalId: approval.id,
       });
 
-      await this.config.backend.updateApproval(runId, approval.id, {
+      const expired = await this.config.backend.updateApproval(runId, approval.id, {
         approved: false,
         approver: "system",
         comment: "Approval expired",
       });
+      // A concurrent decision may have resolved this approval between the list
+      // read and here; if so the atomic gate skipped it, so don't fail the run.
+      if (expired === false) {
+        continue;
+      }
 
       await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",

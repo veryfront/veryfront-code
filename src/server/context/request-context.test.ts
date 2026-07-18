@@ -161,14 +161,31 @@ describe("createRequestContext", () => {
   });
 
   describe("host resolution priority", () => {
-    it("x-forwarded-host takes priority over host header", () => {
+    it("ignores x-forwarded-host by default (untrusted) and uses the host header", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        "x-forwarded-host": "my-app.preview.veryfront.com",
-        host: "other.production.veryfront.com",
+        "x-forwarded-host": "evil.preview.veryfront.com",
+        host: "my-app.lvh.me",
       });
       const ctx = createRequestContext(req);
+      // Untrusted default: a client-supplied x-forwarded-host must not flip mode
+      // or slug. The Host header is the source of truth.
       assertEquals(ctx.slug, "my-app");
-      assertEquals(ctx.mode, "preview");
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("honours x-forwarded-host when forwarded headers are trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = makeRequest("https://127.0.0.1/page", {
+          "x-forwarded-host": "my-app.preview.lvh.me",
+          host: "other.lvh.me",
+        });
+        const ctx = createRequestContext(req);
+        assertEquals(ctx.slug, "my-app");
+        assertEquals(ctx.mode, "preview");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
     });
 
     it("host header takes priority over URL hostname", () => {
@@ -219,7 +236,7 @@ describe("createRequestContext", () => {
 
     it("falls back to the parsed domain slug when x-project-slug is blank", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        "x-forwarded-host": "my-app.preview.lvh.me",
+        host: "my-app.preview.lvh.me",
         "x-project-slug": "   ",
       });
       const ctx = createRequestContext(req);
@@ -228,19 +245,24 @@ describe("createRequestContext", () => {
 
     it("falls back to the parsed domain slug when x-project-slug is empty string", () => {
       const req = makeRequest("https://127.0.0.1/page", {
-        "x-forwarded-host": "my-app.preview.lvh.me",
+        host: "my-app.preview.lvh.me",
         "x-project-slug": "",
       });
       const ctx = createRequestContext(req);
       assertEquals(ctx.slug, "my-app");
     });
 
-    it("takes the first entry from a comma-separated x-forwarded-host", () => {
-      const req = makeRequest("https://127.0.0.1/page", {
-        "x-forwarded-host": "my-app.preview.lvh.me, proxy2.internal",
-      });
-      const ctx = createRequestContext(req);
-      assertEquals(ctx.slug, "my-app");
+    it("takes the first entry from a comma-separated x-forwarded-host when trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = makeRequest("https://127.0.0.1/page", {
+          "x-forwarded-host": "my-app.preview.lvh.me, proxy2.internal",
+        });
+        const ctx = createRequestContext(req);
+        assertEquals(ctx.slug, "my-app");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
     });
 
     it("defaults token to empty string when no header and no env", () => {

@@ -3,7 +3,6 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   checkMemoryPressure,
-  clearAllCaches,
   forceGC,
   getCacheStats,
   getHeapStats,
@@ -267,14 +266,4 @@ describe("memory/profiler", () => {
     });
   });
 
-  describe("clearAllCaches", () => {
-    it("should not throw when no caches are registered", () => {
-      clearAllCaches();
-    });
-
-    it("should not throw when caches are registered", () => {
-      registerCache("test-cache", () => ({ name: "test-cache", entries: 5 }));
-      clearAllCaches();
-    });
-  });
 });

@@ -151,6 +151,48 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(1);
     }
 
+    if (script.includes("conditional-approval-patch")) {
+      const approvalId = args[0]!;
+      const patch = JSON.parse(args[1]!);
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            list[i] = JSON.stringify({ ...approval, ...patch, id: approvalId });
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("conditional-approval-decision")) {
+      const approvalId = args[0]!;
+      const newStatus = args[1]!;
+      const decidedBy = args[2]!;
+      const decidedAt = args[3]!;
+      const hasComment = args[4] === "1";
+      const comment = args[5];
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            if (approval.status !== "pending") return Promise.resolve(2);
+            approval.status = newStatus;
+            approval.decidedBy = decidedBy;
+            approval.decidedAt = decidedAt;
+            if (hasComment) approval.comment = comment;
+            else delete approval.comment;
+            list[i] = JSON.stringify(approval);
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
     if (script.includes("conditional-run-update")) {
       const expectedCount = Number(args[0]);
       const expectedStatuses = args.slice(1, expectedCount + 1);
