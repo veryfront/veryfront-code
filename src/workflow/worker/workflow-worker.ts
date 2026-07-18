@@ -113,7 +113,8 @@ export class WorkflowWorker {
       throw CONFIG_INVALID.create({
         detail: "Backend does not support worker features. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, releaseLock, " +
-          "findStalledRuns, claimStalledRun. " +
+          "findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker. " +
           "Use RedisBackend with worker support enabled.",
       });
     }

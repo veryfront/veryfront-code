@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -31,6 +31,23 @@ function resumeInBackground(worker: WorkflowWorker, run: WorkflowRun): void {
 }
 
 describe("workflow/worker/workflow-worker", () => {
+  it("rejects backends that cannot fence owner-bound persistence", () => {
+    const backend = new MemoryBackend();
+    Object.defineProperty(backend, "saveCheckpointIfStatusAndWorker", {
+      value: undefined,
+    });
+
+    assertThrows(
+      () =>
+        new WorkflowWorker({
+          backend,
+          resumeFn: () => Promise.resolve(),
+        }),
+      Error,
+      "saveCheckpointIfStatusAndWorker",
+    );
+  });
+
   it("restores a stalled run source policy around the resume callback", async () => {
     const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
       allow: { confluence: { allowedTools: ["search_content"] } },

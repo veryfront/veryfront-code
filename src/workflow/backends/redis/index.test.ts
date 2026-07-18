@@ -615,6 +615,13 @@ describe("RedisBackend", () => {
       const updated = await backend.getRun("run-cas");
       assertEquals(updated?.status, "running");
       assertEquals(updated?.workerId, "worker-cas");
+      assertEquals(await backend.listRuns({ status: "pending" }), []);
+      assertEquals(
+        (await backend.listRuns({ status: "running" })).map((run) => run.id),
+        ["run-cas"],
+      );
+      assertEquals(await backend.countRuns({ status: "pending" }), 0);
+      assertEquals(await backend.countRuns({ status: "running" }), 1);
     });
 
     it("moves conditional status updates between current-schema index sets", async () => {

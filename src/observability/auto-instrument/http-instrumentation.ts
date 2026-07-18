@@ -1,4 +1,5 @@
-import { sanitizeUrlForSpan, serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   context as otContext,
   propagation,

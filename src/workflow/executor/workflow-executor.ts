@@ -23,12 +23,12 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
+import { hasLockSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
-import { CheckpointManager } from "./checkpoint-manager.ts";
+import { CheckpointManager, type CheckpointOwnership } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
@@ -126,6 +126,7 @@ export class WorkflowExecutor {
       maxConcurrency: 10,
       debug: false,
       lockDuration: WorkflowExecutor.DEFAULT_LOCK_DURATION,
+      heartbeatInterval: WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
       ...config,
     };
 
@@ -267,11 +268,15 @@ export class WorkflowExecutor {
 
     await runWithWorkflowSourceIntegrationPolicy(
       run,
-      () => this.resumeRun(run, fromCheckpoint),
+      () => this.resumeRun(run, fromCheckpoint, expectedWorkerId),
     );
   }
 
-  private async resumeRun(run: WorkflowRun, fromCheckpoint?: string): Promise<void> {
+  private async resumeRun(
+    run: WorkflowRun,
+    fromCheckpoint?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const runId = run.id;
 
     if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
@@ -297,14 +302,25 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      await this.config.backend.updateRun(runId, {
-        status: "running",
-        context: resumeInfo.context,
-        nodeStates: resumeInfo.nodeStates,
-      });
+      const restored = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        [run.status],
+        {
+          status: "running",
+          context: resumeInfo.context,
+          nodeStates: resumeInfo.nodeStates,
+        },
+        expectedWorkerId,
+      );
+      if (!restored) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Cannot resume workflow run because execution ownership or status changed",
+        });
+      }
     }
 
-    await this.executeAsync(runId, resumeInfo?.startFromNode);
+    await this.executeAsync(runId, resumeInfo?.startFromNode, expectedWorkerId);
   }
 
   /**
@@ -313,17 +329,30 @@ export class WorkflowExecutor {
    * Uses distributed locking (when backend supports it) to prevent
    * concurrent execution of the same workflow run.
    */
-  async executeAsync(runId: string, startFromNode?: string): Promise<void> {
+  async executeAsync(
+    runId: string,
+    startFromNode?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Cannot execute workflow run because execution ownership has changed",
+      });
+    }
 
     await runWithWorkflowSourceIntegrationPolicy(
       run,
-      () => this.executeRun(run, startFromNode),
+      () => this.executeRun(run, startFromNode, expectedWorkerId),
     );
   }
 
-  private async executeRun(run: WorkflowRun, startFromNode?: string): Promise<void> {
+  private async executeRun(
+    run: WorkflowRun,
+    startFromNode?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const runId = run.id;
 
     const workflow = this.workflows.get(run.workflowId);
@@ -333,6 +362,11 @@ export class WorkflowExecutor {
 
     const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
     const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
+    const heartbeatIntervalMs = this.config.heartbeatInterval ??
+      WorkflowExecutor.HEARTBEAT_INTERVAL_MS;
+    const ownership: CheckpointOwnership | undefined = expectedWorkerId === undefined
+      ? undefined
+      : { runId, workerId: expectedWorkerId };
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
     let heartbeatPromise: Promise<void> | undefined;
 
@@ -341,6 +375,7 @@ export class WorkflowExecutor {
     // that happens, then wait for it to settle before releasing the lock. The
     // new owner remains responsible for the terminal status.
     let lockLostError: Error | undefined;
+    let ownershipLostError: Error | undefined;
 
     // Acquire the lock before registering the per-run controller. A failed
     // acquisition must not replace or leak active execution state.
@@ -368,11 +403,22 @@ export class WorkflowExecutor {
       ) return;
 
       const now = new Date();
-      await this.config.backend.updateRun(runId, {
-        status: "running",
-        startedAt: run.startedAt || now,
-        heartbeatAt: now,
-      });
+      const activated = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        ["pending", "waiting", "running"],
+        {
+          status: "running",
+          startedAt: run.startedAt || now,
+          heartbeatAt: now,
+        },
+        expectedWorkerId,
+      );
+      if (!activated) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Cannot execute workflow run because execution ownership or status changed",
+        });
+      }
 
       heartbeatInterval = setInterval(() => {
         if (heartbeatPromise) return;
@@ -386,7 +432,11 @@ export class WorkflowExecutor {
           if (useLocking && typeof this.config.backend.extendLock === "function") {
             let extended: boolean;
             try {
-              extended = await this.config.backend.extendLock(runId, lockDuration);
+              extended = await this.config.backend.extendLock(
+                runId,
+                lockDuration,
+                lockToken ?? undefined,
+              );
             } catch (error) {
               if (!lockLostError) {
                 lockLostError = ORCHESTRATION_ERROR.create({
@@ -419,16 +469,31 @@ export class WorkflowExecutor {
           ) return;
 
           try {
-            await this.config.backend.updateRun(runId, {
-              heartbeatAt: new Date(),
-            });
+            if (expectedWorkerId === undefined) {
+              await this.config.backend.updateRun(runId, { heartbeatAt: new Date() });
+            } else {
+              const updated = await updateRunIfStatus(
+                this.config.backend,
+                runId,
+                ["running"],
+                { heartbeatAt: new Date() },
+                expectedWorkerId,
+              );
+              if (!updated) {
+                ownershipLostError = ORCHESTRATION_ERROR.create({
+                  detail: `Lost execution ownership for run "${runId}" during heartbeat`,
+                });
+                if (heartbeatInterval) clearInterval(heartbeatInterval);
+                executionController.abort(ownershipLostError);
+              }
+            }
           } catch (error) {
             logger.warn("Heartbeat update failed", { runId }, error);
           } finally {
             heartbeatPromise = undefined;
           }
         })();
-      }, WorkflowExecutor.HEARTBEAT_INTERVAL_MS);
+      }, heartbeatIntervalMs);
 
       const updatedRun = await this.config.backend.getRun(runId);
       this.config.onStart?.(updatedRun!);
@@ -450,6 +515,7 @@ export class WorkflowExecutor {
               runWithTenantContext,
               startFromNode,
               executionController.signal,
+              ownership,
             ),
           workflow.timeout,
           executionController,
@@ -468,6 +534,7 @@ export class WorkflowExecutor {
           result.context,
           result.nodeStates,
           executionController,
+          expectedWorkerId,
         );
         if (!finalRun) return;
         if (finalRun.status === "cancelled") return;
@@ -486,6 +553,7 @@ export class WorkflowExecutor {
           result.context,
           result.nodeStates,
           executionController,
+          expectedWorkerId,
         );
         if (!paused) return;
 
@@ -502,6 +570,7 @@ export class WorkflowExecutor {
           result.context,
           result.nodeStates,
           executionController,
+          expectedWorkerId,
         ))
       ) return;
 
@@ -517,6 +586,10 @@ export class WorkflowExecutor {
         logger.warn("Aborted run after losing lock; leaving status for new owner", { runId });
         throw lockLostError;
       }
+      if (ownershipLostError) {
+        logger.warn("Aborted run after losing execution ownership", { runId });
+        throw ownershipLostError;
+      }
 
       await this.waitForCancellationUpdate(runId);
       const latestRun = await this.config.backend.getRun(runId);
@@ -529,6 +602,7 @@ export class WorkflowExecutor {
           run.context,
           run.nodeStates,
           executionController,
+          expectedWorkerId,
         ))
       ) return;
 
@@ -711,6 +785,7 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     executionController: AbortController,
+    expectedWorkerId?: string,
   ): Promise<WorkflowRun | null> {
     await this.waitForCancellationUpdate(runId);
     const currentRun = await this.config.backend.getRun(runId);
@@ -724,13 +799,20 @@ export class WorkflowExecutor {
     const publicContext = this.toPublicContext(context);
     const output = this.determineOutput(publicContext);
 
-    await this.config.backend.updateRun(runId, {
-      status: "completed",
-      output,
-      context: publicContext,
-      nodeStates,
-      completedAt: new Date(),
-    });
+    const completed = await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["running"],
+      {
+        status: "completed",
+        output,
+        context: publicContext,
+        nodeStates,
+        completedAt: new Date(),
+      },
+      expectedWorkerId,
+    );
+    if (!completed) return null;
 
     return (await this.config.backend.getRun(runId))!;
   }
@@ -744,6 +826,7 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     executionController: AbortController,
+    expectedWorkerId?: string,
   ): Promise<boolean> {
     await this.waitForCancellationUpdate(runId);
     const currentRun = await this.config.backend.getRun(runId);
@@ -752,17 +835,22 @@ export class WorkflowExecutor {
 
     const publicContext = this.toPublicContext(context);
 
-    await this.config.backend.updateRun(runId, {
-      status: "failed",
-      context: publicContext,
-      nodeStates,
-      error: {
-        message: error.message,
-        stack: error.stack,
+    return await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["running"],
+      {
+        status: "failed",
+        context: publicContext,
+        nodeStates,
+        error: {
+          message: error.message,
+          stack: error.stack,
+        },
+        completedAt: new Date(),
       },
-      completedAt: new Date(),
-    });
-    return true;
+      expectedWorkerId,
+    );
   }
 
   /**
@@ -774,6 +862,7 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     executionController: AbortController,
+    expectedWorkerId?: string,
   ): Promise<boolean> {
     await this.waitForCancellationUpdate(runId);
     const currentRun = await this.config.backend.getRun(runId);
@@ -785,13 +874,18 @@ export class WorkflowExecutor {
 
     const publicContext = this.toPublicContext(context);
 
-    await this.config.backend.updateRun(runId, {
-      status: "waiting",
-      currentNodes: [waitingNode],
-      context: publicContext,
-      nodeStates,
-    });
-    return true;
+    return await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["running"],
+      {
+        status: "waiting",
+        currentNodes: [waitingNode],
+        context: publicContext,
+        nodeStates,
+      },
+      expectedWorkerId,
+    );
   }
 
   /**

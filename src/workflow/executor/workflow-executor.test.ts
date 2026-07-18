@@ -91,6 +91,27 @@ class FailingLockHeartbeatBackend extends MemoryBackend {
   }
 }
 
+class TokenCheckingLockBackend extends MemoryBackend {
+  acquiredToken: string | null = null;
+  extendedToken: string | undefined;
+  extensionCalls = 0;
+
+  override async acquireLock(runId: string, duration: number): Promise<string | null> {
+    this.acquiredToken = await super.acquireLock(runId, duration);
+    return this.acquiredToken;
+  }
+
+  override extendLock(
+    runId: string,
+    duration: number,
+    lockId?: string,
+  ): Promise<boolean> {
+    this.extensionCalls++;
+    this.extendedToken = lockId;
+    return super.extendLock(runId, duration, lockId);
+  }
+}
+
 class DelayedCancellationBackend extends MemoryBackend {
   readonly cancellationStarted = Promise.withResolvers<void>();
   readonly persistCancellation = Promise.withResolvers<void>();
@@ -214,6 +235,78 @@ describe("workflow/executor/workflow-executor", () => {
     );
 
     assertEquals(observedPolicy, expectedPolicy);
+  });
+
+  it("does not complete a run after worker ownership changes during execution", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "owner-fenced-completion",
+        steps: [
+          step("blocking", {
+            tool: createTool("blocking", async () => {
+              started.resolve();
+              await release.promise;
+              return { stale: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("owner-fenced-completion"),
+      status: "running" as const,
+      workerId: "run-execution:old-owner",
+    };
+    await backend.createRun(run);
+
+    const execution = executor.resume(run.id, undefined, run.workerId);
+    await started.promise;
+    await backend.updateRun(run.id, { workerId: "run-execution:new-owner" });
+    release.resolve();
+    await execution;
+
+    const persisted = await backend.getRun(run.id);
+    assertExists(persisted);
+    assertEquals(persisted.status, "running");
+    assertEquals(persisted.workerId, "run-execution:new-owner");
+    assertEquals(persisted.output, undefined);
+  });
+
+  it("does not save a checkpoint after worker ownership changes", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const run = {
+      ...createRun("owner-fenced-checkpoint"),
+      status: "running" as const,
+      workerId: "run-execution:old-owner",
+    };
+    executor.register(
+      workflow({
+        id: "owner-fenced-checkpoint",
+        steps: [
+          step("reclaimed", {
+            checkpoint: true,
+            tool: createTool("reclaimed", async () => {
+              await backend.updateRun(run.id, { workerId: "run-execution:new-owner" });
+              return { stale: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    await backend.createRun(run);
+
+    await executor.resume(run.id, undefined, run.workerId);
+
+    const persisted = await backend.getRun(run.id);
+    assertExists(persisted);
+    assertEquals(persisted.status, "running");
+    assertEquals(persisted.workerId, "run-execution:new-owner");
+    assertEquals(await backend.getLatestCheckpoint(run.id), null);
   });
 
   it("acquires and releases the backend lock around successful execution", async () => {
@@ -387,6 +480,45 @@ describe("workflow/executor/workflow-executor", () => {
 
     await assertRejects(() => execution, Error, "Could not renew lock");
     assertEquals(backend.releaseCalls, 0);
+  });
+
+  it("renews the lock with its immutable token at the configured interval", async () => {
+    using time = new FakeTime();
+    const backend = new TokenCheckingLockBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      lockDuration: 30_000,
+      heartbeatInterval: 5,
+    });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "token-bound-heartbeat",
+        steps: [
+          step("blocking", {
+            tool: createTool("blocking", async () => {
+              started.resolve();
+              await release.promise;
+              return { ok: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    const run = createRun("token-bound-heartbeat");
+    await backend.createRun(run);
+
+    const execution = executor.executeAsync(run.id);
+    await started.promise;
+    await time.tickAsync(5);
+
+    assertEquals(backend.extensionCalls, 1);
+    assertEquals(backend.extendedToken, backend.acquiredToken);
+
+    release.resolve();
+    await time.tickAsync(0);
+    await execution;
   });
 
   it("keeps cancellation terminal and does not schedule dependent steps", async () => {

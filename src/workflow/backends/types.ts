@@ -252,6 +252,9 @@ type WithWorkerSupport =
       | "releaseLock"
       | "findStalledRuns"
       | "claimStalledRun"
+      | "updateRunIfStatusAndWorker"
+      | "saveCheckpointIfStatusAndWorker"
+      | "savePendingApprovalIfStatusAndWorker"
     >
   >;
 
@@ -261,6 +264,9 @@ export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorke
     hasQueueSupport(backend) &&
     hasLockSupport(backend) &&
     typeof backend.findStalledRuns === "function" &&
-    typeof backend.claimStalledRun === "function"
+    typeof backend.claimStalledRun === "function" &&
+    typeof backend.updateRunIfStatusAndWorker === "function" &&
+    typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
+    typeof backend.savePendingApprovalIfStatusAndWorker === "function"
   );
 }
