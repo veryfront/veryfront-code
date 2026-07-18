@@ -1,6 +1,6 @@
 # Reasoning
 
-A disclosure for a model's reasoning part — auto-opens while streaming, auto-closes when done.
+A disclosure for a model's reasoning part — auto-opens while streaming, auto-closes when done. Render it whole, or compose the parts.
 
 > **Status: proposed (RFC).** This page documents the *proposed* API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
@@ -14,43 +14,108 @@ import { Reasoning } from 'veryfront/chat'
 
 ## Anatomy
 
-Each part renders one node, `extends` its native attributes, spreads `{...props}`, and takes `asChild`.
-
 ```tsx
-<Reasoning.Root>
-  <Reasoning.Trigger />
-  <Reasoning.Content />
+<Reasoning.Root text={text} isStreaming={isStreaming}>
+  <Reasoning.Trigger />   {/* "Thinking…" shimmer / "Thought process" · rotating chevron */}
+  <Reasoning.Content />   {/* the reasoning text as Markdown; null while closed */}
 </Reasoning.Root>
 ```
 
+`<Reasoning.Root>` with **no children renders exactly this default anatomy** (render-or-compose, like `ToolCall`). Pass children to recompose.
+
+## Default DOM (childless render)
+
+The actual HTML of `<Reasoning text={…} />` today (classes abbreviated to layout-relevant ones):
+
+```html
+<div class="mb-3">                                                <!-- .Root — in-flow block -->
+  <button class="flex w-full items-center gap-2 text-sm">         <!-- .Trigger — full-width flex row, gap-2 -->
+    <span>Thinking…</span>                                        <!--   label: shimmer animation while streaming, plain "Thought process" when done -->
+    <span class="flex size-3.5 shrink-0 items-center justify-center transition-transform"> <!-- chevron wrapper: rotates; -rotate-90 when CLOSED -->
+      <svg class="size-3.5 shrink-0" />                           <!--   chevron glyph itself never rotates — the wrapper does -->
+    </span>
+  </button>
+  <div class="mt-2 text-sm">                                      <!-- .Content — in-flow block; PRESENT ONLY WHEN OPEN -->
+    <div class="markdown space-y-2.5 text-sm">…reasoning as Markdown at 14px…</div>
+  </div>
+</div>
+```
+
+No absolute positioning — both parts are in-flow; the disclosure works by mounting/unmounting `.Content`. The open/close transition is the chevron wrapper's rotation only.
+
 ## Parts
 
-| Part | Renders | State attributes | Description |
+### `Reasoning.Root`
+
+The disclosure wrapper (one `<div>`) + the compound's scoped context. The reasoning text and streaming flag enter here; sub-parts read them from context.
+
+**Layout:** in-flow block (`mb-3`); no positioning context.
+
+| Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `Reasoning.Root` | `<div>` | `data-open` `data-streaming` | Disclosure root. Auto-open while streaming, auto-close when done. |
-| `Reasoning.Trigger` | `<button>` | `data-open` | Toggles the content. |
-| `Reasoning.Content` | `<div>` | — | The reasoning text. |
+| `text` *(required)* | `string` | — | The reasoning text; `.Content` renders it as Markdown. |
+| `isStreaming` | `boolean` | `false` | Drives the shimmering "Thinking…" label, the auto open/close behavior, and `data-streaming` *(proposed)*. |
+| `open` | `boolean` | — | Controlled open state. When provided, **all auto open/close behavior is disabled** — the parent owns the state. |
+| `defaultOpen` | `boolean` | `isStreaming` at mount | Uncontrolled initial state: a live card opens as tokens arrive; a completed/reloaded card starts collapsed and never plays the open-then-collapse animation. |
+| `onOpenChange` | `(open: boolean) => void` | — | Fired on every open-state change, both user toggles and auto transitions. |
+| ~~`icon`~~ | `ReactNode` | — | **Removed** (today overrides the chevron glyph). The RFC bans `icon` slot props; pass children to `Reasoning.Trigger` instead. |
+| ~~`labels`~~ | `{ thinking?: string; thought?: string }` | `"Thinking..."` / `"Thought process"` | **Removed** (the labels bag). At L1, `<Chat labels={…}>` handles i18n; at L2+ pass children to `Reasoning.Trigger` — the consumer owns all text. |
+| `asChild` *(proposed)* | `boolean` | `false` | Merge the root node onto your own element. |
+| + native | `React.HTMLAttributes<HTMLDivElement>` · `ref` | — | Spread onto the single node; `className` merges. |
 
-## Props (`Reasoning.Root`)
+**Auto open/close (uncontrolled):** opens when streaming starts; when streaming ends, collapses after a 1-second beat — but only if the card actually streamed during this session (a history-reloaded card mounts collapsed and stays put). A manual toggle by the user permanently opts that card out of the stream-driven behavior.
 
-| Prop | Type | Description |
-| --- | --- | --- |
-| `asChild` | `boolean` | Merge the root node onto your own element. |
-| …rest | native `<div>` attributes | Spread onto the root — `className`, `data-*`, `aria-*`, handlers, `ref`. |
-
-Inside a `Message`, the reasoning part reaches the component through the message context (`Message.Reasoning part={part}` in the `Message.Parts` render fn).
-
-## State attributes
+**State attributes (proposed):**
 
 | Attribute | Values | Meaning |
 | --- | --- | --- |
-| `data-open` | present | Expanded. Automatically set while the reasoning is streaming; automatically removed when done. |
-| `data-streaming` | present | The reasoning content is streaming now. |
+| `data-open` | present | Expanded. Automatically set while streaming; automatically removed ~1s after streaming ends (unless the user toggled). Today open state is expressed only by mounting `.Content` and rotating the chevron. |
+| `data-streaming` | present | The reasoning content is streaming now. Today this is expressed only by the shimmer animation on the trigger label. |
 
 ```css
 [data-streaming] .shimmer { animation: shimmer 1.2s infinite; }
 [data-open] .chevron { rotate: 180deg; }
 ```
+
+### `Reasoning.Trigger`
+
+One full-width `<button>`. Default content: the label — a shimmering `Thinking...` while streaming, a plain `Thought process` when done — followed by a chevron inside a rotating wrapper (`-rotate-90` when closed, so a custom glyph never needs to know about open state). Always renders.
+
+**Layout:** in-flow full-width flex row (`gap-2`); label sizes naturally, chevron wrapper is `shrink-0`.
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| ~~`icon`~~ | `ReactNode` | **Removed** (today overrides the chevron glyph). Pass children to replace the default label + chevron content. |
+| ~~`labels`~~ | `{ thinking?, thought? }` | **Removed** — children own the text. |
+| `asChild` + native (`ButtonHTMLAttributes`, `ref`) | | Own the node; `data-open` *(proposed)* mirrors the root. |
+
+### `Reasoning.Content`
+
+One `<div>`. Default content: the reasoning `text` rendered as [`Markdown`](./markdown.md) at 14px (the compact variant size). **Renders `null` while the disclosure is closed** — safe to include unconditionally.
+
+**Layout:** in-flow block below the trigger; mounted/unmounted by open state (no height animation today).
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| `children` | `ReactNode` | Replaces the rendered Markdown (read `text` from `useReasoning()`). |
+| `asChild` + native + `ref` | | Own the node. |
+
+## Context (what the parts read)
+
+`useReasoning()` — throws outside `Reasoning.Root`:
+
+```ts
+{
+  open: boolean
+  toggle: () => void
+  isStreaming: boolean
+  duration: number            // seconds spent thinking — proposed; see note
+  getTriggerProps: () => ButtonProps
+  getContentProps: () => DivProps
+}
+```
+
+*Grounding:* today's context is `{ text, isStreaming, isOpen, toggle }`. The RFC adds the prop getters and `duration`. **TBD:** how `duration` is measured (first-token → last-token wall clock vs. provider-reported) — nothing tracks it in today's source.
 
 ## Examples
 
@@ -93,8 +158,6 @@ function MyReasoning() {
   )
 }
 ```
-
-`useReasoning()` returns `{ open, toggle, isStreaming, duration, getTriggerProps, getContentProps }`.
 
 ## Customization (eject path)
 

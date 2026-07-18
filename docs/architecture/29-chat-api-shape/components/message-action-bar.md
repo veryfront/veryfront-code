@@ -4,7 +4,7 @@ The message action buttons — a namespace re-export of the `Message.Actions` fa
 
 > **Status: proposed (RFC).** This page documents the *proposed* API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-`MessageActionBar` **is** the `Message.Actions` family — one implementation, re-exported under a standalone name for use outside a `Message`. `Message.*` is canonical; there is never a parallel implementation.
+`MessageActionBar` **is** the `Message.Actions` family — one implementation, re-exported under a standalone name. `Message.*` is canonical; there is never a parallel implementation. This is a real deletion: today `MessageActionBar` is a *second, context-free* implementation (a `content` prop plus `onCopy`/`onEdit`/`onRegenerate` handler props, leaves `.Copy`/`.Copied`/`.Regenerate`/`.Edit`, each with an `icon` prop). The RFC collapses it onto the context-bound `Message.Actions` family.
 
 ## Import
 
@@ -19,46 +19,98 @@ import { Message } from 'veryfront/chat' // Message.Actions, Message.CopyAction,
 Each part renders one node, `extends` its native attributes, spreads `{...props}`, and takes `asChild`. A leaf renders its default icon when childless; pass children to replace it (no `icon` props).
 
 ```tsx
-<Message.Actions>
-  <Message.CopyAction />
-  <Message.RegenerateAction />
-  <Message.EditAction />
+<Message.Actions>                {/* ONE <div> — data-floating, holds its space */}
+  <Message.CopyAction />         {/* copy icon → check while data-copied; null without text */}
+  <Message.RegenerateAction />   {/* refresh icon; null on user turns / no reload */}
+  <Message.EditAction />         {/* pencil icon; enters edit mode → data-editing on the Root */}
 </Message.Actions>
 ```
 
+`<Message.Actions />` with **no children renders the default cluster**: `CopyAction` + `RegenerateAction` (`EditAction` is available but off by default).
+
+## Default DOM (childless render)
+
+What `<Message.Actions />` actually renders (today's source classes, abbreviated to layout). The bar lives inside a `Message` row whose root carries the `group/msg` hover scope — the reveal keys off *that ancestor*, not the bar itself. Nothing is absolutely positioned.
+
+```html
+<!-- ancestor: <article class="group/msg …"> (Message.Root) -->
+<div class="flex items-center gap-0.5
+            opacity-0 group-hover/msg:opacity-100 transition-all duration-200">
+        <!-- Message.Actions — in-flow flex ROW that HOLDS ITS SPACE; hidden and
+             revealed purely by OPACITY when the ancestor group/msg row is
+             hovered → no layout shift, never unmounted to hide.
+             Proposed: the baked opacity classes are removed; you style the
+             reveal yourself off [data-floating]. -->
+  <button class="inline-flex items-center justify-center size-7 rounded-full">⧉</button>
+        <!-- Message.CopyAction — fixed 7×7 round icon button (icon size-3.5);
+             icon swaps to ✓ while copied (proposed: [data-copied]) -->
+  <button class="inline-flex items-center justify-center size-7 rounded-full">↻</button>
+        <!-- Message.RegenerateAction — same 7×7 button; present only when
+             reload is available (assistant turns) -->
+</div>
+```
+
+In the `<Message>` childless default, this bar sits inside a footer layout div (`mt-1.5 flex items-center gap-0.5`) next to `Message.Tokens` — that footer div is yours after eject.
+
 ## Parts
 
-| Part | Renders | State attributes | Description |
+### `Message.Actions`
+
+The bar container — one `<div>` + nothing else (the buttons read message context directly; there is no bar-scoped context).
+
+**Layout:** in-flow flex row (`gap-0.5`) that holds its space; revealed by opacity on ancestor `group/msg` hover — zero layout shift.
+
+Default content: `Message.CopyAction` + `Message.RegenerateAction`. **Renders `null` when the message has no text content** (today's gate). Hidden-but-animatable — **never unmounted to hide**: the RFC replaces today's baked `opacity-0 group-hover/msg:opacity-100` classes with `data-floating` so the reveal is your CSS.
+
+| Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `Message.Actions` | `<div>` | `data-floating` | Container. Hidden-but-animatable — never unmounted to hide. |
-| `Message.CopyAction` | `<button>` | `data-copied` | Copies the message text. |
-| `Message.RegenerateAction` | `<button>` | — | Regenerates the message (via `reload` from `ChatRoot` context). |
-| `Message.EditAction` | `<button>` | — | Enters edit mode (`Message.Root` gets `data-editing`; a `ChatInput` inside the message is the edit form). |
+| `children` | `ReactNode` | default cluster | Compose your own bar from the action leaves, in your order. |
+| `asChild` | `boolean` | `false` | Merge onto your own element. |
+| + native | `React.HTMLAttributes<HTMLDivElement>` · `ref` | — | Spread onto the `<div>`; `className` merges. |
 
-There is **no `.Copied` part** — it is deleted. Copied feedback is the transient `data-copied` attribute on `.CopyAction`, styled with CSS. There is also no `.Feedback` in v1 (cut — no backend endpoint).
+**State attributes (proposed):** `data-floating` — hidden-but-animatable.
 
-## Props
+### `Message.CopyAction`
 
-| Prop | Type | Description |
-| --- | --- | --- |
-| `asChild` | `boolean` | Merge the node onto your own element. |
-| …rest | native attributes of the node (`<div>` / `<button>`) | Spread onto the node — `className`, `data-*`, `aria-*`, handlers, `ref`. |
+One `<button>`. Default content: copy icon (`size-3.5`), swapping to a check while copied; `aria-label`/`title` `"Copy to clipboard"` / `"Copied!"`. Copies the message's flat `textContent` via `useClipboard`. **Renders `null` when there is no text content.**
 
-Session callbacks (`editMessage`, `reload`) come from the nearest `ChatRoot` context; the message comes from the surrounding `Message.Root` context. Nothing is re-threaded per action.
+**Layout:** in-flow fixed `size-7` round icon button.
 
-## State attributes
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `children` | `ReactNode` | default icon | Replace the icon (the `icon` prop is deleted — icon-slot ban). |
+| `onClick` | `MouseEventHandler` | — | Composes with the internal copy — consumer first; `preventDefault()` skips the copy. Replaces today's `onClick(event, next)` wrap signature. |
+| `asChild` | `boolean` | `false` | Your element becomes the button. |
+| + native | `React.ButtonHTMLAttributes<HTMLButtonElement>` · `ref` | — | Spread onto the `<button>`. |
 
-| Attribute | Values | Meaning |
-| --- | --- | --- |
-| `data-floating` | present | On the container — hidden-but-animatable. Style visibility with CSS; the bar is never unmounted to hide. |
-| `data-copied` | present | On `.CopyAction` — transient copied feedback. |
+**State attributes (proposed):** `data-copied` — transient copied feedback (today expressed only by the icon/label swap).
 
-```css
-[data-floating] { opacity: 0; transition: opacity 150ms; }
-article:hover [data-floating] { opacity: 1; }
-[data-copied] .copy-icon { display: none; }
-[data-copied] .check-icon { display: inline; }
-```
+### `Message.RegenerateAction`
+
+One `<button>`. Default content: refresh icon; `aria-label`/`title` `"Regenerate response"`. **Renders `null` unless regeneration is available** — assistant turns only, and only when `reload` exists on the nearest `ChatRoot` context (today: `onReload` gated `role !== 'user'`). Same props table as `.CopyAction` (children replace icon, composed `onClick`, `asChild`, native + `ref`).
+
+**Layout:** in-flow fixed `size-7` round icon button.
+
+### `Message.EditAction`
+
+One `<button>`. Default content: pencil icon; `aria-label`/`title` `"Edit message"`. **Renders `null` when editing is unavailable or there is no text content.** Same props table as `.CopyAction`. **Semantics change (proposed):** today it calls `editMessage(id, textContent)` immediately; proposed it enters edit mode (`startEdit`) — `Message.Root` gets `data-editing` and a `ChatInput` rendered inside the message *is* the edit form.
+
+**Layout:** in-flow fixed `size-7` round icon button; available but not in the childless default cluster.
+
+### Deleted parts
+
+- **`MessageActionBar.Copied` — deleted.** Today it is a *second button* that swaps in while `copied` is true (check icon, `"Copied!"` label) while `.Copy` null-renders. Proposed: one `.CopyAction` button whose icon/label swap is the transient `data-copied` attribute, styled with CSS.
+- **No `.Feedback` in v1** — cut (no backend endpoint); returns additively later.
+- **Removed props:** `content`, `onCopy(e, next)`, `onEdit`, `onRegenerate` on the root (context supplies them — see below); `icon` on every leaf (children replace the icon).
+
+## Context (what the parts read)
+
+The action leaves have no bar-scoped context of their own (today's `MessageActionBarContext` goes away with the parallel implementation). They read:
+
+- **`useMessageContext()`** — `textContent`, `copy`, `copied`, `startEdit`, `regenerate` (see [Message](./message.md#context-what-the-parts-read)).
+- **`ChatRoot` context** — the session callbacks behind those (`editMessage`, `reload`). Nothing is re-threaded per action.
+
+**TBD:** whether the standalone `MessageActionBar` re-export retains a controlled mode for use *outside* a `Message.Root` (today's context-free bar takes `content` + handlers; the proposal makes context canonical and does not spec a prop-driven fallback).
 
 ## Examples
 
@@ -89,6 +141,15 @@ Rendered as part of the public `<Chat>` composition on each message row.
 <Message.CopyAction asChild>
   <MyIconButton icon="copy" />
 </Message.CopyAction>
+```
+
+Style the reveal and the copied tick with CSS, not props:
+
+```css
+[data-floating] { opacity: 0; transition: opacity 150ms; }
+article:hover [data-floating] { opacity: 1; }
+[data-copied] .copy-icon { display: none; }
+[data-copied] .check-icon { display: inline; }
 ```
 
 ### Headless (L3)
