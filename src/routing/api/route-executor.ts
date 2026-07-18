@@ -1,7 +1,7 @@
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import { createError, toError, errorToRFC9457Response } from "#veryfront/errors";
+import { createError, toError, errorToRFC9457Response, NOT_SUPPORTED } from "#veryfront/errors";
 import type {
   APIRoute,
   AppRouteContext,
@@ -260,7 +260,7 @@ function workerResponseToResponse(
   }
 
   // data-result type is not expected in API route execution
-  throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
+  throw NOT_SUPPORTED.create({ detail: `Unexpected worker response type: ${workerResponse.type}` });
 }
 
 // ---------------------------------------------------------------------------

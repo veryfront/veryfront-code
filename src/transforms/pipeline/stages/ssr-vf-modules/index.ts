@@ -1,3 +1,5 @@
+import { CIRCULAR_DEPENDENCY } from "#veryfront/errors";
+
 /**
  * SSR VF Modules Stage - resolves /_vf_modules/_veryfront/ paths to framework source.
  *
@@ -151,7 +153,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
           // Skip cycle placeholders - don't cache or use them
           if (isCyclePlaceholder(transformed)) {
-            throw new Error(`Cycle detected while transforming ${vfModulePath}`);
+            throw CIRCULAR_DEPENDENCY.create({ detail: `Cycle detected while transforming ${vfModulePath}` });
           }
 
           return await cacheTransformedCode(transformed, vfModulePath, fs);

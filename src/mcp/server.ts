@@ -5,7 +5,7 @@ import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig, ToolListEntry } from "./types.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, toError, CONFIG_INVALID } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { IntegrationRuntimeConfig } from "#veryfront/integrations/types.ts";
@@ -167,17 +167,17 @@ export class MCPServer {
     const auth = (config as { auth?: unknown }).auth;
 
     if (auth === undefined || auth === null) {
-      throw new Error(
-        "MCP auth must be configured. For local dev, pass " +
+      throw CONFIG_INVALID.create({
+        detail: "MCP auth must be configured. For local dev, pass " +
           "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
-      );
+      });
     }
 
     if (typeof auth !== "object") {
-      throw new Error(
-        "MCP auth must be an object. For local dev, pass " +
+      throw CONFIG_INVALID.create({
+        detail: "MCP auth must be an object. For local dev, pass " +
           "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
-      );
+      });
     }
 
     const type = (auth as { type?: unknown }).type;
@@ -185,10 +185,10 @@ export class MCPServer {
     if (type === "none") {
       const allow = (auth as { allowUnauthenticated?: unknown }).allowUnauthenticated;
       if (allow !== true) {
-        throw new Error(
-          "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
+        throw CONFIG_INVALID.create({
+          detail: "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
             "the server will accept all requests.",
-        );
+        });
       }
       return;
     }
@@ -197,11 +197,11 @@ export class MCPServer {
       return;
     }
 
-    throw new Error(
-      `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
+    throw CONFIG_INVALID.create({
+      detail: `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
         "or { type: 'none', allowUnauthenticated: true } for explicit opt-in to " +
         "unauthenticated traffic.",
-    );
+    });
   }
 
   notifyToolsChanged(): void {

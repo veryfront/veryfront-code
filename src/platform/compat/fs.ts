@@ -1,5 +1,5 @@
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, INITIALIZATION_ERROR, toError } from "#veryfront/errors";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 /**
@@ -107,17 +107,17 @@ class NodeFileSystem implements FileSystem {
   }
 
   private getFs(): NodeFsPromises {
-    if (!this.fs) throw new Error("NodeFileSystem not initialized");
+    if (!this.fs) throw INITIALIZATION_ERROR.create({ detail: "NodeFileSystem not initialized" });
     return this.fs;
   }
 
   private getOs(): typeof import("node:os") {
-    if (!this.os) throw new Error("NodeFileSystem not initialized");
+    if (!this.os) throw INITIALIZATION_ERROR.create({ detail: "NodeFileSystem not initialized" });
     return this.os;
   }
 
   private getPath(): typeof import("node:path") {
-    if (!this.path) throw new Error("NodeFileSystem not initialized");
+    if (!this.path) throw INITIALIZATION_ERROR.create({ detail: "NodeFileSystem not initialized" });
     return this.path;
   }
 

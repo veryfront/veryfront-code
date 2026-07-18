@@ -47,6 +47,7 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -611,7 +612,9 @@ export class AgentStreamHandler extends BaseHandler {
 
     const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
     if (!ctx.projectSlug || !fsWrapper.isMultiProjectMode?.() || !fsWrapper.runWithContext) {
-      throw new Error("Alternate agent source requires a multi-project runtime context");
+      throw INVALID_ARGUMENT.create({
+        detail: "Alternate agent source requires a multi-project runtime context",
+      });
     }
 
     const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";

@@ -1,4 +1,5 @@
 import { readRecord } from "./provider-records.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Check whether a value is an array of numbers. */
 export function isNumberArray(value: unknown): value is number[] {
@@ -9,7 +10,7 @@ export function extractOpenAIEmbeddings(payload: unknown): number[][] {
   const record = readRecord(payload);
   const data = record?.data;
   if (!Array.isArray(data)) {
-    throw new Error("Invalid OpenAI embedding response: data array missing");
+    throw INVALID_ARGUMENT.create({ detail: "Invalid OpenAI embedding response: data array missing" });
   }
 
   const embeddings: number[][] = [];
@@ -18,7 +19,7 @@ export function extractOpenAIEmbeddings(payload: unknown): number[][] {
     const itemRecord = readRecord(item);
     const embedding = itemRecord?.embedding;
     if (!isNumberArray(embedding)) {
-      throw new Error("Invalid OpenAI embedding response: embedding vector missing");
+      throw INVALID_ARGUMENT.create({ detail: "Invalid OpenAI embedding response: embedding vector missing" });
     }
     embeddings.push(embedding);
   }
@@ -51,7 +52,7 @@ export function extractGoogleEmbedding(payload: unknown): number[] {
     return values;
   }
 
-  throw new Error("Invalid Google embedding response: embedding vector missing");
+  throw INVALID_ARGUMENT.create({ detail: "Invalid Google embedding response: embedding vector missing" });
 }
 
 export function extractGoogleUsageTokens(payload: unknown): number | undefined {

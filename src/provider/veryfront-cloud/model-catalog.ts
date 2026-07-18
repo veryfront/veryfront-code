@@ -1,3 +1,5 @@
+import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
+
 /** Public API contract for Veryfront Cloud provider ID. */
 export type VeryfrontCloudProviderId =
   | "anthropic"
@@ -224,7 +226,7 @@ export function getVeryfrontCloudProviderFromModelId(
       return prefix;
   }
 
-  throw new Error(`Unknown model provider prefix "${prefix}" in model ID "${modelId}"`);
+  throw INVALID_ARGUMENT.create({ detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"` });
 }
 
 /** Try to get Veryfront Cloud provider from model ID. */
@@ -252,14 +254,14 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
     // Mistral models are gated by the catalog whitelist; reject ids we don't
     // list so callers get a clear error rather than a gateway-side failure.
     if (requestedModel.startsWith("mistral/") && !isSupportedMistralModelId(requestedModel)) {
-      throw new Error(`Unsupported Mistral model "${requestedModel}"`);
+      throw NOT_SUPPORTED.create({ detail: `Unsupported Mistral model "${requestedModel}"` });
     }
     return requestedModel;
   }
 
   const model = findVeryfrontCloudModel(requestedModel);
   if (!model) {
-    throw new Error(`Unknown model alias "${requestedModel}"`);
+    throw INVALID_ARGUMENT.create({ detail: `Unknown model alias "${requestedModel}"` });
   }
   return model.modelId;
 }

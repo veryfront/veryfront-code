@@ -1,3 +1,4 @@
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
@@ -126,9 +127,10 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
-    throw new Error(
-      `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw INITIALIZATION_ERROR.create({
+      detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      cause: error,
+    });
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);

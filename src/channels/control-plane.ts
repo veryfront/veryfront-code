@@ -1,3 +1,4 @@
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
@@ -253,14 +254,14 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
 ): Promise<TClaims> {
   const parts = jws.split(".");
   if (parts.length !== 3) {
-    throw new Error("Control-plane signature must be a compact JWS");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must be a compact JWS" });
   }
 
   const encodedHeader = parts[0];
   const encodedPayload = parts[1];
   const encodedSignature = parts[2];
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
-    throw new Error("Control-plane signature must include header, payload, and signature");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must include header, payload, and signature" });
   }
 
   compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
@@ -272,50 +273,50 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
 
   if (!verified) {
-    throw new Error("Control-plane signature verification failed");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature verification failed" });
   }
 
   if (claims.iss !== "veryfront-api") {
-    throw new Error("Control-plane issuer mismatch");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane issuer mismatch" });
   }
 
   if (claims.aud !== options.audience) {
-    throw new Error("Control-plane audience mismatch");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane audience mismatch" });
   }
 
   if (options.expectedProjectId && claims.project_id !== options.expectedProjectId) {
-    throw new Error("Control-plane project mismatch");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane project mismatch" });
   }
 
   if (options.expectedSubject && claims.sub !== options.expectedSubject) {
-    throw new Error("Control-plane subject mismatch");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane subject mismatch" });
   }
 
   if (options.scopedClaim && claims[options.scopedClaim.key] !== options.scopedClaim.value) {
-    throw new Error(`Control-plane ${options.scopedClaim.label} mismatch`);
+    throw SECURITY_VIOLATION.create({ detail: `Control-plane ${options.scopedClaim.label} mismatch` });
   }
 
   const now = Math.floor(Date.now() / 1000);
   if (claims.exp <= now) {
-    throw new Error("Control-plane signature expired");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature expired" });
   }
 
   if (claims.iat > now + SIGNATURE_SKEW_SECONDS) {
-    throw new Error("Control-plane signature issued in the future");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature issued in the future" });
   }
 
   if (now - claims.iat > options.maxAgeSeconds) {
-    throw new Error("Control-plane signature is too old");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature is too old" });
   }
 
   const requestHash = claims[options.hashClaimKey];
   if (typeof requestHash !== "string") {
-    throw new Error("Control-plane request hash is missing");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane request hash is missing" });
   }
 
   const bodyHash = await sha256Base64url(body);
   if (requestHash !== bodyHash) {
-    throw new Error("Control-plane body hash mismatch");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane body hash mismatch" });
   }
 
   return claims;

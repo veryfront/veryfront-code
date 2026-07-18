@@ -14,6 +14,7 @@
  */
 
 import { ragStore } from "#veryfront/embedding/index.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type {
   RagSearchOptions,
   RagSearchResult,
@@ -494,11 +495,11 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
       typeof parsed.shardCount !== "number" ||
       typeof parsed.shardIndex !== "number"
     ) {
-      throw new Error("Invalid cursor payload");
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid cursor payload" });
     }
 
     if (parsed.shardIndex < 0 || parsed.shardIndex >= parsed.shardCount) {
-      throw new Error("Cursor shard_index must be within shard_count");
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Cursor shard_index must be within shard_count" });
     }
 
     return {
@@ -510,7 +511,7 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
       shardIndex: parsed.shardIndex,
     };
   } catch {
-    throw new Error("Invalid knowledge lookup cursor");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge lookup cursor" });
   }
 }
 
@@ -720,22 +721,22 @@ function lookupKnowledgeManifest(
   const lookupTargetPath = cursorState ? null : getLookupTargetPath(input.lookup_target);
 
   if (!resolvedQuery && !lookupTargetPath) {
-    throw new Error("search_knowledge requires a non-empty query");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge requires a non-empty query" });
   }
 
   if (cursorState && providedQuery && providedQuery !== cursorState.query) {
-    throw new Error("search_knowledge cursor query mismatch");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge cursor query mismatch" });
   }
 
   const resolvedShardCount = cursorState?.shardCount ?? input.shard_count ?? 1;
   const resolvedShardIndex = cursorState?.shardIndex ?? input.shard_index ?? 0;
 
   if (resolvedShardCount < 1) {
-    throw new Error("search_knowledge shard_count must be at least 1");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge shard_count must be at least 1" });
   }
 
   if (resolvedShardIndex < 0 || resolvedShardIndex >= resolvedShardCount) {
-    throw new Error("search_knowledge shard_index must be within shard_count");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge shard_index must be within shard_count" });
   }
 
   if (lookupTargetPath) {
@@ -825,7 +826,7 @@ function coerceSearchKnowledgeInput(
   input: ProjectKnowledgeLookupInput,
 ): ProjectKnowledgeLookupInput {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("search_knowledge input must be an object");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge input must be an object" });
   }
 
   const value = input as Record<string, unknown>;

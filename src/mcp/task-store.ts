@@ -9,6 +9,8 @@ export interface Task {
   pollInterval?: number;
 }
 
+import { SERVICE_OVERLOADED } from "#veryfront/errors";
+
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const DEFAULT_POLL_INTERVAL = 2000;
 const SWEEP_INTERVAL_MS = 30_000;
@@ -27,9 +29,9 @@ export class TaskStore {
       // hard bound. Reclaim newly expired entries before rejecting live work.
       this.sweep();
       if (this.tasks.size >= MAX_TASKS && !this.evictOldest()) {
-        throw new Error(
-          "Task store capacity reached. Wait for an existing task to finish or expire.",
-        );
+        throw SERVICE_OVERLOADED.create({
+          detail: "Task store capacity reached. Wait for an existing task to finish or expire.",
+        });
       }
     }
 

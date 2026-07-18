@@ -1,4 +1,5 @@
 import type { DurableRunCanaryCase, DurableRunCanaryPreparedCase } from "./runner.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   assertCompleted,
   assertNoMalformedCreateFileToolCalls,
@@ -56,7 +57,7 @@ export function createDurableRunTokenGrowthCanaryCase(
         const assistant = findAssistantMessage(messages, run.messageId);
         const assistantText = collectAssistantText(assistant).trim();
         if (!assistantText) {
-          throw new Error("Expected follow-up durable run to persist assistant text");
+          throw INVALID_ARGUMENT.create({ detail: "Expected follow-up durable run to persist assistant text" });
         }
       },
     }),

@@ -402,17 +402,17 @@ export class ProxyFSAdapterManager {
         context = { sourceType: "release", projectSlug, releaseId };
       } else {
         if (!environmentName) {
-          throw new Error(
-            `[ProxyFSAdapterManager] createAdapter: productionMode=true requires environmentName when no releaseId is provided (projectSlug=${projectSlug})`,
-          );
+          throw INVALID_ARGUMENT.create({
+            detail: `[ProxyFSAdapterManager] createAdapter: productionMode=true requires environmentName when no releaseId is provided (projectSlug=${projectSlug})`,
+          });
         }
         context = { sourceType: "environment", projectSlug, environmentName };
       }
     } else {
       if (!branch) {
-        throw new Error(
-          `[ProxyFSAdapterManager] createAdapter: productionMode=false requires branch (projectSlug=${projectSlug})`,
-        );
+        throw INVALID_ARGUMENT.create({
+          detail: `[ProxyFSAdapterManager] createAdapter: productionMode=false requires branch (projectSlug=${projectSlug})`,
+        });
       }
       context = { sourceType: "branch", projectSlug, branch };
     }
