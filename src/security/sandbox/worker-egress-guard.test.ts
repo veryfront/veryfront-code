@@ -255,6 +255,93 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     assertEquals(seen[1], "Bearer secret");
   });
 
+  it("applies the Fetch redirect method and body rules", async () => {
+    const cases: Array<{
+      status: number;
+      method: string;
+      body?: string;
+      expectedMethod: string;
+      expectedBody?: string;
+    }> = [
+      { status: 301, method: "POST", body: "post-body", expectedMethod: "GET" },
+      {
+        status: 302,
+        method: "PUT",
+        body: "put-body",
+        expectedMethod: "PUT",
+        expectedBody: "put-body",
+      },
+      { status: 303, method: "PATCH", body: "patch-body", expectedMethod: "GET" },
+      { status: 303, method: "HEAD", expectedMethod: "HEAD" },
+    ];
+
+    for (const testCase of cases) {
+      const seen: Array<{ method: string | undefined; body: BodyInit | null | undefined }> = [];
+      let calls = 0;
+      const fetchImpl: typeof fetch = (_input, init) => {
+        seen.push({ method: init?.method, body: init?.body });
+        calls++;
+        return Promise.resolve(
+          calls === 1
+            ? redirectTo("http://93.184.216.34/landing", testCase.status)
+            : new Response(null, { status: 200 }),
+        );
+      };
+
+      await guardedEgressFetch(
+        "http://93.184.216.34/start",
+        { method: testCase.method, body: testCase.body },
+        { fetchImpl },
+      );
+
+      assertEquals(seen, [
+        { method: testCase.method, body: testCase.body },
+        { method: testCase.expectedMethod, body: testCase.expectedBody },
+      ]);
+    }
+  });
+
+  it("removes request body headers when a redirect downgrades to GET", async () => {
+    const seenHeaders: Headers[] = [];
+    let calls = 0;
+    const fetchImpl: typeof fetch = (_input, init) => {
+      seenHeaders.push(new Headers(init?.headers));
+      calls++;
+      return Promise.resolve(
+        calls === 1
+          ? redirectTo("http://93.184.216.34/landing", 303)
+          : new Response(null, { status: 200 }),
+      );
+    };
+
+    await guardedEgressFetch(
+      "http://93.184.216.34/start",
+      {
+        method: "POST",
+        body: "payload",
+        headers: {
+          "content-encoding": "gzip",
+          "content-language": "en",
+          "content-location": "/source",
+          "content-type": "text/plain",
+        },
+      },
+      { fetchImpl },
+    );
+
+    for (
+      const header of [
+        "content-encoding",
+        "content-language",
+        "content-location",
+        "content-type",
+      ]
+    ) {
+      assertEquals(seenHeaders[0]?.get(header) !== null, true);
+      assertEquals(seenHeaders[1]?.get(header), null);
+    }
+  });
+
   it("blocks a redirect to a non-http(s) scheme (e.g. file://)", async () => {
     let calls = 0;
     const fetchImpl: typeof fetch = (input) => {

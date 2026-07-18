@@ -352,16 +352,25 @@ export async function guardedEgressFetch(
     }
     url = nextUrl.href;
 
-    // Standard fetch redirect method/body rules: 303, and 301/302 for a
-    // non-GET/HEAD method, downgrade to GET and drop the body; 307/308 preserve.
-    const downgrades = response.status === 303 ||
-      ((response.status === 301 || response.status === 302) &&
-        method !== "GET" && method !== "HEAD");
+    // Standard fetch redirect method/body rules: 301/302 downgrade POST, while
+    // 303 downgrades every method except GET and HEAD. 307/308 always preserve.
+    const downgrades =
+      ((response.status === 301 || response.status === 302) && method === "POST") ||
+      (response.status === 303 && method !== "GET" && method !== "HEAD");
     if (downgrades) {
       method = "GET";
       body = undefined;
-      headers.delete("content-length");
-      headers.delete("content-type");
+      for (
+        const header of [
+          "content-encoding",
+          "content-language",
+          "content-length",
+          "content-location",
+          "content-type",
+        ]
+      ) {
+        headers.delete(header);
+      }
     } else if (!isReplayableBody(body)) {
       throw new WorkerEgressBlockedError(
         "Worker network egress blocked: cannot safely follow a body-preserving redirect",
