@@ -1,7 +1,7 @@
 import * as React from "react";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import { rendererLogger } from "#veryfront/utils";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 
 const logger = rendererLogger.component("veryfront");
 

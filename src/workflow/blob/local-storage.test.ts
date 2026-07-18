@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
@@ -95,6 +101,8 @@ describe("LocalBlobStorage", () => {
     try {
       const textError = await assertRejects(() => storage.getText("blob-id"));
       const bytesError = await assertRejects(() => storage.getBytes("blob-id"));
+      assertInstanceOf(textError, Error);
+      assertInstanceOf(bytesError, Error);
       assertEquals(textError.message, "Failed to read blob text from local storage");
       assertEquals(bytesError.message, "Failed to read blob bytes from local storage");
     } finally {

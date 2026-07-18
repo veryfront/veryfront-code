@@ -110,6 +110,5 @@
   "src/transforms/npm-import-rewrites.test.ts",
   "src/utils/cache/stores/memory/lru-list-manager.test.ts",
   "src/workflow/api/workflow-client.test.ts",
-  "src/workflow/blob/gcs-storage.test.ts",
-  "src/workflow/runtime/approval-manager.test.ts"
+  "src/workflow/blob/gcs-storage.test.ts"
 ]

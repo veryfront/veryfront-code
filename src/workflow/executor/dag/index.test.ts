@@ -15,7 +15,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
-import type { Checkpoint, WorkflowContext, WorkflowNode, WorkflowRun } from "../../types.ts";
+import type {
+  Checkpoint,
+  LoopExecutionContext,
+  WorkflowContext,
+  WorkflowNode,
+  WorkflowRun,
+} from "../../types.ts";
 import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
@@ -77,9 +83,9 @@ function createMockCheckpointManager(): CheckpointManager & {
   };
 
   const manager = new (class extends CheckpointManager {
-    override save(runId: string, checkpoint: Checkpoint): Promise<void> {
+    override save(runId: string, checkpoint: Checkpoint): Promise<boolean> {
       saved.push({ runId, nodeId: checkpoint.nodeId });
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
   })({ backend });
 
@@ -185,7 +191,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "loop",
             maxIterations: 2,
-            while: (_context: WorkflowContext, loop) => {
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => {
               if (loop.iteration === 1) {
                 releaseReader();
                 return false;
@@ -237,7 +243,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "loop",
             maxIterations: 2,
-            while: (_context: WorkflowContext, loop) => {
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => {
               if (loop.iteration === 1) {
                 releaseObserver();
                 return false;

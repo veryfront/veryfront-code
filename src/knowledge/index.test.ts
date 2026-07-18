@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
@@ -257,6 +262,7 @@ describe("projectKnowledge", () => {
 
     const error = await assertRejects(() => knowledge.lookup({ query: "billing", cursor }));
 
+    assertInstanceOf(error, Error);
     assertEquals(error.message, "Invalid knowledge lookup cursor");
     assertEquals(error.cause, undefined);
   });

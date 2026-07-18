@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createRemoteMCPToolSource } from "./remote-mcp.ts";
@@ -346,6 +346,7 @@ describe("tool/remote-mcp", () => {
       Error,
     );
 
+    assertInstanceOf(error, Error);
     assertEquals(error.message, "Remote MCP request failed (500)");
   });
 

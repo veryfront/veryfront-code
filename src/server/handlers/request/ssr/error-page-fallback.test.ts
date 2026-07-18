@@ -359,10 +359,15 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
 
     it("sanitizes custom error page load failures", async () => {
       __injectCacheForTests({
+        context: {
+          projectId: "test-project",
+          environment: "preview",
+          versionId: "test-version",
+        },
         get: () => Promise.reject(new Error("cache exposed <TOKEN> at <LOCAL_PATH>")),
         set: () => Promise.resolve(),
         delete: () => Promise.resolve(),
-      } as CacheRepository<string>);
+      });
       const adapter = createMockAdapter({
         stat: (path: string) => {
           if (path.endsWith("/pages")) {
