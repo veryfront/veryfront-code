@@ -29,7 +29,9 @@ async function runAgentAsStreamingTool(agent: Agent, input: string): Promise<Age
   await stream.toDataStreamResponse().arrayBuffer();
 
   if (!finalResponse) {
-    throw AGENT_ERROR.create({ detail: `Agent "${agent.id}" stream completed without a final response.` });
+    throw AGENT_ERROR.create({
+      detail: `Agent "${agent.id}" stream completed without a final response.`,
+    });
   }
 
   return finalResponse;

@@ -255,7 +255,9 @@ function requireExplicitRegistrationValue(
   envName: string,
 ): string {
   if (!value) {
-    throw CONFIG_INVALID.create({ detail: `${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` });
+    throw CONFIG_INVALID.create({
+      detail: `${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`,
+    });
   }
   return value;
 }
@@ -316,7 +318,9 @@ async function readAgentPushRuntimeServiceResponse(
   response: Response,
 ): Promise<AgentPushRuntimeServiceRest> {
   if (!response.ok) {
-    throw NETWORK_ERROR.create({ detail: `Agent runtime registration request failed with HTTP ${response.status}` });
+    throw NETWORK_ERROR.create({
+      detail: `Agent runtime registration request failed with HTTP ${response.status}`,
+    });
   }
 
   const parsed = agentPushRuntimeServiceResponseSchema.parse(await response.json());

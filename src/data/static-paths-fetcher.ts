@@ -1,6 +1,6 @@
 import type { PageWithData, StaticPathsResult } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
-import { SpanNames, type Span } from "#veryfront/observability";
+import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const EMPTY_STATIC_PATHS_RESULT: StaticPathsResult = { paths: [], fallback: false };

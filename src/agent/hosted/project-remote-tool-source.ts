@@ -305,7 +305,9 @@ function createHostedMcpToolPolicySource(
     },
     executeTool(toolName, args, context) {
       if (!isHostedMcpToolAllowed(toolName, policy)) {
-        throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this MCP server` });
+        throw PERMISSION_DENIED.create({
+          detail: `Tool "${toolName}" is not allowed for this MCP server`,
+        });
       }
 
       return source.executeTool(toolName, args, context);

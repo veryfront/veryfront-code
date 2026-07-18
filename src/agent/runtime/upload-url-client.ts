@@ -46,9 +46,10 @@ export async function getRuntimeUploadUrl(options: RuntimeUploadUrlOptions): Pro
 
   if (!response.ok) {
     throw NETWORK_ERROR.create({
-      detail: `Failed to fetch signed upload URL for ${options.uploadId}: ${await readApiErrorMessage(
-        response,
-      )}`,
+      detail:
+        `Failed to fetch signed upload URL for ${options.uploadId}: ${await readApiErrorMessage(
+          response,
+        )}`,
     });
   }
 

@@ -7,7 +7,7 @@
  * @module errors/middleware/cli-error-boundary
  */
 
-import { trace, recordErrorCount } from "#veryfront/observability";
+import { recordErrorCount, trace } from "#veryfront/observability";
 import { VeryfrontError } from "../types.ts";
 import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";

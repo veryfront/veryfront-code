@@ -1328,7 +1328,8 @@ async function executeStyleArtifactBuildRun(input: {
 
     if (requestedStyleProfileHash && requestedStyleProfileHash !== styleProfile.hash) {
       throw INVALID_ARGUMENT.create({
-        detail: `Style profile hash mismatch: expected ${requestedStyleProfileHash}, got ${styleProfile.hash}`,
+        detail:
+          `Style profile hash mismatch: expected ${requestedStyleProfileHash}, got ${styleProfile.hash}`,
       });
     }
 

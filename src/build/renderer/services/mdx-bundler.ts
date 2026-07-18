@@ -3,7 +3,7 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentPlugin, ContentProcessor } from "#veryfront/extensions/content/index.ts";
-import { MODULE_NOT_FOUND, ensureError } from "#veryfront/errors";
+import { ensureError, MODULE_NOT_FOUND } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type {

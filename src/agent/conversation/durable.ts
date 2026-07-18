@@ -898,7 +898,9 @@ async function controlPlaneJson<T>(input: {
       error.name === "AbortError" &&
       !timedAbort.wasAbortedByCaller()
     ) {
-      throw TIMEOUT_ERROR.create({ detail: `${input.operation} timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms` });
+      throw TIMEOUT_ERROR.create({
+        detail: `${input.operation} timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms`,
+      });
     }
     throw error;
   } finally {

@@ -109,7 +109,8 @@ const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
 // Fail closed in production: never silently forward to localhost.
 if (!serverUrlFromEnv && isProduction()) {
   throw ENV_VAR_MISSING.create({
-    detail: "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
+    detail:
+      "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
   });
 }
 const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
@@ -152,9 +153,10 @@ const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExte
   "@veryfront/ext-auth-jwt",
 ).catch((error) => {
   throw INITIALIZATION_ERROR.create({
-    detail: `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
-      error instanceof Error ? error.message : String(error)
-    }`,
+    detail:
+      `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     cause: error,
   });
 });

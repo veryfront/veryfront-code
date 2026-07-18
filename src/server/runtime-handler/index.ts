@@ -7,7 +7,7 @@
  * @module server/runtime-handler
  */
 
-import { getBaseLogger, runWithRequestContextAsync, type RequestContext } from "#veryfront/utils";
+import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";

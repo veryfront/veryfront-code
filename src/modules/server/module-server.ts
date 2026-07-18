@@ -10,7 +10,12 @@ import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
-import { markRequestProfilePhase, profilePhase, metrics, type ModuleServeStatus } from "#veryfront/observability";
+import {
+  markRequestProfilePhase,
+  metrics,
+  type ModuleServeStatus,
+  profilePhase,
+} from "#veryfront/observability";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";

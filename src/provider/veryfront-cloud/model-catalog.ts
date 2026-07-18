@@ -226,7 +226,9 @@ export function getVeryfrontCloudProviderFromModelId(
       return prefix;
   }
 
-  throw INVALID_ARGUMENT.create({ detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"` });
+  throw INVALID_ARGUMENT.create({
+    detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"`,
+  });
 }
 
 /** Try to get Veryfront Cloud provider from model ID. */

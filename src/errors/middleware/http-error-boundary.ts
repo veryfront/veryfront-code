@@ -9,7 +9,7 @@
  */
 
 import type { Handler, HandlerContext, HandlerResult } from "#veryfront/types/server.ts";
-import { trace, recordErrorCount } from "#veryfront/observability";
+import { recordErrorCount, trace } from "#veryfront/observability";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
 import { wrapUnknownError } from "./wrap-unknown.ts";

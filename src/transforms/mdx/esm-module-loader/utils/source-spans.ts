@@ -50,7 +50,9 @@ export function replaceSourceSpans(
     }
 
     if (expected !== undefined && source.slice(start, end) !== expected) {
-      throw INVALID_ARGUMENT.create({ detail: `Source replacement span did not match expected text: ${expected}` });
+      throw INVALID_ARGUMENT.create({
+        detail: `Source replacement span did not match expected text: ${expected}`,
+      });
     }
 
     result = result.slice(0, start) + replacement + result.slice(end);

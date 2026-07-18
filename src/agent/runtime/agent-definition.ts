@@ -143,7 +143,8 @@ function validateDelegates(agentId: string, delegates: string[] | undefined): vo
     }
     if (!isProviderSafeDelegateId(delegateId)) {
       throw INVALID_ARGUMENT.create({
-        detail: `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
+        detail:
+          `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
           `"${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}" (must match [A-Za-z0-9_-], max 64 chars).`,
       });
     }

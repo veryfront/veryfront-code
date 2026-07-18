@@ -1,5 +1,5 @@
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
-import { API_CLIENT_ERROR, TIMEOUT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { API_CLIENT_ERROR, INVALID_ARGUMENT, TIMEOUT_ERROR } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { LiveEvalProjectFile } from "./runner.ts";
@@ -196,7 +196,9 @@ function getProjectUploadBodySize(
   if (ArrayBuffer.isView(body)) {
     return body.byteLength;
   }
-  throw INVALID_ARGUMENT.create({ detail: "Project upload fixtures require size when body length cannot be inferred" });
+  throw INVALID_ARGUMENT.create({
+    detail: "Project upload fixtures require size when body length cannot be inferred",
+  });
 }
 
 function createProjectUploadBody(body: BodyInit | Uint8Array, contentType: string): BodyInit {
@@ -245,9 +247,10 @@ async function waitForProjectUploadFixture(
 
     if (!listResponse.ok) {
       throw API_CLIENT_ERROR.create({
-        detail: `Failed to confirm project upload fixture: ${listResponse.status} ${await getResponseText(
-          listResponse,
-        )}`,
+        detail:
+          `Failed to confirm project upload fixture: ${listResponse.status} ${await getResponseText(
+            listResponse,
+          )}`,
       });
     }
 
@@ -261,7 +264,9 @@ async function waitForProjectUploadFixture(
     }
   }
 
-  throw TIMEOUT_ERROR.create({ detail: `Project upload fixture did not appear in time: ${input.filePath}` });
+  throw TIMEOUT_ERROR.create({
+    detail: `Project upload fixture did not appear in time: ${input.filePath}`,
+  });
 }
 
 /** Create live eval API client. */
@@ -297,7 +302,9 @@ export async function createLiveEvalConversation(
 
   if (!response.ok) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to create eval conversation: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to create eval conversation: ${response.status} ${await getResponseText(
+        response,
+      )}`,
     });
   }
 
@@ -325,9 +332,10 @@ export async function deleteLiveEvalConversation(
 
   if (!response.ok && response.status !== 404) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to delete eval conversation ${input.conversationId}: ${response.status} ${await getResponseText(
-        response,
-      )}`,
+      detail:
+        `Failed to delete eval conversation ${input.conversationId}: ${response.status} ${await getResponseText(
+          response,
+        )}`,
     });
   }
 }
@@ -358,15 +366,18 @@ export async function createLiveEvalProjectUploadFixture(
 
   if (!createResponse.ok) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to create project upload URL: ${createResponse.status} ${await getResponseText(
-        createResponse,
-      )}`,
+      detail:
+        `Failed to create project upload URL: ${createResponse.status} ${await getResponseText(
+          createResponse,
+        )}`,
     });
   }
 
   const createPayload = getProjectUploadResponseSchema().parse(await createResponse.json());
   if (!createPayload.file_upload_url) {
-    throw INVALID_ARGUMENT.create({ detail: "Project upload response did not include file_upload_url" });
+    throw INVALID_ARGUMENT.create({
+      detail: "Project upload response did not include file_upload_url",
+    });
   }
 
   const uploadResponse = await createFetch(context)(createPayload.file_upload_url, {
@@ -483,7 +494,9 @@ export async function deleteLiveEvalProjectFile(
 
   if (!response.ok && response.status !== 404) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to delete project file: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to delete project file: ${response.status} ${await getResponseText(
+        response,
+      )}`,
     });
   }
 }
@@ -503,7 +516,9 @@ export async function listOpenLiveEvalInputRequests(
 
   if (!response.ok) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to list eval input requests: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to list eval input requests: ${response.status} ${await getResponseText(
+        response,
+      )}`,
     });
   }
 
@@ -525,7 +540,9 @@ export async function waitForOpenLiveEvalInputRequest(
 
   while (Date.now() < deadline) {
     if (input.abortSignal.aborted) {
-      throw TIMEOUT_ERROR.create({ detail: "Eval sidecar aborted before an input request appeared" });
+      throw TIMEOUT_ERROR.create({
+        detail: "Eval sidecar aborted before an input request appeared",
+      });
     }
 
     const requests = await listOpenLiveEvalInputRequests(context, input);
@@ -538,7 +555,8 @@ export async function waitForOpenLiveEvalInputRequest(
   }
 
   throw TIMEOUT_ERROR.create({
-    detail: `Timed out while waiting for an open input request in conversation ${input.conversationId}`,
+    detail:
+      `Timed out while waiting for an open input request in conversation ${input.conversationId}`,
   });
 }
 
@@ -562,7 +580,9 @@ export async function submitLiveEvalInputResponse(
 
   if (!response.ok) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to submit eval input response: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to submit eval input response: ${response.status} ${await getResponseText(
+        response,
+      )}`,
     });
   }
 }
@@ -586,7 +606,9 @@ export async function cancelLiveEvalInputRequest(
 
   if (!response.ok) {
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to cancel eval input request: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to cancel eval input request: ${response.status} ${await getResponseText(
+        response,
+      )}`,
     });
   }
 }

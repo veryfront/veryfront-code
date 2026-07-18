@@ -403,7 +403,8 @@ export class ProxyFSAdapterManager {
       } else {
         if (!environmentName) {
           throw INVALID_ARGUMENT.create({
-            detail: `[ProxyFSAdapterManager] createAdapter: productionMode=true requires environmentName when no releaseId is provided (projectSlug=${projectSlug})`,
+            detail:
+              `[ProxyFSAdapterManager] createAdapter: productionMode=true requires environmentName when no releaseId is provided (projectSlug=${projectSlug})`,
           });
         }
         context = { sourceType: "environment", projectSlug, environmentName };
@@ -411,7 +412,8 @@ export class ProxyFSAdapterManager {
     } else {
       if (!branch) {
         throw INVALID_ARGUMENT.create({
-          detail: `[ProxyFSAdapterManager] createAdapter: productionMode=false requires branch (projectSlug=${projectSlug})`,
+          detail:
+            `[ProxyFSAdapterManager] createAdapter: productionMode=false requires branch (projectSlug=${projectSlug})`,
         });
       }
       context = { sourceType: "branch", projectSlug, branch };

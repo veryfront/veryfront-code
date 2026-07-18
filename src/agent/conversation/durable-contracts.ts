@@ -124,15 +124,21 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
         d.latest_external_event_sequence) as number | undefined;
 
       if (!runId || !conversationId || !messageId) {
-        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing run identifiers in durable run response" });
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing run identifiers in durable run response",
+        });
       }
 
       if (latestEventId === undefined) {
-        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing latestEventId in durable run response" });
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing latestEventId in durable run response",
+        });
       }
 
       if (latestExternalEventSequence === undefined) {
-        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing latestExternalEventSequence in durable run response" });
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing latestExternalEventSequence in durable run response",
+        });
       }
 
       return {
@@ -261,7 +267,9 @@ export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
       const d = data as { run: Record<string, unknown> };
       const runId = (d.run.runId ?? d.run.run_id) as string | undefined;
       if (!runId) {
-        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing run id in canonical create run response" });
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing run id in canonical create run response",
+        });
       }
       return { runId };
     })

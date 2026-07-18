@@ -32,7 +32,9 @@ function firstMetricForKey(
 ): EvalMetricSummary {
   const metric = current.get(key) ?? baseline.get(key);
   if (!metric) {
-    throw INVALID_ARGUMENT.create({ detail: `Metric key "${key}" was not present in either report.` });
+    throw INVALID_ARGUMENT.create({
+      detail: `Metric key "${key}" was not present in either report.`,
+    });
   }
   return metric;
 }

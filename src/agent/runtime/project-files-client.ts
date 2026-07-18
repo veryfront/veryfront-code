@@ -127,16 +127,18 @@ export async function getRuntimeProjectFile(
 
     if (!response.ok) {
       throw NETWORK_ERROR.create({
-        detail: `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readApiErrorMessage(
-          response,
-        )}`,
+        detail:
+          `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readApiErrorMessage(
+            response,
+          )}`,
       });
     }
 
     const parsed = getRuntimeProjectFileSchema().safeParse(await response.json());
     if (!parsed.success) {
       throw NETWORK_ERROR.create({
-        detail: `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
+        detail:
+          `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
       });
     }
 
@@ -162,9 +164,10 @@ export async function getRuntimeProjectFiles(
 
       if (!response.ok) {
         throw NETWORK_ERROR.create({
-          detail: `Failed to fetch files for project ${options.projectId}: ${await readApiErrorMessage(
-            response,
-          )}`,
+          detail:
+            `Failed to fetch files for project ${options.projectId}: ${await readApiErrorMessage(
+              response,
+            )}`,
         });
       }
 

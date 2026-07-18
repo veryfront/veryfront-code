@@ -243,7 +243,9 @@ export async function executeDurableHumanInputFlow<
       onRequest: async (pendingRequest) => {
         const currentRequest = await options.onRequest(pendingRequest);
         if (!resolveCreatedRequest) {
-          throw AGENT_ERROR.create({ detail: "Durable human input flow could not track the created request" });
+          throw AGENT_ERROR.create({
+            detail: "Durable human input flow could not track the created request",
+          });
         }
         resolveCreatedRequest(currentRequest);
         await options.onCreatedRequest?.(currentRequest);
@@ -315,7 +317,9 @@ export async function waitForDurableHumanInputResolution<TSnapshot>(
     await delay(options.pollIntervalMs);
   }
 
-  throw AGENT_TIMEOUT.create({ detail: "Timed out while waiting for durable human input resolution" });
+  throw AGENT_TIMEOUT.create({
+    detail: "Timed out while waiting for durable human input resolution",
+  });
 }
 
 async function bridgeDurableHumanInputRequest<

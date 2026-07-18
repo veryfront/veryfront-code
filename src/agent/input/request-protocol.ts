@@ -242,7 +242,9 @@ export async function createInputRequest(input: {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw NETWORK_ERROR.create({ detail: detail || `Failed to create durable input request (HTTP ${response.status})` });
+    throw NETWORK_ERROR.create({
+      detail: detail || `Failed to create durable input request (HTTP ${response.status})`,
+    });
   }
 
   return getCreateInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
@@ -268,7 +270,9 @@ export async function getInputRequest(input: {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw NETWORK_ERROR.create({ detail: detail || `Failed to fetch durable input request (HTTP ${response.status})` });
+    throw NETWORK_ERROR.create({
+      detail: detail || `Failed to fetch durable input request (HTTP ${response.status})`,
+    });
   }
 
   return getGetInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;

@@ -1,4 +1,4 @@
-import { serverLogger, sanitizeUrlForSpan } from "#veryfront/utils";
+import { sanitizeUrlForSpan, serverLogger } from "#veryfront/utils";
 import {
   context as otContext,
   propagation,

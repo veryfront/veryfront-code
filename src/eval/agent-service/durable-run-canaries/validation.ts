@@ -50,7 +50,9 @@ export function findAssistantMessage(
     throw INVALID_ARGUMENT.create({ detail: `Assistant message ${messageId} was not persisted` });
   }
   if (message.role !== "assistant") {
-    throw INVALID_ARGUMENT.create({ detail: `Expected assistant message ${messageId}, got role ${message.role}` });
+    throw INVALID_ARGUMENT.create({
+      detail: `Expected assistant message ${messageId}, got role ${message.role}`,
+    });
   }
   return message;
 }
@@ -85,7 +87,9 @@ export function assertNoMalformedCreateFileToolCalls(messages: DurableRunCanaryM
       }
 
       if (!hasCreateFileInput(part.input)) {
-        throw INVALID_ARGUMENT.create({ detail: "Expected create_file tool_call input to include a path and content" });
+        throw INVALID_ARGUMENT.create({
+          detail: "Expected create_file tool_call input to include a path and content",
+        });
       }
     }
   }

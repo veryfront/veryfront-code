@@ -15,7 +15,9 @@ export function registerDiscoveryRuntimeModules(modules: DiscoveryRuntimeModules
 /** Return modules embedded for compiled-binary discovery. */
 export function getDiscoveryRuntimeModules(): DiscoveryRuntimeModules {
   if (!runtimeModules) {
-    throw INITIALIZATION_ERROR.create({ detail: "Compiled discovery runtime modules were not initialized" });
+    throw INITIALIZATION_ERROR.create({
+      detail: "Compiled discovery runtime modules were not initialized",
+    });
   }
   return runtimeModules;
 }

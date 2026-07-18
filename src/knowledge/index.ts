@@ -499,7 +499,9 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
     }
 
     if (parsed.shardIndex < 0 || parsed.shardIndex >= parsed.shardCount) {
-      throw INPUT_VALIDATION_FAILED.create({ detail: "Cursor shard_index must be within shard_count" });
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "Cursor shard_index must be within shard_count",
+      });
     }
 
     return {
@@ -732,11 +734,15 @@ function lookupKnowledgeManifest(
   const resolvedShardIndex = cursorState?.shardIndex ?? input.shard_index ?? 0;
 
   if (resolvedShardCount < 1) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge shard_count must be at least 1" });
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "search_knowledge shard_count must be at least 1",
+    });
   }
 
   if (resolvedShardIndex < 0 || resolvedShardIndex >= resolvedShardCount) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge shard_index must be within shard_count" });
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "search_knowledge shard_index must be within shard_count",
+    });
   }
 
   if (lookupTargetPath) {

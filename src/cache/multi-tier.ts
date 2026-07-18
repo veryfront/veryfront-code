@@ -15,7 +15,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { SpanNames, type Span } from "#veryfront/observability";
+import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CACHE_ERROR } from "#veryfront/errors";
 

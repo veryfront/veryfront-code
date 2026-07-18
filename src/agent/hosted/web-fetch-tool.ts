@@ -96,14 +96,16 @@ function parseCursor(value: string | undefined): number {
 
   if (!/^\d+$/.test(value)) {
     throw INVALID_ARGUMENT.create({
-      detail: "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
+      detail:
+        "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
     });
   }
 
   const offset = Number(value);
   if (!Number.isSafeInteger(offset)) {
     throw INVALID_ARGUMENT.create({
-      detail: "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
+      detail:
+        "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
     });
   }
 
@@ -249,7 +251,10 @@ async function executeHostedWebFetch(
     text = await readResponseTextWithLimit(response, options.maxResponseBytes);
   } catch (error) {
     if (abortScope.didTimeout()) {
-      throw TIMEOUT_ERROR.create({ detail: `web_fetch timed out after ${options.timeoutMs}ms`, cause: error });
+      throw TIMEOUT_ERROR.create({
+        detail: `web_fetch timed out after ${options.timeoutMs}ms`,
+        cause: error,
+      });
     }
     throw error;
   } finally {

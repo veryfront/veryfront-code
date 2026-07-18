@@ -280,7 +280,8 @@ export function createDurableRunCanaryApiClient(
 
     if (!response.ok) {
       throw API_CLIENT_ERROR.create({
-        detail: `API ${init?.method ?? "GET"} ${path} failed: ${response.status} ${await response.text()}`,
+        detail: `API ${init?.method ?? "GET"} ${path} failed: ${response.status} ${await response
+          .text()}`,
       });
     }
 
@@ -477,7 +478,9 @@ function assertCompletedSetupRunBeforeFollowUp(run: DurableRunCanaryRunSummary):
   }
 
   const reason = run.terminalErrorMessage ?? run.terminalErrorCode ?? `status ${run.status}`;
-  throw TIMEOUT_ERROR.create({ detail: `Setup durable run did not complete before follow-up: ${reason}` });
+  throw TIMEOUT_ERROR.create({
+    detail: `Setup durable run did not complete before follow-up: ${reason}`,
+  });
 }
 
 function createDurableRunCanaryRunId(): string {
@@ -532,7 +535,9 @@ async function waitForTerminalRun(
     await sleep(1_500);
   }
 
-  throw TIMEOUT_ERROR.create({ detail: `Timed out waiting for run ${input.runId} to reach a terminal state` });
+  throw TIMEOUT_ERROR.create({
+    detail: `Timed out waiting for run ${input.runId} to reach a terminal state`,
+  });
 }
 
 /** Create durable run canary runner. */

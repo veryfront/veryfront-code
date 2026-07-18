@@ -74,7 +74,9 @@ function convertAgentRuntimePartToChildForkMessagePart(
     return { type: "text", text: `[file: ${part.mediaType}]` };
   }
 
-  throw AGENT_ERROR.create({ detail: `Unhandled AgentRuntimeMessagePart type: ${String(part.type)}` });
+  throw AGENT_ERROR.create({
+    detail: `Unhandled AgentRuntimeMessagePart type: ${String(part.type)}`,
+  });
 }
 
 /** Convert compacted provider messages to child fork runtime messages. */

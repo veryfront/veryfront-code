@@ -34,7 +34,9 @@ export function createInjectedAgUiTool(
     execute: async (_input, context) => {
       const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
       if (!toolCallId) {
-        throw INVALID_ARGUMENT.create({ detail: `Missing toolCallId for injected tool "${tool.name}"` });
+        throw INVALID_ARGUMENT.create({
+          detail: `Missing toolCallId for injected tool "${tool.name}"`,
+        });
       }
 
       sessionManager.prepareForSignal(runId, toolCallId);

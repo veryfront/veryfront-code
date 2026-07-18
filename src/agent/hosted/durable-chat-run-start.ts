@@ -119,12 +119,17 @@ async function parseAcceptedDetachedStartResponse(
   try {
     payload = await response.json();
   } catch (error) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid detached start accepted response: malformed JSON", cause: error });
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Invalid detached start accepted response: malformed JSON",
+      cause: error,
+    });
   }
 
   const parsed = AgUiDetachedStartAcceptedSchema.safeParse(payload);
   if (!parsed.success) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid detached start accepted response: invalid payload" });
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Invalid detached start accepted response: invalid payload",
+    });
   }
 
   return {

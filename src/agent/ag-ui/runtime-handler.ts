@@ -512,7 +512,9 @@ export function createAgUiRuntimeHandler(
         return await createDefaultResponseWithLifecycle();
       }
 
-      throw INITIALIZATION_ERROR.create({ detail: "createAgUiRuntimeHandler configuration became invalid during execution." });
+      throw INITIALIZATION_ERROR.create({
+        detail: "createAgUiRuntimeHandler configuration became invalid during execution.",
+      });
     } catch (error) {
       if (
         error instanceof Error &&

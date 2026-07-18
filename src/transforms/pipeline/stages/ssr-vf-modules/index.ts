@@ -153,7 +153,9 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
           // Skip cycle placeholders - don't cache or use them
           if (isCyclePlaceholder(transformed)) {
-            throw CIRCULAR_DEPENDENCY.create({ detail: `Cycle detected while transforming ${vfModulePath}` });
+            throw CIRCULAR_DEPENDENCY.create({
+              detail: `Cycle detected while transforming ${vfModulePath}`,
+            });
           }
 
           return await cacheTransformedCode(transformed, vfModulePath, fs);

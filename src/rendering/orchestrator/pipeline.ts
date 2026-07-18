@@ -19,7 +19,7 @@ import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { VeryfrontError, FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors";
+import { FILE_NOT_FOUND, RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {

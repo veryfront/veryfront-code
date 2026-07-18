@@ -76,7 +76,9 @@ function createMcpServerToolSource(server: AgentHttpMcpServerConfig): RemoteTool
     },
     executeTool(toolName, args, context) {
       if (!isToolAllowed(toolName, server.toolPolicy)) {
-        throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for MCP server "${server.id}"` });
+        throw PERMISSION_DENIED.create({
+          detail: `Tool "${toolName}" is not allowed for MCP server "${server.id}"`,
+        });
       }
       return source.executeTool(toolName, args, context);
     },

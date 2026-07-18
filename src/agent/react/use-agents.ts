@@ -32,7 +32,9 @@ function isRecord(value: unknown): value is RecordValue {
 /** Normalize the wire response from `GET /api/agents`. */
 export function normalizeAgentsListResponse(value: unknown): AgentMetadata[] {
   if (!isRecord(value) || !Array.isArray(value.agents)) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agents list response: agents must be an array" });
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Invalid agents list response: agents must be an array",
+    });
   }
   return value.agents.map(normalizeAgentMetadata);
 }

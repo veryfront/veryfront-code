@@ -2,7 +2,7 @@ import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
-import { INVALID_ARGUMENT, createError, getErrorMessage, toError } from "#veryfront/errors";
+import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 
 interface ContractSchemaShape {
   __zod?: unknown;

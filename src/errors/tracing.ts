@@ -4,7 +4,7 @@
  * Attaches error metadata to spans for distributed tracing and error correlation.
  */
 
-import { SpanStatusCode, type Span } from "#veryfront/observability";
+import { type Span, SpanStatusCode } from "#veryfront/observability";
 import type { VeryfrontError } from "./types.ts";
 
 /**

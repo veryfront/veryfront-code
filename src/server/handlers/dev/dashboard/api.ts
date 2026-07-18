@@ -580,9 +580,7 @@ function handleLiveErrors(req: Request): Response {
   const type = url.searchParams.get("type") ?? undefined;
   const collector = getErrorCollector();
 
-  const filter = type
-    ? { type: type as import("#veryfront/observability").ErrorType }
-    : undefined;
+  const filter = type ? { type: type as import("#veryfront/observability").ErrorType } : undefined;
 
   const errors = collector.getAll(filter);
   return jsonResponse({

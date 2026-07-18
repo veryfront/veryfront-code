@@ -565,7 +565,9 @@ function getResolvedAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): RuntimeAgentMarkdownDefinition {
   if (!context.agentConfig) {
-    throw INITIALIZATION_ERROR.create({ detail: "Agent service context has not been initialized." });
+    throw INITIALIZATION_ERROR.create({
+      detail: "Agent service context has not been initialized.",
+    });
   }
   return context.agentConfig;
 }
@@ -610,7 +612,9 @@ async function initializeNodeVeryfrontCloudAgentServiceContext(
 
 function getDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): string {
   if (!context.defaultAgentId) {
-    throw INITIALIZATION_ERROR.create({ detail: "Agent service context has not been initialized." });
+    throw INITIALIZATION_ERROR.create({
+      detail: "Agent service context has not been initialized.",
+    });
   }
 
   return context.defaultAgentId;

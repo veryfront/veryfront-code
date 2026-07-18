@@ -10,7 +10,9 @@ export function extractOpenAIEmbeddings(payload: unknown): number[][] {
   const record = readRecord(payload);
   const data = record?.data;
   if (!Array.isArray(data)) {
-    throw INVALID_ARGUMENT.create({ detail: "Invalid OpenAI embedding response: data array missing" });
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid OpenAI embedding response: data array missing",
+    });
   }
 
   const embeddings: number[][] = [];
@@ -19,7 +21,9 @@ export function extractOpenAIEmbeddings(payload: unknown): number[][] {
     const itemRecord = readRecord(item);
     const embedding = itemRecord?.embedding;
     if (!isNumberArray(embedding)) {
-      throw INVALID_ARGUMENT.create({ detail: "Invalid OpenAI embedding response: embedding vector missing" });
+      throw INVALID_ARGUMENT.create({
+        detail: "Invalid OpenAI embedding response: embedding vector missing",
+      });
     }
     embeddings.push(embedding);
   }
@@ -52,7 +56,9 @@ export function extractGoogleEmbedding(payload: unknown): number[] {
     return values;
   }
 
-  throw INVALID_ARGUMENT.create({ detail: "Invalid Google embedding response: embedding vector missing" });
+  throw INVALID_ARGUMENT.create({
+    detail: "Invalid Google embedding response: embedding vector missing",
+  });
 }
 
 export function extractGoogleUsageTokens(payload: unknown): number | undefined {

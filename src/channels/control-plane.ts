@@ -261,7 +261,9 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   const encodedPayload = parts[1];
   const encodedSignature = parts[2];
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
-    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must include header, payload, and signature" });
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature must include header, payload, and signature",
+    });
   }
 
   compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
@@ -293,7 +295,9 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   }
 
   if (options.scopedClaim && claims[options.scopedClaim.key] !== options.scopedClaim.value) {
-    throw SECURITY_VIOLATION.create({ detail: `Control-plane ${options.scopedClaim.label} mismatch` });
+    throw SECURITY_VIOLATION.create({
+      detail: `Control-plane ${options.scopedClaim.label} mismatch`,
+    });
   }
 
   const now = Math.floor(Date.now() / 1000);
