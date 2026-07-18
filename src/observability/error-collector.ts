@@ -5,8 +5,7 @@
  * for exposure via MCP to coding agents.
  **************************/
 
-import type { ErrorCategory } from "#veryfront/errors/types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { type ErrorCategory, INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Public API contract for error type. */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";

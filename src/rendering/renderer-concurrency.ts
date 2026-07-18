@@ -11,7 +11,7 @@
 
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
 
 // ---------------------------------------------------------------------------
 // Constants

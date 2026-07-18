@@ -13,7 +13,7 @@
  * @module
  */
 
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,

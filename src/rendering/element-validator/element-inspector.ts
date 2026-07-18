@@ -1,5 +1,5 @@
 import * as React from "react";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
 import type { InvalidObjectDetails } from "./types.ts";
 import {

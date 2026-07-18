@@ -7,6 +7,8 @@
  * keepalive pings, debounced updates, and CSS hot-swap.
  */
 
+import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+
 interface HMRScriptOptions {
   /** Log prefix for console messages */
   logPrefix: string;
@@ -210,6 +212,8 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 // Veryfront HMR Client (${logPrefix})
 (function() {${debugPreamble}
 
+  ${studioTargetOriginHelperSource()}
+
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
     try {
@@ -217,7 +221,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         action: 'appUpdated',
         isInitialLoad: true,
         url: window.location.href
-      }, '*');
+      }, vfStudioTargetOrigin());
     } catch (_) { /* cross-origin iframe - expected */ }
   }
 
@@ -248,7 +252,10 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   function notifyStudio() {
     if (window.parent === window) return;
     try {
-      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+      window.parent.postMessage(
+        { action: 'appUpdated', url: window.location.href },
+        vfStudioTargetOrigin(),
+      );
     } catch (_) { /* expected: cross-origin iframe */ }
   }
 

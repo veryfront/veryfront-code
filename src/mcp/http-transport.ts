@@ -1,6 +1,7 @@
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { VeryfrontError } from "#veryfront/security/input-validation/errors.ts";
 import {
+  isRequestBodyTooLargeError,
   readBodyWithLimit,
   validateContentType,
 } from "#veryfront/security/input-validation/limits.ts";
@@ -127,10 +128,7 @@ export function createMCPHTTPHandler(
       const bodyText = await readBodyWithLimit(request, MAX_REQUEST_BODY_SIZE);
       rpcRequest = JSON.parse(bodyText) as JSONRPCRequest;
     } catch (error) {
-      if (
-        error instanceof VeryfrontError &&
-        error.detail === "Request body exceeds size limit"
-      ) {
+      if (isRequestBodyTooLargeError(error)) {
         return createJSONRPCErrorResponse(413, -32600, "Request body too large");
       }
       return createJSONRPCErrorResponse(400, -32700, "Parse error");

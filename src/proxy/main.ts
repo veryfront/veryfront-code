@@ -39,6 +39,7 @@ import {
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { ENV_VAR_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import {
   endSpan,
@@ -125,9 +126,10 @@ function resolveProxyBinding(): { hostname: string; port: number } {
 const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
 // Fail closed in production: never silently forward to localhost.
 if (!serverUrlFromEnv && isProduction()) {
-  throw new Error(
-    "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
-  );
+  throw ENV_VAR_MISSING.create({
+    detail:
+      "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
+  });
 }
 const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
@@ -190,12 +192,13 @@ const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExte
   "ext-auth-jwt",
   "@veryfront/ext-auth-jwt",
 ).catch((error) => {
-  throw new Error(
-    `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
-      error instanceof Error ? error.message : String(error)
-    }`,
-    { cause: error },
-  );
+  throw INITIALIZATION_ERROR.create({
+    detail:
+      `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    cause: error,
+  });
 });
 register("AuthProvider", createAuthProvider({}));
 
@@ -623,8 +626,10 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
       lifecycle.end(500, error as Error);
       return withProxyTiming(
         jsonErrorResponse(500, {
+          // Real error logged above via proxyLogger.error; keep body generic so
+          // internal hostnames/paths in error.message are not leaked to clients.
           error: "Internal Proxy Error",
-          message: error instanceof Error ? error.message : "Unknown error",
+          message: "Internal Proxy Error",
         }),
       );
     }
@@ -695,8 +700,10 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
     });
   } catch (error) {
     proxyLogger.error("API proxy error", error as Error);
+    // Real error logged above; keep body generic so internal hostnames/paths in
+    // error.message are not leaked to clients.
     return jsonErrorResponse(502, {
-      error: error instanceof Error ? error.message : "API request failed",
+      error: "Bad Gateway",
     });
   }
 }

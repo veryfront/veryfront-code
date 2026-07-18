@@ -199,26 +199,67 @@ describe("runtime-bridge", () => {
     ]);
   });
 
-  it("throws a clear error when both stream branches are consumed sequentially", async () => {
-    const model = createStreamModel("test", "test/sequential-dual-stream", async () => ({
+  it("rejects a second stream view started after direct consumption", async () => {
+    const model = createStreamModel("test", "test/late-second-stream", async () => ({
       stream: ReadableStream.from([
         { type: "text-delta", delta: "Hel" },
         { type: "text-delta", delta: "lo" },
-        { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
       ]),
     }));
-
     const result = streamText({
       model,
       messages: [{ role: "user", content: "Hello" }],
     });
 
-    assertEquals(await collectAsync(result.textStream), ["Hel", "lo"]);
+    const fullIterator = result.fullStream[Symbol.asyncIterator]();
+    assertEquals(await fullIterator.next(), {
+      value: { type: "text-delta", text: "Hel" },
+      done: false,
+    });
     await assertRejects(
-      () => collectAsync(result.fullStream),
+      () => collectAsync(result.textStream),
       Error,
-      "Consume fullStream and textStream concurrently, or consume only one branch",
+      "must start consumption concurrently",
     );
+    await fullIterator.return?.();
+  });
+
+  it("cancels a sole stream consumer without waiting for an unused branch", async () => {
+    let cancelled = false;
+    const model = createStreamModel("test", "test/sole-stream-cancel", async () => ({
+      stream: new ReadableStream({
+        pull(controller) {
+          controller.enqueue({ type: "text-delta", delta: "chunk" });
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    }));
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    for await (const _part of result.fullStream) break;
+
+    assertEquals(cancelled, true);
+  });
+
+  it("handles an abandoned stream request rejection", async () => {
+    let called = false;
+    const model = createStreamModel("test", "test/abandoned-stream", async () => {
+      called = true;
+      throw new Error("stream failed");
+    });
+
+    streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(called, true);
   });
 
   it("forwards reasoning options to direct stream models", async () => {

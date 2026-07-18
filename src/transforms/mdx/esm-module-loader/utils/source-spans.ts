@@ -1,3 +1,5 @@
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+
 /**
  * Source-span replacement helpers for import rewrites.
  *
@@ -48,7 +50,9 @@ export function replaceSourceSpans(
     }
 
     if (expected !== undefined && source.slice(start, end) !== expected) {
-      throw new Error(`Source replacement span did not match expected text: ${expected}`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Source replacement span did not match expected text: ${expected}`,
+      });
     }
 
     result = result.slice(0, start) + replacement + result.slice(end);

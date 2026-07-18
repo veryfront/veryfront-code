@@ -3,6 +3,10 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { collectAppRoutes, collectPagesRoutes } from "./build-routes.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+} from "#veryfront/utils/logger/logger.ts";
 
 // ---------- In-memory filesystem mock ----------
 

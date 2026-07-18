@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import type { ModelRuntime } from "../types.ts";
 import {

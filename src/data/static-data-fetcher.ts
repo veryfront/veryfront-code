@@ -9,8 +9,8 @@ import {
   REVALIDATION_PER_PROJECT_LIMIT,
   REVALIDATION_TIMEOUT_MS,
 } from "#veryfront/utils/constants/cache.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */

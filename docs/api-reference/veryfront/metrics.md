@@ -31,20 +31,20 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L411) |
-| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L439) |
-| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L425) |
+| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L445) |
+| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L473) |
+| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L459) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MetricAttributes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L25) |
-| `MetricAttributeValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L24) |
-| `MetricInstrumentOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L27) |
+| `MetricAttributes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L28) |
+| `MetricAttributeValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L27) |
+| `MetricInstrumentOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L30) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L459) |
+| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L493) |

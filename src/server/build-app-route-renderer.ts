@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, normalize, relative } from "#veryfront/compa
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
-import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";

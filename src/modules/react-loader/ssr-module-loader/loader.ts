@@ -15,10 +15,10 @@ import {
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
   classifyImportError,

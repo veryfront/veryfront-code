@@ -13,6 +13,7 @@ import {
   type ClientRuntimeHydrationData,
   getHydrationRouterImportSpecifier,
 } from "./client-module-strategy.ts";
+import { rscLogger } from "../client/browser-logger.ts";
 
 /** Signature of `veryfront/router`'s `wrapForHydration` export. */
 type WrapForHydration = <T>(
@@ -56,7 +57,7 @@ export async function wrapWithRouterProvider<T>(
       frontmatter: hydrationData?.frontmatter ?? {},
     });
   } catch (error) {
-    console.debug?.("[RSC] router provider wrap failed", error);
+    rscLogger.debug("router provider wrap failed", error);
     return child;
   }
 }

@@ -14,8 +14,8 @@ import {
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
 import { serverLogger } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { hashCSS } from "./candidate-extractor.ts";
 import {
   buildCSSCacheEntry,

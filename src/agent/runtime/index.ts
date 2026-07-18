@@ -32,11 +32,11 @@ import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
-  setActiveSpanAttributes as setOtelActiveSpanAttributes,
   setActiveSpanErrorStatus as setOtelActiveSpanErrorStatus,
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
@@ -594,7 +594,9 @@ export class AgentRuntime {
     context?: Record<string, unknown>,
     modelOverride?: string,
     maxOutputTokensOverride?: number,
+    abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
+    throwIfAborted(abortSignal);
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
@@ -642,6 +644,7 @@ export class AgentRuntime {
             transport.reasoning,
             maxOutputTokensOverride,
             requestedModel,
+            abortSignal,
           ),
       );
     });
@@ -831,6 +834,7 @@ export class AgentRuntime {
     reasoning?: RuntimeReasoningOption,
     maxOutputTokensOverride?: number,
     temperatureModelString?: string,
+    abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -869,6 +873,7 @@ export class AgentRuntime {
       let agentWriteFinalResponseToolGuardEnabled = false;
 
       for (let step = 0; step < maxSteps; step++) {
+        throwIfAborted(abortSignal);
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
         const stepRuntimeContext = hasSubmittedFormInputInLoop
@@ -893,8 +898,9 @@ export class AgentRuntime {
           runtimeContext: stepRuntimeContext,
           step,
           systemPrompt: currentSystemPrompt,
-          toolContextBase,
+          toolContextBase: { ...toolContextBase, abortSignal },
         });
+        throwIfAborted(abortSignal);
         currentSystemPrompt = preparedStep.systemPrompt;
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
@@ -928,10 +934,12 @@ export class AgentRuntime {
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
+            abortSignal,
           });
           setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
           return result;
         });
+        throwIfAborted(abortSignal);
 
         // Accumulate usage
         if (response.usage) {
@@ -984,6 +992,7 @@ export class AgentRuntime {
         };
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
+        throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
 
         const persistGeneratedToolResult = async (
@@ -999,6 +1008,7 @@ export class AgentRuntime {
           );
           currentMessages.push(toolResultMessage);
           await this.memory.add(toolResultMessage);
+          throwIfAborted(abortSignal);
         };
 
         if (!response.toolCalls?.length) {
@@ -1024,6 +1034,7 @@ export class AgentRuntime {
           response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
+          throwIfAborted(abortSignal);
           const toolCall: ToolCall = {
             id: tc.toolCallId,
             name: tc.toolName,
@@ -1154,6 +1165,7 @@ export class AgentRuntime {
                 // spreads so caller-supplied context cannot spoof it.
                 agentId: this.id,
               };
+              throwIfAborted(abortSignal);
               const result = await traceConfiguredToolExecution({
                 mode: "generate",
                 agentId: this.id,
@@ -1232,6 +1244,7 @@ export class AgentRuntime {
               currentMessages.push(toolResultMessage);
               await this.memory.add(toolResultMessage);
             } catch (error) {
+              throwIfAborted(abortSignal);
               toolCall.status = "error";
               toolCall.error = error instanceof Error ? error.message : String(error);
               setSpanAttributes(toolSpan, {
@@ -1252,9 +1265,11 @@ export class AgentRuntime {
 
             toolCalls.push(toolCall);
           });
+          throwIfAborted(abortSignal);
         }
       }
 
+      throwIfAborted(abortSignal);
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
       setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));

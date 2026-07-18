@@ -2,7 +2,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import { profilePhase } from "#veryfront/observability";
 
 export function handleModuleServer(
   req: Request,

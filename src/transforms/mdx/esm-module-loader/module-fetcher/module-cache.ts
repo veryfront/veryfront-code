@@ -9,7 +9,7 @@
 
 import { join } from "#veryfront/compat/path";
 import * as posix from "#std/path/posix";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs, saveModulePathCache } from "../cache/index.ts";

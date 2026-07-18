@@ -7,11 +7,7 @@
  * @module
  */
 
-import {
-  INITIALIZATION_ERROR,
-  REQUEST_ERROR,
-  TIMEOUT_ERROR,
-} from "#veryfront/errors/error-registry.ts";
+import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import type {

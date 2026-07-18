@@ -13,7 +13,7 @@ import {
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;

@@ -58,6 +58,11 @@ export function startHostedChildForkRuntimeWithHostTools<
     ? composeAbortSignals([abortSignal, childRunMonitorAbortController.signal])
     : undefined;
   const monitor = monitorChildRunStatus ?? monitorHostedChildRunStatus;
+  const abortForkStream = (error: Error) => {
+    if (!forkStreamAbortController.signal.aborted) {
+      forkStreamAbortController.abort(error);
+    }
+  };
   const childRunMonitorPromise = durableChildRun
     ? monitor({
       authToken: runtimeInput.authToken,
@@ -65,11 +70,8 @@ export function startHostedChildForkRuntimeWithHostTools<
       identifiers: durableChildRun,
       abortSignal: childRunMonitorSignal,
       pollIntervalMs: childRunMonitorPollIntervalMs ?? 2_000,
-      onTerminal: (error) => {
-        if (!forkStreamAbortController.signal.aborted) {
-          forkStreamAbortController.abort(error);
-        }
-      },
+      onTerminal: abortForkStream,
+      onMonitoringExhausted: abortForkStream,
     })
     : Promise.resolve();
 

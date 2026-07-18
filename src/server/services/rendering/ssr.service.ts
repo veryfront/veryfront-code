@@ -7,7 +7,7 @@ import {
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -15,8 +15,7 @@ import {
   runInRenderSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import { getErrorCollector, profilePhase } from "#veryfront/observability";
 import { ErrorOverlay, parseErrorLocation } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
 import {

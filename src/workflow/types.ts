@@ -45,7 +45,7 @@ import type {
 type DurationString = string;
 
 /**
- * Workflow context - accumulates node outputs during execution
+ * Workflow context containing structured-cloneable input and node outputs.
  */
 export interface WorkflowContext {
   input: unknown;

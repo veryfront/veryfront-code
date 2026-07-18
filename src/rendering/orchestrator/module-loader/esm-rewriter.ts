@@ -1,5 +1,5 @@
 import { rendererLogger } from "#veryfront/utils";
-import { MODULE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { generateHash } from "./cache.ts";
 

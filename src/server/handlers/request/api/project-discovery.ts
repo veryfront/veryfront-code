@@ -1,5 +1,7 @@
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
 import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
@@ -21,7 +23,7 @@ interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
 }
 
-const discoveredProjects = new Map<string, DiscoveryRecord>();
+const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
 const MAX_DISCOVERY_FAILURES_TO_LOG = 5;
 const MAX_DISCOVERY_ERROR_MESSAGE_LENGTH = 500;
 
@@ -135,7 +137,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   const key = discoveryKey(ctx);
   const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
 
-  const existing = discoveredProjects.get(key);
+  const existing = discoveredProjects.get<DiscoveryRecord>(key);
   if (existing) return existing.promise;
 
   const discovery = {
@@ -203,9 +205,10 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
-    throw new Error(
-      `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw INITIALIZATION_ERROR.create({
+      detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      cause: error,
+    });
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);

@@ -3,6 +3,7 @@ import {
   type FileUIPartWithUpload,
   isTextPreviewFile,
 } from "../../chat/types.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 
 const MAX_INLINE_FILE_CONTENT_CHARS = 200_000;
 const MAX_TOTAL_INLINE_FILE_CONTENT_CHARS = 400_000;
@@ -309,11 +310,11 @@ async function fetchRuntimeTextFileContent(
     timeoutMs,
   );
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch text attachment content${
+    throw NETWORK_ERROR.create({
+      detail: `Failed to fetch text attachment content${
         formatFileContentFetchLabel(input)
       }: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
-    );
+    });
   }
   return await readRuntimeTextFileContent(response, input, fetchSignal, timeoutMs);
 }

@@ -137,6 +137,123 @@ class MockRedisAdapter implements RedisAdapter {
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
 
+    if (script.includes("conditional-stalled-run-claim")) {
+      const claimKey = keys[1]!;
+      const observedActivity = args[0]!;
+      const workerId = args[1]!;
+      const claimDuration = Number(args[2]);
+      const now = args[3]!;
+      const hash = this.hashes.get(key);
+      if (!hash || hash.get("status") !== "running") return Promise.resolve(0);
+      const activity = hash.get("heartbeatAt") || hash.get("startedAt") || hash.get("createdAt");
+      if (activity !== observedActivity || this.store.has(claimKey)) return Promise.resolve(0);
+
+      this.store.set(claimKey, workerId);
+      this.expiries.set(claimKey, claimDuration);
+      hash.set("workerId", workerId);
+      hash.set("heartbeatAt", now);
+      if (!hash.get("startedAt")) hash.set("startedAt", now);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("conditional-owned-append")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const storageKey = args[expectedCount + 2]!;
+      const value = args[expectedCount + 3]!;
+      const hash = this.hashes.get(key);
+      if (
+        !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
+        hash.get("workerId") !== expectedWorkerId
+      ) {
+        return Promise.resolve(0);
+      }
+
+      let list = this.lists.get(storageKey);
+      if (!list) {
+        list = [];
+        this.lists.set(storageKey, list);
+      }
+      list.push(value);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("conditional-approval-patch")) {
+      const approvalId = args[0]!;
+      const patch = JSON.parse(args[1]!);
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            list[i] = JSON.stringify({ ...approval, ...patch, id: approvalId });
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("conditional-approval-decision")) {
+      const approvalId = args[0]!;
+      const newStatus = args[1]!;
+      const decidedBy = args[2]!;
+      const decidedAt = args[3]!;
+      const hasComment = args[4] === "1";
+      const comment = args[5];
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            if (approval.status !== "pending") return Promise.resolve(2);
+            approval.status = newStatus;
+            approval.decidedBy = decidedBy;
+            approval.decidedAt = decidedAt;
+            if (hasComment) approval.comment = comment;
+            else delete approval.comment;
+            list[i] = JSON.stringify(approval);
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("conditional-run-update")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const nextStatus = args[expectedCount + 1]!;
+      const statusPrefix = args[expectedCount + 2]!;
+      const runId = args[expectedCount + 3]!;
+      const expectedWorkerId = args[expectedCount + 4]!;
+      const hash = this.hashes.get(key);
+      const oldStatus = hash?.get("status");
+      if (!hash || !oldStatus || !expectedStatuses.includes(oldStatus)) {
+        return Promise.resolve(0);
+      }
+      if (expectedWorkerId && hash.get("workerId") !== expectedWorkerId) {
+        return Promise.resolve(0);
+      }
+
+      if (nextStatus && oldStatus !== nextStatus) {
+        hash.set("status", nextStatus);
+        this.sets.get(statusPrefix + oldStatus)?.delete(runId);
+        let nextSet = this.sets.get(statusPrefix + nextStatus);
+        if (!nextSet) {
+          nextSet = new Set();
+          this.sets.set(statusPrefix + nextStatus, nextSet);
+        }
+        nextSet.add(runId);
+      }
+
+      for (let i = expectedCount + 5; i < args.length; i += 2) {
+        hash.set(args[i]!, args[i + 1]!);
+      }
+      return Promise.resolve(1);
+    }
+
     // Atomic status-move script: reads old status from the run hash, then moves
     // the run between status index sets and writes the new status.
     // KEYS[1]=runKey, ARGV[1]=runId, ARGV[2]=newStatus, ARGV[3]=statusIndexPrefix
@@ -494,6 +611,95 @@ describe("RedisBackend", () => {
       assertEquals(updated?.output, { value: 42 });
     });
 
+    it("should atomically reject a patch when the current status is not expected", async () => {
+      await backend.createRun(createTestRun("run-cas"));
+
+      assertEquals(
+        await backend.updateRunIfStatus("run-cas", ["running"], {
+          status: "completed",
+          output: { stale: true },
+        }),
+        false,
+      );
+      assertEquals((await backend.getRun("run-cas"))?.status, "pending");
+      assertEquals((await backend.getRun("run-cas"))?.output, undefined);
+
+      assertEquals(
+        await backend.updateRunIfStatus("run-cas", ["pending"], {
+          status: "running",
+          workerId: "worker-cas",
+        }),
+        true,
+      );
+      const updated = await backend.getRun("run-cas");
+      assertEquals(updated?.status, "running");
+      assertEquals(updated?.workerId, "worker-cas");
+      assertEquals(await backend.listRuns({ status: "pending" }), []);
+      assertEquals(
+        (await backend.listRuns({ status: "running" })).map((run) => run.id),
+        ["run-cas"],
+      );
+      assertEquals(await backend.countRuns({ status: "pending" }), 0);
+      assertEquals(await backend.countRuns({ status: "running" }), 1);
+    });
+
+    it("moves conditional status updates between current-schema index sets", async () => {
+      const runId = "run-cas-index";
+      await backend.createRun(createTestRun(runId));
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["pending"], { status: "running" }),
+        true,
+      );
+
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:pending")?.has(runId),
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:running")?.has(runId),
+        true,
+      );
+      assertEquals(mockRedis.sets.has("test:index:status:running"), false);
+      assertEquals(await backend.listRuns({ status: "pending" }), []);
+      assertEquals(
+        (await backend.listRuns({ status: "running" })).map((run) => run.id),
+        [runId],
+      );
+      assertEquals(await backend.countRuns({ status: "pending" }), 0);
+      assertEquals(await backend.countRuns({ status: "running" }), 1);
+    });
+
+    it("should atomically reject a patch from a stale worker owner", async () => {
+      await backend.createRun(createTestRun("run-owner-cas"));
+      await backend.updateRun("run-owner-cas", {
+        status: "running",
+        workerId: "worker-new",
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owner-cas",
+          ["running"],
+          "worker-old",
+          { status: "failed" },
+        ),
+        false,
+      );
+      assertEquals((await backend.getRun("run-owner-cas"))?.status, "running");
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owner-cas",
+          ["running"],
+          "worker-new",
+          { status: "failed" },
+        ),
+        true,
+      );
+      assertEquals((await backend.getRun("run-owner-cas"))?.status, "failed");
+    });
+
     it("rejects attempts to mutate immutable run identity and policy fields", async () => {
       const run = createTestRun("run-immutable-fields");
       await backend.createRun(run);
@@ -515,6 +721,56 @@ describe("RedisBackend", () => {
       const stored = await backend.getRun(run.id);
       assertEquals(stored?.workflowId, run.workflowId);
       assertEquals(stored?.sourceIntegrationPolicy, run.sourceIntegrationPolicy);
+    });
+
+    it("rejects immutable tenant changes through conditional update methods", async () => {
+      const tenant = {
+        projectSlug: "original-project",
+        token: "original-token",
+        productionMode: false,
+        releaseId: null,
+      };
+      const run = createTestRun("run-immutable-tenant", {
+        status: "running",
+        workerId: "worker-1",
+        _tenant: tenant,
+      });
+      await backend.createRun(run);
+      const replacementTenant = {
+        ...tenant,
+        projectSlug: "other-project",
+        token: "other-token",
+      };
+      const unsafeConditionalUpdate = backend.updateRunIfStatus.bind(backend) as (
+        runId: string,
+        statuses: WorkflowRun["status"][],
+        patch: Record<string, unknown>,
+      ) => Promise<boolean>;
+      const unsafeOwnedConditionalUpdate = backend.updateRunIfStatusAndWorker.bind(backend) as (
+        runId: string,
+        statuses: WorkflowRun["status"][],
+        workerId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<boolean>;
+
+      await assertRejects(
+        () => unsafeConditionalUpdate(run.id, ["running"], { _tenant: replacementTenant }),
+        Error,
+        "immutable",
+      );
+      await assertRejects(
+        () =>
+          unsafeOwnedConditionalUpdate(
+            run.id,
+            ["running"],
+            "worker-1",
+            { _tenant: replacementTenant },
+          ),
+        Error,
+        "immutable",
+      );
+
+      assertEquals((await backend.getRun(run.id))?._tenant, tenant);
     });
   });
 
@@ -672,6 +928,42 @@ describe("RedisBackend", () => {
       const all = await backend.getCheckpoints("run-cp2");
       assertEquals(all.length, 2);
     });
+
+    it("should condition checkpoint appends on the canonical run owner", async () => {
+      await backend.createRun(createTestRun("run-cp-owned", {
+        status: "running",
+        workerId: "worker-new",
+      }));
+      const checkpoint = {
+        id: "cp-owned",
+        nodeId: "step-owned",
+        timestamp: new Date(),
+        context: { input: {} },
+        nodeStates: {},
+      };
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-cp-owned",
+          ["running"],
+          "worker-old",
+          checkpoint,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-cp-owned",
+          ["running"],
+          "worker-new",
+          checkpoint,
+        ),
+        true,
+      );
+      assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
   });
 
   describe("approvals", () => {
@@ -710,6 +1002,40 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getPendingApproval("run-ap3", "nope"), null);
     });
 
+    it("should condition approval appends on owner and patch notification metadata", async () => {
+      await backend.createRun(createTestRun("run-ap-owned", {
+        status: "waiting",
+        workerId: "worker-new",
+      }));
+      const approval = makeApproval("ap-owned");
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-ap-owned",
+          ["waiting"],
+          "worker-old",
+          approval,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-ap-owned",
+          ["waiting"],
+          "worker-new",
+          approval,
+        ),
+        true,
+      );
+      await backend.updatePendingApproval("run-ap-owned", approval.id, {
+        notificationError: "delivery failed",
+      });
+      assertEquals(
+        (await backend.getPendingApproval("run-ap-owned", approval.id))?.notificationError,
+        "delivery failed",
+      );
+    });
+
     it("should update approval decision", async () => {
       await backend.createRun(createTestRun("run-ap4"));
       await backend.savePendingApproval("run-ap4", makeApproval("ap-4"));
@@ -731,6 +1057,59 @@ describe("RedisBackend", () => {
         Error,
         "Approval not found",
       );
+    });
+
+    it("updateApproval returns true and records the decision when the approval is pending", async () => {
+      await backend.createRun(createTestRun("run-ap-true"));
+      await backend.savePendingApproval("run-ap-true", makeApproval("ap-true"));
+
+      // Applied path: the pending precondition holds, so the decision lands.
+      assertEquals(
+        await backend.updateApproval("run-ap-true", "ap-true", {
+          approved: true,
+          approver: "admin",
+          comment: "looks good",
+        }),
+        true,
+      );
+
+      // The approval left the pending set and recorded the decider verbatim.
+      assertEquals(await backend.getPendingApprovals("run-ap-true"), []);
+      const stored = JSON.parse(mockRedis.lists.get("test:schema-v1:approvals:run-ap-true")![0]!);
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "admin");
+      assertEquals(stored.comment, "looks good");
+    });
+
+    it("updateApproval returns false (no-op) once the approval is already decided", async () => {
+      await backend.createRun(createTestRun("run-ap-decided"));
+      await backend.savePendingApproval("run-ap-decided", makeApproval("ap-decided"));
+
+      // First decision wins the race and applies.
+      assertEquals(
+        await backend.updateApproval("run-ap-decided", "ap-decided", {
+          approved: true,
+          approver: "first",
+        }),
+        true,
+      );
+
+      // Second, concurrent decision arrives after the approval is no longer
+      // pending: the precondition rejects it, so it is a no-op returning false
+      // rather than overwriting the first decision (lost-race path).
+      assertEquals(
+        await backend.updateApproval("run-ap-decided", "ap-decided", {
+          approved: false,
+          approver: "second",
+        }),
+        false,
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-decided")![0]!,
+      );
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "first");
     });
   });
 
@@ -806,6 +1185,25 @@ describe("RedisBackend", () => {
       await backend.releaseLock("run-own");
 
       assertEquals(mockRedis.store.get(lockKey), "worker-B-token");
+    });
+
+    it("stale token should not release or extend a lease reacquired by this backend", async () => {
+      const lockKey = "test:schema-v1:lock:run-reacquired";
+      const staleToken = await backend.acquireLock("run-reacquired", 5000);
+      assertExists(staleToken);
+
+      // Simulate expiry before the same backend instance acquires a new lease.
+      mockRedis.store.delete(lockKey);
+      const currentToken = await backend.acquireLock("run-reacquired", 5000);
+      assertExists(currentToken);
+
+      assertEquals(await backend.extendLock("run-reacquired", 5000, staleToken), false);
+      await backend.releaseLock("run-reacquired", staleToken);
+      assertEquals(mockRedis.store.get(lockKey), currentToken);
+
+      assertEquals(await backend.extendLock("run-reacquired", 5000, currentToken), true);
+      await backend.releaseLock("run-reacquired", currentToken);
+      assertEquals(mockRedis.store.get(lockKey), undefined);
     });
 
     it("extendLock should not extend a lock owned by another worker", async () => {
@@ -911,6 +1309,30 @@ describe("RedisBackend", () => {
       const run = await backend.getRun("run-claim");
       assertEquals(run?.workerId, "worker-a");
       assertExists(run?.heartbeatAt);
+    });
+
+    it("does not claim after a concurrent heartbeat refresh", async () => {
+      await backend.createRun(
+        createTestRun("run-claim-refreshed", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+      const originalEval = mockRedis.eval.bind(mockRedis);
+      mockRedis.eval = (script, keys, args) => {
+        if (script.includes("conditional-stalled-run-claim")) {
+          mockRedis.hashes.get(keys[0]!)?.set("heartbeatAt", new Date().toISOString());
+        }
+        return originalEval(script, keys, args);
+      };
+
+      assertEquals(
+        await backend.claimStalledRun("run-claim-refreshed", "worker-a", 60_000),
+        false,
+      );
+      const run = await backend.getRun("run-claim-refreshed");
+      assertEquals(run?.workerId, undefined);
+      assertEquals(mockRedis.store.has("test:schema-v1:claim:run-claim-refreshed"), false);
     });
   });
 

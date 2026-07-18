@@ -14,6 +14,7 @@
  */
 
 import { logger } from "./bridge-logger.ts";
+import { resolveTrustedStudioOrigin } from "#veryfront/security/http/studio-origin-policy.ts";
 
 const MAX_PENDING_MESSAGES = 100;
 
@@ -51,29 +52,18 @@ export function postToStudio(message: Record<string, unknown>): void {
 }
 
 export function isFromStudio(event: MessageEvent): boolean {
-  try {
-    // Ignore messages from the current window (e.g. React DevTools, browser extensions).
-    // Only accept messages from a different window (the parent Studio frame).
-    if (!event.source || event.source === window) return false;
+  if (!window.parent || event.source !== window.parent) return false;
 
-    const url = new URL(event.origin || "");
-    const host = url.hostname;
-    const valid = host === "localhost" ||
-      host.endsWith(".veryfront.org") ||
-      host === "veryfront.org" ||
-      host.endsWith(".veryfront.com") ||
-      host === "veryfront.com" ||
-      host.endsWith(".veryfront.dev") ||
-      host === "veryfront.dev";
-    if (valid && !studioOrigin) {
-      studioOrigin = event.origin;
-      flushPending();
-    }
-    return valid;
-  } catch (_) {
-    /* expected: invalid URL in event.origin */
-    return false;
+  const trustedOrigin = resolveTrustedStudioOrigin(event.origin || "");
+  if (!trustedOrigin) return false;
+
+  if (studioOrigin) {
+    return trustedOrigin === studioOrigin;
   }
+
+  studioOrigin = trustedOrigin;
+  flushPending();
+  return true;
 }
 
 /** Test-only: reset module state. Not exported from the public surface. */

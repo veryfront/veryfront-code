@@ -4,7 +4,8 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { ReloadNotifier } from "veryfront/server";
 import {
   vfGetDebugContext,
   vfGetFlywheelStatus,
@@ -13,6 +14,8 @@ import {
   vfTriggerHmr,
   vfWaitForReady,
 } from "./dev-tools.ts";
+
+afterEach(() => ReloadNotifier.reset());
 
 describe("mcp/tools/dev-tools", () => {
   describe("vfHotReload", () => {
@@ -28,15 +31,20 @@ describe("mcp/tools/dev-tools", () => {
       assertEquals(typeof vfHotReload.execute, "function");
     });
 
-    it("returns success result", async () => {
+    it("reports when no browser is connected", async () => {
       const result = await vfHotReload.execute({});
-      assertEquals(result.success, true);
+      assertEquals(result.success, false);
       assertExists(result.message);
     });
 
-    it("accepts optional file parameter", async () => {
+    it("triggers a reload with an optional file parameter", async () => {
+      const unsubscribe = ReloadNotifier.subscribe(() => {});
+      const triggerCalls = ReloadNotifier.getMetrics().triggerCalls;
       const result = await vfHotReload.execute({ file: "app/page.tsx" });
+
       assertEquals(result.success, true);
+      assertEquals(ReloadNotifier.getMetrics().triggerCalls, triggerCalls + 1);
+      unsubscribe();
     });
   });
 

@@ -8,8 +8,8 @@
 
 import { exists, readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors";
 import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/parser.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import type { Skill } from "#veryfront/skill";

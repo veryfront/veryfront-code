@@ -75,6 +75,9 @@ export async function prepareAgentRuntimeStep(
     input.systemPrompt,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  if (input.toolContextBase?.abortSignal !== undefined) {
+    toolContext.abortSignal = input.toolContextBase.abortSignal;
+  }
   delete toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY];
   if (input.sourceIntegrationPolicy !== undefined) {
     toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY] = input.sourceIntegrationPolicy;

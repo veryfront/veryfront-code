@@ -1,5 +1,5 @@
 import type { CORSConfig, CORSValidationResult } from "./types.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import { recordCorsRejection } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 

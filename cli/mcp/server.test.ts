@@ -89,6 +89,23 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server.start();
       server.start();
     });
+
+    it("contains HTTP bind failures and remains stoppable", async () => {
+      const portNum = 19902;
+      const primary = new MCPDevServer({ httpPort: portNum });
+      const conflicting = new MCPDevServer({ httpPort: portNum });
+
+      try {
+        primary.start();
+        await waitForServerBind();
+        conflicting.start();
+        await waitForServerBind();
+        await conflicting.stop();
+      } finally {
+        await conflicting.stop();
+        await primary.stop();
+      }
+    });
   });
 
   describe("MCPServerConfig type", () => {

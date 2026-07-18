@@ -1,10 +1,9 @@
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { TOOL_ID_CONFLICT } from "#veryfront/errors/error-registry/agent.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
+import { INVALID_ARGUMENT, TOOL_ID_CONFLICT } from "#veryfront/errors";
 
 /**
  * Returns true when `incoming` is considered the same definition as `existing`:

@@ -861,6 +861,40 @@ describe("logger", () => {
   });
 
   describe("project env overlay isolation", () => {
+    it("should read host config when the first log occurs inside a project env overlay", async () => {
+      const projectEnvUrl = new URL("../../server/project-env/storage.ts", import.meta.url).href;
+      const loggerUrl = new URL("./logger.ts", import.meta.url).href;
+      const source = `
+        import { runWithProjectEnv } from ${JSON.stringify(projectEnvUrl)};
+        import { serverLogger } from ${JSON.stringify(loggerUrl)};
+
+        runWithProjectEnv({}, () => serverLogger.info("Cold overlay log"));
+        serverLogger.info("After overlay log");
+      `;
+      const command = new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--frozen", "--config=deno.json", source],
+        env: {
+          LOG_FORMAT: "json",
+          LOG_LEVEL: "INFO",
+          NODE_ENV: "production",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const result = await command.output();
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertEquals(result.success, true, stderr);
+
+      const entries = new TextDecoder().decode(result.stdout).trim().split("\n").map((line) =>
+        JSON.parse(line) as LogEntry
+      );
+      assertEquals(entries.map((entry) => entry.message), [
+        "Cold overlay log",
+        "After overlay log",
+      ]);
+    });
+
     it("should output JSON even when project env overlay is active", () => {
       // This reproduces the production bug: during SSR, the project env overlay
       // blocks getEnv() from reading host-level LOG_FORMAT/NODE_ENV, which caused

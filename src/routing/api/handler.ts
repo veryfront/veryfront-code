@@ -3,7 +3,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
@@ -63,6 +63,9 @@ export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
   private lastErrorMessage: string | null = null;
+  private activeRequests = 0;
+  private destroyRequested = false;
+  private destroyed = false;
 
   private adapter: RuntimeAdapter | null;
   private adapterPromise: Promise<RuntimeAdapter> | null = null;
@@ -132,6 +135,7 @@ export class APIRouteHandler {
 
   handle(request: Request, ctx?: HandlerContext): Promise<Response | null> {
     const { pathname } = new URL(request.url);
+    this.activeRequests++;
 
     return withSpan(
       "api.handle",
@@ -217,7 +221,7 @@ export class APIRouteHandler {
         return corsResponse ?? response;
       },
       { "http.method": request.method, "http.path": pathname },
-    );
+    ).finally(() => this.completeRequest());
   }
 
   private loadHandler(match: RouteMatch): Promise<APIRoute | null> {
@@ -265,6 +269,25 @@ export class APIRouteHandler {
   }
 
   destroy(): void {
+    if (this.destroyed || this.destroyRequested) return;
+
+    if (this.activeRequests > 0) {
+      this.destroyRequested = true;
+      return;
+    }
+
+    this.destroyNow();
+  }
+
+  private completeRequest(): void {
+    this.activeRequests--;
+    if (this.activeRequests === 0 && this.destroyRequested) this.destroyNow();
+  }
+
+  private destroyNow(): void {
+    if (this.destroyed) return;
+
+    this.destroyed = true;
     this.routeCache.destroy();
     this.router.destroy();
   }

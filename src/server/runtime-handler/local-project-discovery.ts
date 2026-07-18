@@ -7,7 +7,7 @@
  * @module server/runtime-handler/local-project-discovery
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";

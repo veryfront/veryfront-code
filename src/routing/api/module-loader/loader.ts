@@ -6,7 +6,7 @@ import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";

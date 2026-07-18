@@ -7,7 +7,7 @@ export type ServerMode = InferSchema<ReturnType<typeof getServerModeSchema>>;
 
 export interface ParsedArgs {
   _: (string | number)[];
-  port?: number;
+  port?: number | string;
   p?: number | string;
   __explicit?: Record<string, true>;
   help?: boolean;

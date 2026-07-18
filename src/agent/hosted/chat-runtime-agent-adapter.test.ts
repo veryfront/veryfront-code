@@ -121,6 +121,7 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
       agentId: "agent-1",
       runId: "run-1",
+      conversationId: "conversation-1",
       authToken: "run-token-1",
       runStream: async (operation) => {
         runnerCalled = true;
@@ -149,6 +150,7 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     assertEquals(capturedInput?.context?.abortSignal, abortController.signal);
     assertEquals(capturedInput?.context?.agentId, "agent-1");
     assertEquals(capturedInput?.context?.runId, "run-1");
+    assertEquals(capturedInput?.context?.conversationId, "conversation-1");
     assertEquals(capturedInput?.context?.authToken, "run-token-1");
     const expectedChunks = [
       { type: "start", messageId: "assistant-message" },

@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
 

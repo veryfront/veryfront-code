@@ -106,4 +106,31 @@ describe("agent/hosted-child-fork-runtime-start", () => {
     assertEquals(started.forkStreamAbortController.signal.aborted, true);
     assertEquals(started.forkStreamAbortController.signal.reason instanceof Error, true);
   });
+
+  it("aborts the fork without fabricating a terminal state when monitoring is exhausted", async () => {
+    const monitoringError = new Error("control plane unavailable");
+    const started = startHostedChildForkRuntimeWithHostTools(
+      createStartInput({
+        durableChildRun: {
+          childConversationId: "conversation-child",
+          childRunId: "run-child",
+          childMessageId: "message-child",
+          latestEventId: 1,
+          latestExternalEventSequence: 2,
+        },
+        monitorChildRunStatus: async (input) => {
+          input.onMonitoringExhausted?.(monitoringError);
+        },
+      }),
+    );
+
+    await started.childRunMonitorPromise;
+
+    assertEquals(started.forkStreamAbortController.signal.aborted, true);
+    assertEquals(started.forkStreamAbortController.signal.reason, monitoringError);
+    assertEquals(
+      started.forkStreamAbortController.signal.reason instanceof HostedChildTerminalStateError,
+      false,
+    );
+  });
 });

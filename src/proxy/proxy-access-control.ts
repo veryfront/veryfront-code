@@ -1,6 +1,7 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 
 export interface ProxyAccessControlLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
@@ -40,12 +41,12 @@ function getAuthProvider(): AuthProvider {
     return cachedAuthProvider;
   } catch (err) {
     const base = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `${base}\nTo enable JWT verification in the proxy, install ext-auth-jwt ` +
+    throw INITIALIZATION_ERROR.create({
+      detail: `${base}\nTo enable JWT verification in the proxy, install ext-auth-jwt ` +
         `(scaffold with \`deno task cli extension init ext-auth-jwt\` or add the ` +
         `npm package @veryfront/ext-auth-jwt).`,
-      { cause: err },
-    );
+      cause: err,
+    });
   }
 }
 

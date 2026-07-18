@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { parseCliArgs } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleServeCommand, parseServeArgs } from "./handler.ts";
-import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/serve/handler", () => {
   describe("handleServeCommand", () => {
@@ -62,6 +63,16 @@ describe("commands/serve/handler", () => {
     });
 
     describe("boolean flag extraction", () => {
+      it("parses --binary without consuming the following positional", () => {
+        const args = parseCliArgs(["serve", "--binary", "project"]);
+        const parsed = parseServeArgs(args);
+
+        assertEquals(parsed.success, true);
+        assertExists(parsed.data);
+        assertEquals(parsed.data.binary, true);
+        assertEquals(args._, ["serve", "project"]);
+      });
+
       it("extracts split flag", () => {
         const args: ParsedArgs = { _: ["serve"], split: true };
         assertEquals(Boolean(args.split), true);
@@ -93,6 +104,7 @@ describe("commands/serve/handler", () => {
         const args: ParsedArgs = { _: ["serve"] };
         const parsed = parseServeArgs(args);
         assertEquals(parsed.success, true);
+        assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "127.0.0.1");
       });
 
@@ -100,6 +112,7 @@ describe("commands/serve/handler", () => {
         const args: ParsedArgs = { _: ["serve"], hostname: "127.0.0.1" };
         const parsed = parseServeArgs(args);
         assertEquals(parsed.success, true);
+        assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "127.0.0.1");
       });
 
@@ -107,6 +120,7 @@ describe("commands/serve/handler", () => {
         const args: ParsedArgs = { _: ["serve"], host: "localhost" };
         const parsed = parseServeArgs(args);
         assertEquals(parsed.success, true);
+        assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "localhost");
       });
 
@@ -118,6 +132,7 @@ describe("commands/serve/handler", () => {
         };
         const parsed = parseServeArgs(args);
         assertEquals(parsed.success, true);
+        assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "10.0.0.1");
       });
     });

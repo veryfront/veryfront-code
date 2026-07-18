@@ -7,9 +7,9 @@ import { getLayoutEntity } from "#veryfront/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { LAYOUT_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
 
 const logger = rendererLogger.component("layout-collector");
 

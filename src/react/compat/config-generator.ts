@@ -1,6 +1,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 import {
