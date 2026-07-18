@@ -141,6 +141,8 @@ export interface MonitorHostedChildRunStatusInput {
   onTerminal: (error: HostedChildTerminalStateError) => void;
   /** Called when a poll attempt fails; receives the error and consecutive failure count. */
   onMonitoringError?: (error: unknown, consecutiveFailures: number) => void;
+  /** Called when repeated poll failures stop the monitor without observing a terminal run. */
+  onMonitoringExhausted?: (error: Error) => void;
 }
 
 /** Monitor hosted child run status helper. */
@@ -190,10 +192,14 @@ export async function monitorHostedChildRunStatus(
           `[monitorHostedChildRunStatus] Aborting status monitor after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures for run ${input.identifiers.childRunId}`,
           { error },
         );
-        // Poll retries are exhausted: drive the parent fork to abort now via a
-        // terminal failure state instead of leaving it to hit its idle timeout.
-        input.onTerminal(
-          new HostedChildTerminalStateError("failed", input.identifiers),
+        // A transport failure is not an observed remote terminal state. Abort
+        // local execution through a separate channel so lifecycle code still
+        // persists or reconciles the durable child failure.
+        input.onMonitoringExhausted?.(
+          new Error(
+            `Stopped monitoring hosted child run ${input.identifiers.childRunId} after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures`,
+            { cause: error },
+          ),
         );
         return;
       }

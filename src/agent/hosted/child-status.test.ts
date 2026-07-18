@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   hostedChildTerminalErrorCodes,
   HostedChildTerminalStateError,
@@ -107,6 +108,43 @@ describe("agent/hosted-child-status", () => {
     });
 
     assertEquals(calls, 0);
+  });
+
+  it("reports polling exhaustion separately from an observed terminal state", async () => {
+    let pollAttempts = 0;
+    let terminalCalls = 0;
+    let monitoringError: Error | undefined;
+
+    await withMockFetch(
+      () => {
+        pollAttempts++;
+        return Promise.reject(new Error("control plane unavailable"));
+      },
+      () =>
+        monitorHostedChildRunStatus({
+          authToken: "token",
+          apiUrl: "https://api.example.com",
+          identifiers: {
+            childConversationId: "11111111-1111-4111-a111-111111111111",
+            childRunId: "run_123",
+            childMessageId: "22222222-2222-4222-a222-222222222222",
+            latestEventId: 1,
+            latestExternalEventSequence: 0,
+          },
+          pollIntervalMs: 0,
+          onTerminal: () => {
+            terminalCalls++;
+          },
+          onMonitoringExhausted: (error) => {
+            monitoringError = error;
+          },
+        }),
+    );
+
+    assertEquals(pollAttempts, 5);
+    assertEquals(terminalCalls, 0);
+    assertInstanceOf(monitoringError, Error);
+    assertEquals(monitoringError instanceof HostedChildTerminalStateError, false);
   });
 });
 
