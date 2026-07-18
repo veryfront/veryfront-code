@@ -94,7 +94,6 @@
   "src/security/path-validation/canonical.test.ts",
   "src/security/path-validation/index.test.ts",
   "src/security/repository-hardening.test.ts",
-  "src/security/sandbox/worker-egress-guard.test.ts",
   "src/server/build-service-worker.test.ts",
   "src/server/handlers/response/cors.test.ts",
   "src/server/runtime-handler/index.test.ts",

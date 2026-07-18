@@ -133,6 +133,27 @@ testSuite("ProjectWorker", () => {
     const worker = createTestWorker();
     assertEquals(worker.projectId, "test-project");
   });
+
+  it("rejects unrestricted network access for custom worker scripts", () => {
+    const worker = new ProjectWorker({
+      projectId: "test-custom-worker-network",
+      permissions: { ...TEST_PERMISSIONS, net: true },
+      requestTimeoutMs: 5_000,
+      workerScriptUrl: TEST_WORKER_SCRIPT_URL,
+    });
+    let startupError: unknown;
+    try {
+      worker.start();
+    } catch (error) {
+      startupError = error;
+    }
+    assert(startupError instanceof Error);
+    assertEquals((startupError as Error & { slug?: string }).slug, "invalid-argument");
+    assertEquals(
+      startupError.message,
+      "Custom project worker scripts cannot use unrestricted network permissions",
+    );
+  });
 });
 
 testSuite("ProjectWorker - error handling", () => {
@@ -190,6 +211,65 @@ testSuite("ProjectWorker - clearModuleCache", () => {
 });
 
 testSuite("ProjectWorker - real worker request isolation", () => {
+  it("closes broker resources when project code exits the worker", async () => {
+    for (
+      const [label, exitStatement] of [
+        ["close", "globalThis.close()"],
+        ["deno-exit", "Deno.exit(0)"],
+      ]
+    ) {
+      const projectDir = await Deno.makeTempDir();
+      const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+      await Deno.writeTextFile(
+        modulePath,
+        `
+          export function GET() {
+            self.postMessage = () => {};
+            ${exitStatement};
+            return Response.json({ exited: false });
+          }
+        `,
+      );
+      const worker = new ProjectWorker({
+        projectId: `test-worker-${label}`,
+        permissions: buildWorkerPermissions([projectDir]),
+        requestTimeoutMs: 10_000,
+      });
+
+      try {
+        worker.start();
+        await assertWorkerReady(worker);
+        const rejected = await Promise.race([
+          worker.execute({
+            type: "execute-app-route",
+            id: `worker-${label}`,
+            modulePath,
+            method: "GET",
+            request: {
+              url: `http://localhost/api/${label}`,
+              method: "GET",
+              headers: [],
+              body: null,
+            },
+            params: {},
+            projectDir,
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          }).then(
+            () => false,
+            () => true,
+          ),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+        ]);
+        assertEquals(rejected, true, label);
+        assertEquals(worker.status, "terminated", label);
+        assertEquals(worker.hasPendingRequests, false, label);
+      } finally {
+        worker.terminate();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    }
+  });
+
   it("returns a serialized error for unknown worker request types", async () => {
     const worker = new ProjectWorker({
       projectId: "test-unknown-request",
@@ -781,6 +861,399 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     } finally {
       worker.terminate();
       await loopbackServer.shutdown();
+      if (previousOverride === undefined) {
+        Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+      } else {
+        Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, previousOverride);
+      }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("replays a POST body safely across a brokered 307 redirect", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const previousOverride = Deno.env.get(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+    let finalRequests = 0;
+    const server = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/start") {
+          return new Response(null, { status: 307, headers: { location: "/final" } });
+        }
+        finalRequests++;
+        return Response.json({
+          method: request.method,
+          body: await request.text(),
+          marker: request.headers.get("x-test-marker"),
+        });
+      },
+    );
+    const address = server.addr;
+    if (address.transport !== "tcp") throw new Error("expected TCP test server");
+    const targetUrl = `http://127.0.0.1:${address.port}/start`;
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const response = await fetch(${JSON.stringify(targetUrl)}, {
+            method: "POST",
+            body: "payload",
+            headers: { "x-test-marker": "preserved" },
+          });
+          return Response.json(await response.json());
+        }
+      `,
+    );
+    Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-post-307",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "post-307",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/post-307",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      assertEquals(response.type, "result");
+      if (response.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array())),
+        { method: "POST", body: "payload", marker: "preserved" },
+      );
+      assertEquals(finalRequests, 1);
+    } finally {
+      worker.terminate();
+      await server.shutdown();
+      if (previousOverride === undefined) {
+        Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+      } else {
+        Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, previousOverride);
+      }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("connects fetch to the validated address without a second DNS lookup", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const previousOverride = Deno.env.get(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+    let trapRequests = 0;
+    let validatedRequests = 0;
+    let resolutionCount = 0;
+    const trapServer = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      () => {
+        trapRequests++;
+        return Response.json({ source: "dns-rebind" });
+      },
+    );
+    const trapAddress = trapServer.addr;
+    if (trapAddress.transport !== "tcp") throw new Error("expected TCP test server");
+    const validatedServer = Deno.serve(
+      { hostname: "::1", port: trapAddress.port, onListen: () => {} },
+      (request) => {
+        validatedRequests++;
+        return Response.json({
+          source: "validated",
+          host: request.headers.get("host"),
+        });
+      },
+    );
+    const targetUrl = `http://localhost:${trapAddress.port}/pinned`;
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const response = await fetch(${JSON.stringify(targetUrl)});
+          return Response.json(await response.json());
+        }
+      `,
+    );
+    Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-dns-pinned-fetch",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      egressResolveHost: (hostname) => {
+        assertEquals(hostname, "localhost");
+        resolutionCount++;
+        return Promise.resolve(resolutionCount === 1 ? ["::1"] : ["127.0.0.1"]);
+      },
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "dns-pinned-fetch",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/dns-pinned-fetch",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+
+      assertEquals(response.type, "result");
+      if (response.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array())),
+        { source: "validated", host: `localhost:${trapAddress.port}` },
+      );
+      assertEquals(resolutionCount, 1);
+      assertEquals(validatedRequests, 1);
+      assertEquals(trapRequests, 0);
+    } finally {
+      worker.terminate();
+      await Promise.all([trapServer.shutdown(), validatedServer.shutdown()]);
+      if (previousOverride === undefined) {
+        Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+      } else {
+        Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, previousOverride);
+      }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("routes raw TCP through the validated broker connection", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const previousOverride = Deno.env.get(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+    const listener = Deno.listen({ hostname: "::1", port: 0 });
+    const exchange = (async () => {
+      const connection = await listener.accept();
+      try {
+        const request = new Uint8Array(4);
+        let offset = 0;
+        while (offset < request.length) {
+          const read = await connection.read(request.subarray(offset));
+          if (read === null) throw new Error("raw TCP test connection closed early");
+          offset += read;
+        }
+        assertEquals(new TextDecoder().decode(request), "ping");
+        assertEquals(await connection.read(new Uint8Array(1)), null);
+        await connection.write(new TextEncoder().encode("pong"));
+      } finally {
+        connection.close();
+      }
+    })();
+    let resolutionCount = 0;
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const connection = await Deno.connect({
+            hostname: "socket.invalid",
+            port: ${listener.addr.port},
+          });
+          try {
+            await connection.write(new TextEncoder().encode("ping"));
+            await connection.closeWrite();
+            const response = new Uint8Array(4);
+            let offset = 0;
+            while (offset < response.length) {
+              const read = await connection.read(response.subarray(offset));
+              if (read === null) throw new Error("raw TCP response closed early");
+              offset += read;
+            }
+            return Response.json({ value: new TextDecoder().decode(response) });
+          } finally {
+            connection.close();
+          }
+        }
+      `,
+    );
+    Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-raw-tcp-pinned",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      egressResolveHost: (hostname) => {
+        assertEquals(hostname, "socket.invalid");
+        resolutionCount++;
+        return Promise.resolve(["::1"]);
+      },
+    });
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "raw-tcp-pinned",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/raw-tcp",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      assertEquals(response.type, "result", JSON.stringify(response));
+      if (response.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array())),
+        { value: "pong" },
+      );
+      assertEquals(resolutionCount, 1);
+      await exchange;
+    } finally {
+      worker.terminate();
+      listener.close();
+      await exchange.catch(() => undefined);
+      if (previousOverride === undefined) {
+        Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+      } else {
+        Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, previousOverride);
+      }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("denies unwrapped native network clients at the worker permission boundary", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const previousOverride = Deno.env.get(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    let accepted = false;
+    const accept = listener.accept().then((connection) => {
+      accepted = true;
+      connection.close();
+    }).catch(() => undefined);
+    let webSocketAccepted = 0;
+    const webSocketServer = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      (request) => {
+        webSocketAccepted++;
+        const { response, socket } = Deno.upgradeWebSocket(request);
+        socket.onopen = () => socket.close();
+        return response;
+      },
+    );
+    const webSocketAddress = webSocketServer.addr;
+    if (webSocketAddress.transport !== "tcp") throw new Error("expected TCP WebSocket server");
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        import { connect } from "node:net";
+
+        export async function GET() {
+          const result = await new Promise((resolve) => {
+            const socket = connect({ host: "127.0.0.1", port: ${listener.addr.port} });
+            socket.setTimeout(2_000);
+            socket.once("connect", () => {
+              socket.destroy();
+              resolve({ blocked: false });
+            });
+            socket.once("error", (error) => resolve({
+              blocked: true,
+              message: String(error?.message ?? error),
+            }));
+            socket.once("timeout", () => {
+              socket.destroy();
+              resolve({ blocked: true, message: "timed out" });
+            });
+          });
+          const webSocketBlocked = await new Promise((resolve) => {
+            try {
+              const socket = new WebSocket("ws://127.0.0.1:${webSocketAddress.port}/socket");
+              const timer = setTimeout(() => {
+                socket.close();
+                resolve(false);
+              }, 2_000);
+              socket.onopen = () => {
+                clearTimeout(timer);
+                socket.close();
+                resolve(false);
+              };
+              socket.onerror = () => {
+                clearTimeout(timer);
+                resolve(true);
+              };
+            } catch {
+              resolve(true);
+            }
+          });
+          return Response.json({
+            nodeBlocked: result.blocked,
+            nodeMessage: result.message,
+            webSocketBlocked,
+          });
+        }
+      `,
+    );
+    Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-native-bypass-denied",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "native-bypass-denied",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/native-bypass",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      assertEquals(response.type, "result");
+      if (response.type !== "result") throw new Error("expected result response");
+      const body = JSON.parse(
+        new TextDecoder().decode(response.response.body ?? new Uint8Array()),
+      );
+      assertEquals(body.nodeBlocked, true);
+      assertEquals(body.nodeMessage === "timed out", false);
+      assertEquals(body.webSocketBlocked, true);
+      assertEquals(accepted, false);
+      assertEquals(webSocketAccepted, 0);
+    } finally {
+      worker.terminate();
+      listener.close();
+      await accept;
+      await webSocketServer.shutdown();
       if (previousOverride === undefined) {
         Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
       } else {
