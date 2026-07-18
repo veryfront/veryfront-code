@@ -29,7 +29,10 @@ import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowDefinition } from "../types.ts";
 import {
-  createIsolatedWorkflowExecutor,
+  requireWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
+import {
   failRunExecution,
   getFinalRunExitCode,
   getRunExecutionWorkerId,
@@ -108,13 +111,13 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
   }
 
   try {
-    // Fetch the workflow run
     let run = await backend.getRun(runId);
     if (!run) {
       logger.error(`Workflow run not found: ${runId}`);
       return EXIT_CODES.NOT_FOUND;
     }
 
+    requireWorkflowSourceIntegrationPolicy(run);
     run = await hydrateRunContextEnv(backend, runId, run, expectedWorkerId);
 
     // Get tenant context (from env or from stored run)
@@ -154,15 +157,12 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
       }
     };
 
-    // Run with tenant context if available
-    if (tenant) {
-      return await runWithTenantContext(tenant, safeExecute);
-    }
-
-    return await safeExecute();
+    return await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => tenant ? runWithTenantContext(tenant, safeExecute) : safeExecute(),
+    );
   } catch (error) {
-    logger.error(`Fatal error:`, error);
-    return EXIT_CODES.WORKFLOW_FAILED;
+    return await failRunExecution(backend, logger, EXIT_CODES, runId, error, expectedWorkerId);
   }
 }
 
@@ -205,19 +205,21 @@ export async function createWorkflowRunEntrypoint(
 ): Promise<() => Promise<number>> {
   // Dynamic imports to avoid loading Redis if not needed
   const { RedisBackend } = await import("../backends/redis.ts");
+  const { WorkflowExecutor } = await import("../executor/workflow-executor.ts");
+
   const backend = new RedisBackend({
     url: options.redisUrl,
     debug: options.debug,
   });
 
-  const executor = createIsolatedWorkflowExecutor(
+  const executor = new WorkflowExecutor({
     backend,
-    options.debug,
-    {
+    debug: options.debug,
+    stepExecutor: {
       agentRegistry,
       toolRegistry,
     },
-  );
+  });
 
   // Register workflows
   for (const wf of options.workflows) {

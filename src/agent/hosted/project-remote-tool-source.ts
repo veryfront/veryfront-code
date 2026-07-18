@@ -59,6 +59,14 @@ export type CreateHostedProjectRemoteToolSourceInput = {
   defaultProjectId?: ProjectScopedRemoteToolDefaultProjectId;
   getActiveBranchId?: () => string | null | undefined;
   allowedToolNames?: ReadonlySet<string> | null;
+  /**
+   * Live activated remote tool names from the discovery context.
+   * When provided, this Set (passed by reference) is used as the execution
+   * gate for the remote tool catalog instead of `allowedToolNames`. Because
+   * the same Set is mutated by `load_tools`, newly activated tools become
+   * executable without any catalog re-creation.
+   */
+  activatedRemoteToolNames?: ReadonlySet<string> | null;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   filterToolDefinitions?: ProjectScopedRemoteToolCatalogOptions["filterToolDefinitions"];
   prepareToolInput?: HostedProjectRemoteToolSourcePrepareToolInput;
@@ -79,10 +87,16 @@ function resolveActiveBranchId(
 export function createHostedProjectRemoteToolSource(
   input: CreateHostedProjectRemoteToolSourceInput,
 ): RemoteToolSource {
+  // When `activatedRemoteToolNames` is provided, it acts as the live execution
+  // gate: only tools in this Set (which grows as load_tools activates them)
+  // can be listed or executed. Falls back to `allowedToolNames` when absent.
+  const catalogAllowedToolNames = input.activatedRemoteToolNames !== undefined
+    ? input.activatedRemoteToolNames
+    : input.allowedToolNames;
   const toolCatalog = createProjectScopedRemoteToolCatalog({
     source: input.source,
     defaultProjectId: input.defaultProjectId,
-    allowedToolNames: input.allowedToolNames,
+    allowedToolNames: catalogAllowedToolNames,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     filterToolDefinitions: input.filterToolDefinitions,
   });
@@ -250,6 +264,9 @@ function createHostedProjectRemoteToolSourceFromConfig(
       ? { getActiveBranchId: input.getActiveBranchId }
       : {}),
     ...(input.allowedToolNames !== undefined ? { allowedToolNames: input.allowedToolNames } : {}),
+    ...(input.activatedRemoteToolNames !== undefined
+      ? { activatedRemoteToolNames: input.activatedRemoteToolNames }
+      : {}),
     ...(input.projectScopedRemoteToolOptions !== undefined
       ? { projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions }
       : {}),

@@ -1,5 +1,7 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { RemoteToolSource } from "#veryfront/tool";
 import type { DefaultHostedChatRuntimeSystemRefreshInput } from "./default-chat-runtime.ts";
 import {
   createDefaultHostedProjectSteeringRefresh,
@@ -12,6 +14,7 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
   return {
     id: "agent-1",
     name: "Agent",
+    description: "Agent description",
     instructions: "Base instructions",
   };
 }
@@ -19,8 +22,10 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
 function createSkill(id: string): RuntimeSkillDefinition {
   return {
     id,
-    title: id,
+    name: id,
     description: `${id} skill`,
+    instructions: `${id} instructions`,
+    allowedTools: [],
   };
 }
 
@@ -42,6 +47,7 @@ function createRefreshInput(
       initialSkills: [createSkill("initial")],
     },
     toolAssembly: {
+      sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
       runtimeTools: {},
       remoteToolSources: [],
       localToolNames: ["load_skill", "sleep"],
@@ -146,6 +152,58 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Current run tool inventory:"), true);
   });
 
+  it("keeps source-denied integration tools out of refreshed inventory", async () => {
+    const remoteToolSource: RemoteToolSource = {
+      id: "api",
+      listTools: () =>
+        Promise.resolve([
+          {
+            name: "confluence__search_content",
+            description: "Search Confluence",
+            parameters: { type: "object", properties: {} },
+          },
+          {
+            name: "gmail__list_emails",
+            description: "List Gmail emails",
+            parameters: { type: "object", properties: {} },
+          },
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    };
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => input.instructions,
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({
+          allow: { confluence: {} },
+        }),
+        runtimeTools: {},
+        remoteToolSources: [remoteToolSource],
+        localToolNames: ["sleep"],
+        remoteToolNames: ["confluence__search_content"],
+        providerToolNames: [],
+        availableToolNames: ["confluence__search_content", "sleep"],
+        compatibleRemoteToolNames: ["confluence__search_content"],
+        systemInstructions: "",
+      },
+    });
+
+    const system = await refresh(input);
+
+    assertEquals(input.taskContext.availableToolNames, [
+      "confluence__search_content",
+      "sleep",
+    ]);
+    assertStringIncludes(system, "- confluence__search_content");
+    assertEquals(system.includes("gmail__list_emails"), false);
+    assertEquals(input.toolAssembly.compatibleRemoteToolNames, [
+      "confluence__search_content",
+    ]);
+  });
+
   it("keeps an empty visible skill set restrictive during refresh", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
@@ -185,6 +243,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         model: "anthropic/claude-sonnet-4-6",
       },
       toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
         runtimeTools: {},
         remoteToolSources: [],
         localToolNames: ["sleep"],

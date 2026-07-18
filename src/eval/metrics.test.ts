@@ -378,6 +378,144 @@ describe("eval/metrics", () => {
     );
   });
 
+  it("evaluates citation precision and recall from structured RAG record evidence", async () => {
+    const record = createRecord({
+      metadata: {
+        expectedKnowledge: [
+          "knowledge/billing/credits.md",
+          {
+            path: "knowledge/support/playbooks/billing-ledger.md",
+            contentMatch: "ledger review",
+          },
+        ],
+      },
+      retrievedContext: [
+        {
+          source: "knowledge/billing/credits.md",
+          content: "Credit grants, expiration, and usage ledger checks.",
+        },
+        {
+          source: "knowledge/support/playbooks/billing-ledger.md",
+          content: "Use the billing ledger review before changing the account.",
+        },
+        {
+          source: "knowledge/unrelated.md",
+          content: "Unrelated troubleshooting note.",
+        },
+      ],
+      citations: [
+        { source: "knowledge/billing/credits.md", text: "[credits]" },
+        { source: "knowledge/unrelated.md", text: "[unrelated]" },
+      ],
+    });
+
+    assertEquals(
+      await metrics.knowledge.citationPrecision().soft({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.citationPrecision",
+        family: "knowledge",
+        severity: "soft",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          citations: [
+            "knowledge/billing/credits.md",
+            "knowledge/unrelated.md",
+          ],
+          expected: [
+            "knowledge/billing/credits.md",
+            "knowledge/support/playbooks/billing-ledger.md",
+          ],
+          expectedFrom: "metadata.expectedKnowledge",
+          supported: ["knowledge/billing/credits.md"],
+          unsupported: ["knowledge/unrelated.md"],
+          supportedCount: 1,
+          citationCount: 2,
+        },
+      },
+    );
+
+    assertEquals(
+      await metrics.knowledge.citationRecall().gate({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.citationRecall",
+        family: "knowledge",
+        severity: "gate",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          citations: [
+            "knowledge/billing/credits.md",
+            "knowledge/unrelated.md",
+          ],
+          expected: [
+            "knowledge/billing/credits.md",
+            "knowledge/support/playbooks/billing-ledger.md",
+          ],
+          expectedFrom: "metadata.expectedKnowledge",
+          cited: ["knowledge/billing/credits.md"],
+          missing: ["knowledge/support/playbooks/billing-ledger.md"],
+          citedCount: 1,
+          expectedCount: 2,
+        },
+      },
+    );
+  });
+
+  it("reads citations from the output and retrieved context from search_knowledge traces", async () => {
+    const record = createRecord({
+      output: {
+        text: "Check the billing credits runbook and cite the source.",
+        citations: [
+          { source: "knowledge/billing/credits.md" },
+          { source: "knowledge/unrelated.md" },
+        ],
+      },
+      trace: {
+        events: [],
+        toolCalls: [
+          {
+            name: "search_knowledge",
+            status: "ok",
+            output: {
+              data: [
+                { path: "knowledge/billing/credits.md" },
+                { path: "knowledge/support/playbooks/billing-ledger.md" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    assertEquals(
+      await metrics.knowledge.citationPrecision({
+        expected: ["knowledge/billing/credits.md"],
+      }).gate({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.citationPrecision",
+        family: "knowledge",
+        severity: "gate",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          citations: [
+            "knowledge/billing/credits.md",
+            "knowledge/unrelated.md",
+          ],
+          expected: ["knowledge/billing/credits.md"],
+          supported: ["knowledge/billing/credits.md"],
+          unsupported: ["knowledge/unrelated.md"],
+          supportedCount: 1,
+          citationCount: 2,
+        },
+      },
+    );
+  });
+
   it("evaluates answer groundedness with retrieved knowledge evidence", async () => {
     const groundedness = metrics.answer.groundedness({
       judge: async ({ evidence, output }) => ({

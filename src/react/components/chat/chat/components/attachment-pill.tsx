@@ -30,22 +30,12 @@ export interface AttachmentInfo {
   url?: string;
 }
 
-/** Icon overrides for {@link AttachmentPill}. Each defaults to its glyph. */
-export interface AttachmentPillIcons {
-  /** Override the remove (✕) glyph. */
-  remove?: React.ReactNode;
-  /** Override the retry glyph. */
-  retry?: React.ReactNode;
-}
-
 /** Props accepted by attachment pill. */
 export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement> {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
   /** Retry handler — surfaces a retry button in the `error` state. */
   onRetry?: (id: string) => void;
-  /** Override the remove / retry button icons. */
-  icons?: AttachmentPillIcons;
   /**
    * Draw the outline + surrounding box. `false` gives a flat, borderless row
    * (e.g. `AttachmentsPanel`, where the pills are a plain list). @default true
@@ -53,6 +43,8 @@ export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement
   bordered?: boolean;
   /** Compose your own pill; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -69,7 +61,8 @@ function getExtension(name: string): string {
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
-function formatSize(bytes: number): string {
+/** Format a byte count as a compact `B` / `KB` / `MB` label. */
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -151,7 +144,6 @@ export interface AttachmentPillContextValue {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
   onRetry?: (id: string) => void;
-  icons?: AttachmentPillIcons;
   /** File extension (from the name, falling back to the media type). */
   ext: string;
   /** Tailwind color pair for the default (no-state) icon box. */
@@ -170,8 +162,6 @@ export interface AttachmentPillContextValue {
   label: string;
   /** Legacy dimming for the old `status="uploading"` API. */
   legacyUploading: boolean;
-  /** Whether the remove control should render. */
-  showRemove: boolean;
   /** The state glyph for the icon box (null → render the extension text). */
   stateGlyph: React.ReactNode;
   /** Tailwind classes for the icon box background/foreground. */
@@ -200,19 +190,16 @@ export function useAttachmentPill(): AttachmentPillContextValue {
  * `AttachmentPill.Root` — context provider + the chip wrapper. No children
  * renders the default anatomy; pass children to recompose.
  */
-const AttachmentPillRoot = React.forwardRef<
-  HTMLDivElement,
-  AttachmentPillProps
->(function AttachmentPill({
+function AttachmentPillRoot({
   attachment,
   onRemove,
   onRetry,
-  icons,
   bordered = true,
   className,
   children,
+  ref,
   ...props
-}, ref): React.ReactElement {
+}: AttachmentPillProps): React.ReactElement {
   const mediaType = attachment.type ?? "";
   const ext = getExtension(attachment.name) ||
     mediaType.split("/").pop()?.toLowerCase() || "";
@@ -232,8 +219,6 @@ const AttachmentPillRoot = React.forwardRef<
   const label = getStateLabel(attachment, ext, mediaType);
   // Legacy dimming only applies to the old `status` API (new states stay solid).
   const legacyUploading = !state && attachment.status === "uploading";
-  const showRemove = Boolean(onRemove) &&
-    (Boolean(state) || attachment.status !== "uploading");
 
   // The left box shows a state glyph when a lifecycle `state` is set, otherwise
   // the file-type extension badge (default behaviour).
@@ -259,7 +244,6 @@ const AttachmentPillRoot = React.forwardRef<
     attachment,
     onRemove,
     onRetry,
-    icons,
     ext,
     colorClass,
     isImage,
@@ -269,7 +253,6 @@ const AttachmentPillRoot = React.forwardRef<
     shimmerTitle,
     label,
     legacyUploading,
-    showRemove,
     stateGlyph,
     boxClass,
   };
@@ -304,7 +287,7 @@ const AttachmentPillRoot = React.forwardRef<
       </div>
     </AttachmentPillContext.Provider>
   );
-});
+}
 AttachmentPillRoot.displayName = "AttachmentPill.Root";
 
 /**
@@ -397,9 +380,9 @@ AttachmentPillLabel.displayName = "AttachmentPill.Label";
  * when an `onRetry` handler is provided.
  */
 function AttachmentPillRetry(
-  { className }: { className?: string },
+  { className, icon }: { className?: string; icon?: React.ReactNode },
 ): React.JSX.Element | null {
-  const { attachment, isError, onRetry, icons } = useAttachmentPill();
+  const { attachment, isError, onRetry } = useAttachmentPill();
   if (!isError || !onRetry) return null;
   return (
     <Button
@@ -411,7 +394,7 @@ function AttachmentPillRetry(
       aria-label={`Retry ${attachment.name}`}
       className={cn("shrink-0", className)}
     >
-      {icons?.retry ?? <RefreshCwIcon />}
+      {icon ?? <RefreshCwIcon />}
     </Button>
   );
 }
@@ -422,10 +405,10 @@ AttachmentPillRetry.displayName = "AttachmentPill.Retry";
  * `onRemove` handler is provided and the pill isn't a legacy uploading pill.
  */
 function AttachmentPillRemove(
-  { className }: { className?: string },
+  { className, icon }: { className?: string; icon?: React.ReactNode },
 ): React.JSX.Element | null {
-  const { attachment, showRemove, onRemove, icons } = useAttachmentPill();
-  if (!showRemove) return null;
+  const { attachment, onRemove, legacyUploading } = useAttachmentPill();
+  if (!onRemove || legacyUploading) return null;
   return (
     <Button
       type="button"
@@ -439,7 +422,7 @@ function AttachmentPillRemove(
         className,
       )}
     >
-      {icons?.remove ?? (
+      {icon ?? (
         <svg
           viewBox="0 0 24 24"
           fill="none"
@@ -459,7 +442,7 @@ AttachmentPillRemove.displayName = "AttachmentPill.Remove";
 /**
  * AttachmentPill — render `<AttachmentPill attachment={…} />` for the default
  * chip, or compose `AttachmentPill.Root` + `.Thumbnail` / `.Icon` / `.Label` /
- * `.Retry` / `.Remove` for a custom layout. Publicly aliased as `Attachment`.
+ * `.Retry` / `.Remove` for a custom layout.
  */
 export const AttachmentPill = Object.assign(AttachmentPillRoot, {
   Root: AttachmentPillRoot,

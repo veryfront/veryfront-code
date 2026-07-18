@@ -3,7 +3,8 @@
 #
 # Verifies, against the real `deno task build:npm` artifacts installed into a
 # throwaway npm project, that:
-#   1. a `veryfront` install with co-published required packages runs the CLI under Node
+#   1. a `veryfront` install with co-published required packages runs the CLI
+#      and activates the parser extension under Node
 #   2. the @huggingface/transformers optional peer is declared
 #   3. loading a missing extension fails naming the installable package
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
@@ -26,23 +27,55 @@ fail() {
 [ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
 
 (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz
+npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-parser-babel-*.tgz
 
-echo "== 1. root install: CLI runs under Node"
+echo "== 1. root install: CLI and parser extension run under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
   fail "CLI --version failed on root install"
 node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
   fail "CLI schema --json failed on root install (bundled ext-schema-zod broken)"
+node -e "
+const p = require('./node_modules/veryfront/package.json');
+if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(1);
+" || fail "root package does not pin @veryfront/ext-parser-babel to its version"
+node --input-type=module -e "
+const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-extensions.js');
+const resolved = m.createOptionalBuiltinExtension({
+  name: 'ext-parser-babel',
+  origin: 'veryfront/ext-parser-babel',
+  sourceDirectory: 'ext-parser-babel',
+  contracts: { provides: ['CodeParser'] },
+  capabilities: [],
+});
+let codeParser;
+const logger = { debug() {}, info() {}, warn() {}, error() {} };
+await resolved.extension.setup({
+  get() {},
+  require() { throw new Error('unexpected contract requirement'); },
+  provide(name, impl) { if (name === 'CodeParser') codeParser = impl; },
+  config: {},
+  logger,
+});
+if (!codeParser) throw new Error('CodeParser was not registered');
+const ast = await codeParser.parse({
+  code: 'export default function Page(): JSX.Element { return <main />; }',
+  filePath: 'app/page.tsx',
+});
+if (ast?.type !== 'File') throw new Error('TSX parse failed');
+await resolved.extension.teardown?.();
+" || fail "root optional builtin did not register a working CodeParser"
 
 echo "== 2. root install: transformers optional peer declared"
 node -e "

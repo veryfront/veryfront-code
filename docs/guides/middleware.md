@@ -157,6 +157,33 @@ const pipeline = new MiddlewarePipeline()
   .use(cors({ origin: "*" }));
 ```
 
+## Project-wide root middleware
+
+Add `middleware.ts`, `middleware.js`, or `middleware.mjs` at the project root to run middleware before every project route. Export one middleware function or an array of functions:
+
+```ts
+// middleware.ts
+import type { MiddlewareHandler } from "veryfront/middleware";
+
+const requireAccess: MiddlewareHandler = async (c, next) => {
+  if (!c.request.headers.has("authorization")) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const response = await next();
+  response?.headers.set("x-project-middleware", "applied");
+  return response;
+};
+
+export default requireAccess;
+```
+
+Root middleware has the same ordering and short-circuit contract in local development, dedicated production servers, and the shared hosted runtime. The shared runtime resolves and compiles the file only after it has authenticated the project and selected its release or preview branch. Middleware receives only that request's project environment through `c.env`.
+
+Production middleware is cached by project, environment, and immutable release or preview branch. Preview cache invalidation reloads the file after source changes, and the cache has a fixed entry limit. A missing file passes through normally.
+
+Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
+
 ## Verify it worked
 
 Hit a route with and without the headers the middleware expects:

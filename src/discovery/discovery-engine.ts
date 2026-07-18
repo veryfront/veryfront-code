@@ -135,7 +135,13 @@ async function discoverItems<T>(
           continue;
         }
 
-        const registered = handler.register(id, candidate.item, file, dir);
+        const registered = handler.register(
+          id,
+          candidate.item,
+          file,
+          dir,
+          candidate.exportName,
+        );
         resultMap.set(id, registered);
 
         if (verbose) {

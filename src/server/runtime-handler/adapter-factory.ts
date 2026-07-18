@@ -14,6 +14,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getConfig } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { timeAsync } from "./request-lifecycle.ts";
 import {
   defaultDiscoveryCache,
@@ -67,10 +68,19 @@ interface AdapterResolutionOptions {
   environmentName: string | undefined;
   /** Parsed domain info */
   parsedDomain: ParsedDomain;
+  /** Request pathname, used to decide whether config failures can safely fall back. */
+  pathname?: string;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
   cache?: ProjectDiscoveryCache;
+}
+
+function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
+  return opts.isProxyMode &&
+    !!opts.projectSlug &&
+    !!opts.proxyToken &&
+    isConfigOptionalControlPlaneRunRequest(opts.req.method, opts.pathname);
 }
 
 /**
@@ -134,8 +144,9 @@ export async function resolveAdapter(
 
     effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
 
-    // Load project-specific config
-    try {
+    if (usesExactSourceConfig(opts)) {
+      effectiveConfig = undefined;
+    } else {
       effectiveConfig = await timeAsync(
         "config:load-project",
         () => getConfig(effectiveProjectDir, effectiveAdapter),
@@ -147,14 +158,23 @@ export async function resolveAdapter(
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
-    } catch (error) {
-      logger.warn("Failed to load project config, using defaults", {
-        projectSlug: opts.projectSlug,
-        projectDir: effectiveProjectDir,
-        error: getErrorMessage(error),
-      });
     }
   } else if (opts.isProxyMode && opts.projectSlug && opts.proxyToken) {
+    if (usesExactSourceConfig(opts)) {
+      logger.debug("Skipping outer config load for exact-source control-plane request", {
+        projectSlug: opts.projectSlug,
+        projectId: opts.projectId,
+        pathname: opts.pathname,
+      });
+      effectiveConfig = undefined;
+      return {
+        projectDir: effectiveProjectDir,
+        adapter: effectiveAdapter,
+        config: effectiveConfig,
+        isLocalProject,
+      };
+    }
+
     // Load config via proxy mode with project context.
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.

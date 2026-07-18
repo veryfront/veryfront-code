@@ -26,12 +26,7 @@ export interface FileSystem {
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   readDir(
     path: string,
-  ): AsyncIterable<{
-    name: string;
-    isFile: boolean;
-    isDirectory: boolean;
-    isSymlink?: boolean;
-  }>;
+  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(options?: { prefix?: string }): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
@@ -187,7 +182,7 @@ class NodeFileSystem implements FileSystem {
     name: string;
     isFile: boolean;
     isDirectory: boolean;
-    isSymlink: boolean;
+    isSymlink?: boolean;
   }> {
     await this.ensureInitialized();
     const entries = await this.getFs().readdir(path, { withFileTypes: true });
@@ -288,7 +283,7 @@ class DenoFileSystem implements FileSystem {
     name: string;
     isFile: boolean;
     isDirectory: boolean;
-    isSymlink: boolean;
+    isSymlink?: boolean;
   }> {
     for await (const entry of denoGlobal().readDir(path)) {
       yield {
@@ -359,6 +354,30 @@ export function stat(path: string): Promise<FileInfo> {
   return getFs().stat(path);
 }
 
+/** Read file metadata without following a terminal symbolic link. */
+export async function lstat(path: string): Promise<FileInfo> {
+  if (isDeno) {
+    const info = await denoGlobal().lstat(path);
+    return {
+      isFile: info.isFile,
+      isDirectory: info.isDirectory,
+      isSymlink: info.isSymlink,
+      size: info.size,
+      mtime: info.mtime,
+    };
+  }
+
+  const fs = await import("node:fs/promises");
+  const info = await fs.lstat(path);
+  return {
+    isFile: info.isFile(),
+    isDirectory: info.isDirectory(),
+    isSymlink: info.isSymbolicLink(),
+    size: info.size,
+    mtime: info.mtime,
+  };
+}
+
 /** Create a directory. */
 export function mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().mkdir(path, options);
@@ -372,7 +391,12 @@ export function remove(path: string, options?: { recursive?: boolean }): Promise
 /** Read directory entries. */
 export function readDir(
   path: string,
-): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+): AsyncIterable<{
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink?: boolean;
+}> {
   return getFs().readDir(path);
 }
 
@@ -420,7 +444,10 @@ type DenoGlobal = typeof globalThis & {
 };
 
 /** Error shape for is not found. */
-export function isNotFoundError(error: unknown): boolean {
+export function isNotFoundError(error: unknown, seen: Set<unknown> = new Set()): boolean {
+  if (seen.has(error)) return false;
+  seen.add(error);
+
   const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
   if (isDeno && NotFound && error instanceof NotFound) return true;
   if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
@@ -430,6 +457,11 @@ export function isNotFoundError(error: unknown): boolean {
   ) {
     return true;
   }
+
+  if (error instanceof Error && "cause" in error) {
+    return isNotFoundError(error.cause, seen);
+  }
+
   return false;
 }
 

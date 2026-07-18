@@ -5,6 +5,7 @@
 import { dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
+import { isErroredToolExecutionResult, type Tool, type ToolExecutionContext } from "veryfront/tool";
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
@@ -15,17 +16,26 @@ import type {
   EvalRecord,
   EvalReport,
   EvalReportComparison,
+  EvalReportComparisonPolicy,
   EvalReportExportConfig,
+  EvalToolAdapterContext,
   EvalToolCall,
   EvalUsage,
 } from "veryfront/eval";
-import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
+import { orchestrateExtensions } from "veryfront/extensions";
+import {
+  createEvalReportExporterRegistry,
+  type EvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+  type EvalReportExportRedaction,
+} from "veryfront/extensions/eval";
+import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 import {
   compareEvalModelReports,
   compareEvalReports,
   createEvalModelComparisonMarkdown,
   createEvalRunId,
-  discoverEvals,
+  EVAL_REPORT_SCHEMA_VERSION,
   exportEvalReport,
   resolveEvalRunProvenance,
   runEval,
@@ -38,15 +48,27 @@ import {
 import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
+  discoverProjectAgentRuntime,
+  type ProjectAgentRuntimeDiscovery,
+  runWithProjectAgentRuntime,
+} from "../../../src/agent/project/agent-runtime.ts";
+import {
   createErrorEnvelope,
   createSuccessEnvelope,
   isJsonMode,
   outputJson,
 } from "../../shared/json-output.ts";
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
+import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
 
-export interface EvalOptions extends EvalArgs {}
+export interface EvalOptions extends EvalArgs {
+  projectDir?: string;
+}
+
+interface EvalCommandDependencies {
+  discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
+}
 
 type CliEvalSummary = {
   runId: string;
@@ -79,10 +101,12 @@ type EvalModelComparisonArtifactPaths = {
 
 type EvalSummaryArtifact = {
   kind: "eval-summary";
+  schemaVersion: number;
   runId: string;
   definitionId: string;
   targetKind: EvalReport["targetKind"];
   target: string;
+  dataset?: EvalReport["dataset"];
   startedAt: string;
   endedAt: string;
   summary: EvalReport["summary"];
@@ -114,6 +138,16 @@ type GatewayBillingFinalizeOptions = {
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
 
 const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
+const ENV_EVAL_EXPORTERS = "VERYFRONT_EVAL_EXPORTERS";
+const ENV_EVAL_EXPORT = "VERYFRONT_EVAL_EXPORT";
+const ENV_EVAL_EXPORT_INCLUDE_INPUTS = "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS";
+const ENV_EVAL_EXPORT_INCLUDE_OUTPUTS = "VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS";
+const ENV_EVAL_EXPORT_INCLUDE_REFERENCES = "VERYFRONT_EVAL_EXPORT_INCLUDE_REFERENCES";
+const ENV_EVAL_EXPORT_INCLUDE_TRACES = "VERYFRONT_EVAL_EXPORT_INCLUDE_TRACES";
+const ENV_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE = "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE";
+const ENV_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS =
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS";
+const ENV_EVAL_EXPORT_METADATA_ALLOWLIST = "VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST";
 // Gateway usage capture is eventually consistent after model streams close.
 const DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS = [
   500,
@@ -290,16 +324,38 @@ export function createSummaryArtifact(
 ): EvalSummaryArtifact {
   return {
     kind: "eval-summary",
+    schemaVersion: report.schemaVersion ?? EVAL_REPORT_SCHEMA_VERSION,
     runId: report.runId,
     definitionId: report.definitionId,
     targetKind: report.targetKind,
     target: report.target,
+    ...(report.dataset ? { dataset: report.dataset } : {}),
     startedAt: report.startedAt,
     endedAt: report.endedAt,
     summary: report.summary,
     ...(report.metadata ? { metadata: report.metadata } : {}),
     ...(report.exports ? { exports: report.exports } : {}),
     ...(baseline ? { baseline } : {}),
+  };
+}
+
+function createEvalBaselineComparisonPolicy(options: EvalOptions): EvalReportComparisonPolicy {
+  return {
+    ...(options.baselinePassRateDropThreshold !== undefined
+      ? { passRateDropThreshold: options.baselinePassRateDropThreshold }
+      : {}),
+    ...(options.baselineMetricPassRateDropThreshold !== undefined
+      ? { metricPassRateDropThreshold: options.baselineMetricPassRateDropThreshold }
+      : {}),
+    ...(options.baselineFailedDeltaThreshold !== undefined
+      ? { failedDeltaThreshold: options.baselineFailedDeltaThreshold }
+      : {}),
+    ...(options.baselineUsageIncreaseThreshold !== undefined
+      ? { usageIncreaseThreshold: options.baselineUsageIncreaseThreshold }
+      : {}),
+    ...(options.baselineLatencyIncreaseThreshold !== undefined
+      ? { latencyIncreaseThreshold: options.baselineLatencyIncreaseThreshold }
+      : {}),
   };
 }
 
@@ -900,6 +956,10 @@ function resolveAgentTargetId(target: string): string {
   return target.startsWith("agent:") ? target.slice("agent:".length) : target;
 }
 
+export function resolveToolTargetId(target: string): string {
+  return target.startsWith("tool:") ? target.slice("tool:".length) : target;
+}
+
 type EvalRuntimeAuthConfig = Pick<VeryfrontConfig, "projectSlug" | "fs"> & {
   projectSlug?: string;
 };
@@ -918,6 +978,17 @@ export async function hydrateEvalRuntimeAuth(
     projectDir,
     projectSlug: resolveEvalRuntimeProjectSlug(config),
   });
+}
+
+function createEvalToolExecutionContext(
+  config: EvalRuntimeAuthConfig | null | undefined,
+): ToolExecutionContext {
+  const projectSlug = resolveEvalRuntimeProjectSlug(config);
+  const authToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  return {
+    ...(projectSlug ? { projectSlug } : {}),
+    ...(authToken ? { authToken } : {}),
+  };
 }
 
 export function normalizeUsage(response: AgentResponse) {
@@ -994,6 +1065,19 @@ export function normalizeToolCalls(response: AgentResponse): EvalToolCall[] {
   }));
 }
 
+function getToolExecutionErrorMessage(output: unknown): string | undefined {
+  if (!isErroredToolExecutionResult(output)) return undefined;
+  if (isRecord(output) && typeof output.error === "string") return output.error;
+  if (isRecord(output) && isRecord(output.output) && typeof output.output.error === "string") {
+    return output.output.error;
+  }
+  return "Tool execution returned an error result.";
+}
+
+function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): string {
+  return `eval-${toolId}-${context.example.id}-${context.repetition}-${crypto.randomUUID()}`;
+}
+
 function createAgentAdapter(agent: Agent, options: EvalOptions) {
   return async ({ example }: EvalAgentAdapterContext) => {
     const started = Date.now();
@@ -1016,6 +1100,26 @@ function createAgentAdapter(agent: Agent, options: EvalOptions) {
   };
 }
 
+export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext = {}) {
+  return async (context: EvalToolAdapterContext) => {
+    const started = Date.now();
+    const toolCallId = createEvalToolCallId(tool.id, context);
+    const output = await tool.execute(context.input, {
+      ...baseContext,
+      runId: context.runId,
+      toolCallId,
+    });
+    const error = getToolExecutionErrorMessage(output);
+    return {
+      output,
+      toolCallId,
+      durationMs: Date.now() - started,
+      completed: !error,
+      ...(error ? { error } : {}),
+    };
+  };
+}
+
 function listEvals(evals: DiscoveredEval[], projectDir: string) {
   return evals.map((item) => ({
     id: item.id,
@@ -1026,6 +1130,22 @@ function listEvals(evals: DiscoveredEval[], projectDir: string) {
       exportName: item.exportName,
     },
   }));
+}
+
+function getDiscoveredEvals(runtime: ProjectAgentRuntimeDiscovery): DiscoveredEval[] {
+  return [...runtime.evals.entries()].map(([id, definition]) => {
+    if (!definition.source) {
+      throw new Error(`Discovered eval "${id}" is missing source metadata.`);
+    }
+
+    return {
+      id,
+      name: definition.name,
+      filePath: definition.source.filePath,
+      exportName: definition.source.exportName,
+      definition,
+    };
+  });
 }
 
 function printReport(report: EvalReport, baseline?: EvalReportComparison): void {
@@ -1066,23 +1186,29 @@ function printReport(report: EvalReport, baseline?: EvalReportComparison): void 
   }
 }
 
-function createEvalCliExportConfig(
+export function createEvalCliExportConfig(
   evalItem: DiscoveredEval,
   options: EvalOptions,
   projectDir: string,
   artifactPaths: EvalArtifactPaths,
+  registry: EvalReportExporterRegistry,
+  config?: EvalRuntimeAuthConfig | null,
 ): EvalReportExportConfig | undefined {
-  if (options.exporters.length === 0) return undefined;
+  const exporterIds = resolveEvalExporterIds(options);
+  if (exporterIds.length === 0) return undefined;
+  const projectReference = resolveEvalRuntimeProjectSlug(config);
 
   return {
-    exporterIds: options.exporters,
+    registry,
+    exporterIds,
     context: {
       evalId: evalItem.definition.id,
+      ...(projectReference ? { projectReference } : {}),
       sourcePath: displaySourcePath(evalItem.filePath, projectDir),
       reportPath: options.report ?? artifactPaths.summary,
       tags: evalItem.definition.tags,
       metadata: evalItem.definition.metadata,
-      redaction: {},
+      redaction: resolveEvalExportRedactionFromEnv(),
     },
   };
 }
@@ -1101,6 +1227,117 @@ type ResolvedEvalModelComparisonConfig = {
 
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function readEvalCliEnv(name: string): string | undefined {
+  try {
+    const value = Deno.env.get(name);
+    return value && value.trim().length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseEvalExporterList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+export function resolveEvalExporterIds(options: Pick<EvalOptions, "exporters">): string[] {
+  if (options.exporters.length > 0) return uniqueValues(options.exporters);
+
+  const envExporters = parseEvalExporterList(readEvalCliEnv(ENV_EVAL_EXPORTERS));
+  if (envExporters.length > 0) return uniqueValues(envExporters);
+
+  return uniqueValues(parseEvalExporterList(readEvalCliEnv(ENV_EVAL_EXPORT)));
+}
+
+function parseEvalExportBooleanEnv(name: string): boolean | undefined {
+  const value = readEvalCliEnv(name)?.toLowerCase();
+  if (value === undefined) return undefined;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return false;
+}
+
+function assignEvalExportBooleanEnv(
+  redaction: EvalReportExportRedaction,
+  key: keyof Pick<
+    EvalReportExportRedaction,
+    | "includeInputs"
+    | "includeOutputs"
+    | "includeReferences"
+    | "includeTraces"
+    | "includeMetricEvidence"
+    | "includeMetricExplanations"
+  >,
+  envName: string,
+): void {
+  const value = parseEvalExportBooleanEnv(envName);
+  if (value !== undefined) redaction[key] = value;
+}
+
+export function resolveEvalExportRedactionFromEnv(): EvalReportExportRedaction {
+  const redaction: EvalReportExportRedaction = {};
+  assignEvalExportBooleanEnv(redaction, "includeInputs", ENV_EVAL_EXPORT_INCLUDE_INPUTS);
+  assignEvalExportBooleanEnv(redaction, "includeOutputs", ENV_EVAL_EXPORT_INCLUDE_OUTPUTS);
+  assignEvalExportBooleanEnv(redaction, "includeReferences", ENV_EVAL_EXPORT_INCLUDE_REFERENCES);
+  assignEvalExportBooleanEnv(redaction, "includeTraces", ENV_EVAL_EXPORT_INCLUDE_TRACES);
+  assignEvalExportBooleanEnv(
+    redaction,
+    "includeMetricEvidence",
+    ENV_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE,
+  );
+  assignEvalExportBooleanEnv(
+    redaction,
+    "includeMetricExplanations",
+    ENV_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS,
+  );
+
+  const metadataAllowlist = parseEvalExporterList(
+    readEvalCliEnv(ENV_EVAL_EXPORT_METADATA_ALLOWLIST),
+  );
+  if (metadataAllowlist.length > 0) redaction.metadataAllowlist = uniqueValues(metadataAllowlist);
+
+  return redaction;
+}
+
+type EvalCliExtensionSetup = {
+  loader: Awaited<ReturnType<typeof orchestrateExtensions>>;
+  exporterRegistry: EvalReportExporterRegistry;
+};
+
+function createEvalCliPrimeContracts(): {
+  contracts: Record<string, unknown>;
+  exporterRegistry: EvalReportExporterRegistry;
+} {
+  const exporterRegistry = createEvalReportExporterRegistry();
+  return {
+    exporterRegistry,
+    contracts: {
+      [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      [EvalReportExporterRegistryName]: exporterRegistry,
+    },
+  };
+}
+
+async function setupEvalCliExtensions(
+  projectDir: string,
+  config: VeryfrontConfig,
+  exporterIds: string[],
+): Promise<EvalCliExtensionSetup> {
+  const primeContracts = createEvalCliPrimeContracts();
+  const loader = await orchestrateExtensions({
+    projectDir,
+    config,
+    logger: cliLogger.component("eval-extensions"),
+    primeContracts: primeContracts.contracts,
+    builtinExtensions: createEvalCliBuiltinExtensions(exporterIds),
+  });
+  return { loader, exporterRegistry: primeContracts.exporterRegistry };
 }
 
 function resolveEvalModelComparisonConfig(
@@ -1160,7 +1397,9 @@ async function runEvalModelComparison(input: {
   projectDir: string;
   config: EvalModelComparisonConfig;
   policy: EvalModelComparisonPolicy;
-}): Promise<void> {
+  exporterRegistry: EvalReportExporterRegistry;
+  projectReference?: string;
+}): Promise<0 | 1> {
   const runId = createEvalRunId();
   const reportDir = input.options.reportDir ??
     createDefaultEvalReportDir(runId, input.evalItem.id);
@@ -1180,6 +1419,8 @@ async function runEvalModelComparison(input: {
       modelOptions,
       input.projectDir,
       modelPaths,
+      input.exporterRegistry,
+      input.projectReference ? { projectSlug: input.projectReference } : undefined,
     );
     const finalizedReport = await runEvalWithGatewayBillingGroup(
       modelRunId,
@@ -1238,10 +1479,10 @@ async function runEvalModelComparison(input: {
     if (input.options.report) cliLogger.info(`Report: ${input.options.report}`);
   }
 
-  exitProcess(createEvalModelComparisonExitCode(reports));
+  return createEvalModelComparisonExitCode(reports);
 }
 
-async function outputEvalNotFound(id: string, evals: DiscoveredEval[]): Promise<void> {
+async function outputEvalNotFound(id: string, evals: DiscoveredEval[]): Promise<1> {
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("eval", {
       code: "NOT_FOUND",
@@ -1258,10 +1499,10 @@ async function outputEvalNotFound(id: string, evals: DiscoveredEval[]): Promise<
       cliLogger.info("No evals found. Create an eval file in evals/.");
     }
   }
-  exitProcess(1);
+  return 1;
 }
 
-async function outputAgentNotFound(agentId: string): Promise<void> {
+async function outputAgentNotFound(agentId: string): Promise<1> {
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("eval", {
       code: "NOT_FOUND",
@@ -1271,10 +1512,23 @@ async function outputAgentNotFound(agentId: string): Promise<void> {
   } else {
     cliLogger.error(`Agent "${agentId}" not found for eval target.`);
   }
-  exitProcess(1);
+  return 1;
 }
 
-async function outputEvalUsageError(message: string): Promise<void> {
+async function outputToolNotFound(toolId: string): Promise<1> {
+  if (isJsonMode()) {
+    await outputJson(createErrorEnvelope("eval", {
+      code: "NOT_FOUND",
+      slug: "eval-tool-not-found",
+      message: `Tool "${toolId}" not found`,
+    }));
+  } else {
+    cliLogger.error(`Tool "${toolId}" not found for eval target.`);
+  }
+  return 1;
+}
+
+async function outputEvalUsageError(message: string): Promise<2> {
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("eval", {
       code: "USAGE_ERROR",
@@ -1284,40 +1538,59 @@ async function outputEvalUsageError(message: string): Promise<void> {
   } else {
     cliLogger.error(message);
   }
-  exitProcess(2);
+  return 2;
 }
 
-export async function evalCommand(options: EvalOptions): Promise<void> {
-  const projectDir = Deno.cwd();
+export async function runEvalCommand(
+  options: EvalOptions,
+  dependencies: EvalCommandDependencies = {},
+): Promise<number | undefined> {
+  const projectDir = options.projectDir ?? Deno.cwd();
+  const discoverRuntime = dependencies.discoverProjectAgentRuntime ?? discoverProjectAgentRuntime;
 
-  await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
+  return await withProjectSourceContext(projectDir, async (context) => {
+    const { adapter, config, configCacheKey } = context;
     await hydrateEvalRuntimeAuth(projectDir, config);
 
-    const evalDiscovery = await discoverEvals({ projectDir, adapter, config });
+    const projectRuntime = await discoverRuntime({
+      projectDir,
+      adapter,
+      config,
+      fsAdapter: adapter.fs,
+      cacheKey: configCacheKey,
+      verbose: options.debug,
+    });
+    const evals = getDiscoveredEvals(projectRuntime);
 
     if (options.debug) {
-      for (const error of evalDiscovery.errors) {
-        cliLogger.warn(`Eval discovery warning: ${error.filePath}: ${error.error}`);
+      for (const error of projectRuntime.errors) {
+        cliLogger.warn(`Eval discovery warning: ${error.file}: ${error.error.message}`);
       }
     }
 
     if (options.list) {
-      const evals = listEvals(evalDiscovery.evals, projectDir);
+      const listedEvals = listEvals(evals, projectDir);
       if (isJsonMode()) {
-        await outputJson(createSuccessEnvelope("eval", { evals, errors: evalDiscovery.errors }));
-        return;
+        await outputJson(createSuccessEnvelope("eval", {
+          evals: listedEvals,
+          errors: projectRuntime.errors.map((error) => ({
+            filePath: error.file,
+            error: error.error.message,
+          })),
+        }));
+        return undefined;
       }
 
-      if (evals.length === 0) {
+      if (listedEvals.length === 0) {
         cliLogger.info("No evals found.");
-        return;
+        return undefined;
       }
 
       cliLogger.info("Evals:");
-      for (const item of evals) {
+      for (const item of listedEvals) {
         cliLogger.info(`  - ${item.id} (${item.target})`);
       }
-      return;
+      return undefined;
     }
 
     if (!options.id) {
@@ -1330,111 +1603,164 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       } else {
         cliLogger.error("Eval id is required. Usage: veryfront eval <eval-id>");
       }
-      exitProcess(2);
-      return;
+      return 2;
     }
 
     const evalId = normalizeEvalCliId(options.id);
-    const evalItem = findEvalForCliId(evalDiscovery.evals, options.id);
+    const evalItem = findEvalForCliId(evals, options.id);
     if (!evalItem) {
-      await outputEvalNotFound(evalId, evalDiscovery.evals);
-      return;
+      return await outputEvalNotFound(evalId, evals);
     }
 
     let modelComparisonConfig: ResolvedEvalModelComparisonConfig | undefined;
     try {
-      modelComparisonConfig = await createResolvedEvalModelComparisonConfig(projectDir, options);
+      modelComparisonConfig = await createResolvedEvalModelComparisonConfig(
+        projectDir,
+        options,
+      );
     } catch (error) {
-      await outputEvalUsageError(error instanceof Error ? error.message : String(error));
-      return;
+      return await outputEvalUsageError(error instanceof Error ? error.message : String(error));
     }
 
-    const discoveryConfig = createProjectDiscoveryConfig({
+    if (evalItem.definition.targetKind !== "agent") {
+      if (modelComparisonConfig) {
+        return await outputEvalUsageError(
+          "Model comparison flags are only supported for agent evals.",
+        );
+      }
+      if (options.model || options.maxOutputTokens) {
+        return await outputEvalUsageError(
+          "--model and --max-output-tokens are only supported for agent evals.",
+        );
+      }
+    }
+
+    const selectedExporterIds = resolveEvalExporterIds(options);
+    const extensionSetup = await setupEvalCliExtensions(
       projectDir,
       config,
-      fsAdapter: adapter.fs,
-      verbose: options.debug,
-    });
-    const projectDiscovery = await discoverAll(discoveryConfig);
-    const agentId = resolveAgentTargetId(evalItem.definition.target);
-    const agent = projectDiscovery.agents.get(agentId);
-    if (!agent) {
-      await outputAgentNotFound(agentId);
-      return;
-    }
+      selectedExporterIds,
+    );
 
-    if (modelComparisonConfig) {
-      await runEvalModelComparison({
+    try {
+      const agentId = evalItem.definition.targetKind === "agent"
+        ? resolveAgentTargetId(evalItem.definition.target)
+        : undefined;
+      const toolId = evalItem.definition.targetKind === "tool"
+        ? resolveToolTargetId(evalItem.definition.target)
+        : undefined;
+      const agent = agentId ? projectRuntime.agents.get(agentId) : undefined;
+      const tool = toolId ? projectRuntime.tools.get(toolId) : undefined;
+
+      if (agentId && !agent) {
+        return await outputAgentNotFound(agentId);
+      }
+      if (toolId && !tool) {
+        return await outputToolNotFound(toolId);
+      }
+
+      if (modelComparisonConfig) {
+        return await runWithProjectAgentRuntime(
+          projectRuntime,
+          () =>
+            runEvalModelComparison({
+              evalItem,
+              agent: agent!,
+              options,
+              projectDir,
+              config: modelComparisonConfig.config,
+              policy: modelComparisonConfig.policy,
+              exporterRegistry: extensionSetup.exporterRegistry,
+              projectReference: resolveEvalRuntimeProjectSlug(config),
+            }),
+        );
+      }
+
+      const runId = createEvalRunId();
+      const artifactPaths = createEvalArtifactPaths(
+        options.reportDir ?? createDefaultEvalReportDir(runId, evalItem.id),
+      );
+      const provenance = await resolveEvalRunProvenance({
+        projectDir,
+        frameworkVersion: VERSION,
+      });
+      const billingGroupId = options.model
+        ? `${runId}_${sanitizeModelIdForPath(options.model)}`
+        : runId;
+      const exportConfig = createEvalCliExportConfig(
         evalItem,
-        agent,
         options,
         projectDir,
-        config: modelComparisonConfig.config,
-        policy: modelComparisonConfig.policy,
-      });
-      return;
-    }
+        artifactPaths,
+        extensionSetup.exporterRegistry,
+        config,
+      );
+      const finalizedReport = await runWithProjectAgentRuntime(
+        projectRuntime,
+        () =>
+          runEvalWithGatewayBillingGroup(
+            billingGroupId,
+            () =>
+              runEval(evalItem.definition, {
+                baseDir: options.datasetBase ?? projectDir,
+                runId,
+                adapters: evalItem.definition.targetKind === "tool"
+                  ? { tool: createToolAdapter(tool!, createEvalToolExecutionContext(config)) }
+                  : { agent: createAgentAdapter(agent!, options) },
+                metadata: {
+                  provenance,
+                  ...(options.model ? { model: options.model } : {}),
+                },
+              }),
+          ),
+      );
+      const report = await exportEvalReportForCli(finalizedReport, exportConfig);
 
-    const runId = createEvalRunId();
-    const artifactPaths = createEvalArtifactPaths(
-      options.reportDir ?? createDefaultEvalReportDir(runId, evalItem.id),
-    );
-    const provenance = await resolveEvalRunProvenance({
-      projectDir,
-      frameworkVersion: VERSION,
-    });
-    const billingGroupId = options.model
-      ? `${runId}_${sanitizeModelIdForPath(options.model)}`
-      : runId;
-    const exportConfig = createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths);
-    const finalizedReport = await runEvalWithGatewayBillingGroup(
-      billingGroupId,
-      () =>
-        runEval(evalItem.definition, {
-          baseDir: options.datasetBase ?? projectDir,
-          runId,
-          adapters: {
-            agent: createAgentAdapter(agent, options),
-          },
-          metadata: {
-            provenance,
-            ...(options.model ? { model: options.model } : {}),
-          },
-        }),
-    );
-    const report = await exportEvalReportForCli(finalizedReport, exportConfig);
+      const baseline = options.baseline
+        ? compareEvalReports(
+          report,
+          await readEvalReport(options.baseline),
+          createEvalBaselineComparisonPolicy(options),
+        )
+        : undefined;
 
-    const baseline = options.baseline
-      ? compareEvalReports(report, await readEvalReport(options.baseline))
-      : undefined;
+      await writeEvalArtifacts(report, artifactPaths, baseline);
+      if (options.report) {
+        await writeTextFileEnsuringDir(options.report, JSON.stringify(report, null, 2));
+      }
+      if (options.junit) {
+        await writeTextFileEnsuringDir(options.junit, createJunitXml(report));
+      }
+      if (options.writeBaseline) {
+        await writeTextFileEnsuringDir(options.writeBaseline, JSON.stringify(report, null, 2));
+      }
 
-    await writeEvalArtifacts(report, artifactPaths, baseline);
-    if (options.report) {
-      await writeTextFileEnsuringDir(options.report, JSON.stringify(report, null, 2));
-    }
-    if (options.junit) {
-      await writeTextFileEnsuringDir(options.junit, createJunitXml(report));
-    }
-    if (options.writeBaseline) {
-      await writeTextFileEnsuringDir(options.writeBaseline, JSON.stringify(report, null, 2));
-    }
+      if (isJsonMode()) {
+        await outputJson(createSuccessEnvelope("eval", {
+          report,
+          summary: summarizeReportForCli(report),
+          baseline,
+          artifacts: artifactPaths,
+        }));
+      } else {
+        printReport(report, baseline);
+        cliLogger.info(`Report directory: ${artifactPaths.directory}`);
+        cliLogger.info(`Report markdown: ${artifactPaths.reportMarkdown}`);
+        if (options.report) cliLogger.info(`Report: ${options.report}`);
+        if (options.junit) cliLogger.info(`JUnit: ${options.junit}`);
+        if (options.writeBaseline) cliLogger.info(`Baseline written: ${options.writeBaseline}`);
+      }
 
-    if (isJsonMode()) {
-      await outputJson(createSuccessEnvelope("eval", {
-        report,
-        summary: summarizeReportForCli(report),
-        baseline,
-        artifacts: artifactPaths,
-      }));
-    } else {
-      printReport(report, baseline);
-      cliLogger.info(`Report directory: ${artifactPaths.directory}`);
-      cliLogger.info(`Report markdown: ${artifactPaths.reportMarkdown}`);
-      if (options.report) cliLogger.info(`Report: ${options.report}`);
-      if (options.junit) cliLogger.info(`JUnit: ${options.junit}`);
-      if (options.writeBaseline) cliLogger.info(`Baseline written: ${options.writeBaseline}`);
+      return createEvalExitCode(report, baseline);
+    } finally {
+      await extensionSetup.loader.teardownAll();
     }
-
-    exitProcess(createEvalExitCode(report, baseline));
   });
+}
+
+export async function evalCommand(options: EvalOptions): Promise<void> {
+  const exitCode = await runEvalCommand(options);
+  if (typeof exitCode === "number") {
+    exitProcess(exitCode);
+  }
 }

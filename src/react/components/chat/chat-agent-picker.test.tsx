@@ -18,16 +18,16 @@ describe("react/components/chat/chat-agent-picker: agentsToPickerOptions", () =>
         agent("sales", { name: "Sales" }),
       ]),
       [
-        { id: "support", name: "Support", avatarSrc: "https://cdn/x.svg" },
-        { id: "sales", name: "Sales" },
+        { id: "support", name: "Support", avatarUrl: "https://cdn/x.svg" },
+        { id: "sales", name: "Sales", avatarUrl: null },
       ],
     );
   });
 
-  it("omits avatarSrc when the agent has no avatar", () => {
+  it("carries a null avatar url through when the agent has no avatar", () => {
     const rows = agentsToPickerOptions([agent("solo", { name: "Solo" })]);
     assertEquals(rows.length, 1);
-    assertEquals("avatarSrc" in rows[0]!, false);
+    assertEquals(rows[0]!.avatarUrl, null);
   });
 });
 

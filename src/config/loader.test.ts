@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
@@ -7,9 +7,15 @@ import {
   getCachedConfigSync,
   getConfig,
   mergeConfigs,
+  rewriteBareVeryfrontConfigImports,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 function setup() {
   clearConfigCache();
@@ -47,6 +53,67 @@ export default config as const;
     });
   });
 
+  describe("rewriteBareVeryfrontConfigImports", () => {
+    afterAll(async () => {
+      await stopEsbuild();
+    });
+
+    it("rewrites bare veryfront specifiers to a loadable shim", () => {
+      const rewritten = rewriteBareVeryfrontConfigImports(
+        'import { defineConfig } from "veryfront";\nexport default defineConfig({});',
+      );
+
+      assert(!rewritten.includes('"veryfront"'), "bare specifier must be replaced");
+      assert(rewritten.includes("data:text/javascript,"), "specifier must point at the shim");
+    });
+
+    it("handles single quotes and leaves other specifiers untouched", () => {
+      const rewritten = rewriteBareVeryfrontConfigImports(
+        "import { defineConfig } from 'veryfront';\nimport other from './local.ts';\nimport 'veryfront';",
+      );
+
+      assert(!rewritten.includes("'veryfront'"));
+      assert(rewritten.includes("./local.ts"), "relative imports must stay untouched");
+    });
+
+    it("does not rewrite veryfront subpath or lookalike specifiers", () => {
+      const source =
+        'import { a } from "veryfront/head";\nimport { b } from "not-veryfront";\nconst s = "veryfront";';
+      assertEquals(rewriteBareVeryfrontConfigImports(source), source);
+    });
+
+    it("produces a module whose defineConfig behaves as identity end to end", async () => {
+      const source = [
+        'import { defineConfig } from "veryfront";',
+        'export default defineConfig({ projectSlug: "shimmed", title: "Shim" });',
+      ].join("\n");
+
+      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
+      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
+      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
+        default: { projectSlug: string; title: string };
+      };
+
+      assertEquals(module.default.projectSlug, "shimmed");
+      assertEquals(module.default.title, "Shim");
+    });
+
+    it("shims defineConfigWithEnv with a working environment factory", async () => {
+      const source = [
+        'import { defineConfigWithEnv } from "veryfront";',
+        "export default defineConfigWithEnv((env) => ({ title: `env:${env}` }));",
+      ].join("\n");
+
+      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
+      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
+      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
+        default: { title: string };
+      };
+
+      assert(module.default.title.startsWith("env:"), "factory must receive an env name");
+    });
+  });
+
   describe("clearConfigCache", () => {
     it("should not throw when called on empty cache", () => {
       clearConfigCache();
@@ -72,6 +139,13 @@ export default config as const;
     it("should return null for uncached project", () => {
       clearConfigCache();
       assertEquals(getCachedConfigSync("/nonexistent-project"), null);
+    });
+
+    it("returns the config cached for a project directory", async () => {
+      const adapter = setup();
+      const config = await getConfig("/cached-project", adapter);
+
+      assertEquals(getCachedConfigSync("/cached-project"), config);
     });
 
     it("should return null after cache is cleared", async () => {
@@ -123,29 +197,267 @@ export default config as const;
 
     it("should load and validate a JS config file", async () => {
       const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-js-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { title: "JS Project" };';
 
-      adapter.fs.files.set(
-        "/js-project/veryfront.config.js",
-        'export default { title: "JS Project" };',
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const config = await getConfig(projectDir, adapter);
+        assertEquals(config.title, "JS Project");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("loads canonical source integration restrictions", async () => {
+      const adapter = setup();
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+      });
+      const projectDir = "/typed-integration-config";
+      const configPath = "/veryfront.config.ts";
+      const source = [
+        'import { defineConfig } from "veryfront";',
+        'export default defineConfig({ integrations: { allow: { linear: { allowedTools: ["search_issues"] } } } });',
+      ].join("\n");
+
+      adapter.fs.files.set(configPath, source);
+
+      const config = await getConfig(projectDir, adapter);
+      assertEquals(config.integrations, {
+        allow: { linear: { allowedTools: ["search_issues"] } },
+      });
+    });
+
+    it("isolates virtual config values by exact branch, release, and environment", async () => {
+      const adapter = setup();
+      const reads: string[] = [];
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        exists: async (path: string) => path === "/veryfront.config.ts",
+        readFile: async () => {
+          const source = getCurrentRequestContext();
+          const target = !source?.productionMode
+            ? `branch:${source?.branch ?? "main"}`
+            : source.environmentName
+            ? `env:${source.environmentName}:${source.releaseId}`
+            : `release:${source.releaseId}`;
+          reads.push(target);
+          return `export default { title: ${JSON.stringify(target)} };`;
+        },
+      });
+
+      const loadFor = (
+        source: Parameters<typeof runWithRequestContext>[0],
+      ) =>
+        runWithRequestContext(
+          source,
+          () =>
+            getConfig("/source-qualified-config", adapter, {
+              cacheKey: "project-1",
+              sourceContext: {
+                productionMode: source.productionMode ?? false,
+                releaseId: source.releaseId,
+                branch: source.branch,
+                environmentName: source.environmentName,
+              },
+            }),
+        );
+
+      const main = await loadFor({
+        projectSlug: "demo",
+        token: "token",
+        branch: "main",
+      });
+      const preview = await loadFor({
+        projectSlug: "demo",
+        token: "token",
+        branch: "feature/integrations",
+      });
+      const release = await loadFor({
+        projectSlug: "demo",
+        token: "token",
+        productionMode: true,
+        releaseId: "release-1",
+      });
+      const environment = await loadFor({
+        projectSlug: "demo",
+        token: "token",
+        productionMode: true,
+        releaseId: "release-1",
+        environmentName: "Production",
+      });
+
+      assertEquals(main.title, "branch:main");
+      assertEquals(preview.title, "branch:feature/integrations");
+      assertEquals(release.title, "release:release-1");
+      assertEquals(environment.title, "env:Production:release-1");
+
+      await loadFor({ projectSlug: "demo", token: "token", branch: "main" });
+      await loadFor({
+        projectSlug: "demo",
+        token: "token",
+        productionMode: true,
+        releaseId: "release-1",
+        environmentName: "Production",
+      });
+      assertEquals(reads, [
+        "branch:main",
+        "branch:feature/integrations",
+        "release:release-1",
+        "env:Production:release-1",
+        "branch:main",
+      ]);
+    });
+
+    it("reloads mutable branch config across request contexts", async () => {
+      const adapter = setup();
+      let revision = "first";
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        exists: async (path: string) => path === "/veryfront.config.ts",
+        readFile: async () => `export default { title: ${JSON.stringify(revision)} };`,
+      });
+
+      const sourceContext = { productionMode: false, branch: "feature/integrations" } as const;
+      const loadBranchConfig = () =>
+        runWithRequestContext(
+          { projectSlug: "demo", token: "token", branch: sourceContext.branch },
+          () =>
+            getConfig("/mutable-branch-config", adapter, {
+              cacheKey: "project-1",
+              sourceContext,
+            }),
+        );
+
+      const first = await loadBranchConfig();
+      revision = "second";
+      const second = await loadBranchConfig();
+
+      assertEquals(first.title, "first");
+      assertEquals(second.title, "second");
+    });
+
+    it("does not persist virtual config without an exact source", async () => {
+      const adapter = setup();
+      let revision = "first";
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        exists: async (path: string) => path === "/veryfront.config.ts",
+        readFile: async () => `export default { title: ${JSON.stringify(revision)} };`,
+      });
+
+      const first = await getConfig("/contextless-virtual-config", adapter);
+      revision = "second";
+      const second = await getConfig("/contextless-virtual-config", adapter);
+
+      assertEquals(first.title, "first");
+      assertEquals(second.title, "second");
+    });
+
+    it("rejects an explicit source that differs from the request context", async () => {
+      const adapter = setup();
+      let reads = 0;
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        exists: async () => true,
+        readFile: async () => {
+          reads++;
+          return 'export default { title: "wrong source" };';
+        },
+      });
+
+      await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo",
+              token: "token",
+              productionMode: true,
+              environmentName: "Production:release-1",
+              releaseId: "release-2",
+            },
+            () =>
+              getConfig("/mismatched-source-config", adapter, {
+                cacheKey: "project-1",
+                sourceContext: {
+                  productionMode: true,
+                  environmentName: "Production",
+                  releaseId: "release-1:release-2",
+                },
+              }),
+          ),
+        Error,
+        "does not match the current request context",
       );
+      assertEquals(reads, 0);
+    });
 
-      const config = await getConfig("/js-project", adapter);
-      // The mock adapter doesn't support dynamic import, so this falls through
-      // to defaults when the file can't be loaded. The test verifies the
-      // function handles the error gracefully.
-      assert(config !== null);
+    it("rejects legacy integration policy fields instead of normalizing them", async () => {
+      const adapter = setup();
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+      });
+      const projectDir = "/legacy-integration-config";
+      const configPath = "/veryfront.config.ts";
+      const source = [
+        'import { defineConfig } from "veryfront";',
+        'export default defineConfig({ integrations: { linear: { scope: "endUser", tools: ["search_issues"] } } });',
+      ].join("\n");
+
+      adapter.fs.files.set(configPath, source);
+
+      await assertRejects(
+        () => getConfig(projectDir, adapter),
+        Error,
+        "integrations.allow",
+      );
     });
 
     it("should try multiple config file names", async () => {
       const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-mjs-" });
+      const configPath = `${projectDir}/veryfront.config.mjs`;
+      const source = 'export default { title: "MJS Project" };';
 
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const config = await getConfig(projectDir, adapter);
+        assertEquals(config.title, "MJS Project");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects a detected config file that cannot be imported", async () => {
+      const adapter = setup();
       adapter.fs.files.set(
-        "/mjs-project/veryfront.config.mjs",
-        'export default { title: "MJS Project" };',
+        "/broken-project/veryfront.config.js",
+        "export default {",
       );
 
-      const config = await getConfig("/mjs-project", adapter);
-      assert(config !== null);
+      const error = await assertRejects(() => getConfig("/broken-project", adapter));
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "config-parse-error");
+      assertEquals(getCachedConfigSync("/broken-project"), null);
     });
 
     it("should produce fresh defaults per call after cache clear", async () => {

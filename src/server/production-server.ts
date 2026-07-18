@@ -2,11 +2,9 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { requestTracker } from "./runtime-handler/request-tracker.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { shutdownOTLP } from "#veryfront/observability";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   startConfiguredMemoryMonitoring,
@@ -23,7 +21,10 @@ import {
 } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
-import { markServerShuttingDown } from "./shutdown-state.ts";
+import {
+  gracefullyShutdownProductionServer,
+  parseShutdownDrainTimeoutMs,
+} from "./graceful-shutdown.ts";
 import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
@@ -33,10 +34,6 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
-
-/** Default time to wait for in-flight requests to drain during shutdown.
- *  K8s default terminationGracePeriodSeconds is 30s, so 25s leaves headroom. */
-const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 
 /** Default port when PORT / VERYFRONT_PORT env vars are not set */
 const DEFAULT_SERVER_PORT = 3_000;
@@ -265,6 +262,8 @@ export function startProductionServer(
           localProjects,
         });
 
+        const coreHandler = baseHandler;
+
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
         // creates a new Request object, which breaks Deno.upgradeWebSocket()
@@ -272,12 +271,12 @@ export function startProductionServer(
           ? Object.assign(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-              if (isWebSocketUpgrade) return baseHandler(req);
-              return baseHandler(await requestInterceptor(req));
+              if (isWebSocketUpgrade) return coreHandler(req);
+              return coreHandler(await requestInterceptor(req));
             },
-            { ready: baseHandler.ready },
+            { ready: coreHandler.ready },
           )
-          : baseHandler;
+          : coreHandler;
 
         let resolveListenReady: (() => void) | undefined;
         const listenReady = new Promise<void>((resolve) => {
@@ -408,9 +407,8 @@ if (import.meta.main) {
 
     // Graceful shutdown for direct CLI execution (e.g., deno run)
     // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
-    const drainTimeoutMs = parseInt(
-      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? String(DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS),
-      10,
+    const drainTimeoutMs = parseShutdownDrainTimeoutMs(
+      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
     );
 
     let shuttingDown = false;
@@ -418,40 +416,14 @@ if (import.meta.main) {
       if (shuttingDown) return;
       shuttingDown = true;
 
-      logger.info(`Received ${signal}, initiating graceful shutdown...`, {
-        inFlightRequests: requestTracker.getInFlightCount(),
+      await gracefullyShutdownProductionServer({
+        signal,
         drainTimeoutMs,
+        abort: () => shutdownController.abort(),
+        dispose: bootstrap.dispose,
+        stop: server.stop,
+        logger,
       });
-
-      // Phase 1: Enter lame-duck mode. markServerShuttingDown() makes the
-      // agent-work handlers reject NEW requests with 503 (before any side
-      // effects) so the API can retry against another instance, even while the
-      // pod IP is still directly reachable. setServerInitialized(false) flips
-      // /readyz to not-ready so K8s stops routing Service traffic.
-      markServerShuttingDown();
-      setServerInitialized(false);
-      logger.info("Server marked as not ready, waiting for in-flight requests to drain...");
-
-      try {
-        // Phase 2: Wait for in-flight requests to complete (graceful drain)
-        const drained = await requestTracker.waitForDrain(drainTimeoutMs);
-        if (!drained) {
-          logger.warn("Drain timeout exceeded, forcing shutdown", {
-            remainingRequests: requestTracker.getInFlightCount(),
-          });
-        }
-
-        // Phase 3: Stop accepting new connections and clean up
-        requestTracker.shutdown();
-        await bootstrap.dispose?.();
-        shutdownController.abort();
-        await server.stop();
-        await shutdownOTLP();
-
-        logger.info("Graceful shutdown complete");
-      } catch (error) {
-        logger.warn("Error while shutting down production server:", error);
-      }
     };
 
     const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {

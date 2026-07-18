@@ -48,9 +48,16 @@ describe("hydration-script-builder/templates/renderer", () => {
     it("should use the RSC module endpoint only for app router RSC client pages", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
-      assertIncludes(result, "normalizedPagePath.startsWith('app/')");
+      assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
       assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)");
       assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
+    });
+
+    it("uses the configured App Router root for pages and layouts", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "data.appRouterRoot");
+      assertIncludes(result, "function isAppRouterPath");
+      assertIncludes(result, "function isRootAppLayoutPath");
     });
 
     it("should use pathToModuleUrl for non-RSC page loading", () => {
@@ -84,7 +91,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "layouts.length - 1; i >= 0; i--");
     });
 
-    it("should load App Router RSC layouts through the RSC module endpoint", () => {
+    it("should load only the client layouts advertised for an isolated App Router page", () => {
       const result = getRendererScript();
       assertIncludes(result, "loadHydrationComponent");
       assertIncludes(result, "layouts[i].path");
@@ -92,12 +99,25 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(path)");
     });
 
+    it("should recreate initial layouts with their serialized props", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "data.layoutProps?.[layouts[i].path] || {}");
+      assertIncludes(result, "{ ...layoutProps, children: tree }");
+    });
+
+    it("should mount isolated App Router pages inside the server-emitted page island", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "data.isolatedClientPage");
+      assertIncludes(result, "getElementById('veryfront-page-island')");
+      assertIncludes(result, "Isolated client page root not found");
+    });
+
     it("should unwrap App Router document layouts before mounting into the root container", () => {
       const result = getRendererScript();
       assertIncludes(result, "function unwrapAppRouterDocumentLayout");
       assertIncludes(result, "element.type !== 'html'");
       assertIncludes(result, "child.type === 'body'");
-      assertIncludes(result, "layouts[i].path === 'app/layout.tsx'");
+      assertIncludes(result, "isRootAppLayoutPath(layouts[i].path)");
     });
 
     it("should wrap with App component when appPath is provided", () => {
@@ -135,7 +155,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       const result = getRendererScript();
       assertIncludes(
         result,
-        "data.clientModuleStrategy === 'rsc-module' && normalizedPagePath.startsWith('app/')",
+        "data.clientModuleStrategy === 'rsc-module' && isAppRouterPath(normalizedPagePath)",
       );
       assertIncludes(result, "container.__reactRoot = createRoot(container)");
       assertIncludes(result, "container.__reactRoot.render(tree)");

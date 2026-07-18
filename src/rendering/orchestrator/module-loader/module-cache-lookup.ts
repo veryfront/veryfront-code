@@ -12,6 +12,7 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { UNRESOLVED_VF_MODULES_RE } from "./module-transform-cache.ts";
 
 const logger = rendererLogger.component("module-loader");
@@ -21,10 +22,18 @@ export function getModuleCacheKey(
   projectId?: string,
   projectDir?: string,
   contentSourceId?: string,
+  reactVersion?: string,
+  mode?: "development" | "production",
 ): string {
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
-  return `${base}:${source}:${filePath}`;
+  return JSON.stringify([
+    base,
+    source,
+    reactVersion ?? REACT_DEFAULT_VERSION,
+    mode ?? "default",
+    filePath,
+  ]);
 }
 
 type LookupMdxCache = typeof lookupMdxEsmCache;

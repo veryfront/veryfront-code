@@ -54,5 +54,24 @@ export function useMessageContextOptional(): MessageContextValue | null {
   return React.useContext(MessageContext);
 }
 
+/** The message's grouped parts exposed as headless data. */
+export interface MessagePartsData {
+  /** Parts grouped in render order (text / reasoning / tool / source …). */
+  parts: MessageContextValue["parts"];
+  /** The concatenated text content of the answer parts. */
+  textContent: string;
+}
+
+/**
+ * `useMessageParts` — read the current message's parts as data, so a consumer
+ * can render them however they like (the headless access point to parts;
+ * `Message.Part` is the leaf and `Message.Content` provides the default
+ * rendering). Throws outside a `Message`.
+ */
+export function useMessageParts(): MessagePartsData {
+  const { parts, textContent } = useMessageContext();
+  return { parts, textContent };
+}
+
 /** Render message context provider. */
 export const MessageContextProvider = MessageContext.Provider;

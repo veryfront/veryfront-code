@@ -32,6 +32,8 @@ export {
   createFileSystem,
   exists,
   type FileSystem,
+  isNotFoundError,
+  lstat,
   mkdir,
   readDir,
   readTextFile,

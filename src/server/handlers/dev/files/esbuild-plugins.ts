@@ -2,6 +2,7 @@ import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/e
 import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
   getDirectory,
   isWithinDirectory,
@@ -19,106 +20,278 @@ import {
   mergeBrowserImportMapImports,
 } from "#veryfront/utils/import-map.ts";
 import { serverLogger } from "#veryfront/utils";
+import {
+  describeBrowserModuleBoundaryViolation,
+  inspectBrowserModuleBoundary,
+} from "#veryfront/server/shared/browser-module-boundary.ts";
 
 const logger = serverLogger.component("bare-ext");
 
 type EsbuildLoader = "tsx" | "ts" | "jsx" | "js";
 
+const SCRIPT_EXTENSIONS = [
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".mts",
+  ".mjs",
+  ".cts",
+  ".cjs",
+] as const;
+const SCRIPT_PATH_PATTERN = /\.(?:[jt]sx?|[cm][jt]s)$/i;
+const PROJECT_FS_NAMESPACE = "veryfront-project-fs";
+
+interface ProjectFsPluginData {
+  absolutePath: string;
+}
+
+export interface RelativeFsPluginOptions {
+  enforceBrowserBoundaries?: boolean;
+}
+
 function getLoaderForPath(path: string): EsbuildLoader {
-  if (path.endsWith(".tsx")) return "tsx";
-  if (path.endsWith(".ts")) return "ts";
-  if (path.endsWith(".jsx")) return "jsx";
+  if (/\.tsx$/i.test(path)) return "tsx";
+  if (/\.(?:ts|[cm]ts)$/i.test(path)) return "ts";
+  if (/\.jsx$/i.test(path)) return "jsx";
   return "js";
 }
 
+export type BrowserModulePathStatus = "trusted" | "symlink" | "unavailable";
+
+export async function inspectBrowserModulePath(
+  projectDir: string,
+  filePath: string,
+  adapter: RuntimeAdapter,
+): Promise<BrowserModulePathStatus> {
+  const projectRoot = normalizePath(projectDir);
+  const normalizedFilePath = normalizePath(filePath);
+  if (!isWithinDirectory(projectRoot, normalizedFilePath)) return "unavailable";
+
+  const pathSegments = normalizedFilePath.slice(projectRoot.length).split("/").filter(Boolean);
+  if (pathSegments.length === 0) return "unavailable";
+
+  let parent = projectRoot;
+  try {
+    for (const [index, segment] of pathSegments.entries()) {
+      let matchingEntry:
+        | { isFile: boolean; isDirectory: boolean; isSymlink: boolean }
+        | undefined;
+      for await (const entry of adapter.fs.readDir(parent)) {
+        if (entry.name === segment) {
+          matchingEntry = entry;
+          break;
+        }
+      }
+
+      if (!matchingEntry) return "unavailable";
+      if (matchingEntry.isSymlink) return "symlink";
+
+      const isLast = index === pathSegments.length - 1;
+      if (isLast ? !matchingEntry.isFile : !matchingEntry.isDirectory) {
+        return "unavailable";
+      }
+      parent = normalizePath(joinPath(parent, segment));
+    }
+  } catch {
+    return "unavailable";
+  }
+
+  return "trusted";
+}
+
+function dependencyPathError(status: Exclude<BrowserModulePathStatus, "trusted">) {
+  return status === "symlink"
+    ? "Browser dependency traverses a symbolic link"
+    : "Browser dependency path metadata is unavailable";
+}
+
+function getProjectModuleIdentity(projectDir: string, filePath: string): string {
+  const projectRoot = normalizePath(projectDir);
+  const normalizedFilePath = normalizePath(filePath);
+  const projectRelativePath = normalizedFilePath.slice(projectRoot.length).replace(/^\/+/, "");
+  return `/${projectRelativePath}`;
+}
+
+function getProjectFsPluginPath(args: OnLoadArgs): string | null {
+  const pluginData = args.pluginData as Partial<ProjectFsPluginData> | null | undefined;
+  return typeof pluginData?.absolutePath === "string" ? pluginData.absolutePath : null;
+}
+
 /** Create relative file system plugin for resolving imports via adapter's fs */
-export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapter): Plugin {
+export function createRelativeFsPlugin(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options: RelativeFsPluginOptions = {},
+): Plugin {
   return {
     name: "veryfront-rel-fs",
     setup(build: PluginBuild) {
-      const exts = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
-
-      build.onResolve({ filter: /^(\.?\.?\/|\/)\/*/ }, async (args: OnResolveArgs) => {
-        // VULN-FS-6: NUL bytes are never legitimate in module paths.
-        if (args.path.includes("\0")) {
-          return {
-            errors: [{ text: `Import path contains NUL byte: ${args.path}`, location: null }],
-          };
-        }
-
-        const basedir = args.resolveDir ||
-          (args.importer ? getDirectory(args.importer) : projectDir);
-        // normalizePath collapses `./` and `foo/../` segments produced by
-        // `joinPath` so downstream `adapter.fs.stat` lookups match the file
-        // system's canonical key. Still inside the containment check below.
-        const candidate = normalizePath(
-          args.path.startsWith("/")
-            ? joinPath(projectDir, args.path)
-            : joinPath(basedir, args.path),
-        );
-
-        // VULN-FS-6: refuse anything that, after joining, escapes the project
-        // root. esbuild plugins fire per-import; an entry file with
-        // `import "../../../../etc/hostname"` would otherwise embed the file.
-        if (!isWithinDirectory(projectDir, candidate)) {
-          return {
-            errors: [{
-              text: `Import escapes project directory: ${args.path}`,
-              location: null,
-            }],
-          };
-        }
-
-        const candidates: string[] = [candidate];
-        for (const ext of exts) candidates.push(candidate + ext);
-        for (const ext of exts) candidates.push(joinPath(candidate, `index${ext}`));
-
-        for (const f of candidates) {
-          // Defence in depth: each extension probe must also stay inside.
-          if (!isWithinDirectory(projectDir, f)) continue;
-          try {
-            const st = await adapter.fs.stat(f);
-            if (st.isFile) return { path: f };
-          } catch (_) {
-            // expected: candidate path doesn't exist, try next
+      // esbuild invokes plugin callbacks from its child-process message pump,
+      // which does not inherit the caller's AsyncLocalStorage store. Re-enter
+      // the request context captured at plugin setup so context-scoped
+      // adapters (MultiProjectFSAdapter) can resolve the project.
+      build.onResolve(
+        { filter: /^(\.?\.?\/|\/)\/*/ },
+        wrapWithCurrentContext(async (args: OnResolveArgs) => {
+          // VULN-FS-6: NUL bytes are never legitimate in module paths.
+          if (args.path.includes("\0")) {
+            return {
+              errors: [{ text: `Import path contains NUL byte: ${args.path}`, location: null }],
+            };
           }
-        }
 
-        return undefined;
-      });
+          const basedir = args.resolveDir ||
+            (args.importer ? getDirectory(args.importer) : projectDir);
+          // normalizePath collapses `./` and `foo/../` segments produced by
+          // `joinPath` so downstream `adapter.fs.stat` lookups match the file
+          // system's canonical key. Still inside the containment check below.
+          const candidate = normalizePath(
+            args.path.startsWith("/")
+              ? joinPath(projectDir, args.path)
+              : joinPath(basedir, args.path),
+          );
 
-      build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, async (args: OnLoadArgs) => {
+          // VULN-FS-6: refuse anything that, after joining, escapes the project
+          // root. esbuild plugins fire per-import; an entry file with
+          // `import "../../../../etc/hostname"` would otherwise embed the file.
+          if (!isWithinDirectory(projectDir, candidate)) {
+            return {
+              errors: [{
+                text: `Import escapes project directory: ${args.path}`,
+                location: null,
+              }],
+            };
+          }
+
+          const candidates: string[] = [candidate];
+          for (const ext of SCRIPT_EXTENSIONS) candidates.push(candidate + ext);
+          for (const ext of SCRIPT_EXTENSIONS) {
+            candidates.push(joinPath(candidate, `index${ext}`));
+          }
+
+          for (const f of candidates) {
+            // Defence in depth: each extension probe must also stay inside.
+            if (!isWithinDirectory(projectDir, f)) continue;
+            try {
+              const st = await adapter.fs.stat(f);
+              if (st.isFile) {
+                if (options.enforceBrowserBoundaries) {
+                  const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
+                  if (pathStatus !== "trusted") {
+                    return {
+                      errors: [{ text: dependencyPathError(pathStatus), location: null }],
+                    };
+                  }
+                  return {
+                    path: getProjectModuleIdentity(projectDir, f),
+                    namespace: PROJECT_FS_NAMESPACE,
+                    pluginData: { absolutePath: f } satisfies ProjectFsPluginData,
+                  };
+                }
+                return { path: f };
+              }
+            } catch (_) {
+              // expected: candidate path doesn't exist, try next
+            }
+          }
+
+          return undefined;
+        }),
+      );
+
+      async function loadModule(
+        filePath: string,
+        enforceBrowserBoundaries: boolean,
+      ) {
         // VULN-FS-6: belt-and-braces — reject any onLoad call whose path
         // escapes the project root or carries a NUL byte. onResolve already
         // gates this, but esbuild can call onLoad with paths produced by
         // other plugins or namespaces.
-        if (args.path.includes("\0")) {
-          return {
-            errors: [{ text: `Load path contains NUL byte: ${args.path}`, location: null }],
-          };
-        }
-        if (!isWithinDirectory(projectDir, args.path)) {
+        if (filePath.includes("\0")) {
           return {
             errors: [{
-              text: `Load path escapes project directory: ${args.path}`,
+              text: enforceBrowserBoundaries
+                ? "Browser dependency path contains a NUL byte"
+                : `Load path contains NUL byte: ${filePath}`,
               location: null,
             }],
           };
         }
+        if (!isWithinDirectory(projectDir, filePath)) {
+          return {
+            errors: [{
+              text: enforceBrowserBoundaries
+                ? "Browser dependency escapes the project directory"
+                : `Load path escapes project directory: ${filePath}`,
+              location: null,
+            }],
+          };
+        }
+        if (enforceBrowserBoundaries) {
+          const pathStatus = await inspectBrowserModulePath(projectDir, filePath, adapter);
+          if (pathStatus !== "trusted") {
+            return {
+              errors: [{ text: dependencyPathError(pathStatus), location: null }],
+            };
+          }
+        }
         try {
-          const contents = await adapter.fs.readFile(args.path);
-          return { contents, loader: getLoaderForPath(args.path) };
+          const contents = await adapter.fs.readFile(filePath);
+          if (enforceBrowserBoundaries) {
+            const violation = await inspectBrowserModuleBoundary(contents, filePath);
+            if (violation) {
+              return {
+                errors: [{
+                  text: describeBrowserModuleBoundaryViolation(violation).replace(
+                    "Browser module",
+                    "Browser dependency",
+                  ),
+                  location: null,
+                }],
+              };
+            }
+          }
+          return {
+            contents,
+            loader: getLoaderForPath(filePath),
+            ...(enforceBrowserBoundaries
+              ? { resolveDir: getDirectory(filePath), watchFiles: [filePath] }
+              : {}),
+          };
         } catch (error) {
           return {
             errors: [
               {
-                text: `Failed to read ${args.path}: ${String(error)}`,
+                text: enforceBrowserBoundaries
+                  ? "Failed to read browser dependency"
+                  : `Failed to read ${filePath}: ${String(error)}`,
                 location: null,
               },
             ],
           };
         }
-      });
+      }
+
+      build.onLoad(
+        { filter: SCRIPT_PATH_PATTERN, namespace: "file" },
+        wrapWithCurrentContext((args: OnLoadArgs) => {
+          return loadModule(args.path, false);
+        }),
+      );
+
+      build.onLoad(
+        { filter: SCRIPT_PATH_PATTERN, namespace: PROJECT_FS_NAMESPACE },
+        wrapWithCurrentContext((args: OnLoadArgs) => {
+          const absolutePath = getProjectFsPluginPath(args);
+          if (!absolutePath) {
+            return {
+              errors: [{ text: "Browser dependency path metadata is unavailable", location: null }],
+            };
+          }
+          return loadModule(absolutePath, true);
+        }),
+      );
     },
   };
 }

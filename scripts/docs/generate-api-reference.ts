@@ -406,14 +406,12 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
 
   "veryfront/chat": {
     Chat: "Full chat UI (messages + input)",
-    ChatComponents: "Compound components for custom layouts",
     ChatHeader: "Chat header section",
     ChatMessages: "Scrollable message list",
     ModelSelector: "Dropdown for switching models at runtime",
     ChatInput: "Text input with send button",
     ChatFooter: "Chat footer section",
     Message: "Chat message bubble",
-    StreamingMessage: "Incrementally rendered message",
     AgentCard: "Agent status, tool calls, and messages",
     AIErrorBoundary: "Error boundary with retry",
     useChat:
@@ -425,7 +423,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     useAIErrorHandler: "Programmatic AI error handler",
     ChatProps: "`<Chat>` props",
     MessageProps: "`<Message>` props",
-    StreamingMessageProps: "`<StreamingMessage>` props",
     AgentCardProps: "`<AgentCard>` props",
     AIErrorBoundaryProps: "`<AIErrorBoundary>` props",
     ChatTheme: "Theme System for Styled Components",
@@ -613,8 +610,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MCPServerConfig: "`createMCPServer()` config",
     MCPStats: "Registry statistics",
     MCPTool: "MCP-exposed tool",
-    IntegrationLoaderConfig:
-      "Configuration for loading integration tools into MCP",
   },
 
   "veryfront/middleware": {
@@ -756,8 +751,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
-    IntegrationRuntimeConfig:
-      "Per-user settings and tool allowlist for integration",
     IntegrationTool: "Integration tool with endpoint execution spec",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",

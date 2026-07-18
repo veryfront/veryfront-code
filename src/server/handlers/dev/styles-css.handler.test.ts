@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "../../../html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { createMockAdapter, type MockRuntimeAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import type { HandlerContext } from "../types.ts";
@@ -50,18 +50,20 @@ function mockTailwindFetch(): { restore: () => void; getCallCount: () => number 
 
 function createHandlerAdapter(
   files: Array<{ path: string; content?: string }>,
-  contentContext: ResolvedContentContext,
+  contentContext: ResolvedContentContext | null,
   client?: Pick<
     VeryfrontApiClient,
     "ensureStyleArtifactBuild" | "resolveStyleArtifact" | "upsertStyleArtifact"
   >,
-): RuntimeAdapter & { setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void } {
+): MockRuntimeAdapter & {
+  setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
+} {
   const adapter = createMockAdapter();
   adapter.fs.files.set("/project/globals.css", TEST_STYLESHEET);
   let currentFiles = files;
   const underlyingAdapter: {
     getAllSourceFiles: () => Promise<Array<{ path: string; content?: string }>>;
-    getContentContext: () => ResolvedContentContext;
+    getContentContext: () => ResolvedContentContext | null;
     getClient?: () => Pick<
       VeryfrontApiClient,
       "ensureStyleArtifactBuild" | "resolveStyleArtifact" | "upsertStyleArtifact"
@@ -84,18 +86,19 @@ function createHandlerAdapter(
       ...adapter.fs,
       getUnderlyingAdapter: () => underlyingAdapter,
     },
-  } as RuntimeAdapter & {
+  } as MockRuntimeAdapter & {
     setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
   };
 }
 
-function makeCtx(adapter: RuntimeAdapter): HandlerContext {
+function makeCtx(adapter: RuntimeAdapter, overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
     projectDir: "/project",
     adapter,
     securityConfig: null,
     cspUserHeader: null,
     projectSlug: PROJECT_SLUG,
+    ...overrides,
   };
 }
 
@@ -192,7 +195,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
-  it("resolves prepared CSS through style artifact metadata before rescanning files", async () => {
+  it("resolves release prepared CSS through style artifact metadata before rescanning files", async () => {
     const fetchMock = mockTailwindFetch();
     let storedHash: string | undefined;
     let resolveCalls = 0;
@@ -222,7 +225,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
         path: "/project/pages/index.tsx",
         content: '<div className="text-emerald-500">Hello</div>',
       }],
-      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+      { sourceType: "release", projectSlug: PROJECT_SLUG, releaseId: "rel-remote-css" },
       client,
     );
     const ctx = makeCtx(adapter);
@@ -256,6 +259,178 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(secondBody, firstBody);
       assertEquals(fetchMock.getCallCount(), initialFetchCount);
       assertEquals(resolveCalls > 0, true);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not use remote style artifacts for branch-scoped CSS", async () => {
+    const fetchMock = mockTailwindFetch();
+    let resolveCalls = 0;
+    let ensureCalls = 0;
+    let upsertCalls = 0;
+    const client = {
+      resolveStyleArtifact: async () => {
+        resolveCalls++;
+        return { status: "ready" as const, artifactHash: "stale-branch-css" };
+      },
+      ensureStyleArtifactBuild: async () => {
+        ensureCalls++;
+        return { status: "building" as const };
+      },
+      upsertStyleArtifact: async () => {
+        upsertCalls++;
+        return {
+          status: "ready" as const,
+          artifactHash: "new-branch-css",
+          assetPath: "/_vf/css/new-branch-css.css",
+        };
+      },
+    };
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-cyan-500">Hello</div>',
+      }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+      client,
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.length > 0, true);
+      assertEquals(resolveCalls, 0);
+      assertEquals(ensureCalls, 0);
+      assertEquals(upsertCalls, 0);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not use remote style artifacts for branch fallback selectors", async () => {
+    const fetchMock = mockTailwindFetch();
+    let resolveCalls = 0;
+    let upsertCalls = 0;
+    const client = {
+      resolveStyleArtifact: async () => {
+        resolveCalls++;
+        return { status: "ready" as const, artifactHash: "stale-branch-fallback-css" };
+      },
+      ensureStyleArtifactBuild: async () => ({ status: "building" as const }),
+      upsertStyleArtifact: async () => {
+        upsertCalls++;
+        return {
+          status: "ready" as const,
+          artifactHash: "new-branch-fallback-css",
+          assetPath: "/_vf/css/new-branch-fallback-css.css",
+        };
+      },
+    };
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-lime-500">Hello</div>',
+      }],
+      null,
+      client,
+    );
+    const ctx = makeCtx(adapter, {
+      parsedDomain: { branch: "main" } as HandlerContext["parsedDomain"],
+    });
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.length > 0, true);
+      assertEquals(resolveCalls, 0);
+      assertEquals(upsertCalls, 0);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not let branch content context fall through to release remote artifacts", async () => {
+    const fetchMock = mockTailwindFetch();
+    let resolveCalls = 0;
+    let upsertCalls = 0;
+    const client = {
+      resolveStyleArtifact: async () => {
+        resolveCalls++;
+        return { status: "ready" as const, artifactHash: "stale-branch-release-css" };
+      },
+      ensureStyleArtifactBuild: async () => ({ status: "building" as const }),
+      upsertStyleArtifact: async () => {
+        upsertCalls++;
+        return {
+          status: "ready" as const,
+          artifactHash: "new-branch-release-css",
+          assetPath: "/_vf/css/new-branch-release-css.css",
+        };
+      },
+    };
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-orange-500">Hello</div>',
+      }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG } as ResolvedContentContext,
+      client,
+    );
+    const ctx = makeCtx(adapter, { releaseId: "rel-should-not-be-used" });
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.length > 0, true);
+      assertEquals(resolveCalls, 0);
+      assertEquals(upsertCalls, 0);
     } finally {
       fetchMock.restore();
       clearCSSCache();
@@ -317,6 +492,90 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(body.length > 0, true);
       assertEquals(ensureCalls, 1);
       assertEquals(upsertCalls, 1);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("includes CSS imported by source modules in the compiled stylesheet", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [
+        {
+          path: "/project/app/layout.tsx",
+          content:
+            'import "./styles.css";\nexport default function Layout({ children }) { return children; }',
+        },
+        { path: "/project/app/page.tsx", content: '<div className="calc">Hello</div>' },
+      ],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    adapter.fs.files.set(
+      "/project/app/styles.css",
+      ".calc { background: #191919; border-radius: 20px; }",
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(
+        body.includes(".calc"),
+        true,
+        "CSS imported from app/layout.tsx must be part of the compiled stylesheet",
+      );
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not duplicate the configured stylesheet when it is also imported by a module", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [
+        {
+          path: "/project/app/layout.tsx",
+          content: 'import "../globals.css";\nexport default ({ children }) => children;',
+        },
+      ],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.length > 0, true);
     } finally {
       fetchMock.restore();
       clearCSSCache();

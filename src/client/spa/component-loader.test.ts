@@ -25,14 +25,14 @@ async function writeModule(
 }
 
 async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Promise<T> {
-  const globalRecord = globalThis as typeof globalThis & {
+  const globalRecord = globalThis as unknown as {
     MODULE_SERVER_URL?: string;
-    window?: typeof globalThis;
+    window?: unknown;
   };
-  const previousModuleServerUrl = globalThis.MODULE_SERVER_URL;
+  const previousModuleServerUrl = globalRecord.MODULE_SERVER_URL;
   const previousWindow = globalRecord.window;
   globalRecord.window = globalThis;
-  globalThis.MODULE_SERVER_URL = createFileModuleServerUrl(tempDir);
+  globalRecord.MODULE_SERVER_URL = createFileModuleServerUrl(tempDir);
   clearComponentCache();
 
   try {
@@ -41,9 +41,9 @@ async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Pr
     clearComponentCache();
 
     if (previousModuleServerUrl === undefined) {
-      delete globalThis.MODULE_SERVER_URL;
+      delete globalRecord.MODULE_SERVER_URL;
     } else {
-      globalThis.MODULE_SERVER_URL = previousModuleServerUrl;
+      globalRecord.MODULE_SERVER_URL = previousModuleServerUrl;
     }
 
     if (previousWindow === undefined) {
@@ -91,15 +91,28 @@ describe("client/spa/component-loader", () => {
 
   it("clears failed in-flight loads so a later retry can succeed", async () => {
     await withTempDir(async (missingTempDir) => {
-      await withModuleServerUrl(missingTempDir, async () => {
-        const firstAttempt = await Promise.all([
-          loadComponent("layouts/missing.tsx"),
-          loadComponent("layouts/missing.tsx"),
-        ]);
+      const errors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+      try {
+        await withModuleServerUrl(missingTempDir, async () => {
+          const firstAttempt = await Promise.all([
+            loadComponent("layouts/missing.tsx"),
+            loadComponent("layouts/missing.tsx"),
+          ]);
 
-        assertEquals(firstAttempt, [null, null]);
-        assertStrictEquals(getCachedComponent("layouts/missing.tsx"), null);
-      });
+          assertEquals(firstAttempt, [null, null]);
+          assertStrictEquals(getCachedComponent("layouts/missing.tsx"), null);
+        });
+      } finally {
+        console.error = originalError;
+      }
+
+      assertEquals(errors.length, 1);
+      assertEquals(errors[0]?.includes("layouts/missing.tsx"), true);
+      assertEquals(errors[0]?.includes("TypeError"), true);
+      assertEquals(errors[0]?.includes(missingTempDir), false);
+      assertEquals(errors[0]?.includes("at async"), false);
     }, { prefix: "vf-client-loader-" });
 
     await withTempDir(async (recoveredTempDir) => {

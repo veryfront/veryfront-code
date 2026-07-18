@@ -15,6 +15,7 @@ import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
+import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
@@ -173,17 +174,7 @@ export class HTMLGenerator {
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
     let html: string;
     if (isFullHTMLDocument(context.html)) {
-      let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
-      if (this.config.mode === "production" && context.options?.environment === "production") {
-        const mergedFrontmatter = mergeCollectedFrontmatter(context);
-        const htmlOptions = await profilePhase(
-          "html.build_options",
-          () => this.buildHTMLOptions(context, mergedFrontmatter),
-        );
-        projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
-      }
-
-      html = await this.handleFullHTMLDocument(context, projectCSSPromise);
+      html = await this.handleFullHTMLDocument(context);
     } else {
       html = await this.wrapHTMLFragment(context);
     }
@@ -201,14 +192,6 @@ export class HTMLGenerator {
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
     const fullContext = context as HTMLGenerationContext;
-    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
-    const htmlOptions = await profilePhase(
-      "html.build_options",
-      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
-    );
-    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
-    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
-
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
@@ -224,13 +207,10 @@ export class HTMLGenerator {
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
       const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument(
-          {
-            ...fullContext,
-            html: reactContent,
-          },
-          projectCSSPromise,
-        ),
+        await this.handleFullHTMLDocument({
+          ...fullContext,
+          html: reactContent,
+        }),
         context.options?.nonce,
       );
 
@@ -241,6 +221,14 @@ export class HTMLGenerator {
         },
       });
     }
+
+    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+    );
+    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
+    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
 
     const { start, end } = await profilePhase(
       "html.generate_shell_parts",
@@ -270,8 +258,13 @@ export class HTMLGenerator {
 
   private async handleFullHTMLDocument(
     context: HTMLGenerationContext,
-    projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<string> {
+    const mergedFrontmatter = mergeCollectedFrontmatter(context);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(context, mergedFrontmatter),
+    );
+    const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
@@ -313,7 +306,7 @@ export class HTMLGenerator {
       isClientPage,
       params: context.options?.params,
       environment: context.options?.environment,
-      isLocalProject: this.config.mode === "development",
+      isLocalProject: this.config.isLocalProject === true,
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
@@ -344,7 +337,7 @@ export class HTMLGenerator {
   private async detectUseClientDirective(pagePath: string): Promise<boolean> {
     try {
       const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      const isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
+      const isClientPage = hasUseClientDirective(pageContent, pagePath);
 
       if (isClientPage) {
         logger.debug(`Detected 'use client' page: ${pagePath}`);
@@ -452,7 +445,12 @@ export class HTMLGenerator {
   private async loadProjectFile(filename: string): Promise<string | undefined> {
     try {
       const filePath = join(this.config.projectDir, filename);
-      const content = await this.config.adapter.fs.readFile(filePath);
+      const fs = this.config.adapter.fs as typeof this.config.adapter.fs & {
+        readOptionalTextFile?: (path: string) => Promise<string>;
+      };
+      const content = fs.readOptionalTextFile
+        ? await fs.readOptionalTextFile(filePath)
+        : await fs.readFile(filePath);
       logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
     } catch (_) {
@@ -472,6 +470,29 @@ export class HTMLGenerator {
       profilePhase("html.load_global_css", () => this.loadProjectFile(stylesheetPath)),
     ]);
     const appComponentPath = appComponentPathOrNull ?? undefined;
+    const clientLayoutPaths = new Set(
+      context.options?.clientPageIsland?.clientLayoutPaths ?? [],
+    );
+    const hydrationLayouts = context.options?.clientPageIsland
+      ? context.nestedLayouts.filter((layout) =>
+        clientLayoutPaths.has(layout.componentPath ?? layout.path ?? "")
+      )
+      : context.nestedLayouts;
+    const hydrationLayoutPaths = new Set(
+      hydrationLayouts.map((layout) =>
+        extractRelativePath(
+          layout.componentPath ?? layout.path ?? "",
+          this.config.projectDir,
+        )
+      ),
+    );
+    const hydrationLayoutProps = context.options?.layoutProps
+      ? Object.fromEntries(
+        Object.entries(context.options.layoutProps).filter(([path]) =>
+          hydrationLayoutPaths.has(path)
+        ),
+      )
+      : undefined;
     const projectClasses = await profilePhase(
       "html.route_candidates",
       () => extractProjectClassesForRoute(this.config, context, appComponentPath),
@@ -514,12 +535,14 @@ export class HTMLGenerator {
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,
-      nestedLayouts: context.nestedLayouts.map((l) => ({
+      nestedLayouts: hydrationLayouts.map((l) => ({
         kind: l.kind,
         path: l.path,
         componentPath: l.componentPath,
       })),
-      appPath: appComponentPath,
+      appPath: context.options?.clientPageIsland ? undefined : appComponentPath,
+      isolatedClientPage: context.options?.clientPageIsland ? true : undefined,
+      layoutProps: hydrationLayoutProps,
       pagePath,
       pageType,
       nonce: context.options?.nonce,
@@ -537,7 +560,7 @@ export class HTMLGenerator {
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,
-      isLocalProject: this.config.mode === "development",
+      isLocalProject: this.config.isLocalProject === true,
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
       ...(context.options?.releaseAssetManifest !== undefined

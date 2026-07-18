@@ -19,6 +19,8 @@ export interface RenderContext {
   projectDir: string;
   config: VeryfrontConfig;
   mode: "development" | "production";
+  /** Whether browser-facing local filesystem module URLs are trusted. */
+  isLocalProject?: boolean;
   adapter: RuntimeAdapter;
   cachePrefix: string;
   environment: RenderEnvironment;
@@ -80,6 +82,7 @@ export function createRenderContext(
     projectDir: ctx.projectDir,
     config: ctx.config,
     mode: isLocal ? "development" : "production",
+    isLocalProject: isLocal,
     adapter: ctx.adapter,
     cachePrefix,
     environment,
@@ -133,6 +136,7 @@ export function createRenderContextFromEnriched(
     projectDir: enriched.projectDir,
     config: enriched.config,
     mode: enriched.mode,
+    isLocalProject: enriched.isLocalProject,
     adapter: enriched.adapter,
     cachePrefix: enriched.cachePrefix,
     environment: enriched.environment,

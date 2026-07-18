@@ -307,9 +307,14 @@ export class Renderer {
             slug,
             projectId: effectiveCtx.projectId,
             colorScheme: effectiveOptions?.colorScheme,
+            status: cacheResult.status,
             duration: `${(performance.now() - startTime).toFixed(2)}ms`,
           });
-          this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+          if (cacheResult.status === "stale") {
+            this.scheduleProductionRenderRefresh(slug, effectiveCtx, effectiveOptions, cacheKey);
+          } else {
+            this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+          }
           return cacheResult.cachedResult;
         }
 
@@ -441,6 +446,14 @@ export class Renderer {
     cacheKey: string | null,
   ): boolean {
     if (RENDER_PREWARM_MAX_ROUTES <= 0) return false;
+    return this.shouldScheduleProductionStaleRefresh(ctx, options, cacheKey);
+  }
+
+  private shouldScheduleProductionStaleRefresh(
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    cacheKey: string | null,
+  ): boolean {
     if (cacheKey === null) return false;
     if (ctx.environment !== "production" || ctx.mode !== "production") return false;
     if (!ctx.adapter?.fs) return false;
@@ -476,6 +489,62 @@ export class Renderer {
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
     };
+  }
+
+  private buildStaleRefreshOptions(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): RenderOptions {
+    return {
+      ...this.buildCanonicalPrewarmOptions(ctx, options),
+      request: options?.request,
+      url: options?.url,
+      cacheKey: options?.cacheKey,
+      colorScheme: options?.colorScheme,
+      colorSchemeFromParam: options?.colorSchemeFromParam,
+      colorSchemeFromHeader: options?.colorSchemeFromHeader,
+    };
+  }
+
+  private scheduleProductionRenderRefresh(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    cacheKey: string | null,
+  ): void {
+    if (!this.shouldScheduleProductionStaleRefresh(ctx, options, cacheKey)) return;
+
+    const refreshKey = `${ctx.cachePrefix}:refresh:${cacheKey}`;
+    if (this.productionPrewarmContexts.has(refreshKey)) return;
+
+    const refreshOptions = this.buildStaleRefreshOptions(ctx, options);
+    let resolvePromise!: () => void;
+    let rejectPromise!: (error: unknown) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+
+    this.rememberProductionPrewarm(refreshKey, promise);
+
+    setTimeout(() => {
+      void this.doRenderPage(slug, ctx, refreshOptions, performance.now(), cacheKey)
+        .then(() => {
+          this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cacheKey);
+          resolvePromise();
+        }, rejectPromise);
+    }, 0);
+
+    promise.finally(() => {
+      this.productionPrewarmContexts.delete(refreshKey);
+    }).catch((error) => {
+      logger.warn("Production stale render refresh failed", {
+        slug,
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private async runProductionRenderPrewarm(
@@ -815,6 +884,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      isLocalProject: ctx.isLocalProject === true,
     });
 
     const ssrOrchestrator = new SSROrchestrator({
@@ -854,6 +924,11 @@ export class Renderer {
       adapter: ctx.adapter,
       mode: ctx.mode,
       projectDir: ctx.projectDir,
+      isLocalProject: ctx.isLocalProject === true,
+      projectId: ctx.projectId,
+      contentSourceId: ctx.contentSourceId,
+      config: ctx.config,
+      directories: ctx.config.directories,
       queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
     });
 

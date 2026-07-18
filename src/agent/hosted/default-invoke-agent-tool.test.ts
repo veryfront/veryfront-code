@@ -57,14 +57,14 @@ Deno.test("defaultHostedInvokeAgentInputSchema accepts child-agent selection", (
       prompt: "Inspect auth flow.",
       context: {},
       agent_id: "security-reviewer",
-      result_mode: "full",
+      result_mode: "structured",
     }),
     {
       description: "inspect auth",
       prompt: "Inspect auth flow.",
       context: {},
       agent_id: "security-reviewer",
-      result_mode: "full",
+      result_mode: "structured",
     },
   );
 });
@@ -147,6 +147,7 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
 
   assertStringIncludes(invokeTool.description, "agent_id is required");
   assertStringIncludes(invokeTool.description, "result_mode defaults");
+  assertStringIncludes(invokeTool.description, 'use "structured"');
 
   const result = await invokeTool.execute(
     {

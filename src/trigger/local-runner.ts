@@ -1,4 +1,5 @@
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { runWithProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import {
   TRIGGER_EXECUTION_FAILED,
   TRIGGER_NOT_SUPPORTED,
@@ -63,12 +64,16 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
     });
   }
 
-  const result = await runTask({
-    task,
-    config: toRecordInput(options.input),
-    projectId: options.projectId,
-    debug: options.debug,
-  });
+  const result = await runWithProjectAgentRuntime(
+    discovery,
+    () =>
+      runTask({
+        task,
+        config: toRecordInput(options.input),
+        projectId: options.projectId,
+        debug: options.debug,
+      }),
+  );
 
   if (!result.success) {
     throw TRIGGER_EXECUTION_FAILED.create({
@@ -99,29 +104,31 @@ async function runWorkflowTarget(
     });
   }
 
-  const client = createWorkflowClient({
-    debug: options.debug,
-    executor: {
-      stepExecutor: {
-        agentRegistry,
-        toolRegistry,
+  return await runWithProjectAgentRuntime(discovery, async () => {
+    const client = createWorkflowClient({
+      debug: options.debug,
+      executor: {
+        stepExecutor: {
+          agentRegistry,
+          toolRegistry,
+        },
       },
-    },
-  });
+    });
 
-  try {
-    client.register(workflow.definition);
-    const handle = await client.start(options.target.id, options.input ?? {});
-    const output = await handle.result();
-    return {
-      kind: "workflow",
-      id: options.target.id,
-      output,
-      durationMs: Date.now() - start,
-    };
-  } finally {
-    await client.destroy();
-  }
+    try {
+      client.register(workflow.definition);
+      const handle = await client.start(options.target.id, options.input ?? {});
+      const output = await handle.result();
+      return {
+        kind: "workflow",
+        id: options.target.id,
+        output,
+        durationMs: Date.now() - start,
+      };
+    } finally {
+      await client.destroy();
+    }
+  });
 }
 
 export async function runTriggerTarget(

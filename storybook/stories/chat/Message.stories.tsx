@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Message } from "veryfront/chat";
+import { Message, useMessageParts } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -19,7 +19,10 @@ Message.Root  <- or compose it: context (message, branch state)
   +-- Message.Header  <- agent avatar + name + timestamp (assistant)
   +-- Message.Content  <- body; no children = default loop, or a function child
   |     +-- Message.Part  <- default rendering for one grouped part
+  |     +-- Message.Text  <- typed sugar: render a text part
+  |     +-- Message.Reasoning  <- typed sugar: render a reasoning part
   |     +-- Message.Sources  <- inline citation sources
+  |     |     +-- Message.Source  <- typed sugar: render a single citation
   +-- Message.Continuing  <- "Continuing…" shimmer while streaming
   +-- Message.Actions  <- copy / regenerate
   +-- Message.Tokens  <- token-usage popover (Model / Input / Output / Total)
@@ -30,26 +33,26 @@ function MessageDocsPage() {
     <DocsPage>
       <DocsHero
         title="Message"
-        lead="A single chat turn. Render `<Message message={msg} />` for the default anatomy, or compose `Message.Root` + `Message.*` parts for a custom layout — like the `Chat` preset, userland decides."
+        lead="A single chat turn. Render `<Message message={msg} />` for the default anatomy, or compose `Message.Root` + `Message.*` parts for a custom layout. Like the `Chat` preset, userland decides."
       />
 
       <DocsSection
         title="Render"
-        description="`<Message message={msg} />` renders the full turn — header, content, reasoning, tools, actions — no composition required."
+        description="`<Message message={msg} />` renders the full turn: header, content, reasoning, tools, and actions. No composition required."
       >
         <DocsExampleAuto of={RenderPair} />
       </DocsSection>
 
       <DocsSection
-        title="Compose — Assistant"
+        title="Compose: Assistant"
         description="Drop to `Message.Root` + parts to recompose the layout: content with sources and steps, actions, tokens."
       >
         <DocsExampleAuto of={CompoundAssistant} />
       </DocsSection>
 
       <DocsSection
-        title="Compose — User"
-        description="A minimal user turn — just content and actions."
+        title="Compose: User"
+        description="A minimal user turn with just content and actions."
       >
         <DocsExampleAuto of={CompoundUser} />
       </DocsSection>
@@ -67,6 +70,14 @@ function MessageDocsPage() {
 
       <DocsSection title="Composition">
         <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection
+        title="Headless parts"
+        description="Read the message's grouped parts as data with `useMessageParts()` (the 4th access point, alongside `Message.Part` and `Message.Content`) to build a fully custom body without reimplementing part grouping."
+      >
+        <DocsExampleAuto of={HeadlessParts} />
+        <DocsCode code={headlessPartsCode} />
       </DocsSection>
 
       <DocsSection title="API Reference">
@@ -94,7 +105,7 @@ function MessageDocsPage() {
             {
               name: "onReload",
               type: "() => void",
-              description: "Regenerate handler — surfaces the retry action",
+              description: "Regenerate handler that surfaces the retry action",
             },
           ]}
         />
@@ -166,7 +177,7 @@ export const RenderPair: Story = {
 };
 
 export const CompoundAssistant: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {
@@ -215,6 +226,52 @@ export const CompoundAssistant: Story = {
   ),
 };
 
+export const TypedPartLeaves: Story = {
+  name: "Typed part leaves (Text / Reasoning / Source)",
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Message } from "veryfront/chat";
+
+// Compose the body from typed sugar leaves instead of switching on part.type:
+// Message.Text / .Reasoning render a narrowed part; Message.Source renders one
+// citation and inherits the row's onSourceClick.
+<Message.Root message={assistantMessage}>
+  <Message.Header />
+  <Message.Content>
+    {(part) => {
+      if (part.type === "text") return <Message.Text part={part} />;
+      if (part.type === "reasoning") return <Message.Reasoning part={part} />;
+      return <Message.Part part={part} />;
+    }}
+  </Message.Content>
+  <Message.Sources>
+    {(source, index) => <Message.Source source={source} index={index} />}
+  </Message.Sources>
+</Message.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="760px">
+      <Message.Root message={chatMessages[1]}>
+        <Message.Header />
+        <Message.Content>
+          {(part) => {
+            if (part.type === "text") return <Message.Text part={part} />;
+            if (part.type === "reasoning") return <Message.Reasoning part={part} />;
+            return <Message.Part part={part} />;
+          }}
+        </Message.Content>
+        <Message.Sources>
+          {(source, index) => <Message.Source source={source} index={index} />}
+        </Message.Sources>
+      </Message.Root>
+    </StoryFrame>
+  ),
+};
+
 export const CompoundUser: Story = {
   tags: ["!dev"],
   parameters: {
@@ -253,6 +310,51 @@ export const Streaming: Story = {
   render: () => (
     <StoryFrame maxWidth="760px">
       <Message message={chatMessages[1]} isStreaming />
+    </StoryFrame>
+  ),
+};
+
+// The 4th, headless access point to a message's parts: read them as data and
+// render your own UI with no part grouping to reimplement.
+const headlessPartsCode = `import { Message, useMessageParts } from "veryfront/chat";
+
+function PartsSummary() {
+  const { parts, textContent } = useMessageParts();
+  return (
+    <div>
+      <span>{parts.length} part(s): {parts.map((p) => p.type).join(", ")}</span>
+      <p>{textContent}</p>
+    </div>
+  );
+}
+
+<Message.Root message={assistantMessage}>
+  <PartsSummary />
+</Message.Root>`;
+
+function PartsSummary() {
+  const { parts, textContent } = useMessageParts();
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[var(--edge-medium)] p-3 text-sm">
+      <div className="mb-1 font-medium text-[var(--faint)]">
+        {parts.length} part(s): {parts.map((p) => p.type).join(", ")}
+      </div>
+      <p className="text-[var(--foreground)]">{textContent}</p>
+    </div>
+  );
+}
+
+export const HeadlessParts: Story = {
+  name: "Headless parts (useMessageParts)",
+  tags: ["!dev"],
+  parameters: {
+    docs: { source: { code: headlessPartsCode } },
+  },
+  render: () => (
+    <StoryFrame maxWidth="760px">
+      <Message.Root message={chatMessages[1]}>
+        <PartsSummary />
+      </Message.Root>
     </StoryFrame>
   ),
 };

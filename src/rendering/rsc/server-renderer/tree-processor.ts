@@ -20,13 +20,14 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
   props: Props,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
+  reactVersion?: string,
 ): Promise<RSCNode> {
   if (Component == null || typeof Component === "string" || typeof Component === "number") {
     return { type: "html", html: Component == null ? "" : escapeHtml(String(Component)) };
   }
 
   if (React.isValidElement(Component)) {
-    return processElement(Component, clientManifest, clientRefs);
+    return processElement(Component, clientManifest, clientRefs, reactVersion);
   }
 
   if (typeof Component !== "function") {
@@ -43,6 +44,12 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
       type: "client",
       component: componentId,
       props: serializeProps(props),
+      children: await renderBoundaryChildren(
+        props.children as React.ReactNode,
+        clientManifest,
+        clientRefs,
+        reactVersion,
+      ),
     };
   }
 
@@ -52,7 +59,9 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
       : await (Component as React.FC<Props>)(props);
 
     if (!element) return { type: "html", html: "" };
-    if (React.isValidElement(element)) return processElement(element, clientManifest, clientRefs);
+    if (React.isValidElement(element)) {
+      return processElement(element, clientManifest, clientRefs, reactVersion);
+    }
 
     return { type: "html", html: escapeHtml(String(element)) };
   } catch (error) {
@@ -66,6 +75,7 @@ export async function processElement(
   element: React.ReactElement,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
+  reactVersion?: string,
 ): Promise<RSCNode> {
   const { type } = element;
   // Cast props for React 19 compatibility (props is unknown in R19 types)
@@ -76,6 +86,7 @@ export async function processElement(
       props.children as React.ReactNode,
       clientManifest,
       clientRefs,
+      reactVersion,
     );
     return { type: "fragment", children };
   }
@@ -85,15 +96,18 @@ export async function processElement(
       props.children as React.ReactNode,
       clientManifest,
       clientRefs,
+      reactVersion,
     );
 
     if (processedChildren.every((child) => child.type === "html")) {
-      const html = await renderToStringAdapter(element);
+      const html = await renderToStringAdapter(element, { reactVersion });
       return { type: "html", html };
     }
 
     const attrs = renderAttributes(props);
-    const childrenHtml = await Promise.all(processedChildren.map(treeToHTML));
+    const childrenHtml = await Promise.all(
+      processedChildren.map((child) => treeToHTML(child, clientRefs, clientManifest)),
+    );
     const html = `<${type}${attrs}>${childrenHtml.join("")}</${type}>`;
 
     return { type: "html", html };
@@ -105,10 +119,11 @@ export async function processElement(
       props,
       clientManifest,
       clientRefs,
+      reactVersion,
     );
   }
 
-  const html = await renderToStringAdapter(element);
+  const html = await renderToStringAdapter(element, { reactVersion });
   return { type: "html", html };
 }
 
@@ -116,16 +131,108 @@ export function renderChildren(
   children: React.ReactNode,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
+  reactVersion?: string,
 ): Promise<RSCNode[]> {
   if (!children) return Promise.resolve([]);
 
   return Promise.all(
     React.Children.toArray(children).map((child) => {
       if (React.isValidElement(child)) {
-        return processElement(child, clientManifest, clientRefs);
+        return processElement(child, clientManifest, clientRefs, reactVersion);
       }
 
       return Promise.resolve({ type: "html" as const, html: escapeHtml(String(child)) });
     }),
   );
+}
+
+async function renderBoundaryChildren(
+  children: React.ReactNode,
+  clientManifest: Map<string, ClientComponentMeta>,
+  clientRefs: Map<string, string>,
+  reactVersion?: string,
+): Promise<RSCNode[]> {
+  return await Promise.all(
+    React.Children.toArray(children).map((child) =>
+      renderBoundaryChild(child, clientManifest, clientRefs, reactVersion)
+    ),
+  );
+}
+
+async function renderBoundaryChild(
+  child: React.ReactNode,
+  clientManifest: Map<string, ClientComponentMeta>,
+  clientRefs: Map<string, string>,
+  reactVersion?: string,
+): Promise<RSCNode> {
+  if (typeof child === "string" || typeof child === "number") {
+    return { type: "html", text: String(child) };
+  }
+
+  if (!React.isValidElement(child)) {
+    return { type: "fragment", children: [] };
+  }
+
+  const type = child.type;
+  const props = child.props as Record<string, unknown>;
+  if (type === React.Fragment) {
+    return {
+      type: "fragment",
+      children: await renderBoundaryChildren(
+        props.children as React.ReactNode,
+        clientManifest,
+        clientRefs,
+        reactVersion,
+      ),
+    };
+  }
+
+  if (typeof type === "string") {
+    return {
+      type: "server",
+      component: type,
+      props: serializeProps(props),
+      children: await renderBoundaryChildren(
+        props.children as React.ReactNode,
+        clientManifest,
+        clientRefs,
+        reactVersion,
+      ),
+    };
+  }
+
+  if (typeof type === "function") {
+    const Component = type as RSCComponent;
+    if (isClientComponent(Component, clientManifest)) {
+      const componentId = getComponentId(Component);
+      registerClientRef(componentId, Component, clientManifest, clientRefs);
+      return {
+        type: "client",
+        component: componentId,
+        props: serializeProps(props),
+        children: await renderBoundaryChildren(
+          props.children as React.ReactNode,
+          clientManifest,
+          clientRefs,
+          reactVersion,
+        ),
+      };
+    }
+
+    const rendered = Component.prototype?.render
+      ? new (Component as React.ComponentClass<RSCComponentProps>)(props).render()
+      : await (Component as React.FC<RSCComponentProps>)(props);
+    const renderedChildren = await renderBoundaryChildren(
+      rendered,
+      clientManifest,
+      clientRefs,
+      reactVersion,
+    );
+    return renderedChildren.length === 1
+      ? renderedChildren[0]!
+      : { type: "fragment", children: renderedChildren };
+  }
+
+  const html = await renderToStringAdapter(child, { reactVersion });
+  return { type: "html", html };
 }

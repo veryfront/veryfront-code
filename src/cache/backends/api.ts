@@ -8,6 +8,7 @@ import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -97,17 +98,22 @@ export class ApiCacheBackend implements CacheBackend {
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
-    // Cache API calls are framework-owned operations; use the host token when
-    // available so project/request-scoped credentials cannot shadow it.
-    const token = hostToken || reqCtx?.token || envToken || null;
-    const tokenSource = hostToken
+    const verifiedCredential = getVerifiedCacheApiCredential();
+    const verifiedRequestToken = verifiedCredential?.token;
+    // The private verified-request context cannot be changed through the
+    // globally exposed filesystem request context.
+    const token = verifiedRequestToken || hostToken || reqCtx?.token || envToken || null;
+    const tokenSource = verifiedRequestToken
+      ? "verified-control-plane"
+      : hostToken
       ? "host-env"
       : reqCtx?.token
       ? "request"
       : envToken
       ? "env"
       : "none";
-    const projectRef = reqCtx?.projectId || reqCtx?.projectSlug ||
+    const projectRef = verifiedCredential?.projectId || verifiedCredential?.projectSlug ||
+      reqCtx?.projectId || reqCtx?.projectSlug ||
       tryGetCacheKeyContext()?.projectId || null;
 
     if (!token || !projectRef) {

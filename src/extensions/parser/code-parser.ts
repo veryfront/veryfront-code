@@ -50,6 +50,12 @@ export interface ParseOptions {
   [key: string]: unknown;
 }
 
+/** Options for a parser-owned function directive check. */
+export interface FunctionDirectiveOptions extends ParseOptions {
+  /** Exact directive value to find in function-body directive prologues. */
+  directive: string;
+}
+
 /** Options passed to {@link CodeParser.generate}. */
 export interface GenerateOptions {
   /** Include source maps in the output. */
@@ -88,6 +94,15 @@ export interface CodeParser {
   traverse(ast: ASTNode, visitor: TraverseVisitor): void;
   /** Generate source code from an AST. */
   generate(ast: ASTNode, options?: GenerateOptions): Promise<GenerateResult>;
+  /**
+   * Determine whether any function body declares the requested directive.
+   *
+   * This capability is optional for backward compatibility. Implementations
+   * that provide it must use their own AST semantics, reject invalid source,
+   * and ignore directive-like strings outside function directive prologues.
+   * Security-sensitive callers fail closed when the capability is absent.
+   */
+  hasFunctionDirective?(options: FunctionDirectiveOptions): Promise<boolean>;
   /**
    * Inject `data-node-*` attributes into every JSX element in the source,
    * enabling Studio Navigator to map rendered elements back to their

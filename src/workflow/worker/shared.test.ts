@@ -4,6 +4,7 @@ import {
 } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { waitForApproval, workflow } from "../dsl/index.ts";
 import type { WorkflowRun } from "../types.ts";
@@ -69,6 +70,7 @@ function createRun(id: string, status: WorkflowRun["status"], workerId?: string)
     checkpoints: [],
     pendingApprovals: [],
     createdAt: new Date(),
+    sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
     workerId,
   };
 }

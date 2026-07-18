@@ -1,6 +1,21 @@
 import type { WebSocketUpgradeOptions } from "#veryfront/platform/compat/http/index.ts";
+import type { ProxyContext, ProxyRequestOptions } from "./handler.ts";
 
 type BridgePeer = Pick<WebSocket, "close" | "readyState">;
+type ProxyError = NonNullable<ProxyContext["error"]>;
+
+export type WebSocketAuthorization =
+  | { allowed: true; context: ProxyContext }
+  | { allowed: false; error: ProxyError };
+
+export async function authorizeWebSocketRequest(
+  req: Request,
+  url: URL,
+  resolveContext: (req: Request, options: ProxyRequestOptions) => Promise<ProxyContext>,
+): Promise<WebSocketAuthorization> {
+  const context = await resolveContext(req, { url });
+  return context.error ? { allowed: false, error: context.error } : { allowed: true, context };
+}
 
 export type ServerWebSocketErrorLogLevel = "warn" | "error";
 

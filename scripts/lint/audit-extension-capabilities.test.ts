@@ -66,6 +66,60 @@ describe("auditExtensionCapabilities", () => {
       'extensions/ext-cache-redis/deno.json sensitive extension "Redis token cache" is missing capability {"keys":["REDIS_PASSWORD","REDIS_PREFIX","REDIS_URL"],"type":"env:read"}',
     ]);
   });
+
+  it("requires MLflow export capabilities without the legacy exporter-id env key", () => {
+    const manifestPath = "extensions/ext-eval-report-mlflow/deno.json";
+    const allowedCapabilities = [
+      { type: "net:outbound", hosts: ["*"] },
+      {
+        type: "env:read",
+        keys: [
+          "MLFLOW_ARTIFACTS_URI",
+          "MLFLOW_EXPERIMENT_NAME",
+          "MLFLOW_RUN_NAME",
+          "MLFLOW_TRACKING_PASSWORD",
+          "MLFLOW_TRACKING_TOKEN",
+          "MLFLOW_TRACKING_URI",
+          "MLFLOW_TRACKING_USERNAME",
+        ],
+      },
+    ];
+
+    assertEquals(
+      auditExtensionCapabilities([
+        input({
+          manifestPath,
+          manifestCapabilities: allowedCapabilities,
+          factoryCapabilities: allowedCapabilities,
+        }),
+      ]),
+      [],
+    );
+
+    const forbiddenCapabilities = [
+      { type: "net:outbound", hosts: ["*"] },
+      {
+        type: "env:read",
+        keys: [
+          "MLFLOW_TRACKING_URI",
+          "VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
+        ],
+      },
+    ];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath,
+        manifestCapabilities: forbiddenCapabilities,
+        factoryCapabilities: forbiddenCapabilities,
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      "extensions/ext-eval-report-mlflow/deno.json manifest capabilities must not register forbidden env key VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
+      "extensions/ext-eval-report-mlflow/deno.json factory capabilities must not register forbidden env key VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
+      'extensions/ext-eval-report-mlflow/deno.json sensitive extension "eval report MLflow export" is missing capability {"keys":["MLFLOW_ARTIFACTS_URI","MLFLOW_EXPERIMENT_NAME","MLFLOW_RUN_NAME","MLFLOW_TRACKING_PASSWORD","MLFLOW_TRACKING_TOKEN","MLFLOW_TRACKING_URI","MLFLOW_TRACKING_USERNAME"],"type":"env:read"}',
+    ]);
+  });
 });
 
 describe("extractExtensionSourceMetadata capabilities", () => {

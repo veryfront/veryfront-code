@@ -15,8 +15,8 @@ const logger = baseLogger.component("get-entity-by-slug");
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 const fs = createFileSystem();
-const PAGE_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts"] as const;
-const DIRECT_ROUTE_EXTENSIONS = ["mdx", "md", "tsx", "ts"] as const;
+const PAGE_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
+const DIRECT_ROUTE_EXTENSIONS = PAGE_FILE_EXTENSIONS;
 const LAYOUT_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const DYNAMIC_PAGE_ENTRY_PATTERN = /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/;
 
@@ -178,6 +178,7 @@ export async function getEntityBySlug(
   projectDir: string,
   slug: string,
   adapter?: RuntimeAdapter,
+  pagesDirectory = "pages",
 ): Promise<EntityInfo | null> {
   return await withSpan(
     "types.getEntityBySlug",
@@ -196,11 +197,11 @@ export async function getEntityBySlug(
       });
 
       if (resolveFile) {
-        const basePaths = [pathHelper.join(projectDir, "pages", normalizedSlug)];
+        const basePaths = [pathHelper.join(projectDir, pagesDirectory, normalizedSlug)];
 
         if (isVeryfrontRoute) basePaths.unshift(pathHelper.join(projectDir, normalizedSlug));
         if (normalizedSlug === "index" || normalizedSlug === "") {
-          basePaths.unshift(pathHelper.join(projectDir, "pages", "index"));
+          basePaths.unshift(pathHelper.join(projectDir, pagesDirectory, "index"));
         }
 
         logger.debug("Checking paths (resolveFile branch)", {
@@ -226,22 +227,32 @@ export async function getEntityBySlug(
               normalizedSlug,
               path: info.entity.path,
             });
-            return info;
+            return withResolvedSlug(info, normalizedSlug);
           }
         }
 
-        const dynamicPage = await findDynamicPageEntity(projectDir, normalizedSlug, adapter);
-        if (dynamicPage) return dynamicPage;
+        const dynamicPage = await findDynamicPageEntity(
+          projectDir,
+          normalizedSlug,
+          adapter,
+          pagesDirectory,
+        );
+        if (dynamicPage) return withResolvedSlug(dynamicPage, normalizedSlug);
 
         logger.debug("No page found via resolveFile branch", { slug, normalizedSlug });
         return null;
       }
 
       const candidatePaths = [
-        ...buildFileCandidates(projectDir, ["pages"], normalizedSlug, PAGE_FILE_EXTENSIONS),
         ...buildFileCandidates(
           projectDir,
-          ["pages"],
+          [pagesDirectory],
+          normalizedSlug,
+          PAGE_FILE_EXTENSIONS,
+        ),
+        ...buildFileCandidates(
+          projectDir,
+          [pagesDirectory],
           `${normalizedSlug}/index`,
           PAGE_FILE_EXTENSIONS,
         ),
@@ -255,7 +266,12 @@ export async function getEntityBySlug(
 
       if (normalizedSlug === "index" || normalizedSlug === "") {
         candidatePaths.unshift(
-          ...buildFileCandidates(projectDir, ["pages"], "index", DIRECT_ROUTE_EXTENSIONS),
+          ...buildFileCandidates(
+            projectDir,
+            [pagesDirectory],
+            "index",
+            DIRECT_ROUTE_EXTENSIONS,
+          ),
         );
       }
 
@@ -264,10 +280,16 @@ export async function getEntityBySlug(
       });
 
       for (const info of candidateResults) {
-        if (info?.entity.isPage) return info;
+        if (info?.entity.isPage) return withResolvedSlug(info, normalizedSlug);
       }
 
-      return await findDynamicPageEntity(projectDir, normalizedSlug, adapter);
+      const dynamicPage = await findDynamicPageEntity(
+        projectDir,
+        normalizedSlug,
+        adapter,
+        pagesDirectory,
+      );
+      return dynamicPage ? withResolvedSlug(dynamicPage, normalizedSlug) : null;
     },
     {
       "entity.slug": slug,
@@ -366,13 +388,14 @@ async function findDynamicPageEntity(
   projectDir: string,
   normalizedSlug: string,
   adapter?: RuntimeAdapter,
+  pagesDirectory = "pages",
 ): Promise<EntityInfo | null> {
   const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
   for (let depth = slugParts.length - 1; depth >= 0; depth--) {
     const parentPath = slugParts.slice(0, depth).join("/");
     const pagesDir = parentPath
-      ? pathHelper.join(projectDir, "pages", parentPath)
-      : pathHelper.join(projectDir, "pages");
+      ? pathHelper.join(projectDir, pagesDirectory, parentPath)
+      : pathHelper.join(projectDir, pagesDirectory);
 
     try {
       const canReadDirectory = await pagesDirectoryExists(pagesDir, adapter);
@@ -397,6 +420,15 @@ async function findDynamicPageEntity(
   }
 
   return null;
+}
+
+function withResolvedSlug(info: EntityInfo, normalizedSlug: string): EntityInfo {
+  return {
+    entity: {
+      ...info.entity,
+      slug: normalizedSlug === "index" ? "" : normalizedSlug,
+    },
+  };
 }
 
 async function pagesDirectoryExists(

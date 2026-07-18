@@ -18,11 +18,19 @@ import { agentLogger } from "#veryfront/utils";
 /**
  * Redis client interface (compatible with ioredis and node-redis)
  */
+export interface RedisEvalOptions {
+  keys: string[];
+  arguments: string[];
+}
+
 export interface RedisClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, options?: { EX?: number }): Promise<unknown>;
   del(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
+  eval?(script: string, options: RedisEvalOptions): Promise<unknown>;
+  sendCommand?(args: string[]): Promise<unknown>;
+  call?(command: string, ...args: string[]): Promise<unknown>;
 }
 
 /**
@@ -42,6 +50,77 @@ export interface RedisMemoryConfig extends MemoryConfigBase {
 
 const DEFAULT_TTL = 86_400; // 24 hours
 const DEFAULT_KEY_PREFIX = "veryfront:agent:memory:";
+
+const ATOMIC_ADD_SCRIPT = `
+local key = KEYS[1]
+local message_json = ARGV[1]
+local max_messages = tonumber(ARGV[2]) or 0
+local max_tokens = tonumber(ARGV[3]) or 0
+local ttl = tonumber(ARGV[4]) or 0
+
+local function decode_json(value, label)
+  local ok, decoded = pcall(cjson.decode, value)
+  if not ok then
+    return nil, redis.error_reply("CORRUPT_REDIS_MEMORY_JSON:" .. label)
+  end
+  if type(decoded) ~= "table" then
+    return nil, redis.error_reply("CORRUPT_REDIS_MEMORY_JSON:" .. label)
+  end
+  return decoded, nil
+end
+
+local messages = {}
+local current = redis.call("GET", key)
+if current and current ~= "" then
+  local decoded, decode_error = decode_json(current, "stored")
+  if decode_error then return decode_error end
+  messages = decoded
+end
+
+local message, message_error = decode_json(message_json, "message")
+if message_error then return message_error end
+table.insert(messages, message)
+
+if max_messages > 0 then
+  while #messages > max_messages do
+    table.remove(messages, 1)
+  end
+end
+
+local function message_text_length(item)
+  if type(item) ~= "table" or type(item.parts) ~= "table" then return 0 end
+  local total = 0
+  for _, part in ipairs(item.parts) do
+    if type(part) == "table" and part.type == "text" and type(part.text) == "string" then
+      total = total + string.len(part.text)
+    end
+  end
+  return total
+end
+
+local function estimate_tokens(items)
+  local total = 0
+  for _, item in ipairs(items) do
+    total = total + message_text_length(item)
+  end
+  return math.ceil(total / 4)
+end
+
+if max_tokens > 0 then
+  while #messages > 1 and estimate_tokens(messages) > max_tokens do
+    table.remove(messages, 1)
+  end
+end
+
+local encoded = cjson.encode(messages)
+if ttl > 0 then
+  redis.call("SET", key, encoded, "EX", ttl)
+else
+  redis.call("SET", key, encoded)
+end
+
+return #messages
+`;
 
 /** Implement redis memory. */
 export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
@@ -86,27 +165,7 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
       "agent.memory.redis.add",
       async () => {
         const key = this.getKey();
-        // NOTE: this GET -> push -> SET is not atomic. The RedisClient interface
-        // exposes only get/set/del/expire (no eval/rPush), so concurrent add()
-        // calls on the same key can lose updates (last writer wins). Given an
-        // atomic list op or Lua eval, prefer an atomic append here.
-        let messages = this.parseMessages(await this.client.get(key));
-
-        messages.push(message);
-
-        const { maxMessages, maxTokens } = this.config;
-
-        if (maxMessages && messages.length > maxMessages) {
-          messages = messages.slice(-maxMessages);
-        }
-
-        if (maxTokens) {
-          messages = this.trimToTokenLimit(messages);
-        }
-
-        // TTL <= 0 means no expiration
-        const options = this.ttl > 0 ? { EX: this.ttl } : undefined;
-        await this.client.set(key, JSON.stringify(messages), options);
+        await this.atomicAdd(key, message);
       },
       { "memory.type": "redis", "memory.agent_id": this.agentId, "memory.ttl": this.ttl },
     );
@@ -157,18 +216,32 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
     );
   }
 
-  private trimToTokenLimit(messages: M[]): M[] {
-    const { maxTokens } = this.config;
-    if (!maxTokens) return messages;
+  private atomicAdd(key: string, message: M): Promise<void> {
+    const args = [
+      JSON.stringify(message),
+      String(this.config.maxMessages ?? 0),
+      String(this.config.maxTokens ?? 0),
+      String(this.ttl),
+    ];
 
-    let tokenCount = estimateTokens(messages);
-
-    while (tokenCount > maxTokens && messages.length > 1) {
-      messages.shift();
-      tokenCount = estimateTokens(messages);
+    if (typeof this.client.sendCommand === "function") {
+      return this.client.sendCommand(["EVAL", ATOMIC_ADD_SCRIPT, "1", key, ...args]).then(
+        () => {},
+      );
     }
 
-    return messages;
+    if (typeof this.client.call === "function") {
+      return this.client.call("EVAL", ATOMIC_ADD_SCRIPT, "1", key, ...args).then(() => {});
+    }
+
+    if (typeof this.client.eval === "function") {
+      return this.client.eval(ATOMIC_ADD_SCRIPT, { keys: [key], arguments: args }).then(() => {});
+    }
+
+    throw new Error(
+      "RedisMemory requires Redis sendCommand(), call(), or eval() for atomic add(); " +
+        "non-atomic GET/SET append is not supported",
+    );
   }
 }
 

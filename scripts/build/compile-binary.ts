@@ -8,7 +8,7 @@ import { fromFileUrl, isAbsolute, join } from "#std/path.ts";
 import { getBinaryPluginBundleIncludes } from "../../src/build/binary-plugin-includes.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
-const DEFAULT_INCLUDES = [
+export const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
@@ -20,6 +20,7 @@ const DEFAULT_INCLUDES = [
   "extensions/ext-db-sqlite/src/index.ts",
   "extensions/ext-document-kreuzberg/src/index.ts",
   "extensions/ext-eval-report-http/src/index.ts",
+  "extensions/ext-eval-report-mlflow/src/index.ts",
   "extensions/ext-observability-opentelemetry/src/index.ts",
   "extensions/ext-parser-babel/src/index.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",

@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import {
+  datasets,
+  EVAL_REPORT_SCHEMA_VERSION,
+  evalAgent,
+  evalTool,
+  metrics,
+  runEval,
+} from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import {
   _resetShimForTests,
@@ -36,8 +43,12 @@ describe("eval/runner", () => {
     });
 
     assertEquals(report.kind, "eval-report");
+    assertEquals(report.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
     assertEquals(report.definitionId, "eval:capital-answer");
     assertEquals(report.target, "agent:researcher");
+    assertEquals(report.dataset?.kind, "inline");
+    assertEquals(report.dataset?.examples, 2);
+    assertEquals(report.dataset?.hash.startsWith("sha256:"), true);
     assertEquals(report.summary.records, 2);
     assertEquals(report.summary.passed, 2);
     assertEquals(report.summary.failed, 0);
@@ -123,6 +134,265 @@ describe("eval/runner", () => {
     ]);
     assertEquals(record.checks?.map((check) => check.pass), [true, true, true]);
     assertEquals(report.summary.passed, 1);
+  });
+
+  it("runs a realistic RAG eval with retrieval, groundedness, citations, and report summaries", async () => {
+    const definition = evalAgent({
+      id: "eval:support-rag",
+      name: "Support RAG answer quality",
+      target: "agent:support",
+      dataset: datasets.inline([
+        {
+          id: "billing-credit-expiry",
+          input: {
+            question:
+              "A customer says their credits disappeared after the billing cycle. What should support check first?",
+          },
+          reference:
+            "Check the billing ledger, credit grant, expiration policy, and recent usage before changing the account.",
+          metadata: {
+            expectedKnowledge: [
+              "knowledge/billing/credits.md",
+              "knowledge/support/playbooks/billing-ledger.md",
+            ],
+          },
+        },
+      ]),
+      metrics: [
+        metrics.agent.calledTool("search_knowledge").gate(),
+        metrics.agent.noFailedTools().gate(),
+        metrics.knowledge.recallAtK({ k: 3 }).gate({ min: 1 }),
+        metrics.knowledge.precisionAtK({ k: 3 }).soft({ min: 0.6 }),
+        metrics.knowledge.citationPrecision().gate({ min: 1 }),
+        metrics.knowledge.citationRecall().gate({ min: 1 }),
+        metrics.answer.groundedness({
+          judge: async ({ evidence, output, sources }) => {
+            const joinedEvidence = evidence.join("\n");
+            const pass = String(output.text).includes("billing ledger") &&
+              joinedEvidence.includes("expiration policy") &&
+              sources.includes("knowledge/billing/credits.md");
+            return {
+              score: pass ? 0.92 : 0.1,
+              pass,
+              explanation: "The answer is supported by retrieved billing knowledge.",
+            };
+          },
+        }).gate({ min: 0.8 }),
+      ],
+      check(ctx) {
+        ctx.expect.completed().gate();
+        ctx.expect.outputContains("billing ledger").gate();
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({
+          text:
+            "Check the billing ledger, credit grant, expiration policy, and recent usage before changing the account. [credits] [ledger]",
+          retrievedContext: [
+            {
+              source: "knowledge/billing/credits.md",
+              content:
+                "Credit grants can expire by expiration policy and should be checked against the usage ledger.",
+            },
+            {
+              source: "knowledge/support/playbooks/billing-ledger.md",
+              content: "Support must review the billing ledger before changing a customer account.",
+            },
+            {
+              source: "knowledge/unrelated.md",
+              content: "General account settings.",
+            },
+          ],
+          citations: [
+            { source: "knowledge/billing/credits.md", text: "[credits]" },
+            { source: "knowledge/support/playbooks/billing-ledger.md", text: "[ledger]" },
+          ],
+          trace: {
+            toolCalls: [
+              {
+                name: "search_knowledge",
+                status: "ok",
+                input: { query: "billing credit expiry ledger" },
+                output: {
+                  data: [
+                    {
+                      path: "knowledge/billing/credits.md",
+                      content:
+                        "Credit grants can expire by expiration policy and should be checked against the usage ledger.",
+                    },
+                    {
+                      path: "knowledge/support/playbooks/billing-ledger.md",
+                      content:
+                        "Support must review the billing ledger before changing a customer account.",
+                    },
+                    {
+                      path: "knowledge/unrelated.md",
+                      content: "General account settings.",
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          usage: { inputTokens: 800, outputTokens: 120, totalTokens: 920 },
+          durationMs: 840,
+        }),
+      },
+    });
+
+    assertEquals(report.summary.records, 1);
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.summary.failed, 0);
+    assertEquals(report.records[0]?.retrievedContext?.length, 3);
+    assertEquals(report.records[0]?.citations?.map((citation) => citation.source), [
+      "knowledge/billing/credits.md",
+      "knowledge/support/playbooks/billing-ledger.md",
+    ]);
+    assertEquals(
+      report.records[0]?.metrics?.map((metric) => ({
+        name: metric.name,
+        score: metric.score,
+        pass: metric.pass,
+      })),
+      [
+        { name: "agent.calledTool", score: 1, pass: true },
+        { name: "agent.noFailedTools", score: 1, pass: true },
+        { name: "knowledge.recallAtK", score: 1, pass: true },
+        { name: "knowledge.precisionAtK", score: 2 / 3, pass: true },
+        { name: "knowledge.citationPrecision", score: 1, pass: true },
+        { name: "knowledge.citationRecall", score: 1, pass: true },
+        { name: "answer.groundedness", score: 0.92, pass: true },
+      ],
+    );
+    assertEquals(report.summary.metrics.map((metric) => metric.name), [
+      "agent.calledTool",
+      "agent.noFailedTools",
+      "knowledge.recallAtK",
+      "knowledge.precisionAtK",
+      "knowledge.citationPrecision",
+      "knowledge.citationRecall",
+      "answer.groundedness",
+      "expect.completed",
+      "expect.outputContains",
+    ]);
+  });
+
+  it("runs a tool eval and records the direct tool call trace", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([
+        {
+          id: "order-1",
+          input: { orderId: "A1049", prompt: "Find order A1049" },
+          reference: { status: "shipped" },
+        },
+      ]),
+      input: (example) => ({ orderId: (example.input as { orderId: string }).orderId }),
+      metrics: [
+        metrics.agent.calledTool("lookup_order", {
+          input: { orderId: "A1049" },
+          match: "partial",
+        }).gate(),
+        metrics.answer.jsonMatch({ expected: { status: "shipped" } }).gate(),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async ({ input }) => ({
+          output: { status: input === undefined ? "missing" : "shipped" },
+          toolCallId: "eval-lookup-tool-order-1",
+          durationMs: 12,
+          usage: { totalTokens: 0, costUsd: 0 },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(report.targetKind, "tool");
+    assertEquals(report.target, "tool:lookup_order");
+    assertEquals(report.summary.records, 1);
+    assertEquals(report.summary.passed, 1);
+    assertEquals(record.input, { orderId: "A1049", prompt: "Find order A1049" });
+    assertEquals(record.executionInput, { orderId: "A1049" });
+    assertEquals(record.output, { status: "shipped" });
+    assertEquals(record.trace.toolCalls, [
+      {
+        id: "eval-lookup-tool-order-1",
+        name: "lookup_order",
+        status: "ok",
+        input: { orderId: "A1049" },
+        output: { status: "shipped" },
+        metadata: { durationMs: 12 },
+      },
+    ]);
+  });
+
+  it("preserves mapped undefined tool input in direct tool traces", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool-empty-input",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([
+        {
+          id: "order-1",
+          input: { orderId: "A1049" },
+        },
+      ]),
+      input: () => undefined,
+      metrics: [
+        metrics.agent.calledTool("lookup_order", {
+          input: undefined,
+          match: "exact",
+        }).gate(),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async ({ input }) => ({
+          output: { sawUndefinedInput: input === undefined },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(report.summary.passed, 1);
+    assertEquals(record.output, { sawUndefinedInput: true });
+    assertEquals(Object.hasOwn(record, "executionInput"), true);
+    assertEquals(record.executionInput, undefined);
+    assertEquals(record.trace.toolCalls[0]?.input, undefined);
+  });
+
+  it("does not synthesize a direct tool call when tool input mapping fails", async () => {
+    const definition = evalTool({
+      id: "eval:lookup-tool-input-error",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([{ id: "order-1", input: { orderId: "A1049" } }]),
+      input: () => {
+        throw new Error("Invalid order fixture");
+      },
+      metrics: [metrics.agent.calledTool("lookup_order").gate()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async () => ({
+          output: { status: "should-not-run" },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(report.summary.passed, 0);
+    assertEquals(record.completed, false);
+    assertEquals(record.error, "Invalid order fixture");
+    assertEquals(record.trace.toolCalls, []);
   });
 
   it("counts adapter errors as failed records even without metrics", async () => {

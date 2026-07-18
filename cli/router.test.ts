@@ -6,6 +6,7 @@ import { parseLoginMethod } from "./auth/utils.ts";
 import { routeCommand } from "./router.ts";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
+import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 /**
@@ -346,6 +347,7 @@ describe("cli/router helpers", () => {
       cliLogger.info = originalInfo;
       console.log = originalConsoleLog;
       setJsonMode(false);
+      resetInteractiveMode();
     }
 
     async function runAndCaptureExit(args: ParsedArgs): Promise<number> {
@@ -383,6 +385,18 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("--yes enables non-interactive confirmation before routing", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({ version: true, yes: true, _: [] } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(isInteractive(), false);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("--version --verbose prints runtime and OS details", async () => {
       stubExit();
       stubLogger();
@@ -413,7 +427,7 @@ describe("cli/router helpers", () => {
         );
         assertEquals(code, 0);
         assertEquals(consoleOutput.length, 1);
-        const parsed = JSON.parse(consoleOutput[0]);
+        const parsed = JSON.parse(consoleOutput[0]!);
         assertEquals(parsed.success, true);
         assertEquals(parsed.command, "version");
         assertEquals(parsed.data.version, VERSION);
@@ -438,7 +452,7 @@ describe("cli/router helpers", () => {
         );
         assertEquals(code, 2);
         assertEquals(consoleOutput.length, 1);
-        const parsed = JSON.parse(consoleOutput[0]);
+        const parsed = JSON.parse(consoleOutput[0]!);
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "nosuch");
         assertEquals(parsed.error.code, "USAGE_ERROR");
@@ -459,7 +473,7 @@ describe("cli/router helpers", () => {
         );
         assertEquals(code, 2);
         assertEquals(consoleOutput.length, 1);
-        const parsed = JSON.parse(consoleOutput[0]);
+        const parsed = JSON.parse(consoleOutput[0]!);
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "serve");
         assertEquals(parsed.error.code, "USAGE_ERROR");

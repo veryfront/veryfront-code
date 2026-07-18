@@ -17,9 +17,16 @@ import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 
 import { restoreLogs } from "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";
+import { createMockAdapter } from "../../../src/platform/adapters/mock.ts";
+import { FSAdapterWrapper } from "../../../src/platform/adapters/fs/wrapper.ts";
+import { MultiProjectFSAdapter } from "../../../src/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import type { RuntimeAdapter } from "../../../src/platform/adapters/base.ts";
+import type { BootstrapResult } from "../../../src/server/bootstrap.ts";
+import { startProductionServer } from "../../../src/server/production-server.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-handler/project-middleware.ts";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -412,6 +419,247 @@ describe(
                 `id="veryfront-hydration-data" type="application/json" nonce="${nonce}"`,
               ),
               "Pages Router hydration payload should use the response nonce",
+            );
+          });
+        });
+      },
+    );
+
+    describe(
+      "Production Server - Project middleware",
+      () => {
+        it("does not read project middleware before proxy request context exists", async () => {
+          const multiProjectFs = new MultiProjectFSAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              proxyMode: true,
+              cache: { enabled: false },
+            },
+          });
+          const mockAdapter = createMockAdapter();
+          let serveCalled = false;
+
+          const proxyAdapter: RuntimeAdapter = {
+            ...mockAdapter,
+            fs: new FSAdapterWrapper(multiProjectFs),
+            serve: (_handler, options) => {
+              serveCalled = true;
+              const hostname = options.hostname ?? "127.0.0.1";
+              const port = options.port ?? 0;
+              options.onListen?.({ hostname, port });
+              return Promise.resolve({
+                stop: () => Promise.resolve(),
+                addr: { hostname, port },
+              });
+            },
+          };
+
+          let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          try {
+            server = await startProductionServer({
+              projectDir: "/app",
+              port: 0,
+              bindAddress: "127.0.0.1",
+              adapter: proxyAdapter,
+              bootstrapResult: {
+                adapter: proxyAdapter,
+                config: {
+                  fs: {
+                    type: "veryfront",
+                    veryfront: {
+                      apiBaseUrl: "https://api.example.com",
+                      proxyMode: true,
+                    },
+                  },
+                },
+                usingFSAdapter: true,
+                fsAdapterType: "MultiProjectFSAdapter",
+                extensionLoader: {} as BootstrapResult["extensionLoader"],
+              },
+            });
+            await server.ready;
+
+            assert(serveCalled, "Proxy production server must reach its listening state");
+          } finally {
+            await server?.stop();
+            multiProjectFs.dispose();
+          }
+        });
+
+        it("loads shared proxy middleware after trusted request context is resolved", async () => {
+          const projectSlug = "shared-middleware-project";
+          const projectId = "shared-middleware-project-id";
+          const releaseId = "shared-middleware-release";
+          const middlewareSource = `export default function projectMiddleware() {
+            return new Response("shared middleware", {
+              status: 418,
+              headers: { "x-shared-middleware": "applied" },
+            });
+          }`;
+          const projectFs = {
+            exists: (path: string) => Promise.resolve(path === "/app/middleware.ts"),
+            readFile: () => Promise.resolve(middlewareSource),
+            readTextFile: () => Promise.resolve(middlewareSource),
+            readOptionalTextFile: () => Promise.resolve(middlewareSource),
+          };
+          const resolvedContexts: Array<{
+            projectSlug: string;
+            projectId?: string;
+            productionMode?: boolean;
+            releaseId?: string | null;
+          }> = [];
+          const multiProjectFs = new MultiProjectFSAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              proxyMode: true,
+              cache: { enabled: false },
+            },
+          });
+          const originalManager = (multiProjectFs as any).manager;
+          (multiProjectFs as any).manager = {
+            getAdapter(
+              resolvedSlug: string,
+              _token: string,
+              resolvedProjectId?: string,
+              productionMode?: boolean,
+              resolvedReleaseId?: string | null,
+            ) {
+              resolvedContexts.push({
+                projectSlug: resolvedSlug,
+                projectId: resolvedProjectId,
+                productionMode,
+                releaseId: resolvedReleaseId,
+              });
+              return Promise.resolve(projectFs);
+            },
+            getStats: () => ({ adapters: 0, stats: [] }),
+            dispose: () => {},
+          };
+
+          const mockAdapter = createMockAdapter();
+          let servedHandler: ((request: Request) => Promise<Response> | Response) | undefined;
+          const proxyAdapter: RuntimeAdapter = {
+            ...mockAdapter,
+            fs: new FSAdapterWrapper(multiProjectFs),
+            serve: (handler, options) => {
+              servedHandler = handler;
+              const hostname = options.hostname ?? "127.0.0.1";
+              const port = options.port ?? 0;
+              options.onListen?.({ hostname, port });
+              return Promise.resolve({
+                stop: () => Promise.resolve(),
+                addr: { hostname, port },
+              });
+            },
+          };
+
+          let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          try {
+            server = await startProductionServer({
+              projectDir: "/app",
+              port: 0,
+              bindAddress: "127.0.0.1",
+              adapter: proxyAdapter,
+              bootstrapResult: {
+                adapter: proxyAdapter,
+                config: {
+                  fs: {
+                    type: "veryfront",
+                    veryfront: {
+                      apiBaseUrl: "https://api.example.com",
+                      proxyMode: true,
+                    },
+                  },
+                },
+                usingFSAdapter: true,
+                fsAdapterType: "MultiProjectFSAdapter",
+                extensionLoader: {} as BootstrapResult["extensionLoader"],
+              },
+            });
+            await server.ready;
+            assertExists(servedHandler);
+
+            const response = await servedHandler(
+              new Request(`https://${projectSlug}.production.veryfront.com/protected`, {
+                headers: {
+                  "x-project-slug": projectSlug,
+                  "x-project-id": projectId,
+                  "x-release-id": releaseId,
+                  "x-token": "request-token",
+                },
+              }),
+            );
+
+            assertEquals(response.status, 418);
+            assertEquals(await response.text(), "shared middleware");
+            assertEquals(response.headers.get("x-shared-middleware"), "applied");
+            assert(
+              resolvedContexts.length >= 1 &&
+                resolvedContexts.every((context) =>
+                  context.projectSlug === projectSlug &&
+                  context.projectId === projectId
+                ),
+              "Every filesystem lookup must use the resolved project context",
+            );
+            assert(
+              resolvedContexts.some((context) =>
+                context.productionMode === true && context.releaseId === releaseId
+              ),
+              "Middleware loading must use production release context",
+            );
+          } finally {
+            invalidateProjectMiddlewareCache(projectSlug, projectId);
+            await server?.stop();
+            (multiProjectFs as any).manager = originalManager;
+            multiProjectFs.dispose();
+          }
+        });
+
+        it("applies root middleware.ts to requests", async () => {
+          await withTestContext("prod-project-middleware", async (context) => {
+            await writeTextFile(
+              join(context.projectDir, "public", "open.txt"),
+              "open content",
+            );
+            await writeTextFile(
+              join(context.projectDir, "middleware.ts"),
+              `export default async function gate(
+                c: { req: Request },
+                next: () => Promise<Response | undefined>,
+              ): Promise<Response | undefined> {
+                if (c.req.headers.get("x-gate") !== "open") {
+                  return new Response("blocked", { status: 401 });
+                }
+                const response = await next();
+                response?.headers.set("x-gate-passed", "1");
+                return response;
+              }
+              `,
+            );
+
+            const server = await context.createProductionServer();
+
+            const blocked = await fetch(`http://127.0.0.1:${server.port}/open.txt`);
+            assertEquals(
+              blocked.status,
+              401,
+              "Middleware must reject requests without the expected header",
+            );
+            assertEquals(await blocked.text(), "blocked");
+
+            const allowed = await fetch(`http://127.0.0.1:${server.port}/open.txt`, {
+              headers: { "x-gate": "open" },
+            });
+            assertEquals(
+              allowed.status,
+              200,
+              "Middleware must pass matching requests through to the handler",
+            );
+            assertEquals(await allowed.text(), "open content");
+            assertEquals(
+              allowed.headers.get("x-gate-passed"),
+              "1",
+              "Middleware must run around the handler response",
             );
           });
         });

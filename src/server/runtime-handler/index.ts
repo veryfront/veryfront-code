@@ -16,6 +16,8 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -78,6 +80,7 @@ import {
 } from "./tracing.ts";
 import {
   completeRequestTracking,
+  completeRequestTrackingOnResponseEnd,
   endContentMetrics,
   endRequestLifecycle,
   incrementRequestMetrics,
@@ -114,6 +117,7 @@ import {
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
+import { projectMiddlewareRuntime } from "./project-middleware.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -319,21 +323,14 @@ export function createVeryfrontHandler(
 
   let config: VeryfrontConfig | undefined = opts.config;
   const configPromise = (async () => {
-    try {
-      const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
-      config = c;
-      if (c?.security?.csrf === undefined) {
-        logger.info(
-          "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
-        );
-      }
-      return c;
-    } catch (error) {
-      logger.warn("Failed to load config, using defaults", {
-        error: getErrorMessage(error),
-      });
-      return undefined;
+    const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
+    config = c;
+    if (c?.security?.csrf === undefined) {
+      logger.info(
+        "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
+      );
     }
+    return c;
   })();
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
@@ -580,6 +577,7 @@ export function createVeryfrontHandler(
               branch: reqCtx.branch,
               environmentName: projectRes.environmentName,
               parsedDomain: projectRes.parsedDomain,
+              pathname: url.pathname,
               isProxyMode,
             }));
 
@@ -658,7 +656,21 @@ export function createVeryfrontHandler(
 
           await incrementRequestMetrics();
 
-          const executeRoute = () => registry.execute(req, ctx);
+          const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
+            adapterRes.config?.integrations,
+          );
+          const executeProjectRoute = () =>
+            projectMiddlewareRuntime.execute({
+              request: req,
+              handlerContext: ctx,
+              isSharedProxy: isProxyMode,
+              next: async () => (await registry.execute(req, ctx)) ?? undefined,
+            });
+          const executeRoute = () =>
+            runWithExactSourceIntegrationPolicy(
+              sourceIntegrationPolicy,
+              executeProjectRoute,
+            );
           // Only activate env isolation in proxy mode (multi-tenant).
           // reqCtx.token indicates the request came through the proxy with auth.
           // Without it (standalone / test), host env must remain accessible.
@@ -728,12 +740,7 @@ export function createVeryfrontHandler(
         });
 
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
-        completeRequestTracking(
-          lifecycle.requestId,
-          response.status,
-          isTimeout,
-          requestProfileRecord,
-        );
+
         // Decrement isolation in-flight count only after the handler actually
         // settles so graceful drain doesn't observe work still running after a
         // timeout response has already been sent to the client.
@@ -741,7 +748,12 @@ export function createVeryfrontHandler(
           completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
         });
 
-        return withServerTimingHeader(response, requestProfileRecord);
+        return completeRequestTrackingOnResponseEnd(
+          lifecycle.requestId,
+          withServerTimingHeader(response, requestProfileRecord),
+          isTimeout,
+          requestProfileRecord,
+        );
       } finally {
         endRequestLifecycle(lifecycle);
       }

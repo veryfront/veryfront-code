@@ -68,7 +68,9 @@ export class PageLoader {
 
   private async tryFetchJSON(path: string): Promise<RouteData | null> {
     try {
-      const response = await fetch(`/_veryfront/data${path}.json`, {
+      const navigationUrl = new URL(path, "http://veryfront.local");
+      const dataPath = navigationUrl.pathname === "/" ? "/index" : navigationUrl.pathname;
+      const response = await fetch(`/_veryfront/data${dataPath}.json${navigationUrl.search}`, {
         headers: { "X-Veryfront-Navigation": "client" },
       });
 
@@ -137,8 +139,11 @@ export class PageLoader {
   }
 
   async fetchSpaPageData(path: string): Promise<SpaPageData> {
-    const normalizedPath = path === "/" ? "" : path.replace(/^\//, "");
-    const endpoint = `/_veryfront/page-data/${normalizedPath}.json`;
+    const navigationUrl = new URL(path, "http://veryfront.local");
+    const normalizedPath = navigationUrl.pathname === "/"
+      ? "index"
+      : navigationUrl.pathname.replace(/^\//, "");
+    const endpoint = `/_veryfront/page-data/${normalizedPath}.json${navigationUrl.search}`;
 
     logger.debug(`Fetching SPA page data from ${endpoint}`);
 

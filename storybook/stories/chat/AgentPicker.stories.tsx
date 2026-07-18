@@ -26,11 +26,12 @@ const compositionTree =
   `AgentPicker            <- render-or-compose: preset with props, or compose sub-parts
   +-- AgentPicker.Trigger  <- the pill / input-style combobox button
   +-- AgentPicker.Content  <- the popover surface (wraps a Command shell)
+  +-- AgentPicker.Search   <- optional search input
   +-- AgentPicker.List     <- the scrollable Command list region
   +-- AgentPicker.Item     <- a single agent row (Avatar + name + check)
 
 Preset props (no children): agents / sections, value / onValueChange,
-onManage / onCreate, inputStyle, isLoading, icons, className.`;
+onManage / onCreate, inputStyle, isLoading, className.`;
 
 const composedCode = `import { AgentPicker } from "veryfront/chat";
 
@@ -38,7 +39,8 @@ const composedCode = `import { AgentPicker } from "veryfront/chat";
 // selection + open state via useAgentPicker(); className merges last.
 <AgentPicker agents={agents} value={value} onValueChange={setValue}>
   <AgentPicker.Trigger />
-  <AgentPicker.Content showSearch>
+  <AgentPicker.Content>
+    <AgentPicker.Search />
     <AgentPicker.List>
       {agents.map((agent) => (
         <AgentPicker.Item key={agent.id} agent={agent} />
@@ -52,7 +54,7 @@ function AgentPickerDocsPage() {
     <DocsPage>
       <DocsHero
         title="AgentPicker"
-        lead="A Popover + Command combobox for switching the active agent — Avatar rows with a check on the selection."
+        lead="A Popover and Command combobox for switching the active agent, with Avatar rows and a check on the selection."
       />
 
       <DocsSection
@@ -79,7 +81,7 @@ function AgentPickerDocsPage() {
 
       <DocsSection
         title="Compose"
-        description="Pass children to recompose the menu from `AgentPicker.Trigger` / `Content` / `List` / `Item`. Each sub-part reads the shared selection + open state via `useAgentPicker()`; `className` merges last. Omit children to keep the data-driven preset."
+        description="Pass children to recompose the menu from `AgentPicker.Trigger` / `Content` / `Search` / `List` / `Item`. Each sub-part reads the shared selection + open state via `useAgentPicker()`; `className` merges last. Omit children to keep the data-driven preset."
       >
         <DocsExampleAuto of={Composed} />
         <DocsCode code={composedCode} />
@@ -131,12 +133,6 @@ function AgentPickerDocsPage() {
               description: "Show skeleton rows while agents load",
             },
             {
-              name: "icons",
-              type: "AgentPickerIcons",
-              description:
-                "Override the check / chevron / create / more glyphs",
-            },
-            {
               name: "className",
               type: "string",
               description: "Additional class names for the trigger",
@@ -158,7 +154,7 @@ function AgentPickerDocsPage() {
               description: "Display name (also the search keyword)",
             },
             {
-              name: "avatarSrc",
+              name: "avatarUrl",
               type: "string",
               description: "Avatar image URL; initials shown when absent",
             },
@@ -248,7 +244,7 @@ export const InputStyle: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => {
     const [value, setValue] = React.useState(agents[0].id);
     return (
@@ -256,7 +252,8 @@ export const Composed: Story = {
         <ReviewSurface label="Composed">
           <AgentPicker agents={agents} value={value} onValueChange={setValue}>
             <AgentPicker.Trigger />
-            <AgentPicker.Content showSearch>
+            <AgentPicker.Content>
+              <AgentPicker.Search />
               <AgentPicker.List>
                 {agents.map((agent) => (
                   <AgentPicker.Item key={agent.id} agent={agent} />

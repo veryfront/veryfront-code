@@ -5,11 +5,17 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { HandlerContext } from "../../types.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 function createHandlerContext(
   projectDir: string,
@@ -49,6 +55,23 @@ async function writeAgentFile(
       `  id: "${agentId}",`,
       `  system: "${systemPrompt}",`,
       "});",
+      "",
+    ].join("\n"),
+  );
+}
+
+async function writeSkillFile(
+  ctx: HandlerContext,
+  skillId: string,
+): Promise<void> {
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/skills/${skillId}/SKILL.md`,
+    [
+      "---",
+      `name: ${skillId}`,
+      `description: ${skillId} fixture`,
+      "---",
+      `Use the ${skillId} fixture.`,
       "",
     ].join("\n"),
   );
@@ -135,6 +158,195 @@ describe(
       const updatedAgent = getAgent(agentId);
       assertExists(updatedAgent);
       assertEquals(updatedAgent.config.system, "SECOND");
+    });
+
+    it("keeps the live skill registry available until mutable rediscovery commits", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/atomic-discovery-project",
+        "atomic-discovery-project",
+        "production",
+      );
+      ctx.projectId = "atomic-discovery-project-id";
+      const requestContext = {
+        projectSlug: ctx.projectSlug!,
+        projectId: ctx.projectId,
+        token: "<TOKEN>",
+        productionMode: true,
+        releaseId: null,
+        environmentName: "Development",
+      };
+
+      await writeSkillFile(ctx, "old-skill");
+      await runWithRequestContext(requestContext, () => ensureProjectDiscovery(ctx));
+
+      await ctx.adapter.fs.remove(`${ctx.projectDir}/skills/old-skill`, { recursive: true });
+      await writeSkillFile(ctx, "new-skill");
+
+      const discoveryPaused = Promise.withResolvers<void>();
+      const resumeDiscovery = Promise.withResolvers<void>();
+      const originalExists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+      let pauseSkillsRead = true;
+      ctx.adapter.fs.exists = async (path: string) => {
+        if (pauseSkillsRead && path === `${ctx.projectDir}/skills`) {
+          pauseSkillsRead = false;
+          discoveryPaused.resolve();
+          await resumeDiscovery.promise;
+        }
+        return originalExists(path);
+      };
+
+      const rediscovery = runWithRequestContext(
+        requestContext,
+        () => ensureProjectDiscovery(ctx),
+      );
+      await discoveryPaused.promise;
+
+      await runWithRequestContext(requestContext, async () => {
+        assertExists(skillRegistry.get("old-skill"));
+        assertEquals(skillRegistry.get("new-skill"), undefined);
+      });
+
+      resumeDiscovery.resolve();
+      await rediscovery;
+
+      await runWithRequestContext(requestContext, async () => {
+        assertEquals(skillRegistry.get("old-skill"), undefined);
+        assertExists(skillRegistry.get("new-skill"));
+      });
+    });
+
+    it("preserves the live skill registry when mutable rediscovery fails", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/failed-atomic-discovery-project",
+        "failed-atomic-discovery-project",
+        "production",
+      );
+      ctx.projectId = "failed-atomic-discovery-project-id";
+      const requestContext = {
+        projectSlug: ctx.projectSlug!,
+        projectId: ctx.projectId,
+        token: "<TOKEN>",
+        productionMode: true,
+        releaseId: null,
+        environmentName: "Development",
+      };
+
+      await writeSkillFile(ctx, "stable-skill");
+      await runWithRequestContext(requestContext, () => ensureProjectDiscovery(ctx));
+
+      const originalExists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+      ctx.adapter.fs.exists = (path: string) => {
+        if (path === `${ctx.projectDir}/skills`) {
+          return Promise.reject(new Error("skill source unavailable"));
+        }
+        return originalExists(path);
+      };
+
+      await assertRejects(
+        () => runWithRequestContext(requestContext, () => ensureProjectDiscovery(ctx)),
+        Error,
+        "skill source unavailable",
+      );
+
+      await runWithRequestContext(requestContext, async () => {
+        assertExists(skillRegistry.get("stable-skill"));
+      });
+    });
+
+    it("does not deduplicate release-less discovery across environments", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const firstCtx = createHandlerContext(
+        "/shared-project-development",
+        "shared-project",
+        "production",
+      );
+      const secondCtx = createHandlerContext(
+        "/shared-project-production",
+        "shared-project",
+        "production",
+      );
+      firstCtx.projectId = "shared-project-id";
+      secondCtx.projectId = "shared-project-id";
+
+      await writeSkillFile(firstCtx, "development-skill");
+      await writeSkillFile(secondCtx, "production-skill");
+
+      let markFirstDiscoveryStarted!: () => void;
+      const firstDiscoveryStarted = new Promise<void>((resolve) => {
+        markFirstDiscoveryStarted = resolve;
+      });
+      let releaseFirstDiscovery!: () => void;
+      const holdFirstDiscovery = new Promise<void>((resolve) => {
+        releaseFirstDiscovery = resolve;
+      });
+      const firstExists = firstCtx.adapter.fs.exists.bind(firstCtx.adapter.fs);
+      let firstExistsCall = true;
+      firstCtx.adapter.fs.exists = async (path: string) => {
+        if (firstExistsCall) {
+          firstExistsCall = false;
+          markFirstDiscoveryStarted();
+          await holdFirstDiscovery;
+        }
+        return firstExists(path);
+      };
+
+      const firstDiscovery = runWithRequestContext(
+        {
+          projectSlug: "shared-project",
+          projectId: "shared-project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: "Development",
+        },
+        () => ensureProjectDiscovery(firstCtx),
+      );
+      await firstDiscoveryStarted;
+
+      const secondDiscovery = runWithRequestContext(
+        {
+          projectSlug: "shared-project",
+          projectId: "shared-project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: "Production",
+        },
+        () => ensureProjectDiscovery(secondCtx),
+      );
+      releaseFirstDiscovery();
+
+      const [firstResult, secondResult] = await Promise.all([
+        firstDiscovery,
+        secondDiscovery,
+      ]);
+      assertEquals(firstResult.skills.has("development-skill"), true);
+      assertEquals(secondResult.skills.has("production-skill"), true);
+
+      await runWithRequestContext(
+        {
+          projectSlug: "shared-project",
+          projectId: "shared-project-id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: "Production",
+        },
+        async () => {
+          assertExists(skillRegistry.get("production-skill"));
+        },
+      );
     });
 
     it("uses cache-key context to isolate production discovery by release", async () => {
@@ -282,6 +494,61 @@ describe(
 
       assertEquals(discovery.tools.has("relative_tool"), true);
       assertEquals(toolRegistry.has("relative_tool"), true);
+    });
+
+    it("warns with safe diagnostics when primitive discovery succeeds partially", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/partial-discovery-project",
+        "partial-discovery-project",
+        "preview",
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/healthy-tool.ts`,
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          '  id: "healthy_tool",',
+          '  description: "Returns a healthy result",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ ok: true }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/broken-tool.ts`,
+        'throw new Error("broken discovery fixture");\n',
+      );
+
+      const logEntries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => logEntries.push(entry));
+
+      try {
+        const discovery = await ensureProjectDiscovery(ctx);
+        assertEquals(discovery.tools.has("healthy_tool"), true);
+        assertEquals(discovery.errors.length, 1);
+      } finally {
+        __resetLogRecordEmitterForTests();
+      }
+
+      const partialWarning = logEntries.find((entry) =>
+        entry.message === "Primitive discovery completed with errors"
+      );
+      assertExists(partialWarning);
+      assertEquals(partialWarning.level, "warn");
+      assertEquals(partialWarning.context?.failures, [{
+        file: "tools/broken-tool.ts",
+        sourceKind: "tool",
+        message: "broken discovery fixture",
+      }]);
+      assertEquals(JSON.stringify(partialWarning).includes(ctx.projectDir), false);
     });
 
     it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {

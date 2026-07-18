@@ -92,6 +92,7 @@ describe("rendering/cache/stores/api-store", () => {
       };
       storedAt: number;
       expiresAt?: number;
+      staleUntil?: number;
     }
 
     function makePayload(overrides: Record<string, unknown> = {}): TestPayload {
@@ -168,6 +169,19 @@ describe("rendering/cache/stores/api-store", () => {
       const serialized = (store as any).serialize(payload);
       const deserialized = (store as any).deserialize(serialized);
       assertEquals(deserialized.expiresAt, payload.expiresAt);
+    });
+
+    it("preserves staleUntil field for stale-while-refresh cache entries", () => {
+      const store = new APICacheStore();
+      const payload = {
+        ...makePayload(),
+        expiresAt: Date.now() - 1,
+        staleUntil: Date.now() + 60_000,
+      };
+      const serialized = (store as any).serialize(payload);
+      const deserialized = (store as any).deserialize(serialized);
+      assertEquals(deserialized.expiresAt, payload.expiresAt);
+      assertEquals(deserialized.staleUntil, payload.staleUntil);
     });
   });
 
@@ -328,6 +342,77 @@ describe("rendering/cache/stores/api-store", () => {
         assertEquals(setResolved, true);
       } finally {
         releaseSet();
+        await store.destroy();
+        await server.shutdown();
+        if (previousApiBaseUrl === undefined) {
+          Deno.env.delete("VERYFRONT_API_BASE_URL");
+        } else {
+          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+        }
+        if (previousApiToken === undefined) {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+        } else {
+          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+        }
+        if (originalAdapter === undefined) {
+          delete globals.__vf_multi_project_adapter;
+        } else {
+          globals.__vf_multi_project_adapter = originalAdapter;
+        }
+      }
+    });
+
+    it("retains distributed entries through staleUntil instead of only the fresh TTL", async () => {
+      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const globals = globalThis as Record<string, unknown>;
+      const originalAdapter = globals.__vf_multi_project_adapter;
+
+      let receivedTtl: number | undefined;
+      let receivedValue = "";
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        async (request) => {
+          const url = new URL(request.url);
+          if (
+            request.method !== "POST" ||
+            url.pathname !== "/projects/api-store-test-project/cache/set"
+          ) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+
+          const body = await request.json() as { ttl?: number; value?: string };
+          receivedTtl = body.ttl;
+          receivedValue = body.value ?? "";
+          return Response.json({ success: true });
+        },
+      );
+      const addr = server.addr as Deno.NetAddr;
+      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      globals.__vf_multi_project_adapter = {
+        getCurrentRequestContext: () => ({
+          token: "request-token",
+          projectSlug: "api-store-test-project",
+          productionMode: true,
+        }),
+      };
+
+      const store = new APICacheStore({ enableLocalCache: false, ttlSeconds: 5 });
+      const staleUntil = Date.now() + 60_000;
+      const payload = {
+        result: { html: "<p>stale</p>", frontmatter: {}, headings: [], stream: null },
+        storedAt: Date.now() - 10_000,
+        expiresAt: Date.now() - 1,
+        staleUntil,
+      } as any;
+
+      try {
+        await store.set("distributed-stale-key", payload);
+
+        assertEquals(receivedTtl !== undefined && receivedTtl > 5, true);
+        assertEquals(receivedValue.includes('"staleUntil"'), true);
+      } finally {
         await store.destroy();
         await server.shutdown();
         if (previousApiBaseUrl === undefined) {

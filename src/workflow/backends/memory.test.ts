@@ -1,8 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
@@ -20,6 +23,8 @@ describe("MemoryBackend", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       ...overrides,
+      sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+        UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
     };
   }
 
@@ -46,6 +51,25 @@ describe("MemoryBackend", () => {
       assertEquals(retrieved.id, "run-1");
       assertEquals(retrieved.workflowId, "test-workflow");
       assertEquals(retrieved.status, "pending");
+    });
+
+    it("rejects a malformed source policy before persisting a run", async () => {
+      const run = createTestRun("run-malformed-policy", {
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: {
+            confluence: { allowedToolIds: ["get_page", "get_page"] },
+          },
+        },
+      });
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "invalid source integration policy snapshot",
+      );
+      assertEquals(await backend.getRun(run.id), null);
     });
 
     it("should return null for non-existent run", async () => {
@@ -89,6 +113,29 @@ describe("MemoryBackend", () => {
         true,
       );
       assertEquals((await backend.getRun("run-owned"))?.status, "failed");
+    });
+
+    it("rejects attempts to mutate the source policy after run creation", async () => {
+      const run = createTestRun("run-immutable-policy");
+      await backend.createRun(run);
+      const unsafeUpdateRun = backend.updateRun.bind(backend) as (
+        runId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<void>;
+
+      await assertRejects(
+        () =>
+          unsafeUpdateRun(run.id, {
+            sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({ allow: {} }),
+          }),
+        Error,
+        "immutable",
+      );
+
+      assertEquals(
+        (await backend.getRun(run.id))?.sourceIntegrationPolicy,
+        run.sourceIntegrationPolicy,
+      );
     });
 
     it("should list runs with filters", async () => {

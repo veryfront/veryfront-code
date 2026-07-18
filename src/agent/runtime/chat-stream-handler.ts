@@ -29,6 +29,10 @@ import {
   sanitizeUrlCredentials,
 } from "#veryfront/utils/logger/redact.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
+import {
+  getToolResultError,
+  isIntegrationAuthenticationActionResult,
+} from "#veryfront/tool/result.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -184,22 +188,6 @@ function resolveToolResultOutput(part: RuntimeStreamPart): unknown {
   }
 
   return undefined;
-}
-
-function getMcpToolErrorMessage(value: unknown): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  if (typeof value.error !== "string" || value.error.length === 0) {
-    return undefined;
-  }
-
-  if (typeof value.message === "string" && value.message.trim().length > 0) {
-    return value.message;
-  }
-
-  return value.error;
 }
 
 function logProviderToolPart(
@@ -918,12 +906,13 @@ export function processStream(
             dynamic: typedPart.dynamic,
           });
           const toolResultOutput = resolveToolResultOutput(typedPart);
-          const mcpToolErrorMessage = getMcpToolErrorMessage(toolResultOutput);
-          const isExplicitError = typedPart.isError === true;
-          const isError = isExplicitError || mcpToolErrorMessage !== undefined;
+          const inferredToolError = getToolResultError(toolResultOutput);
+          const isExplicitError = typedPart.isError === true &&
+            !isIntegrationAuthenticationActionResult(toolResultOutput);
+          const isError = isExplicitError || inferredToolError !== undefined;
           const toolResultError = isExplicitError
             ? toolResultOutput
-            : mcpToolErrorMessage ?? toolResultOutput;
+            : inferredToolError ?? toolResultOutput;
           logProviderToolPart("tool-result", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,

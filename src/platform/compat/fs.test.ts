@@ -13,6 +13,7 @@ import {
   exists,
   isAlreadyExistsError,
   isNotFoundError,
+  lstat,
   makeTempDir,
   mkdir,
   readDir,
@@ -228,6 +229,7 @@ describe("Filesystem Compat", () => {
 
       const content = await readTextFile(linkPath);
       assertEquals(content, "symlink test");
+      assertEquals((await lstat(linkPath)).isSymlink, true);
     });
   });
 
@@ -251,6 +253,14 @@ describe("Filesystem Compat", () => {
       error.name = "VeryfrontError";
       error.slug = "file-not-found";
       assertEquals(isNotFoundError(error), true);
+    });
+
+    it("should return true when not-found is wrapped in an Error cause chain", () => {
+      const cause = new Error("ENOENT") as Error & { code: string };
+      cause.code = "ENOENT";
+      const wrapped = new Error("wrapper", { cause });
+
+      assertEquals(isNotFoundError(wrapped), true);
     });
 
     it("should return false for generic errors", () => {

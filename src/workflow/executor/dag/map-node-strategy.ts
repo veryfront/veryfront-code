@@ -10,6 +10,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { NodeExecutionResult } from "./types.ts";
 import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -58,11 +59,12 @@ function createMapChildNodes(
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime, abortSignal } = input;
+  const { node, config, context, nodeStates, runtime } = input;
+  runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
 
   const items = typeof config.items === "function" ? await config.items(context) : config.items;
-  abortSignal?.throwIfAborted();
+  runtime.abortSignal?.throwIfAborted();
 
   if (!Array.isArray(items)) {
     throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
@@ -97,10 +99,11 @@ export async function executeMapNodeStrategy(
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     },
     config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
   );
-  abortSignal?.throwIfAborted();
+  runtime.abortSignal?.throwIfAborted();
 
   Object.assign(nodeStates, result.nodeStates);
 

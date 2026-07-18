@@ -17,6 +17,7 @@ import {
   resolveProjectReactVersion,
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -243,21 +244,18 @@ function getCdnImportMap(
 }
 
 async function resolveVersions(
-  projectDir: string,
+  projectDir: string | undefined,
   config?: VeryfrontConfig,
 ): Promise<DetectedVersions> {
   // Use shared resolver for React (handles config override + package.json + fallback)
   const versionsConfig = config?.client?.cdn?.versions;
-  const configuredReactVersion = versionsConfig && versionsConfig !== "auto"
-    ? versionsConfig.react
-    : undefined;
   const configuredVeryfrontVersion = versionsConfig && versionsConfig !== "auto"
     ? versionsConfig.veryfront
     : undefined;
-  const detected = await readProjectDependencyVersions(projectDir);
-  const reactVersion = configuredReactVersion
-    ? resolveProjectReactVersion({ config })
-    : Promise.resolve(detected.react ?? DEFAULT_VERSIONS.react);
+  const detected: { react?: string; veryfront?: string } = projectDir
+    ? await readProjectDependencyVersions(projectDir)
+    : {};
+  const reactVersion = await resolveProjectReactVersion({ projectDir, config });
 
   // Resolve veryfront version separately (config override or detection)
   let veryfrontVersion = DEFAULT_VERSIONS.veryfront;
@@ -268,7 +266,7 @@ async function resolveVersions(
     veryfrontVersion = detected.veryfront;
   }
 
-  return { react: await reactVersion, veryfront: veryfrontVersion };
+  return { react: reactVersion, veryfront: veryfrontVersion };
 }
 
 interface BuildImportMapOptions {
@@ -280,7 +278,7 @@ interface BuildImportMapOptions {
 }
 
 function stringifyImportMap(imports: Record<string, string>, pretty = true): string {
-  return JSON.stringify({ imports }, null, pretty ? 2 : undefined);
+  return jsonForInlineScript({ imports }, pretty ? 2 : undefined);
 }
 
 function stableMapKey(imports?: Record<string, string>): string {
@@ -401,7 +399,9 @@ export async function buildImportMap(
   const { projectDir, config, customImports, pretty = true, releaseAssetManifest } =
     (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
-  const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
+  const versions = projectDir || config
+    ? await resolveVersions(projectDir, config)
+    : DEFAULT_VERSIONS;
 
   if (mode === "bundled") {
     const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];

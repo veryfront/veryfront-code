@@ -7,18 +7,47 @@ import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils"
 import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { buildImportMapJson } from "#veryfront/html";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { bundleBrowserModule } from "#veryfront/server/shared/browser-module-bundler.ts";
+import {
+  type BrowserModuleBundle,
+  bundleBrowserModuleWithMetadata,
+  validateBrowserModuleBundle,
+} from "#veryfront/server/shared/browser-module-bundler.ts";
+import {
+  BrowserModuleBuildCoordinator,
+  type BrowserModuleBuildCoordinatorOptions,
+  BrowserModuleCapacityError,
+} from "#veryfront/server/shared/browser-module-availability.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { getRSCHandler } from "./handler-registry.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
+import { analyzeComponent } from "#veryfront/rendering/rsc/component-analyzer.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
+const MODULE_CACHE_CONTROL = "private, no-cache, must-revalidate";
+let browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>();
+let browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
+let nextBrowserModuleAdapterId = 1;
+
+export function resetBrowserModuleEndpointStateForTesting(
+  options: BrowserModuleBuildCoordinatorOptions = {},
+): void {
+  browserModuleBuilds.resetForTesting();
+  browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>(options);
+  browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
+  nextBrowserModuleAdapterId = 1;
+}
+
+export function getBrowserModuleEndpointStatsForTesting() {
+  return browserModuleBuilds.getStatsForTesting();
+}
 
 /**
  * Handle RSC endpoints
@@ -26,7 +55,20 @@ const rscLog = serverLogger.component("rsc");
  * @returns Response or null if not an RSC endpoint
  */
 export async function handleRSCEndpoint(
-  { req, pathname, projectDir, projectId, adapter, config, nonce }: RSCEndpointParams,
+  {
+    req,
+    pathname,
+    projectDir,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    releaseId,
+    adapter,
+    config,
+    isLocalProject,
+    mode,
+    nonce,
+  }: RSCEndpointParams,
 ): Promise<Response | null> {
   if (!pathname.startsWith("/_veryfront/rsc/")) {
     return null;
@@ -60,8 +102,13 @@ export async function handleRSCEndpoint(
     // this endpoint even when the broader RSC transport is not enabled.
     if (sub === "module") {
       return await handleModuleEndpoint({
+        req,
         searchParams: url.searchParams,
         projectDir,
+        projectId,
+        projectSlug,
+        contentSourceId,
+        releaseId,
         adapter,
         config,
       });
@@ -71,7 +118,16 @@ export async function handleRSCEndpoint(
       return null;
     }
 
-    const handler = getRSCHandler(projectDir, projectId);
+    const handler = getRSCHandler(projectDir, projectId, {
+      adapter,
+      config,
+      contentSourceId,
+      isLocalProject,
+      mode,
+      projectId,
+      projectSlug,
+      releaseId,
+    });
 
     if (sub.startsWith("render/")) {
       return handler.handleRender(sub.replace("render/", ""), url.searchParams, req);
@@ -102,12 +158,23 @@ export async function handleRSCEndpoint(
 
       metrics.recordRSC("action");
       try {
-        return await handleActionRequest({ req, projectDir, adapter });
+        return await handleActionRequest({
+          req,
+          projectDir,
+          projectId,
+          contentSourceId,
+          adapter,
+          config,
+          mode,
+        });
       } catch (e) {
         metrics.recordRSC("error");
+        rscEndpointRouterLog.error("action request failed", {
+          errorName: e instanceof Error ? e.name : "UnknownError",
+        });
         return jsonErrorResponse(
           HttpStatus.INTERNAL_SERVER_ERROR,
-          e instanceof Error ? e.message : String(e),
+          "action failed",
         );
       }
     }
@@ -148,19 +215,34 @@ export async function handleRSCEndpoint(
       rscEndpointRouterLog.debug("Failed to record metrics", metricsError);
     }
 
-    rscLog.debug("[dev] endpoint failed", e);
-    return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
+    rscLog.debug("[dev] endpoint failed", {
+      errorName: e instanceof Error ? e.name : "UnknownError",
+    });
+    return new Response("Internal Error", {
+      status: HTTP_SERVER_ERROR,
+      headers: { "cache-control": "no-store" },
+    });
   }
 }
 
 async function handleModuleEndpoint({
+  req,
   searchParams,
   projectDir,
+  projectId,
+  projectSlug,
+  contentSourceId,
+  releaseId,
   adapter,
   config,
 }: {
+  req: Request;
   searchParams: URLSearchParams;
   projectDir: string;
+  projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  releaseId?: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
 }): Promise<Response> {
@@ -168,7 +250,7 @@ async function handleModuleEndpoint({
   if (!relParam) {
     return new Response("Missing rel query parameter", {
       status: HttpStatus.BAD_REQUEST,
-      headers: { "content-type": "text/plain" },
+      headers: { "content-type": "text/plain", "cache-control": "no-store" },
     });
   }
 
@@ -177,66 +259,233 @@ async function handleModuleEndpoint({
   if (relSegments.includes("..")) {
     return new Response("Invalid rel query parameter", {
       status: HttpStatus.BAD_REQUEST,
-      headers: { "content-type": "text/plain" },
+      headers: { "content-type": "text/plain", "cache-control": "no-store" },
     });
   }
 
   const rel = normalizedRel.startsWith("/") ? normalizedRel : `/${normalizedRel}`;
-  const modulePath = await resolveModuleEndpointPath(rel, projectDir, adapter);
-  if (!modulePath) {
-    return new Response("Not Found", { status: 404 });
-  }
-
   try {
-    const source = await bundleBrowserModule(modulePath, {
-      adapter,
-      projectDir,
-      config,
+    const modulePath = await resolveModuleEndpointPath(rel, projectDir, adapter, config);
+    if (!modulePath) {
+      return new Response("Not Found", {
+        status: 404,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+
+    const adapterId = getBrowserModuleAdapterId(adapter);
+    const configHash = await computeHash(stableSerialize(config ?? null));
+    const projectKey = projectId ?? projectSlug ?? projectDir;
+    const cacheKey = [
+      adapterId,
+      projectKey,
+      contentSourceId ?? "",
+      releaseId ?? "",
+      configHash,
+      modulePath,
+    ].join("\0");
+    const result = await browserModuleBuilds.getOrBuild({
+      cacheKey,
+      projectKey,
+      build: async () => {
+        const importMapJson = await buildImportMapJson({ projectDir, config });
+        return bundleBrowserModuleWithMetadata(modulePath, {
+          adapter,
+          projectDir,
+          config,
+          projectSlug,
+          importMapJson,
+        });
+      },
+      validate: async (bundle) => {
+        const importMapJson = await buildImportMapJson({ projectDir, config });
+        if (await computeHash(importMapJson) !== bundle.importMapHash) return false;
+        return validateBrowserModuleBundle(bundle, { adapter, projectDir });
+      },
+      sizeOf: estimateBrowserModuleBundleSize,
     });
-    return new Response(source, {
+    const etag = `"${result.value.contentHash}"`;
+    const headers = {
+      "cache-control": MODULE_CACHE_CONTROL,
+      "etag": etag,
+      "x-content-type-options": "nosniff",
+    };
+    if (ifNoneMatch(req.headers.get("if-none-match"), etag)) {
+      return new Response(null, { status: HttpStatus.NOT_MODIFIED, headers });
+    }
+
+    return new Response(result.value.source, {
       status: 200,
       headers: {
+        ...headers,
         "content-type": "application/javascript; charset=utf-8",
-        "cache-control": "public, max-age=0",
       },
     });
   } catch (error) {
-    rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
-    return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
+    if (error instanceof BrowserModuleCapacityError) {
+      rscEndpointRouterLog.debug("module build capacity exhausted", {
+        errorName: error.name,
+      });
+      return new Response("Service Unavailable", {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        headers: {
+          "cache-control": "no-store",
+          "retry-after": "1",
+        },
+      });
+    }
+
+    rscEndpointRouterLog.debug("module build failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return new Response("Internal Error", {
+      status: HTTP_SERVER_ERROR,
+      headers: { "cache-control": "no-store" },
+    });
   }
+}
+
+function getBrowserModuleAdapterId(adapter: RuntimeAdapter): number {
+  const existing = browserModuleAdapterIds.get(adapter);
+  if (existing !== undefined) return existing;
+  const id = nextBrowserModuleAdapterId++;
+  browserModuleAdapterIds.set(adapter, id);
+  return id;
+}
+
+function stableSerialize(value: unknown, seen = new WeakSet<object>()): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (seen.has(value)) return '"[Circular]"';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerialize(entry, seen)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry, seen)}`);
+  return `{${entries.join(",")}}`;
+}
+
+function estimateBrowserModuleBundleSize(bundle: BrowserModuleBundle): number {
+  let size = new TextEncoder().encode(bundle.source).byteLength +
+    bundle.contentHash.length + bundle.importMapHash.length;
+  for (const dependency of bundle.dependencies) {
+    size += dependency.path.length + dependency.contentHash.length;
+  }
+  for (const probe of bundle.resolutionProbes) {
+    size += probe.path.length + probe.state.length;
+  }
+  return size;
+}
+
+function ifNoneMatch(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  return header.split(",").some((candidate) => {
+    const value = candidate.trim();
+    return value === "*" || value === etag || value === `W/${etag}`;
+  });
 }
 
 async function resolveModuleEndpointPath(
   rel: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  config?: VeryfrontConfig,
 ): Promise<string | null> {
-  const candidateRoots = [
-    joinPath(projectDir, "app"),
-    joinPath(projectDir, "components"),
-    joinPath(projectDir, "src"),
-    projectDir,
-  ];
+  const normalizedRel = rel.replace(/^\/+/, "");
+  if (!/\.(?:[jt]sx?|[cm][jt]s)$/i.test(normalizedRel)) return null;
 
-  for (const root of candidateRoots) {
-    const modulePath = normalizePath(joinPath(root, rel));
-    if (!isWithinDirectory(root, modulePath)) {
-      continue;
-    }
+  const rootRelative = normalizePath(config?.directories?.app ?? "app").replace(/^\/+/, "");
+  const root = normalizePath(joinPath(projectDir, rootRelative));
+  if (!rootRelative || !isWithinDirectory(projectDir, root)) return null;
 
-    try {
-      if (!(await adapter.fs.exists(modulePath))) {
-        continue;
-      }
-    } catch (error) {
-      rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
-      throw error;
-    }
+  const pathRelativeToRoot = normalizedRel.startsWith(`${rootRelative}/`)
+    ? normalizedRel.slice(rootRelative.length + 1)
+    : normalizedRel;
+  const modulePath = normalizePath(joinPath(root, pathRelativeToRoot));
+  if (!isWithinDirectory(root, modulePath)) return null;
 
-    return modulePath;
+  try {
+    if (!(await adapter.fs.exists(modulePath))) return null;
+    if (
+      !(await hasTrustedPathMetadata({
+        adapter,
+        projectDir,
+        rootRelative,
+        pathRelativeToRoot,
+      }))
+    ) return null;
+    if (!(await isTrustedBrowserModuleEntry(modulePath, adapter))) return null;
+  } catch (error) {
+    rscEndpointRouterLog.debug("module lookup failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    throw error;
   }
 
-  return null;
+  return modulePath;
+}
+
+async function hasTrustedPathMetadata(options: {
+  projectDir: string;
+  rootRelative: string;
+  pathRelativeToRoot: string;
+  adapter: RuntimeAdapter;
+}): Promise<boolean> {
+  const segments = [options.rootRelative, options.pathRelativeToRoot]
+    .flatMap((path) => path.split("/"))
+    .filter(Boolean);
+  if (segments.length < 2 || segments.some((segment) => segment === "." || segment === "..")) {
+    return false;
+  }
+
+  let parent = normalizePath(options.projectDir);
+  try {
+    for (const [index, segment] of segments.entries()) {
+      let matchingEntry:
+        | { isFile: boolean; isDirectory: boolean; isSymlink: boolean }
+        | undefined;
+      for await (const entry of options.adapter.fs.readDir(parent)) {
+        if (entry.name === segment) {
+          matchingEntry = entry;
+          break;
+        }
+      }
+
+      const isLast = index === segments.length - 1;
+      if (
+        !matchingEntry || matchingEntry.isSymlink ||
+        (isLast ? !matchingEntry.isFile : !matchingEntry.isDirectory)
+      ) {
+        return false;
+      }
+      parent = normalizePath(joinPath(parent, segment));
+    }
+  } catch (error) {
+    rscEndpointRouterLog.debug("module path metadata inspection failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return false;
+  }
+
+  return true;
+}
+
+async function isTrustedBrowserModuleEntry(
+  modulePath: string,
+  adapter: RuntimeAdapter,
+): Promise<boolean> {
+  try {
+    const analysis = await analyzeComponent(modulePath, adapter.fs);
+    return analysis.type === "client" && !analysis.hasUseServer;
+  } catch (error) {
+    rscEndpointRouterLog.debug("client module analysis failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return false;
+  }
 }
 
 /** Extract name parameter with fallback to "World" */
@@ -251,45 +500,7 @@ async function handlePayloadEndpoint({
   handler: RSCDevServerHandler;
   searchParams: URLSearchParams;
 }): Promise<Response> {
-  let modules: string[] = [];
-
-  try {
-    const manifestResponse = await handler.handleManifest();
-    if (manifestResponse.ok) {
-      const manifestData = await manifestResponse.json();
-      const componentPaths = manifestData?.components;
-
-      if (componentPaths && typeof componentPaths === "object") {
-        modules = Object.values(componentPaths).filter(
-          (value): value is string => typeof value === "string" && value.length > 0,
-        );
-      }
-    }
-  } catch (error) {
-    rscEndpointRouterLog.debug("failed to read manifest for payload", error);
-  }
-
-  if (modules.length === 0) {
-    modules = ["__veryfront_rsc_root__"];
-  }
-
-  const name = getNameParam(searchParams);
-  const rootHtml = `<div data-slot="root">Hello ${escapeHtml(name)}</div>`;
-
-  return new Response(
-    JSON.stringify({
-      html: rootHtml,
-      modules,
-      slots: { root: rootHtml },
-    }),
-    {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "cache-control": "no-cache",
-      },
-    },
-  );
+  return handler.handleRender("/", searchParams);
 }
 
 function handleStreamEndpoint(searchParams: URLSearchParams): Response {

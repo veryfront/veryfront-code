@@ -1,8 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildHttpCacheIdentity,
   ensureAbsoluteDir,
+  fingerprintImportMap,
+  getCanonicalReactEsmVersion,
+  hashHttpCacheIdentity,
   hasIncompatibleFilePaths,
   isExternalScheme,
   isHttpUrl,
@@ -10,10 +14,140 @@ import {
   isParentHttpModule,
   isRelative,
   normalizeHttpUrl,
+  prepareHttpCacheRequestOptions,
   resolveBareSpecifier,
 } from "./http-cache-helpers.ts";
 
 describe("transforms/esm/http-cache-helpers", () => {
+  describe("cache identity", () => {
+    it("uses a full SHA-256 fingerprint for import maps that collide under 32-bit hashing", async () => {
+      const aaFingerprint = await fingerprintImportMap({
+        imports: { collision: "Aa" },
+        scopes: {},
+      });
+      const bbFingerprint = await fingerprintImportMap({
+        imports: { collision: "BB" },
+        scopes: {},
+      });
+
+      assertMatch(aaFingerprint, /^[a-f0-9]{64}$/);
+      assertMatch(bbFingerprint, /^[a-f0-9]{64}$/);
+      assertNotEquals(aaFingerprint, bbFingerprint);
+
+      const aaIdentity = await buildHttpCacheIdentity("https://modules.example.com/root.js", {
+        importMap: { imports: { collision: "Aa" }, scopes: {} },
+      });
+      const bbIdentity = await buildHttpCacheIdentity("https://modules.example.com/root.js", {
+        importMap: { imports: { collision: "BB" }, scopes: {} },
+      });
+      assertMatch(aaIdentity, /^veryfront:http-module:v2:/);
+      assertMatch(await hashHttpCacheIdentity(aaIdentity), /^[a-f0-9]{64}$/);
+      assertNotEquals(
+        await hashHttpCacheIdentity(aaIdentity),
+        await hashHttpCacheIdentity(bbIdentity),
+      );
+    });
+
+    it("frames URL and React version components without delimiter collisions", async () => {
+      const importMap = { imports: {}, scopes: {} };
+
+      assertNotEquals(
+        await buildHttpCacheIdentity(
+          "https://modules.example.com/root:react=19.0.0",
+          { importMap },
+        ),
+        await buildHttpCacheIdentity("https://modules.example.com/root", {
+          importMap,
+          reactVersion: "19.0.0",
+        }),
+      );
+    });
+
+    it("canonicalizes and fingerprints one import map once per prepared request graph", async () => {
+      let importEnumerations = 0;
+      const imports = new Proxy({ pkg: "https://modules.example.com/pkg.js" }, {
+        ownKeys(target) {
+          importEnumerations++;
+          return Reflect.ownKeys(target);
+        },
+      });
+      const options = prepareHttpCacheRequestOptions({
+        cacheDir: ".cache",
+        importMap: { imports, scopes: {} },
+      });
+
+      await Promise.all([
+        buildHttpCacheIdentity("https://modules.example.com/a.js", options),
+        buildHttpCacheIdentity("https://modules.example.com/b.js", options),
+        buildHttpCacheIdentity("https://modules.example.com/c.js", options),
+      ]);
+
+      assertEquals(importEnumerations, 1);
+    });
+
+    it("does not reuse a prepared fingerprint across separate top-level requests", async () => {
+      const importMap = {
+        imports: { pkg: "https://modules.example.com/v1.js" },
+        scopes: {},
+      };
+      const firstOptions = prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap });
+      const first = await buildHttpCacheIdentity(
+        "https://modules.example.com/root.js",
+        firstOptions,
+      );
+
+      importMap.imports.pkg = "https://modules.example.com/v2.js";
+      const secondOptions = prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap });
+      const second = await buildHttpCacheIdentity(
+        "https://modules.example.com/root.js",
+        secondOptions,
+      );
+
+      assertNotEquals(first, second);
+    });
+  });
+
+  describe("canonical React cache identity", () => {
+    it("recognizes root and pinned esm.sh React packages", () => {
+      assertEquals(
+        getCanonicalReactEsmVersion("https://esm.sh/react@19.0.0/es2022/react.mjs"),
+        "19.0.0",
+      );
+      assertEquals(
+        getCanonicalReactEsmVersion("https://esm.sh/v135/react-dom@18.3.1/server.js"),
+        "18.3.1",
+      );
+      assertEquals(
+        getCanonicalReactEsmVersion("https://esm.sh/stable/react@18.3.1/index.js"),
+        "18.3.1",
+      );
+    });
+
+    it("does not classify nested or scoped package subpaths as core React", () => {
+      assertEquals(
+        getCanonicalReactEsmVersion("https://esm.sh/@scope/react@19.0.0/index.js"),
+        null,
+      );
+      assertEquals(
+        getCanonicalReactEsmVersion("https://esm.sh/pkg@1.0.0/react@19.0.0/index.js"),
+        null,
+      );
+    });
+
+    it("normalizes missing ambient versions in canonical identities", async () => {
+      const url = "https://esm.sh/react@19.0.0?target=es2022";
+      const emptyImportMap = { imports: {}, scopes: {} };
+
+      assertEquals(
+        await buildHttpCacheIdentity(url, { importMap: emptyImportMap }),
+        await buildHttpCacheIdentity(url, {
+          importMap: { imports: { unrelated: "https://example.com/a.js" } },
+          reactVersion: "19.0.0",
+        }),
+      );
+    });
+  });
+
   describe("isHttpUrl", () => {
     it("returns true for https URLs", () => {
       assertEquals(isHttpUrl("https://esm.sh/react@18"), true);

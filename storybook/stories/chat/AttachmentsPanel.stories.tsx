@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { AttachmentsPanel } from "veryfront/chat";
+import { AttachmentPill, AttachmentsPanel } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -15,11 +15,15 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 const importCode = `import { AttachmentsPanel } from "veryfront/chat"`;
 
 const compositionTree =
-  `AttachmentsPanel  <- render it: <AttachmentsPanel uploads={…} />
+  `AttachmentsPanel  <- render it: <AttachmentsPanel uploads={uploads} />
 AttachmentsPanel.Root  <- or compose it: context (uploads, callbacks, file picker)
   +-- AttachmentsPanel.Header <- "Attachments" title + close button (when onClose set)
   +-- AttachmentsPanel.List   <- flex-gap column of attachment cards
-  |     +-- AttachmentsPanel.Item    <- composes <Attachment> + a ⋯ menu (Open / Delete)
+  |     +-- AttachmentsPanel.Item    <- composes <AttachmentPill> and an overflow menu
+  |     |     +-- AttachmentsPanel.Item.Icon     <- file-type icon square
+  |     |     +-- AttachmentsPanel.Item.Preview  <- image thumbnail (image files)
+  |     |     +-- AttachmentsPanel.Item.Remove   <- delete control (onRemoveUpload)
+  |     |     (name / size: use AttachmentPill.Label or read useAttachments)
   +-- AttachmentsPanel.Empty  <- empty state (heading, hint, upload action)
   +-- AttachmentsPanel.Action <- upload/attach button (opens the native picker)`;
 
@@ -33,7 +37,7 @@ function AttachmentsPanelDocsPage() {
 
       <DocsSection
         title="Attachments"
-        description="Each row *composes* the shared `Attachment` card — a file-type badge (or image thumbnail), name, and size — swapping the default ✕ for a ⋯ overflow menu (Open / Delete)."
+        description="Each row composes the shared `AttachmentPill`, including its file badge or image thumbnail, name, and size, with an overflow menu for open and delete actions."
       >
         <DocsExampleAuto of={UploadedFiles} />
       </DocsSection>
@@ -54,7 +58,7 @@ function AttachmentsPanelDocsPage() {
 
       <DocsSection
         title="Compose"
-        description="Drop to `AttachmentsPanel.Root` + parts to recompose the panel — reorder or restyle the list, swap in your own `Item` rows, or replace the empty state. Every part takes `className`."
+        description="Use `AttachmentsPanel.Root` and its parts to recompose the panel, reorder or restyle the list, replace item rows, or replace the empty state. Every part takes `className`."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -140,7 +144,8 @@ function AttachmentsPanelDocsPage() {
             {
               name: "url",
               type: "string",
-              description: "Resolved file URL; renders an image thumbnail when the file is an image",
+              description:
+                "Resolved file URL; renders an image thumbnail when the file is an image",
             },
           ]}
         />
@@ -222,9 +227,10 @@ export const Loading: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { AttachmentsPanel, useUploadsRegistry } from "veryfront/chat";
+        code:
+          `import { AttachmentsPanel, useAttachments } from "veryfront/chat";
 
-const uploads = useUploadsRegistry({ url: "/api/uploads" });
+const uploads = useAttachments({ url: "/api/uploads" });
 
 <AttachmentsPanel
   uploads={uploads.items}
@@ -246,8 +252,58 @@ const uploads = useUploadsRegistry({ url: "/api/uploads" });
   ),
 };
 
-export const Composed: Story = {
+export const ComposedRow: Story = {
+  name: "Composed row (Item leaves)",
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { AttachmentPill, AttachmentsPanel } from "veryfront/chat";
+
+// Own the row: compose it from the domain leaves (.Icon derives pill state,
+// .Remove wires to onRemoveUpload) + AttachmentPill.Label for name/size. Plain
+// text isn't a leaf — read useAttachments() or use .Label.
+<AttachmentsPanel.Root uploads={uploads} onRemoveUpload={remove}>
+  <div className="flex-1 overflow-y-auto px-4 py-4">
+    <AttachmentsPanel.List>
+      {uploads.map((file) => (
+        <AttachmentsPanel.Item key={file.id} file={file}>
+          <AttachmentsPanel.Item.Icon />
+          <AttachmentPill.Label />
+          <AttachmentsPanel.Item.Remove />
+        </AttachmentsPanel.Item>
+      ))}
+    </AttachmentsPanel.List>
+  </div>
+</AttachmentsPanel.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ReviewSurface label="Composed row">
+        <div className="h-[280px]">
+          <AttachmentsPanel.Root uploads={uploads} onRemoveUpload={() => undefined}>
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <AttachmentsPanel.List>
+                {uploads.map((file) => (
+                  <AttachmentsPanel.Item key={file.id} file={file}>
+                    <AttachmentsPanel.Item.Icon />
+                    <AttachmentPill.Label />
+                    <AttachmentsPanel.Item.Remove />
+                  </AttachmentsPanel.Item>
+                ))}
+              </AttachmentsPanel.List>
+            </div>
+          </AttachmentsPanel.Root>
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {

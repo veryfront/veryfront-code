@@ -75,10 +75,27 @@ export interface BranchInfo {
 }
 
 /** Result returned from use chat. */
+/**
+ * Streaming lifecycle of a chat turn.
+ * - `submitted`: request sent, awaiting the first streamed token
+ * - `streaming`: assistant tokens are arriving
+ * - `ready`: idle — no turn in flight
+ * - `error`: the last turn failed
+ *
+ * Parity with the Vercel AI SDK `status` field. Prefer this over `isLoading`
+ * (which stays as a convenience alias for `submitted | streaming`).
+ */
+export type ChatStatus = "submitted" | "streaming" | "ready" | "error";
+
 export interface UseChatResult {
   messages: ChatMessage[];
   input: string;
+  /** @deprecated Use `status`. Equivalent to `status === "submitted" || status === "streaming"`. */
   isLoading: boolean;
+  /** Streaming lifecycle of the current turn (AI-SDK parity). */
+  status: ChatStatus;
+  /** Id of the assistant message currently streaming, or `null` when idle. */
+  streamingMessageId: string | null;
   error: Error | null;
   /** Current model override (undefined = use agent default) */
   model: string | undefined;
@@ -103,10 +120,4 @@ export interface UseChatResult {
   data?: unknown;
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   handleSubmit: (e?: React.FormEvent) => Promise<void>;
-  /** Alias for `handleInputChange` — matches `ChatProps.onChange` for easy spreading */
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  /** Alias for `handleSubmit` — matches `ChatProps.onSubmit` for easy spreading */
-  onSubmit: (e?: React.FormEvent) => Promise<void>;
-  /** Alias for `setModel` — matches `ChatProps.onModelChange` for easy spreading */
-  onModelChange: (model: string | undefined) => void;
 }

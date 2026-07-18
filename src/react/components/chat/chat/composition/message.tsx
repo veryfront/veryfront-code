@@ -19,14 +19,8 @@
  */
 
 import * as React from "react";
-import type {
-  BranchInfo,
-  ChatDynamicToolPart,
-  ChatMessage,
-  ChatToolPart,
-} from "#veryfront/agent/react";
+import type { BranchInfo, ChatMessage } from "#veryfront/agent/react";
 import { cn, defaultChatTheme } from "../../theme.ts";
-import { Markdown } from "../../markdown.tsx";
 import type { CodeBlockProps, Components } from "../../markdown.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 import { MessageItem } from "#veryfront/react/primitives/index.ts";
@@ -39,17 +33,27 @@ import { Slot } from "../../../ui/slot.tsx";
 import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
-import { ReasoningCard } from "../components/reasoning.tsx";
 import { Shimmer } from "../../../ui/shimmer.tsx";
-import { ToolCallCard } from "../components/tool-ui.tsx";
-import { StepIndicator } from "../components/step-indicator.tsx";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
-import { Sources as SourcesImpl } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
 import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../ui/popover.tsx";
+import { MessageSources } from "./message-sources.tsx";
+export type { MessageSourcesProps } from "./message-sources.tsx";
 import {
-  extractSourcesFromParts,
+  MessagePart,
+  MessageReasoning,
+  MessageSource,
+  MessageText,
+  renderAnswerPart,
+} from "./message-body.tsx";
+export type {
+  MessagePartProps,
+  MessageReasoningProps,
+  MessageSourceProps,
+  MessageTextProps,
+} from "./message-body.tsx";
+import {
   getAnswerPartsForRendering,
   getTextContentFromParts,
   groupPartsInOrder,
@@ -70,6 +74,12 @@ function metadataString(
 /** Props accepted by message root. */
 export interface MessageRootProps {
   message: ChatMessage;
+  /**
+   * Whether this turn is still streaming. Omit to derive it from
+   * `ChatContext` (`streamingMessageId === message.id`) so a hand-composed
+   * transcript never has to compute an off-by-one index. Pass a boolean only
+   * to override the context (e.g. rendering outside a live chat).
+   */
   isStreaming?: boolean;
   children: React.ReactNode;
   className?: string;
@@ -82,15 +92,19 @@ export interface MessageRootProps {
   feedback?: FeedbackValue | null;
   /** Regenerate this turn — surfaces the retry button in `Message.Actions`. */
   onReload?: () => void;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
-const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
-  function MessageRoot(
-    { message, isStreaming = false, children, className, ...overrides },
-    ref,
-  ) {
+function MessageRoot(
+  { message, isStreaming, children, className, ref, ...overrides }: MessageRootProps,
+): React.ReactElement {
+  {
     const chat = useChatContextOptional();
     const role = message.role as MessageContextValue["role"];
+    // Derive streaming from context unless the caller pins it explicitly.
+    const resolvedStreaming = isStreaming ??
+      (chat?.streamingMessageId != null && chat.streamingMessageId === message.id);
     const answerParts = React.useMemo(
       () =>
         getAnswerPartsForRendering(message.parts, {
@@ -128,7 +142,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
       () => ({
         message,
         role,
-        isStreaming,
+        isStreaming: resolvedStreaming,
         parts,
         textContent,
         branch,
@@ -155,7 +169,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
         message,
         message.id,
         role,
-        isStreaming,
+        resolvedStreaming,
         parts,
         onReload,
         textContent,
@@ -189,8 +203,8 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
         </MessageItem>
       </MessageContextProvider>
     );
-  },
-);
+  }
+}
 MessageRoot.displayName = "Message.Root";
 
 // ---------------------------------------------------------------------------
@@ -213,7 +227,7 @@ function MessageAvatar(
         chat?.agent?.name ??
         metadataString(message.metadata, "agentId")}
       avatarUrl={metadataString(message.metadata, "agentAvatarUrl") ??
-        chat?.agent?.avatarUrl}
+        chat?.agent?.avatarUrl ?? undefined}
       model={metadataString(message.metadata, "model")}
       className={className}
     />
@@ -227,6 +241,8 @@ MessageAvatar.displayName = "Message.Avatar";
 
 interface MessageHeaderProps {
   className?: string;
+  /** Compose the header's inner row yourself; omit for the default anatomy. */
+  children?: React.ReactNode;
 }
 
 /** Format a timestamp as a short `HH:MM` label (matches Studio's meta line). */
@@ -237,14 +253,74 @@ function formatTimestamp(createdAt: ChatMessage["createdAt"]): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Props for `Message.Header.Name`. */
+export interface MessageHeaderNameProps {
+  className?: string;
+  /** Override the default agent/author label. */
+  children?: React.ReactNode;
+}
+
+/**
+ * The agent/author name shown in the header. Reads the same identity from
+ * `MessageContext` (+ optional `ChatContext`) the default header uses — with no
+ * agent it falls back to the `"Assistant"` placeholder. Pass `children` to
+ * replace the text without losing the styling/position.
+ */
+function MessageHeaderName(
+  { className, children }: MessageHeaderNameProps,
+): React.ReactElement {
+  const { message } = useMessageContext();
+  const chat = useChatContextOptional();
+  // The label carries the "Assistant" placeholder; the avatar deliberately does
+  // NOT (so `AgentAvatar` can fall back to the provider logomark for `model`).
+  const agentName = metadataString(message.metadata, "agentName") ??
+    chat?.agent?.name ??
+    metadataString(message.metadata, "agentId");
+  const displayName = agentName ?? "Assistant";
+  return (
+    <span className={cn("min-w-0 truncate font-medium", className)}>
+      {children ?? displayName}
+    </span>
+  );
+}
+MessageHeaderName.displayName = "Message.Header.Name";
+
+/** Props for `Message.Header.Timestamp`. */
+export interface MessageHeaderTimestampProps {
+  className?: string;
+}
+
+/**
+ * The right-aligned `HH:MM` timestamp in the header (`ml-auto`). Reads
+ * `message.createdAt` from context and renders nothing when there's no valid
+ * time — identical to the default header's inline behaviour.
+ */
+function MessageHeaderTimestamp(
+  { className }: MessageHeaderTimestampProps,
+): React.ReactElement | null {
+  const { message } = useMessageContext();
+  const timestamp = formatTimestamp(message.createdAt);
+  if (!timestamp) return null;
+  return (
+    <span
+      className={cn("ml-auto text-sm text-[var(--faint)]", className)}
+      suppressHydrationWarning
+    >
+      {timestamp}
+    </span>
+  );
+}
+MessageHeaderTimestamp.displayName = "Message.Header.Timestamp";
+
 /**
  * Assistant message header — agent avatar (`size-8`) + name on the left, a
  * right-aligned timestamp. Ported 1:1 from Studio's `ChatMessageHeader`
  * (`pt-px pb-2`, `flex items-center gap-2`, name `font-medium`, timestamp
- * `text-sm ml-auto`). User turns have no header.
+ * `text-sm ml-auto`). User turns have no header. Pass `children` to recompose
+ * the inner row from `Message.Header.Name` / `Message.Header.Timestamp`.
  */
 function MessageHeader(
-  { className }: MessageHeaderProps,
+  { className, children }: MessageHeaderProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
   const chat = useChatContextOptional();
@@ -257,34 +333,35 @@ function MessageHeader(
   const agentName = metadataString(message.metadata, "agentName") ??
     chat?.agent?.name ??
     metadataString(message.metadata, "agentId");
-  const displayName = agentName ?? "Assistant";
   const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
-    chat?.agent?.avatarUrl;
-  const timestamp = formatTimestamp(message.createdAt);
+    chat?.agent?.avatarUrl ?? undefined;
 
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
     // is `items-start`, which would otherwise shrink the header to its content.
     <div className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
-      <AvatarImpl
-        name={agentName}
-        avatarUrl={avatarUrl}
-        model={metadataString(message.metadata, "model")}
-        className="size-8"
-      />
-      <span className="min-w-0 truncate font-medium">{displayName}</span>
-      {timestamp && (
-        <span
-          className="ml-auto text-sm text-[var(--faint)]"
-          suppressHydrationWarning
-        >
-          {timestamp}
-        </span>
+      {children ?? (
+        <>
+          <AvatarImpl
+            name={agentName}
+            avatarUrl={avatarUrl}
+            model={metadataString(message.metadata, "model")}
+            className="size-8"
+          />
+          <MessageHeaderName />
+          <MessageHeaderTimestamp />
+        </>
       )}
     </div>
   );
 }
 MessageHeader.displayName = "Message.Header";
+
+/** `Message.Header` compound — the header row plus its addressable leaves. */
+const MessageHeaderCompound = Object.assign(MessageHeader, {
+  Name: MessageHeaderName,
+  Timestamp: MessageHeaderTimestamp,
+});
 
 // ---------------------------------------------------------------------------
 // Message.Content
@@ -306,85 +383,7 @@ function groupKey(group: PartGroup, index: number): string {
   }
 }
 
-/** Options shared by the default part renderer and `Message.Part`. */
-interface RenderPartOptions {
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  showSteps: boolean;
-  stepCount: number;
-  /** Forwarded to the answer `Markdown` — swap the code block. */
-  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  /** Forwarded to the answer `Markdown` — override element renderers. */
-  markdownComponents?: Components;
-}
-
-/**
- * Render one grouped assistant part with the default anatomy. Extracted so both
- * the default `Message.Content` loop and the `Message.Part` sub-part share one
- * source of truth — the composed path never drifts from the preset.
- */
-function renderAnswerPart(
-  group: PartGroup,
-  opts: RenderPartOptions,
-): React.ReactNode {
-  if (group.type === "text") {
-    // `my-2` gives the answer text extra breathing room from an adjacent tool
-    // card. In the flex-col container the gap doesn't collapse with margins, so
-    // this widens text↔tool boundaries while tool↔tool stays at the base gap.
-    return (
-      <Markdown
-        className="my-2 text-[15px] leading-7"
-        renderCodeBlock={opts.codeBlock}
-        components={opts.markdownComponents}
-      >
-        {group.content}
-      </Markdown>
-    );
-  }
-  if (group.type === "reasoning") {
-    return <ReasoningCard text={group.text} isStreaming={group.isStreaming} />;
-  }
-  if (group.type === "step") {
-    return opts.showSteps && opts.stepCount > 1
-      ? (
-        <StepIndicator
-          stepIndex={group.stepIndex}
-          isComplete={group.isComplete}
-        />
-      )
-      : null;
-  }
-  if (group.type === "file") {
-    const isImage = group.file.mediaType.startsWith("image/");
-    return (
-      <div className="my-1.5">
-        <AttachmentPill
-          className="w-[200px]"
-          attachment={{
-            id: "file",
-            name: group.file.filename ?? "Attachment",
-            type: group.file.mediaType,
-            url: group.file.url,
-            // No lifecycle `state`: this is a sent, read-only attachment, so
-            // the pill shows the file type/size rather than an "Uploaded" badge.
-            ...(group.file.size != null ? { size: group.file.size } : {}),
-            preview: isImage ? group.file.url : undefined,
-          }}
-        />
-      </div>
-    );
-  }
-  // ToolCall renders the compact skill row for skill tools and the full
-  // params/result card for everything else — one component either way.
-  return opts.renderTool ? opts.renderTool(group.tool) : <ToolCallCard tool={group.tool} />;
-}
-
 export interface MessageContentProps {
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  /** @deprecated Prefer composition — render `Message.Part` yourself or omit. */
-  showSteps?: boolean;
-  /** @deprecated Prefer composition — render `Message.Sources` or omit. */
-  showSources?: boolean;
-  onSourceClick?: (source: Source, index: number) => void;
   className?: string;
   /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
@@ -400,10 +399,6 @@ export interface MessageContentProps {
 }
 
 function MessageContent({
-  renderTool,
-  showSteps = false,
-  showSources = false,
-  onSourceClick,
   className,
   codeBlock,
   markdownComponents,
@@ -411,8 +406,6 @@ function MessageContent({
 }: MessageContentProps): React.ReactElement {
   const { message, role, parts, textContent } = useMessageContext();
   const chat = useChatContextOptional();
-  const shouldShowSources = showSources || chat?.showSources || false;
-  const sourceClickHandler = onSourceClick ?? chat?.onSourceClick;
 
   if (role === "user") {
     const fileParts = message.parts.filter((p) => p.type === "file");
@@ -453,7 +446,6 @@ function MessageContent({
 
   const stepCount = parts.filter((g) => g.type === "step").length;
   const compose = typeof children === "function";
-  const messageSources = shouldShowSources ? extractSourcesFromParts(message.parts) : [];
 
   return (
     <div
@@ -473,89 +465,16 @@ function MessageContent({
       {parts.map((group, index) => (
         <React.Fragment key={groupKey(group, index)}>
           {compose ? children(group, index) : renderAnswerPart(group, {
-            renderTool,
-            showSteps,
             stepCount,
             codeBlock,
             markdownComponents,
           })}
         </React.Fragment>
       ))}
-      {!compose && messageSources.length > 0 && (
-        <SourcesImpl
-          sources={messageSources}
-          onSourceClick={sourceClickHandler}
-        />
-      )}
     </div>
   );
 }
 MessageContent.displayName = "Message.Content";
-
-// ---------------------------------------------------------------------------
-// Message.Part / Message.Sources — the body sub-parts used inside a composed
-// `Message.Content`. `Message.Part` renders any grouped part with the default
-// anatomy (so composition never drifts from the preset); special-case a part by
-// checking `part.type` and rendering your own node instead.
-// ---------------------------------------------------------------------------
-
-/** Props for `Message.Part`. */
-export interface MessagePartProps {
-  part: PartGroup;
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  /** Render multi-step indicators (default: true here — presence is intent). */
-  showSteps?: boolean;
-  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  markdownComponents?: Components;
-}
-
-/** Render a single grouped part with the default `Message.Content` anatomy. */
-function MessagePart({
-  part,
-  renderTool,
-  showSteps = true,
-  codeBlock,
-  markdownComponents,
-}: MessagePartProps): React.ReactElement {
-  const { parts } = useMessageContext();
-  const stepCount = parts.filter((g) => g.type === "step").length;
-  return (
-    <>
-      {renderAnswerPart(part, {
-        renderTool,
-        showSteps,
-        stepCount,
-        codeBlock,
-        markdownComponents,
-      })}
-    </>
-  );
-}
-MessagePart.displayName = "Message.Part";
-
-/** Props for `Message.Sources`. */
-export interface MessageSourcesProps {
-  onSourceClick?: (source: Source, index: number) => void;
-  className?: string;
-}
-
-/** The inline citation sources extracted from this message's tool results. */
-function MessageSources(
-  { onSourceClick, className }: MessageSourcesProps,
-): React.ReactElement | null {
-  const { message } = useMessageContext();
-  const chat = useChatContextOptional();
-  const sources = extractSourcesFromParts(message.parts);
-  if (sources.length === 0) return null;
-  return (
-    <SourcesImpl
-      sources={sources}
-      onSourceClick={onSourceClick ?? chat?.onSourceClick}
-      className={className}
-    />
-  );
-}
-MessageSources.displayName = "Message.Sources";
 
 // ---------------------------------------------------------------------------
 // Message.Actions — the reference render-or-compose pattern.
@@ -581,20 +500,29 @@ export interface MessageActionProps
   asChild?: boolean;
   /** Runs before the default action; call `next()` to invoke it (or skip it). */
   onClick?: (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Internal button shared by every action sub-part. */
-const ActionButton = React.forwardRef<
-  HTMLButtonElement,
-  MessageActionProps & {
+function ActionButton(
+  {
+    icon,
+    asChild,
+    onClick,
+    className,
+    children,
+    label,
+    defaultIcon,
+    action,
+    ref,
+    ...props
+  }: MessageActionProps & {
     label: string;
     defaultIcon: React.ReactNode;
     action: () => void;
-  }
->(function ActionButton(
-  { icon, asChild, onClick, className, children, label, defaultIcon, action, ...props },
-  ref,
-) {
+  },
+): React.ReactElement {
   const handleClick = (e: React.MouseEvent<HTMLElement>) => onClick ? onClick(e, action) : action();
 
   if (asChild) {
@@ -622,63 +550,61 @@ const ActionButton = React.forwardRef<
       {icon ?? defaultIcon}
     </button>
   );
-});
+}
 ActionButton.displayName = "Message.ActionButton";
 
 /** Copy the message text. Reads `onCopy`/`copied`/`textContent` from context. */
-export const MessageCopyAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
-  function MessageCopyAction(props, ref) {
-    const { onCopy, copied, textContent } = useMessageContext();
-    if (!textContent) return null;
-    return (
-      <ActionButton
-        ref={ref}
-        {...props}
-        label={copied ? "Copied!" : "Copy to clipboard"}
-        defaultIcon={copied
-          ? <CheckIcon className="size-3.5" />
-          : <CopyIcon className="size-3.5" />}
-        action={() => void onCopy()}
-      />
-    );
-  },
-);
+export function MessageCopyAction(
+  props: MessageActionProps,
+): React.ReactElement | null {
+  const { onCopy, copied, textContent } = useMessageContext();
+  if (!textContent) return null;
+  return (
+    <ActionButton
+      ref={props.ref}
+      {...props}
+      label={copied ? "Copied!" : "Copy to clipboard"}
+      defaultIcon={copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      action={() => void onCopy()}
+    />
+  );
+}
 MessageCopyAction.displayName = "Message.CopyAction";
 
 /** Regenerate this turn. Renders only when `onRegenerate` is available. */
-export const MessageRegenerateAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
-  function MessageRegenerateAction(props, ref) {
-    const { onRegenerate } = useMessageContext();
-    if (!onRegenerate) return null;
-    return (
-      <ActionButton
-        ref={ref}
-        {...props}
-        label="Regenerate response"
-        defaultIcon={<RefreshCwIcon className="size-3.5" />}
-        action={onRegenerate}
-      />
-    );
-  },
-);
+export function MessageRegenerateAction(
+  props: MessageActionProps,
+): React.ReactElement | null {
+  const { onRegenerate } = useMessageContext();
+  if (!onRegenerate) return null;
+  return (
+    <ActionButton
+      ref={props.ref}
+      {...props}
+      label="Regenerate response"
+      defaultIcon={<RefreshCwIcon className="size-3.5" />}
+      action={onRegenerate}
+    />
+  );
+}
 MessageRegenerateAction.displayName = "Message.RegenerateAction";
 
 /** Edit this message. Renders only when `onEdit` is available. */
-export const MessageEditAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
-  function MessageEditAction(props, ref) {
-    const { onEdit, textContent } = useMessageContext();
-    if (!onEdit || !textContent) return null;
-    return (
-      <ActionButton
-        ref={ref}
-        {...props}
-        label="Edit message"
-        defaultIcon={<PencilIcon className="size-3.5" />}
-        action={() => onEdit(textContent)}
-      />
-    );
-  },
-);
+export function MessageEditAction(
+  props: MessageActionProps,
+): React.ReactElement | null {
+  const { onEdit, textContent } = useMessageContext();
+  if (!onEdit || !textContent) return null;
+  return (
+    <ActionButton
+      ref={props.ref}
+      {...props}
+      label="Edit message"
+      defaultIcon={<PencilIcon className="size-3.5" />}
+      action={() => onEdit(textContent)}
+    />
+  );
+}
 MessageEditAction.displayName = "Message.EditAction";
 
 /** Props accepted by `<Message.Actions>`. */
@@ -735,9 +661,7 @@ function MessageFeedbackWrapper(
 }
 MessageFeedbackWrapper.displayName = "Message.Feedback";
 
-// ---------------------------------------------------------------------------
 // Message.Tokens — token-usage popover (Studio `ChatTokenUsage`, tightened)
-// ---------------------------------------------------------------------------
 
 interface TokenUsage {
   inputTokens?: number;
@@ -762,10 +686,18 @@ function readUsage(metadata: ChatMessage["metadata"]): TokenUsage | undefined {
   };
 }
 
-interface TokenRowProps {
+/** One row in the token usage breakdown. */
+export interface TokenRowProps {
   label: string;
   value: string;
   bold?: boolean;
+}
+
+/** Props accepted by `Message.Tokens`. */
+export interface MessageTokensProps {
+  className?: string;
+  /** Override how each breakdown row renders (Model / Input / Output / Total). */
+  renderItem?: (options: { item: TokenRowProps; index: number }) => React.ReactNode;
 }
 
 function TokenRow({ label, value, bold }: TokenRowProps): React.ReactElement {
@@ -792,11 +724,7 @@ function TokenRow({ label, value, bold }: TokenRowProps): React.ReactElement {
  * when the message carries no usage metadata.
  */
 function MessageTokens(
-  { className, renderRow }: {
-    className?: string;
-    /** Override how each breakdown row renders (Model / Input / Output / Total). */
-    renderRow?: (row: TokenRowProps) => React.ReactNode;
-  },
+  { className, renderItem }: MessageTokensProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
   const [open, setOpen] = React.useState(false);
@@ -843,9 +771,9 @@ function MessageTokens(
           Token usage
         </p>
         <div className="flex flex-col gap-1.5">
-          {rows.map((row) =>
-            renderRow
-              ? <React.Fragment key={row.label}>{renderRow(row)}</React.Fragment>
+          {rows.map((row, index) =>
+            renderItem
+              ? <React.Fragment key={row.label}>{renderItem({ item: row, index })}</React.Fragment>
               : <TokenRow key={row.label} {...row} />
           )}
         </div>
@@ -855,9 +783,7 @@ function MessageTokens(
 }
 MessageTokens.displayName = "Message.Tokens";
 
-// ---------------------------------------------------------------------------
 // Message.BranchPicker
-// ---------------------------------------------------------------------------
 
 function MessageBranchPicker(): React.ReactElement | null {
   const { branch, onBranchPrev, onBranchNext } = useMessageContext();
@@ -910,23 +836,19 @@ export type { MessageContentProps as MessageCompoundContentProps, MessageContext
 export interface MessageProps extends Omit<MessageRootProps, "children"> {
   /** Compose your own layout; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
-  /** Render inline citation sources under the answer. @default true */
-  showSources?: boolean;
-  /** Render multi-step indicators. @default true */
-  showSteps?: boolean;
+  /** Handle a source selection in the default `Message.Sources` anatomy. */
+  onSourceClick?: (source: Source, index: number) => void;
 }
 
 /** The default anatomy rendered when `<Message>` gets no children. */
 function MessageDefault(
-  { showSources = true, showSteps = true }: {
-    showSources?: boolean;
-    showSteps?: boolean;
-  },
+  { onSourceClick }: Pick<MessageProps, "onSourceClick">,
 ): React.ReactElement {
   return (
     <>
       <MessageHeader />
-      <MessageContent showSources={showSources} showSteps={showSteps} />
+      <MessageContent />
+      <MessageSources onSourceClick={onSourceClick} />
       <MessageContinuing />
       <div className="mt-1.5 flex items-center gap-0.5">
         <MessageActionsWrapper />
@@ -936,16 +858,15 @@ function MessageDefault(
   );
 }
 
-const MessageComponent = React.forwardRef<HTMLDivElement, MessageProps>(
-  function Message({ children, showSources, showSteps, ...root }, ref) {
-    return (
-      <MessageRoot ref={ref} {...root}>
-        {children ??
-          <MessageDefault showSources={showSources} showSteps={showSteps} />}
-      </MessageRoot>
-    );
-  },
-);
+function MessageComponent(
+  { children, onSourceClick, ref, ...root }: MessageProps,
+): React.ReactElement {
+  return (
+    <MessageRoot ref={ref} {...root}>
+      {children ?? <MessageDefault onSourceClick={onSourceClick} />}
+    </MessageRoot>
+  );
+}
 MessageComponent.displayName = "Message";
 
 /**
@@ -955,9 +876,12 @@ MessageComponent.displayName = "Message";
 export const Message = Object.assign(MessageComponent, {
   Root: MessageRoot,
   Avatar: MessageAvatar,
-  Header: MessageHeader,
+  Header: MessageHeaderCompound,
   Content: MessageContent,
   Part: MessagePart,
+  Text: MessageText,
+  Reasoning: MessageReasoning,
+  Source: MessageSource,
   Sources: MessageSources,
   Actions: MessageActionsWrapper,
   CopyAction: MessageCopyAction,

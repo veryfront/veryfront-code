@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import { handleDoctorCommand, parseDoctorArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -17,6 +18,13 @@ describe("commands/doctor/handler", () => {
   });
 
   describe("parseDoctorArgs", () => {
+    it("parses an explicit server port from raw argv", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--port", "4321"]));
+
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4321);
+    });
+
     it("strict defaults to false when not provided", () => {
       const result = parseDoctorArgs({ _: ["doctor"] });
       assertEquals(result.success, true);

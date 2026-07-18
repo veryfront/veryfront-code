@@ -11,6 +11,10 @@ export interface HydrationDataStructure {
   params: Record<string, string | string[]>;
   layouts: HydrationLayout[];
   appPath?: string;
+  /** Project-relative directory that contains App Router routes. */
+  appRouterRoot?: string;
+  /** The page and advertised client layouts mount inside a server-owned layout island. */
+  isolatedClientPage?: boolean;
   pagePath?: string;
   pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   clientModuleStrategy?: ClientModuleStrategy;

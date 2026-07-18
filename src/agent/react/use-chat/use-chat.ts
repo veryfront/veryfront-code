@@ -18,6 +18,7 @@ import type {
   ChatFilePart,
   ChatMessage,
   ChatMessagePart,
+  ChatStatus,
   InferenceMode,
   ToolOutput,
   UseChatOptions,
@@ -103,13 +104,32 @@ export function resolveUseChatStreamHandler(
  */
 const DEFAULT_CHAT_API = "/api/ag-ui";
 
+interface ResettableUseChatResult extends UseChatResult {
+  reset: (messages?: ChatMessage[]) => void;
+}
+
 export function useChat(options: UseChatOptions = {}): UseChatResult {
+  const { reset, ...chat } = useChatState(options);
+  void reset;
+  return chat;
+}
+
+/** @internal Chat session with the reset capability used by conversation hosts. */
+export function useChatWithSessionReset(
+  options: UseChatOptions = {},
+): ResettableUseChatResult {
+  return useChatState(options);
+}
+
+function useChatState(options: UseChatOptions): ResettableUseChatResult {
   const api = options.api ?? DEFAULT_CHAT_API;
   const [messages, setMessages] = useState<ChatMessage[]>(options.initialMessages ?? []);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [status, setStatus] = useState<ChatStatus>("ready");
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [data, setData] = useState<unknown>(null);
   const [model, setModel] = useState<string | undefined>(options.model);
@@ -125,12 +145,16 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
 
+  const invalidateActiveRequest = useCallback(() => {
+    requestIdRef.current++;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
+
   // Abort in-flight request on unmount
   useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort();
-    };
-  }, []);
+    return invalidateActiveRequest;
+  }, [invalidateActiveRequest]);
 
   /**
    * Add tool output to pending tool-call parts.
@@ -186,8 +210,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const base = message.baseMessages ?? messagesRef.current;
       setMessages([...base, userMessage]);
       setIsLoading(true);
+      setStatus("submitted");
+      setStreamingMessageId(null);
       setError(null);
 
+      let didError = false;
       try {
         const allMessages = [...base, userMessage];
 
@@ -230,26 +257,46 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           );
         }
 
+        if (!isLatestRequest(requestIdRef.current, requestId)) return;
         options.onResponse?.(response);
 
         if (!response.body) return;
 
-        const streamingMessageId = generateClientId("msg");
+        const fallbackStreamingId = generateClientId("msg");
         let hasAddedStreamingMessage = false;
-        const currentMessageIdRef = { current: streamingMessageId };
+        const currentMessageIdRef = { current: fallbackStreamingId };
+        // Promote the turn to `streaming` and publish the id of the message
+        // currently receiving tokens. Idempotent — repeated identical values
+        // bail out of re-render, so calling per chunk is cheap.
+        const markStreaming = () => {
+          if (!isLatestRequest(requestIdRef.current, requestId)) return;
+          setStatus("streaming");
+          setStreamingMessageId(currentMessageIdRef.current);
+        };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
         let serverModel: string | undefined = model;
-        setActiveModel(undefined);
+        setActiveModel((current) =>
+          isLatestRequest(requestIdRef.current, requestId) ? undefined : current
+        );
 
         const handleResponse = resolveUseChatStreamHandler(options.transport);
 
         await handleResponse(response.body, {
           onMessage: (assistantMessage) => {
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const withMeta = {
               ...assistantMessage,
               metadata: { ...assistantMessage.metadata, model: serverModel },
             };
+            // A response delivered as a single complete message (no incremental
+            // `onUpdate`) still passes through `streaming` for one commit so
+            // consumers see a consistent lifecycle.
+            if (!hasAddedStreamingMessage) {
+              currentMessageIdRef.current = withMeta.id;
+              markStreaming();
+            }
             setMessages((prev) => {
+              if (!isLatestRequest(requestIdRef.current, requestId)) return prev;
               if (!hasAddedStreamingMessage) return [...prev, withMeta];
               return prev.map((
                 m,
@@ -266,7 +313,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             options.onFinish?.(withMeta);
           },
           onData: (eventData) => {
-            setData(eventData);
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
+            setData((current: unknown) =>
+              isLatestRequest(requestIdRef.current, requestId) ? eventData : current
+            );
             // Detect inference mode and resolved model from server metadata
             if (
               eventData &&
@@ -275,16 +325,22 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             ) {
               const d = eventData as { inferenceMode: string; model?: string };
               if (d.inferenceMode === "server-local" || d.inferenceMode === "cloud") {
-                setInferenceMode(d.inferenceMode);
+                const nextInferenceMode: InferenceMode = d.inferenceMode;
+                setInferenceMode((current) =>
+                  isLatestRequest(requestIdRef.current, requestId) ? nextInferenceMode : current
+                );
               }
               if (d.model) {
                 serverModel = d.model;
-                setActiveModel(d.model);
+                setActiveModel((current) =>
+                  isLatestRequest(requestIdRef.current, requestId) ? d.model : current
+                );
               }
             }
           },
           onUpdate: (parts, messageId, messageMetadata) => {
-            const id = messageId ?? streamingMessageId;
+            if (!isLatestRequest(requestIdRef.current, requestId)) return;
+            const id = messageId ?? fallbackStreamingId;
             const metadata = { ...messageMetadata, model: serverModel };
 
             if (messageId && messageId !== currentMessageIdRef.current) {
@@ -293,12 +349,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
               if (hasAddedStreamingMessage) {
                 setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === oldId
-                      ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
-                      : m
-                  )
+                  isLatestRequest(requestIdRef.current, requestId)
+                    ? prev.map((m) =>
+                      m.id === oldId
+                        ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
+                        : m
+                    )
+                    : prev
                 );
+                markStreaming();
                 return;
               }
             }
@@ -307,40 +366,57 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [
-                ...prev,
-                {
-                  id,
-                  role: "assistant",
-                  parts,
-                  metadata,
-                  // Stamp when the turn first appears; `onMessage` preserves it.
-                  createdAt: new Date().toISOString(),
-                },
-              ]);
+              ) =>
+                isLatestRequest(requestIdRef.current, requestId)
+                  ? [
+                    ...prev,
+                    {
+                      id,
+                      role: "assistant",
+                      parts,
+                      metadata,
+                      // Stamp when the turn first appears; `onMessage` preserves it.
+                      createdAt: new Date().toISOString(),
+                    },
+                  ]
+                  : prev
+              );
+              markStreaming();
               return;
             }
 
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentMessageIdRef.current
-                  ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
-                  : m
-              )
+              isLatestRequest(requestIdRef.current, requestId)
+                ? prev.map((m) =>
+                  m.id === currentMessageIdRef.current
+                    ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
+                    : m
+                )
+                : prev
             );
+            markStreaming();
           },
-          onToolCall: options.onToolCall,
+          onToolCall: options.onToolCall
+            ? (arg) =>
+              isLatestRequest(requestIdRef.current, requestId)
+                ? options.onToolCall?.(arg)
+                : undefined
+            : undefined,
         });
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
+        if (!isLatestRequest(requestIdRef.current, requestId)) return;
 
         const nextError = ensureError(error);
+        didError = true;
         setError(nextError);
         options.onError?.(nextError);
       } finally {
         // Only the latest request can clear loading/abort state.
         if (isLatestRequest(requestIdRef.current, requestId)) {
           setIsLoading(false);
+          setStatus(didError ? "error" : "ready");
+          setStreamingMessageId(null);
           abortControllerRef.current = null;
         }
       }
@@ -371,10 +447,36 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
    * Stop generation
    */
   const stop = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
+    // Abort cannot retract a chunk that was already decoded. Advancing the
+    // request id also fences callbacks and state updaters queued by that chunk.
+    invalidateActiveRequest();
     setIsLoading(false);
-  }, []);
+    setStatus("ready");
+    setStreamingMessageId(null);
+  }, [invalidateActiveRequest]);
+
+  /**
+   * Reset state that belongs to one conversation while preserving the hook
+   * instance. This gives conversation hosts the same isolation as remounting
+   * `useChat`, including branch metadata that cannot be inferred from messages.
+   */
+  const reset = useCallback((nextMessages: ChatMessage[] = []) => {
+    invalidateActiveRequest();
+    messagesRef.current = nextMessages;
+    branchMapRef.current.clear();
+    branchKeyByMessageIdRef.current.clear();
+    pendingToolOutputsRef.current.clear();
+    setMessages(nextMessages);
+    setInput("");
+    setIsLoading(false);
+    setStatus("ready");
+    setStreamingMessageId(null);
+    setError(null);
+    setData(null);
+    setModel(options.model);
+    setInferenceMode("cloud");
+    setActiveModel(undefined);
+  }, [invalidateActiveRequest, options.model]);
 
   /**
    * Edit a previous user message and resubmit.
@@ -519,6 +621,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     messages,
     input,
     isLoading,
+    status,
+    streamingMessageId,
     error,
     model,
     activeModel,
@@ -531,14 +635,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     switchBranch,
     reload,
     stop,
+    reset,
     setMessages,
     addToolOutput,
     data,
     handleInputChange,
     handleSubmit,
-    // Aliases that match ChatProps so users can spread {...chat}
-    onChange: handleInputChange,
-    onSubmit: handleSubmit,
-    onModelChange: setModel,
   };
 }

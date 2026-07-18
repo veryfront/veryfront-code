@@ -61,6 +61,7 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
       "@veryfront/ext-bundler-esbuild",
       "@veryfront/ext-content-mdx",
       "@veryfront/ext-css-tailwind",
+      "@veryfront/ext-parser-babel",
     ]
   ) {
     const dependencyAssignment =
@@ -93,6 +94,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             "@veryfront/ext-bundler-esbuild": "0.1.1016",
             "@veryfront/ext-content-mdx": "^0.1.1016",
             "@veryfront/ext-css-tailwind": "^0.1.1016",
+            "@veryfront/ext-parser-babel": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
             zod: "4.3.6",
           },
@@ -132,6 +134,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       "@veryfront/ext-bundler-esbuild": publishVersion,
       "@veryfront/ext-content-mdx": publishVersion,
       "@veryfront/ext-css-tailwind": publishVersion,
+      "@veryfront/ext-parser-babel": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
       zod: "4.3.6",
     });
@@ -140,6 +143,128 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
     });
   } finally {
     await Deno.remove(packageDir, { recursive: true });
+  }
+});
+
+Deno.test("npm publish orders extensions before the root package", async () => {
+  const packageRoot = await Deno.makeTempDir();
+
+  try {
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-zeta`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-alpha`, {
+      recursive: true,
+    });
+
+    const output = await new Deno.Command("bash", {
+      args: ["-c", 'source "$SCRIPT_PATH"\npackage_dirs'],
+      cwd: packageRoot,
+      env: {
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    assertEquals(
+      new TextDecoder().decode(output.stdout).trim().split("\n"),
+      [
+        "npm/extensions/ext-alpha",
+        "npm/extensions/ext-zeta",
+        "npm",
+      ],
+    );
+  } finally {
+    await Deno.remove(packageRoot, { recursive: true });
+  }
+});
+
+Deno.test("npm publish skips extension packages marked publish false", async () => {
+  const packageRoot = await Deno.makeTempDir();
+
+  try {
+    await Deno.mkdir(`${packageRoot}/extensions/ext-alpha`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/extensions/ext-private`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-alpha`, {
+      recursive: true,
+    });
+    await Deno.mkdir(`${packageRoot}/npm/extensions/ext-private`, {
+      recursive: true,
+    });
+
+    await Deno.writeTextFile(
+      `${packageRoot}/deno.json`,
+      JSON.stringify({
+        workspace: [
+          "./extensions/ext-alpha",
+          "./extensions/ext-private",
+        ],
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/extensions/ext-alpha/deno.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-alpha",
+        veryfront: { extension: true },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/extensions/ext-private/deno.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-private",
+        veryfront: { extension: true, npm: { publish: false } },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/npm/extensions/ext-alpha/package.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-alpha",
+        veryfront: { extension: true },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageRoot}/npm/extensions/ext-private/package.json`,
+      JSON.stringify({
+        name: "@veryfront/ext-private",
+        veryfront: { extension: true, npm: { publish: false } },
+      }),
+    );
+
+    const output = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        'source "$SCRIPT_PATH"\npackage_names_from_workspace\npackage_dirs',
+      ],
+      cwd: packageRoot,
+      env: {
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    assertEquals(
+      new TextDecoder().decode(output.stdout).trim().split("\n"),
+      [
+        "veryfront",
+        "@veryfront/ext-alpha",
+        "npm/extensions/ext-alpha",
+        "npm",
+      ],
+    );
+    assertStringIncludes(
+      new TextDecoder().decode(output.stderr),
+      "@veryfront/ext-private is marked veryfront.npm.publish=false",
+    );
+  } finally {
+    await Deno.remove(packageRoot, { recursive: true });
   }
 });
 
@@ -152,6 +277,7 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-llm-openai",
   "ext-llm-anthropic",
   "ext-llm-google",
+  "ext-eval-report-mlflow",
 ]);
 
 Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
@@ -412,12 +538,13 @@ describe("npm supply-chain policy", () => {
     assertEquals(source.includes("importFirstPartyExtensionModule"), false);
   });
 
-  it("packs auto-loaded extension tarballs for npm install smoke tests", async () => {
+  it("packs and exercises auto-loaded extensions in npm install smoke tests", async () => {
     const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-parser-babel",
     ];
 
     for (const extensionName of autoLoadedExtensions) {
@@ -432,6 +559,9 @@ describe("npm supply-chain policy", () => {
         tarballName,
       );
     }
+
+    assertStringIncludes(source, "CodeParser was not registered");
+    assertStringIncludes(source, "app/page.tsx");
   });
 
   it("loads CLI command handlers after global routing decisions", async () => {
@@ -466,6 +596,7 @@ describe("npm supply-chain policy", () => {
       "ext-css-tailwind",
       "ext-db-sqlite",
       "ext-document-kreuzberg",
+      "ext-eval-report-mlflow",
       "ext-observability-opentelemetry",
       "ext-parser-babel",
       "ext-sandbox-shell-tools",
@@ -559,6 +690,15 @@ describe("npm supply-chain policy", () => {
       source,
       'replaceAll("dntShim.clearInterval", "globalThis.clearInterval")',
     );
+  });
+
+  it("uses native Node timers so root imports can release background intervals", async () => {
+    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+    assertStringIncludes(source, "timers: false");
+    assertEquals(source.includes("timers: true"), false);
+    assertStringIncludes(source, 'VF_DISABLE_LRU_INTERVAL: "0"');
+    assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
   });
 
   it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {

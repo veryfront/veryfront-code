@@ -35,10 +35,18 @@ require_env() {
   done
 }
 
-# Package directories in the `deno task build:npm` output (publish modes).
+# Package directories in dependency order for publish modes. The root package
+# pins auto-loaded extensions to the same version, so publish it last.
 package_dirs() {
+  find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort | while read -r PACKAGE_DIR; do
+    if [ "$(jq -r '.veryfront.npm.publish == false' "${PACKAGE_DIR}/package.json")" = "true" ]; then
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      echo "::notice::${PACKAGE_NAME} is marked veryfront.npm.publish=false; skipping npm publish" >&2
+      continue
+    fi
+    printf '%s\n' "${PACKAGE_DIR}"
+  done
   printf '%s\n' npm
-  find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort
 }
 
 # Package names derived from the deno.json workspace (preflight runs before
@@ -47,6 +55,9 @@ package_names_from_workspace() {
   printf '%s\n' veryfront
   jq -r '.workspace[] | select(startswith("./extensions/")) | .[2:] + "/deno.json"' deno.json \
     | while read -r MANIFEST_PATH; do
+      if [ "$(jq -r '.veryfront.npm.publish == false' "${MANIFEST_PATH}")" = "true" ]; then
+        continue
+      fi
       jq -r '.name' "${MANIFEST_PATH}"
     done \
     | sort
@@ -75,7 +86,10 @@ update_package_version() {
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
-  for attempt in $(seq 1 24); do
+  # npm can expose a published version before its gitHead metadata converges.
+  # Allow up to five minutes of empty reads while preserving hash mismatches as
+  # immediate failures.
+  for attempt in $(seq 1 60); do
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
@@ -83,7 +97,7 @@ wait_for_npm_git_head() {
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
     fi
-    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/24)."
+    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/60)."
     sleep 5
   done
 

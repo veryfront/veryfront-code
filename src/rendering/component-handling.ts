@@ -102,7 +102,7 @@ export async function handleComponentPage(
       );
     }
 
-    const React = await getProjectReact();
+    const React = await getProjectReact(options?.reactVersion);
     const pageElement = React.createElement(
       PageComponent,
       options?.props ?? {},

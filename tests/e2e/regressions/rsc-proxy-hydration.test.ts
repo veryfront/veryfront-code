@@ -186,11 +186,7 @@ const initialMessages: ChatMessage[] = [
 export default function Page() {
   return (
     <main id="preview-chat-page">
-      <Chat
-        messages={initialMessages}
-        input=""
-        onChange={() => {}}
-      />
+      <Chat initialMessages={initialMessages} />
     </main>
   );
 }

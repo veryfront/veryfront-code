@@ -13,6 +13,17 @@ import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
 
 const logger = rendererLogger.component("layout-collector");
 
+export function resolveLayoutRouterRootDir(
+  projectDir: string,
+  useAppRouter: boolean,
+  config: VeryfrontConfig,
+): string {
+  const directory = useAppRouter
+    ? config.directories?.app ?? "app"
+    : config.directories?.pages ?? "pages";
+  return join(projectDir, directory);
+}
+
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
 }
@@ -319,7 +330,11 @@ export class LayoutCollector {
     pageFilePath: string,
     useAppRouter: boolean,
   ): Promise<LayoutItem[]> {
-    const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
+    const rootDir = resolveLayoutRouterRootDir(
+      this.projectDir,
+      useAppRouter,
+      this.config,
+    );
 
     logger.debug("collectLayoutsUnified", {
       pageFilePath,

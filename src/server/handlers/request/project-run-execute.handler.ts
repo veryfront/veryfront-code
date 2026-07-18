@@ -1085,9 +1085,6 @@ async function executeReleaseAssetBuildRun(input: {
     const { VeryfrontApiClient } = await import(
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
-    const { resolveProjectReactVersion } = await import(
-      "#veryfront/transforms/esm/package-registry.ts"
-    );
     const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
     const { createCompileProjectCss } = await import(
       "#veryfront/release-assets/css-compile.ts"
@@ -1106,11 +1103,6 @@ async function executeReleaseAssetBuildRun(input: {
     });
     apiClient.setProjectSlug(projectReference);
 
-    const reactVersion = await resolveProjectReactVersion({
-      projectDir: input.ctx.projectDir,
-      config: input.ctx.config,
-    });
-
     const releaseVersionRef = releaseId;
 
     // Production CSS compiler: compiles the project's Tailwind CSS in-runtime
@@ -1128,8 +1120,6 @@ async function executeReleaseAssetBuildRun(input: {
       releaseId,
       releaseVersion,
       releaseVersionRef,
-      reactVersion,
-      stylesheetPath: input.ctx.config?.tailwind?.stylesheet,
       adapter: input.ctx.adapter,
       client: {
         beginReleaseAssetManifestBuild: (version) =>
@@ -1175,6 +1165,10 @@ type StyleArtifactSourceFile = { path: string; content?: string };
 type StyleArtifactSourceProvider = {
   getAllSourceFiles: () => Promise<StyleArtifactSourceFile[]> | StyleArtifactSourceFile[];
   getContentContext?: () => ResolvedContentContext | null;
+};
+
+type OptionalTextFileReader = {
+  readOptionalTextFile(path: string): Promise<string>;
 };
 
 const DEFAULT_STYLESHEET_PATHS = [
@@ -1237,14 +1231,35 @@ function textFromFileContent(content: Uint8Array | string): string {
   return typeof content === "string" ? content : new TextDecoder().decode(content);
 }
 
+function getOptionalTextFileReader(ctx: HandlerContext): OptionalTextFileReader | null {
+  const wrappedFs = ctx.adapter.fs as {
+    getUnderlyingAdapter?: () => unknown;
+    readOptionalTextFile?: OptionalTextFileReader["readOptionalTextFile"];
+  };
+
+  if (typeof wrappedFs.readOptionalTextFile === "function") {
+    return { readOptionalTextFile: wrappedFs.readOptionalTextFile.bind(wrappedFs) };
+  }
+
+  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+  const underlying = wrappedFs.getUnderlyingAdapter() as Partial<OptionalTextFileReader>;
+  if (typeof underlying.readOptionalTextFile !== "function") return null;
+
+  return { readOptionalTextFile: underlying.readOptionalTextFile.bind(underlying) };
+}
+
 async function readStylesheetFromAdapter(
   ctx: HandlerContext,
   stylesheetPath?: string,
 ): Promise<string | undefined> {
+  const optionalReader = getOptionalTextFileReader(ctx);
+
   for (const path of stylesheetCandidatePaths(stylesheetPath)) {
     try {
-      const content = await ctx.adapter.fs.readFile(path);
-      if (content) return textFromFileContent(content);
+      const content = optionalReader
+        ? await optionalReader.readOptionalTextFile(path)
+        : textFromFileContent(await ctx.adapter.fs.readFile(path));
+      if (content) return content;
     } catch {
       // keep searching
     }

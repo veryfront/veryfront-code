@@ -13,6 +13,8 @@ export interface StepIndicatorProps
   icon?: React.ReactNode;
   /** Compose your own divider; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,38 +57,37 @@ export function useStepIndicator(): StepIndicatorContextValue {
  * renders the default anatomy (`Rule` + `Label` + `Rule`); pass children to
  * recompose.
  */
-const StepIndicatorRoot = React.forwardRef<HTMLDivElement, StepIndicatorProps>(
-  function StepIndicator({
-    stepIndex,
-    isComplete,
-    className,
-    icon,
-    children,
-    ...props
-  }, ref): React.ReactElement {
-    const context: StepIndicatorContextValue = { stepIndex, isComplete, icon };
-    return (
-      <StepIndicatorContext.Provider value={context}>
-        <div
-          {...props}
-          ref={ref}
-          className={cn(
-            "flex items-center gap-3 py-3 text-xs text-[var(--faint)]",
-            className,
-          )}
-        >
-          {children ?? (
-            <>
-              <StepIndicatorRule />
-              <StepIndicatorLabel />
-              <StepIndicatorRule />
-            </>
-          )}
-        </div>
-      </StepIndicatorContext.Provider>
-    );
-  },
-);
+function StepIndicatorRoot({
+  stepIndex,
+  isComplete,
+  className,
+  icon,
+  children,
+  ref,
+  ...props
+}: StepIndicatorProps): React.ReactElement {
+  const context: StepIndicatorContextValue = { stepIndex, isComplete, icon };
+  return (
+    <StepIndicatorContext.Provider value={context}>
+      <div
+        {...props}
+        ref={ref}
+        className={cn(
+          "flex items-center gap-3 py-3 text-xs text-[var(--faint)]",
+          className,
+        )}
+      >
+        {children ?? (
+          <>
+            <StepIndicatorRule />
+            <StepIndicatorLabel />
+            <StepIndicatorRule />
+          </>
+        )}
+      </div>
+    </StepIndicatorContext.Provider>
+  );
+}
 StepIndicatorRoot.displayName = "StepIndicator.Root";
 
 /** `StepIndicator.Rule` — one of the flanking horizontal rules. */

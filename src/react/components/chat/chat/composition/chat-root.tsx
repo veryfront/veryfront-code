@@ -9,10 +9,16 @@
 
 import * as React from "react";
 import { ChatContainer } from "#veryfront/react/primitives/index.ts";
-import type { ChatMessage } from "#veryfront/agent/react";
+import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import { getDocumentNonce } from "../../../ui/csp-nonce.ts";
-import { cn, defaultChatTheme, generateTokenCSS, mergeThemes } from "../../theme.ts";
+import {
+  cn,
+  defaultChatTheme,
+  generateTokenCSS,
+  mergeThemes,
+  UI_SCOPE_ATTRS,
+} from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
@@ -25,9 +31,16 @@ import type { ChatContextValue } from "../contexts/chat-context.tsx";
 export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "children"> {
   children: React.ReactNode;
 
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
+
   // Messages
   messages: ChatMessage[];
   isLoading?: boolean;
+  /** Streaming lifecycle of the current turn (`useChat().status`). */
+  status?: ChatStatus;
+  /** Id of the assistant message currently streaming (`useChat().streamingMessageId`). */
+  streamingMessageId?: string | null;
   error?: Error | null;
 
   // Input
@@ -44,8 +57,10 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   models?: ModelOption[];
   onModelChange?: (modelId: string) => void;
 
-  // Agent identity — fallback for assistant message headers.
-  agent?: { name?: string; avatarUrl?: string };
+  // Agent identity — fallback for assistant message headers. Accepts
+  // `AgentMetadata` structurally, so a `useAgentMetadata()` object passes
+  // through without narrowing (`avatarUrl: string | null`).
+  agent?: { name?: string; avatarUrl?: string | null };
 
   // Attachments
   attachments?: AttachmentInfo[];
@@ -61,7 +76,6 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
 
   // Sources
-  showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
 
   // Theme
@@ -70,122 +84,123 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
 }
 
 /** Render chat root. */
-export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
-  function ChatRoot(
-    {
-      children,
+export function ChatRoot(
+  {
+    children,
+    messages,
+    isLoading = false,
+    status,
+    streamingMessageId,
+    error = null,
+    input,
+    setInput,
+    onSubmit,
+    onStop,
+    onReload,
+    model,
+    models = [],
+    onModelChange,
+    agent,
+    attachments = [],
+    onAttach,
+    onRemoveAttachment,
+    editMessage,
+    getBranches,
+    switchBranch,
+    onFeedback,
+    onSourceClick,
+    theme: userTheme,
+    maxHeight = "100%",
+    className,
+    style,
+    ref,
+    ...containerProps
+  }: ChatRootProps,
+): React.ReactElement {
+  const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
+  const nonce = getDocumentNonce();
+  const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
+  const [isAtBottom, _setIsAtBottom] = React.useState(true);
+  const scrollAreaRef = React.useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = React.useCallback(() => {
+    scrollAreaRef.current?.scrollTo({
+      top: scrollAreaRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, []);
+
+  const contextValue = React.useMemo<ChatContextValue>(
+    () => ({
       messages,
-      isLoading = false,
-      error = null,
+      isLoading,
+      status,
+      streamingMessageId,
+      error,
       input,
-      setInput,
-      onSubmit,
+      setInput: setInput ?? (() => {}),
+      onSubmit: onSubmit ?? (() => {}),
       onStop,
       onReload,
       model,
-      models = [],
+      models,
       onModelChange,
       agent,
-      attachments = [],
+      attachments,
       onAttach,
       onRemoveAttachment,
       editMessage,
       getBranches,
       switchBranch,
       onFeedback,
-      showSources = false,
       onSourceClick,
-      theme: userTheme,
-      maxHeight = "100%",
-      className,
-      style,
-      ...containerProps
-    },
-    ref,
-  ) {
-    const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
-    const nonce = getDocumentNonce();
-    const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
-    const [isAtBottom, _setIsAtBottom] = React.useState(true);
-    const scrollAreaRef = React.useRef<HTMLDivElement>(null);
+      isEmpty: messages.length === 0,
+      isAtBottom,
+      scrollToBottom,
+      theme,
+    }),
+    [
+      messages,
+      isLoading,
+      status,
+      streamingMessageId,
+      error,
+      input,
+      setInput,
+      onSubmit,
+      onStop,
+      onReload,
+      model,
+      models,
+      onModelChange,
+      agent,
+      attachments,
+      onAttach,
+      onRemoveAttachment,
+      editMessage,
+      getBranches,
+      switchBranch,
+      onFeedback,
+      onSourceClick,
+      isAtBottom,
+      scrollToBottom,
+      theme,
+    ],
+  );
 
-    const scrollToBottom = React.useCallback(() => {
-      scrollAreaRef.current?.scrollTo({
-        top: scrollAreaRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }, []);
-
-    const contextValue = React.useMemo<ChatContextValue>(
-      () => ({
-        messages,
-        isLoading,
-        error,
-        input,
-        setInput: setInput ?? (() => {}),
-        onSubmit: onSubmit ?? (() => {}),
-        onStop,
-        onReload,
-        model,
-        models,
-        onModelChange,
-        agent,
-        attachments,
-        onAttach,
-        onRemoveAttachment,
-        editMessage,
-        getBranches,
-        switchBranch,
-        onFeedback,
-        showSources,
-        onSourceClick,
-        isEmpty: messages.length === 0,
-        isAtBottom,
-        scrollToBottom,
-        theme,
-      }),
-      [
-        messages,
-        isLoading,
-        error,
-        input,
-        setInput,
-        onSubmit,
-        onStop,
-        onReload,
-        model,
-        models,
-        onModelChange,
-        agent,
-        attachments,
-        onAttach,
-        onRemoveAttachment,
-        editMessage,
-        getBranches,
-        switchBranch,
-        onFeedback,
-        showSources,
-        onSourceClick,
-        isAtBottom,
-        scrollToBottom,
-        theme,
-      ],
-    );
-
-    return (
-      <ChatContextProvider value={contextValue}>
-        <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
-        <ChatContainer
-          ref={ref}
-          data-vf-chat=""
-          className={cn(theme.container, "relative", className)}
-          style={{ maxHeight, ...style }}
-          {...containerProps}
-        >
-          {children}
-        </ChatContainer>
-      </ChatContextProvider>
-    );
-  },
-);
+  return (
+    <ChatContextProvider value={contextValue}>
+      <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
+      <ChatContainer
+        ref={ref}
+        {...UI_SCOPE_ATTRS}
+        className={cn(theme.container, "relative", className)}
+        style={{ maxHeight, ...style }}
+        {...containerProps}
+      >
+        {children}
+      </ChatContainer>
+    </ChatContextProvider>
+  );
+}
 ChatRoot.displayName = "ChatRoot";

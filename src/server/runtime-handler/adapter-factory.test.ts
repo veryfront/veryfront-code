@@ -566,9 +566,51 @@ describe("adapter-factory", () => {
 
     assertEquals(result.isLocalProject, true);
     assertEquals(result.projectDir, "/local/project");
-    // Config loading will fail (no real config files), but the function should still succeed
-    // since config errors are caught for local projects
+    // A missing config file resolves to fresh defaults; malformed existing config fails closed.
     assertEquals(result.adapter, adapter);
+  });
+
+  it("rejects malformed existing config for a local project", async () => {
+    const cache = new ProjectDiscoveryCache();
+    const adapter = createMockAdapter({
+      "/local/malformed-project": { isDirectory: true },
+      "/local/malformed-project/app": { isDirectory: true },
+      "/local/malformed-project/veryfront.config.ts": { isDirectory: false, isFile: true },
+    });
+    adapter.fs.readFile = (path: string) =>
+      Promise.resolve(
+        path.endsWith("veryfront.config.ts") ? "export default { integrations:" : "",
+      );
+    cache.projects.set("malformedslug", "/local/malformed-project");
+    cache.adapters.set("/local/malformed-project", adapter);
+    const req = await makeReq();
+
+    await assertRejects(
+      () =>
+        resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "malformedslug",
+          projectId: "proj_loc",
+          proxyToken: undefined,
+          releaseId: undefined,
+          proxyEnv: "preview",
+          branch: null,
+          environmentName: undefined,
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req,
+          isProxyMode: false,
+          cache,
+        }),
+    );
   });
 
   describe("proxy mode config loading", () => {
@@ -676,6 +718,105 @@ describe("adapter-factory", () => {
           }),
         Error,
         "proxy config fail",
+      );
+    });
+
+    for (
+      const { method, pathname } of [
+        { method: "POST", pathname: "/api/control-plane/runs/run_1/stream" },
+        { method: "POST", pathname: "/api/control-plane/runs/run_1/resume" },
+        { method: "DELETE", pathname: "/api/control-plane/runs/run_1" },
+      ]
+    ) {
+      it(`leaves ${method} ${pathname} config resolution to the exact-source handler`, async () => {
+        const base = createMockAdapter({});
+        let outerContextCalls = 0;
+        const extendedFs = {
+          ...base.fs,
+          isVeryfrontAdapter: () => true,
+          getUnderlyingAdapter: () => ({}),
+          isMultiProjectMode: () => false,
+          runWithContext: () => {
+            outerContextCalls++;
+            throw new Error("outer source must not be read");
+          },
+        };
+        const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+        const req = new Request(`http://example.com${pathname}`, { method });
+
+        const result = await resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "proxy-slug",
+          projectId: "proj_proxy",
+          proxyToken: "tok-123",
+          releaseId: undefined,
+          proxyEnv: "production",
+          branch: null,
+          environmentName: "production",
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req,
+          pathname,
+          isProxyMode: true,
+        });
+
+        assertEquals(result.isLocalProject, false);
+        assertEquals(result.config, undefined);
+        assertEquals(outerContextCalls, 0);
+      });
+    }
+
+    it("keeps config errors strict for control-plane execute requests", async () => {
+      const base = createMockAdapter({});
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        runWithContext: () => {
+          throw new Error("execute config fail");
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const req = new Request("http://example.com/api/control-plane/runs/run_1/execute", {
+        method: "POST",
+      });
+
+      await assertRejects(
+        () =>
+          resolveAdapter({
+            projectDir: "/base/project",
+            adapter,
+            config: undefined,
+            projectSlug: "proxy-slug",
+            projectId: "proj_proxy",
+            proxyToken: "tok-123",
+            releaseId: "rel-stale",
+            proxyEnv: "production",
+            branch: null,
+            environmentName: "production",
+            parsedDomain: {
+              slug: null,
+              branch: null,
+              environment: null,
+              isVeryfrontDomain: false,
+              isDraft: false,
+              allowIframeEmbed: false,
+            },
+            req,
+            pathname: "/api/control-plane/runs/run_1/execute",
+            isProxyMode: true,
+          }),
+        Error,
+        "execute config fail",
       );
     });
 

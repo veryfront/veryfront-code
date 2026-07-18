@@ -23,15 +23,18 @@ type AnthropicStreamReasoningState = {
 
 type AnthropicStreamOptions = {
   clientToolUseTrailingUsageGraceMs?: number;
+  clientToolUseTrailingUsageTimeoutMode?: "cancel" | "drain";
+  clientToolUseTrailingUsageDrainTimeoutMs?: number;
 };
 
 type AnthropicStreamReadResult =
   | { kind: "chunk"; chunk: Uint8Array }
   | { kind: "done" }
-  | { kind: "timeout" };
+  | { kind: "timeout"; readerMode: "cancel" | "drain" };
 
 const CLIENT_TOOL_USE_FINISH_REASON = { unified: "tool-calls", raw: "tool_use" } as const;
 const DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS = 100;
+const DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS = 15_000;
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
   return Boolean(
@@ -137,6 +140,8 @@ function isToolCallsFinishReason(
 async function readStreamChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs?: number,
+  timeoutMode: "cancel" | "drain" = "cancel",
+  drainTimeoutMs = DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS,
 ): Promise<AnthropicStreamReadResult> {
   if (timeoutMs === undefined) {
     const read = await reader.read();
@@ -148,16 +153,23 @@ async function readStreamChunk(
     read.done ? { kind: "done" } : { kind: "chunk", chunk: read.value }
   );
   const timeoutPromise = new Promise<AnthropicStreamReadResult>((resolve) => {
-    timeoutId = setTimeout(() => resolve({ kind: "timeout" }), Math.max(1, timeoutMs));
+    timeoutId = setTimeout(
+      () => resolve({ kind: "timeout", readerMode: timeoutMode }),
+      Math.max(1, timeoutMs),
+    );
   });
 
   try {
     const result = await Promise.race([readPromise, timeoutPromise]);
     if (result.kind === "timeout") {
-      await cancelStreamReader(
-        reader,
-        "Timed out waiting for trailing Anthropic tool-use usage metadata",
-      );
+      if (timeoutMode === "drain") {
+        void drainStreamReaderAfterTimeout(reader, readPromise, drainTimeoutMs);
+      } else {
+        await cancelStreamReader(
+          reader,
+          "Timed out waiting for trailing Anthropic tool-use usage metadata",
+        );
+      }
     }
     return result;
   } finally {
@@ -178,6 +190,39 @@ async function cancelStreamReader(
   }
 }
 
+async function drainStreamReaderAfterTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  pendingRead: Promise<AnthropicStreamReadResult>,
+  timeoutMs: number,
+): Promise<void> {
+  const timeoutId = setTimeout(() => {
+    void cancelStreamReader(
+      reader,
+      "Timed out draining trailing Anthropic tool-use usage metadata",
+    );
+  }, Math.max(1, timeoutMs));
+
+  try {
+    const firstRead = await pendingRead;
+    if (firstRead.kind === "done") {
+      return;
+    }
+
+    while (true) {
+      const read = await reader.read();
+      if (read.done) {
+        return;
+      }
+    }
+  } catch {
+    // The caller has already emitted a finish event; late drain failures should
+    // not fail the completed tool turn.
+  } finally {
+    clearTimeout(timeoutId);
+    reader.releaseLock();
+  }
+}
+
 export async function* streamAnthropicCompatibleParts(
   stream: ReadableStream<Uint8Array>,
   options: AnthropicStreamOptions = {},
@@ -186,6 +231,10 @@ export async function* streamAnthropicCompatibleParts(
   const reader = stream.getReader();
   const trailingUsageGraceMs = options.clientToolUseTrailingUsageGraceMs ??
     DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS;
+  const trailingUsageTimeoutMode = options.clientToolUseTrailingUsageTimeoutMode ?? "cancel";
+  const trailingUsageDrainTimeoutMs = options.clientToolUseTrailingUsageDrainTimeoutMs ??
+    DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS;
+  let readerReleased = false;
   let buffer = "";
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
@@ -231,8 +280,14 @@ export async function* streamAnthropicCompatibleParts(
 
   try {
     while (true) {
-      const read = await readStreamChunk(reader, getClientToolUseReadTimeoutMs());
+      const read = await readStreamChunk(
+        reader,
+        getClientToolUseReadTimeoutMs(),
+        trailingUsageTimeoutMode,
+        trailingUsageDrainTimeoutMs,
+      );
       if (read.kind === "timeout") {
+        readerReleased = read.readerMode === "drain";
         mergeTrailingBufferUsage();
         finishReason ??= CLIENT_TOOL_USE_FINISH_REASON;
         yield buildFinishPart();
@@ -491,7 +546,9 @@ export async function* streamAnthropicCompatibleParts(
       }
     }
   } finally {
-    reader.releaseLock();
+    if (!readerReleased) {
+      reader.releaseLock();
+    }
   }
 
   mergeTrailingBufferUsage();

@@ -23,6 +23,20 @@ describe("audit-chat-composability", () => {
     assertEquals(parts.has("Body"), true);
   });
 
+  it("collects a compound with an explicit type annotation", () => {
+    const compounds = collectCompoundParts([{
+      path: "chat.tsx",
+      content: `
+        export const Chat: ChatComponent = Object.assign(ChatBase, {
+          Root: ChatRoot,
+          Input: ChatInput,
+        });
+      `,
+    }]);
+
+    assertEquals(compounds.get("Chat"), new Set(["Root", "Input"]));
+  });
+
   it("flags a tree token that is not a real sub-part", () => {
     const compounds = collectCompoundParts(SOURCE);
     const stories = [{

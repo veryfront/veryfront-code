@@ -6,6 +6,8 @@ import type {
   RoutePattern,
 } from "#veryfront/types";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
+import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
+import type { VerifiedControlPlaneRequestClaims } from "#veryfront/internal-agents/control-plane-auth.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -113,8 +115,21 @@ export abstract class BaseHandler implements Handler {
   protected withProxyContext<T>(
     ctx: HandlerContext,
     fn: () => Promise<T>,
-    options: { requireToken?: boolean } = {},
+    options: {
+      requireToken?: boolean;
+      verifiedControlPlaneClaims?: VerifiedControlPlaneRequestClaims;
+    } = {},
   ): Promise<T> {
+    if (options.verifiedControlPlaneClaims) {
+      return runWithVerifiedCacheApiCredential(
+        options.verifiedControlPlaneClaims,
+        () =>
+          this.withProxyContext(ctx, fn, {
+            requireToken: options.requireToken,
+          }),
+      );
+    }
+
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
     const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";

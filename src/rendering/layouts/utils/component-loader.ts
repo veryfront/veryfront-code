@@ -18,10 +18,14 @@ import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolv
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
+import { LAYOUT_EXTENSIONS } from "#veryfront/rendering/layouts/types.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
 const applyMdxLayoutLog = logger.component("apply-mdx-layout");
+const APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS = LAYOUT_EXTENSIONS.filter((extension) =>
+  extension !== "md" && extension !== "mdx"
+);
 
 type AppRouterDocumentLayoutFunction = (
   props: { children?: BundledReact.ReactNode },
@@ -179,12 +183,22 @@ export function createLayoutComponentCache(
 export function shouldUnwrapAppRouterDocumentLayout(
   componentPath: string | undefined,
   projectDir: string,
+  appDirectory = "app",
 ): boolean {
   if (!componentPath) return false;
 
   const relativePath = resolveRelativePath(componentPath.replace(/\\/g, "/"), projectDir)
     .replace(/^\/+/, "");
-  return relativePath === "app/layout.tsx";
+  const relativeAppDirectory = resolveRelativePath(
+    appDirectory.replace(/\\/g, "/"),
+    projectDir,
+  )
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+|\/+$/g, "");
+
+  return APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS.some((extension) =>
+    relativePath === `${relativeAppDirectory}/layout.${extension}`
+  );
 }
 
 export function unwrapAppRouterDocumentLayout(
@@ -214,10 +228,12 @@ export async function loadTSXComponent(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await computeHash(source);
-  const cacheKey = buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId);
+  const cacheKey = buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId) +
+    ":" + (reactVersion ?? "default");
 
   const cached = cache.get(cacheKey);
   if (cached) return cached;
@@ -228,6 +244,7 @@ export async function loadTSXComponent(
     projectSlug,
     ssr: true,
     contentSourceId,
+    reactVersion,
   });
 
   if (!loaded) {
@@ -252,6 +269,7 @@ export function loadMDXLayout(
   projectSlug: string,
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
+  reactVersion?: string,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -279,6 +297,7 @@ export function loadMDXLayout(
         projectDir,
         projectSlug,
         contentSourceId,
+        reactVersion,
       )) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
@@ -304,8 +323,18 @@ export async function preloadMDXLayoutModule(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
 ): Promise<void> {
-  await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug, contentSourceId);
+  await loadMDXLayout(
+    bundle,
+    projectDir,
+    adapter,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    undefined,
+    reactVersion,
+  );
 }
 
 export async function applyTSXLayout(
@@ -318,6 +347,7 @@ export async function applyTSXLayout(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -326,7 +356,7 @@ export async function applyTSXLayout(
     projectSlug,
   });
 
-  const React = await getProjectReact();
+  const React = await getProjectReact(reactVersion);
 
   try {
     applyTsxLayoutLog.debug("loadTSXComponent START", { componentPath: item.componentPath });
@@ -340,6 +370,7 @@ export async function applyTSXLayout(
       projectId,
       projectSlug,
       contentSourceId,
+      reactVersion,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -375,8 +406,9 @@ export async function applyMDXLayout(
   projectSlug: string,
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
+  reactVersion?: string,
 ): Promise<BundledReact.ReactElement> {
-  const React = await getProjectReact();
+  const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
     bundle,
     projectDir,
@@ -385,6 +417,7 @@ export async function applyMDXLayout(
     projectSlug,
     contentSourceId,
     preloadedImportMap,
+    reactVersion,
   );
 
   if (!LayoutFn) {

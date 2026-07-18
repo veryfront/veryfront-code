@@ -147,6 +147,8 @@ export function handleMDXPage(
     studioEmbed?: boolean;
     /** Content source identifier for cache isolation (branch name or release ID) */
     contentSourceId?: string;
+    /** React version resolved for this project. */
+    reactVersion?: string;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -168,6 +170,7 @@ export function handleMDXPage(
           projectDir,
           options?.projectSlug,
           options?.contentSourceId,
+          options?.reactVersion,
         )) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;
@@ -209,7 +212,7 @@ export function handleMDXPage(
         }
 
         // Get project's React for createElement to ensure element symbols match user components
-        const React = await getProjectReact();
+        const React = await getProjectReact(options?.reactVersion);
         const pageElement = React.createElement(
           MDXComp as BundledReact.ComponentType<{ components?: MDXComponents }>,
           { components: mergedComponents },

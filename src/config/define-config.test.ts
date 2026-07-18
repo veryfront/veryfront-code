@@ -7,7 +7,16 @@ import {
   mergeConfigs,
   validateConfig,
 } from "./define-config.ts";
-import type { VeryfrontConfig } from "./schemas/index.ts";
+import {
+  defineConfig as publicDefineConfig,
+  defineConfigWithEnv as publicDefineConfigWithEnv,
+  mergeConfigs as publicMergeConfigs,
+} from "veryfront";
+import {
+  validateVeryfrontConfig,
+  type VeryfrontConfig,
+  type VeryfrontConfigInput,
+} from "./schemas/index.ts";
 import { createTestEnvironmentConfig } from "./environment-config.ts";
 
 describe("define-config", () => {
@@ -37,6 +46,65 @@ describe("define-config", () => {
       expect(result.dev?.port).toBe(3003);
       expect(result.dev?.open).toBe(true);
       expect(result.build?.outDir).toBe("dist");
+    });
+
+    it("keeps source integration restrictions typed without legacy policy fields", () => {
+      const config: VeryfrontConfigInput = {
+        integrations: {
+          allow: {
+            confluence: {},
+            github: { allowedTools: ["list_repos"] },
+          },
+        },
+      };
+
+      expect(defineConfig(config).integrations).toEqual(config.integrations);
+      expect(() =>
+        validateVeryfrontConfig({
+          integrations: { github: { scope: "user", tools: ["list_repos"] } },
+        })
+      ).toThrow("Invalid veryfront.config at integrations.allow:");
+
+      const invalidConnector: VeryfrontConfigInput = {
+        integrations: {
+          allow: {
+            // @ts-expect-error integration keys come from the canonical connector catalog
+            definitely_not_a_connector: {},
+          },
+        },
+      };
+      expect(invalidConnector.integrations).toBeDefined();
+    });
+  });
+
+  describe("public root exports", () => {
+    it("exports the same config helpers used by release config loading", () => {
+      const env = createTestEnvironmentConfig({ nodeEnv: "production" });
+      const shared = publicDefineConfig({ title: "Release" });
+
+      expect(publicDefineConfig).toBe(defineConfig);
+      expect(publicDefineConfigWithEnv).toBe(defineConfigWithEnv);
+      expect(publicMergeConfigs).toBe(mergeConfigs);
+      expect(
+        publicDefineConfigWithEnv(
+          (nodeEnv) => publicMergeConfigs(shared, { react: { version: nodeEnv } }),
+          env,
+        ),
+      ).toEqual({ title: "Release", react: { version: "production" } });
+    });
+
+    it("composes the canonical optional source restriction through public helpers", () => {
+      const canonical: VeryfrontConfig = publicMergeConfigs(
+        publicDefineConfig({
+          integrations: {
+            allow: { gmail: { allowedTools: ["list_emails"] } },
+          },
+        }),
+      );
+
+      expect(canonical.integrations).toEqual({
+        allow: { gmail: { allowedTools: ["list_emails"] } },
+      });
     });
   });
 

@@ -1,9 +1,37 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertMatch } from "#veryfront/testing/assert";
-import { createIdGenerator, generateId } from "./id.ts";
+import { assertEquals, assertMatch, assertThrows } from "#veryfront/testing/assert";
+import { createIdGenerator, generateId, generateUuid } from "./id.ts";
 
 describe("id", () => {
+  describe("generateUuid", () => {
+    it("uses native randomUUID when available", () => {
+      assertEquals(
+        generateUuid({ randomUUID: () => "00000000-0000-4000-8000-000000000000" }),
+        "00000000-0000-4000-8000-000000000000",
+      );
+    });
+
+    it("builds a version 4 UUID from secure random bytes", () => {
+      const uuid = generateUuid({
+        getRandomValues(bytes) {
+          bytes.forEach((_, index) => bytes[index] = index);
+          return bytes;
+        },
+      });
+
+      assertEquals(uuid, "00010203-0405-4607-8809-0a0b0c0d0e0f");
+    });
+
+    it("fails explicitly when secure randomness is unavailable", () => {
+      assertThrows(
+        () => generateUuid(null),
+        Error,
+        "Web Crypto with getRandomValues is required",
+      );
+    });
+  });
+
   describe("generateId", () => {
     it("should generate a 16-character ID without prefix", () => {
       const id = generateId();

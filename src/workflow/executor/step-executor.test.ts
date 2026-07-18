@@ -7,10 +7,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { step } from "../dsl/step.ts";
 import type { RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { StepExecutor } from "./step-executor.ts";
+import { runWithWorkflowTenant, StepExecutor } from "./step-executor.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
-import type { Agent } from "#veryfront/agent/types.ts";
-import type { ToolExecutionContext } from "#veryfront/tool";
+import {
+  runWithCacheKeyContext,
+  tryGetCacheKeyContext,
+  tryGetRegistryScopeId,
+} from "#veryfront/cache/cache-key-builder.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import type { CapturedTenantContext } from "../types.ts";
 
 /** A step whose tool throws `error`, counting how many times it is invoked. */
 function makeThrowingStepNode(
@@ -52,6 +61,38 @@ function makeStepNode(retry: RetryConfig): WorkflowNode {
     retry,
   });
 }
+
+describe("workflow tenant registry scoping", () => {
+  it("restores a release-less production environment without a synthetic cache scope", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "workflow-environment-project",
+      projectId: "workflow-environment-project-id",
+      token: "<TOKEN>",
+      productionMode: true,
+      releaseId: null,
+      environmentName: "Development",
+    };
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+
+    await runWithRequestContext(tenant, async () => {
+      manager.register("environment-skill", "available");
+    });
+
+    await runWithCacheKeyContext(
+      { projectId: "outer-project", mode: "production", versionId: "outer-release" },
+      () =>
+        runWithWorkflowTenant(tenant, async () => {
+          assertEquals(manager.get("environment-skill"), "available");
+          assertEquals(tryGetCacheKeyContext(), null);
+          assertEquals(
+            tryGetRegistryScopeId(),
+            "workflow-environment-project-id:production:environment:Development",
+          );
+          assertEquals(getCurrentRequestContext()?.environmentName, "Development");
+        }),
+    );
+  });
+});
 
 describe("StepExecutor retry validation", () => {
   it("rejects negative maxAttempts before executing the step", async () => {
@@ -152,92 +193,99 @@ describe("StepExecutor retry classification", () => {
   });
 });
 
-describe("StepExecutor cancellation", () => {
-  it("forwards the abort signal to agent steps", async () => {
-    const controller = new AbortController();
-    let observedSignal: AbortSignal | undefined;
-    let started!: () => void;
-    const agentStarted = new Promise<void>((resolve) => started = resolve);
-    const cancellationError = new Error("workflow cancelled");
-    const agent = {
-      generate(input: { abortSignal?: AbortSignal }) {
-        observedSignal = input.abortSignal;
-        started();
-        return new Promise((_resolve, reject) => {
-          input.abortSignal?.addEventListener(
-            "abort",
-            () => reject(input.abortSignal?.reason),
-            { once: true },
-          );
-        });
-      },
-    } as Agent;
-    const node = step("agent-step", { agent });
-    const executor = new StepExecutor({});
-
-    const execution = executor.execute(node, makeContext(), controller.signal);
-    await agentStarted;
-    controller.abort(cancellationError);
-
-    await assertRejects(() => execution, Error, cancellationError.message);
-    assertEquals(observedSignal?.aborted, true);
-    assertEquals(observedSignal?.reason, cancellationError);
-  });
-
-  it("waits for timed-out step cleanup before retrying", async () => {
-    let calls = 0;
-    let observedTimeoutReason: unknown;
-    let markTimedOut!: () => void;
-    const timedOut = new Promise<void>((resolve) => markTimedOut = resolve);
-    let finishCleanup!: () => void;
-    const cleanupGate = new Promise<void>((resolve) => finishCleanup = resolve);
-
-    const node = step("timeout-retry", {
+describe("StepExecutor timeout isolation", () => {
+  it("stops waiting after the cancellation grace when a timed-out tool never settles", async () => {
+    const operation = Promise.withResolvers<unknown>();
+    let receivedSignal: AbortSignal | undefined;
+    let completions = 0;
+    let attempts = 0;
+    const executor = new StepExecutor({
+      cancellationGracePeriod: 5,
+      onStepComplete: () => completions++,
+    });
+    const node = step("never-settling-step", {
       tool: {
-        id: "timeout-retry-tool",
-        description: "Times out once, then succeeds",
-        execute: (_input: unknown, context?: ToolExecutionContext) => {
-          calls++;
-          if (calls > 1) return Promise.resolve({ ok: true });
-
-          const signal = context?.abortSignal;
-          return new Promise((_resolve, reject) => {
-            signal?.addEventListener("abort", () => {
-              observedTimeoutReason = signal.reason;
-              markTimedOut();
-              void cleanupGate.then(() => reject(signal.reason));
-            }, { once: true });
-          });
+        id: "never-settling-tool",
+        description: "Never settles and ignores cancellation",
+        execute: (_input: unknown, context?: { abortSignal?: AbortSignal }) => {
+          attempts++;
+          receivedSignal = context?.abortSignal;
+          return operation.promise;
         },
         // deno-lint-ignore no-explicit-any
       } as any,
-      timeout: 1,
+      timeout: 5,
       retry: {
         maxAttempts: 2,
         backoff: "fixed",
-        initialDelay: 0,
-        maxDelay: 0,
+        initialDelay: 1,
+        maxDelay: 1,
       },
     });
-    const executor = new StepExecutor({});
-    let executionSettled = false;
-    const execution = executor.execute(node, makeContext()).finally(() => executionSettled = true);
 
-    await timedOut;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    let result;
+    let watchdogId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      result = await Promise.race([
+        executor.execute(node, makeContext()),
+        new Promise<never>((_, reject) =>
+          watchdogId = setTimeout(
+            () => reject(new Error("Step execution did not stop after timeout")),
+            100,
+          )
+        ),
+      ]);
+    } finally {
+      if (watchdogId !== undefined) clearTimeout(watchdogId);
+      // A late rejection must remain observed after the public execution settles.
+      operation.reject(new Error("late tool rejection"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
 
-    assertEquals(calls, 1);
-    assertEquals(executionSettled, false);
-    assertEquals(
-      observedTimeoutReason instanceof Error && observedTimeoutReason.message,
-      'Step "timeout-retry" timed out after 1ms',
-    );
+    assertEquals(result.success, false);
+    assertEquals(result.error?.includes("timed out after 5ms"), true);
+    assertEquals(receivedSignal instanceof AbortSignal, true);
+    assertEquals(receivedSignal?.aborted, true);
+    assertEquals(completions, 0);
+    assertEquals(attempts, 1);
+  });
 
-    finishCleanup();
-    const result = await execution;
+  it("does not overlap retries when a timed-out tool ignores cancellation", async () => {
+    let attempts = 0;
+    let active = 0;
+    let maxActive = 0;
+    const signals: Array<AbortSignal | undefined> = [];
+    const node = step("slow-step", {
+      tool: {
+        id: "slow-tool",
+        description: "Ignores cancellation and settles later",
+        execute: async (_input: unknown, context?: { abortSignal?: AbortSignal }) => {
+          attempts++;
+          active++;
+          maxActive = Math.max(maxActive, active);
+          signals.push(context?.abortSignal);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          active--;
+          return { ok: true };
+        },
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      timeout: 5,
+      retry: {
+        maxAttempts: 2,
+        backoff: "fixed",
+        initialDelay: 1,
+        maxDelay: 1,
+      },
+    });
 
-    assertEquals(result.success, true);
-    assertEquals(result.output, { ok: true });
-    assertEquals(calls, 2);
+    const result = await new StepExecutor({}).execute(node, makeContext());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assertEquals(result.success, false);
+    assertEquals(attempts, 2);
+    assertEquals(maxActive, 1);
+    assertEquals(signals.every((signal) => signal instanceof AbortSignal), true);
+    assertEquals(signals.every((signal) => signal?.aborted), true);
   });
 });

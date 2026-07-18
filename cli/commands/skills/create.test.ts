@@ -20,14 +20,11 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function withTempCwd(fn: (dir: string) => Promise<void>): Promise<void> {
-  const original = Deno.cwd();
+async function withTempProject(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir({ prefix: "vf-skill-create-" });
   try {
-    Deno.chdir(dir);
     await fn(dir);
   } finally {
-    Deno.chdir(original);
     await Deno.remove(dir, { recursive: true });
   }
 }
@@ -49,8 +46,8 @@ async function captureConsoleLog(run: () => Promise<void>): Promise<string> {
 describe("Skills Create", () => {
   describe("project skill scaffold", () => {
     it("creates a project skill under skills/<id>/SKILL.md", async () => {
-      await withTempCwd(async (dir) => {
-        await createSkill({ _: ["skills", "create", "code-review"] });
+      await withTempProject(async (dir) => {
+        await createSkill({ _: ["skills", "create", "code-review"] }, dir);
 
         const skillPath = join(dir, "skills", "code-review", "SKILL.md");
         assert(await exists(skillPath));
@@ -64,13 +61,13 @@ describe("Skills Create", () => {
     });
 
     it("does not overwrite an existing project skill", async () => {
-      await withTempCwd(async (dir) => {
+      await withTempProject(async (dir) => {
         const skillPath = join(dir, "skills", "code-review", "SKILL.md");
         await Deno.mkdir(join(dir, "skills", "code-review"), { recursive: true });
         await Deno.writeTextFile(skillPath, "existing");
 
         await assertRejects(
-          () => createSkill({ _: ["skills", "create", "code-review"] }),
+          () => createSkill({ _: ["skills", "create", "code-review"] }, dir),
           Error,
           "already exists",
         );
@@ -79,11 +76,11 @@ describe("Skills Create", () => {
     });
 
     it("returns project-relative file paths in JSON output", async () => {
-      await withTempCwd(async () => {
+      await withTempProject(async (dir) => {
         setJsonMode(true);
         try {
           const output = await captureConsoleLog(() =>
-            createSkill({ _: ["skills", "create", "code-review"] })
+            createSkill({ _: ["skills", "create", "code-review"] }, dir)
           );
           const payload = JSON.parse(output);
 

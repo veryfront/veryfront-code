@@ -271,6 +271,7 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
 export async function initCommand(options: InitOptions): Promise<void> {
   const { name, features = [], quiet = false } = options;
   const { integrations = [] } = options;
+  const parentDir = options.parentDir ?? cwd();
 
   function log(msg: string): void {
     if (!quiet) logger.info(msg);
@@ -284,15 +285,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (name) {
     const nameError = validateProjectName(name);
     if (nameError) {
-      console.error(red(nameError));
-      return;
+      throw toError(createError({ type: "config", message: nameError }));
     }
   }
 
   // Check if directory already exists before entering the wizard
   if (name && !options.force) {
     const fs = createFileSystem();
-    const targetDir = join(cwd(), name);
+    const targetDir = join(parentDir, name);
     if (await fs.exists(targetDir)) {
       console.error(
         red(
@@ -325,7 +325,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   // "bun"/"deno" force the matching pm.
   const pmPreference: PackageManager = runtime === "node" ? "npm" : runtime;
 
-  const projectDir = projectName ? join(cwd(), projectName) : cwd();
+  const projectDir = projectName ? join(parentDir, projectName) : parentDir;
   const fs = createFileSystem();
 
   validateOrThrow("features", features, validateFeatures);
@@ -574,16 +574,17 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const { writeProjectSlug } = await import("#cli/shared/config");
     const { pushCommand } = await import("../push/index.ts");
     const { deployCommand } = await import("../deploy/index.ts");
+    const manualDeployHint = `Run ${brand("veryfront push --branch main")}, then ${
+      brand("veryfront deploy --branch main --env production")
+    } to deploy later.`;
 
     const authResult = await ensureAuthenticated();
     if (!authResult) {
-      log(
-        `\n  Authentication required for --deploy. Run ${brand("veryfront push")} to deploy later.`,
-      );
+      log(`\n  Authentication required for --deploy. ${manualDeployHint}`);
     } else {
       const token = await readToken();
       if (!token) {
-        log(`\n  Could not read auth token. Run ${brand("veryfront push")} to deploy later.`);
+        log(`\n  Could not read auth token. ${manualDeployHint}`);
       } else {
         const slug = `${projectName ?? "my-app"}-${randomSuffix()}`;
 
@@ -621,9 +622,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
-          log(
-            `  Your project was created locally. Run ${brand("veryfront push")} to deploy later.`,
-          );
+          log(`  Your project was created locally. ${manualDeployHint}`);
         }
       }
     }
@@ -665,8 +664,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (!deployedSlug) {
     successContent.push(
       "",
-      `${brand("veryfront push")}   ${dim("→ share a preview")}`,
-      `${brand("veryfront deploy")} ${dim("→ go live")}`,
+      `${brand("veryfront push --branch main")} ${dim("→ upload source")}`,
+      `${brand("veryfront deploy --branch main --env production")} ${
+        dim("→ create a release and go live")
+      }`,
     );
   }
 

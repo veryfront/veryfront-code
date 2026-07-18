@@ -1,7 +1,7 @@
 /**
  * `useDropZone` — file drag-and-drop state for a container. Returns whether a
- * file drag is currently over the element plus the drag handlers to spread on
- * it. A ref-counted enter/leave pair keeps `isDragActive` steady while the
+ * file drag is currently over the element plus explicit event handlers. A
+ * ref-counted enter/leave pair keeps `isDragActive` steady while the
  * cursor moves across child elements (no flicker). Only reacts to drags that
  * carry files, and only fires `onDrop` when `onDrop` is provided.
  *
@@ -22,8 +22,11 @@ export interface DropZoneHandlers {
 export interface UseDropZoneResult {
   /** True while a file drag is hovering the target. */
   isDragActive: boolean;
-  /** Handlers to spread on the target — empty when `onDrop` is undefined. */
-  dragProps: DropZoneHandlers | Record<never, never>;
+  /** Explicit target handlers. Undefined when `onDrop` is undefined. */
+  onDragEnter?: DropZoneHandlers["onDragEnter"];
+  onDragLeave?: DropZoneHandlers["onDragLeave"];
+  onDragOver?: DropZoneHandlers["onDragOver"];
+  onDrop?: DropZoneHandlers["onDrop"];
 }
 
 /** Wire file drag-and-drop for a container. */
@@ -63,14 +66,13 @@ export function useDropZone(
     [onDrop],
   );
 
-  const dragProps = onDrop
+  return onDrop
     ? {
+      isDragActive,
       onDragEnter: handleDragEnter,
       onDragLeave: handleDragLeave,
       onDragOver: handleDragOver,
       onDrop: handleDrop,
     }
-    : {};
-
-  return { isDragActive: onDrop ? isDragActive : false, dragProps };
+    : { isDragActive: false };
 }

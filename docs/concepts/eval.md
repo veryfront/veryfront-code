@@ -14,10 +14,10 @@ with one deterministic unit test.
 ## Characteristics
 
 - An eval has a stable ID.
-- An eval targets an agent in V1.
+- An eval targets an agent or a tool.
 - An eval loads examples from inline data, JSON, or JSONL.
 - An eval records `input`, optional `reference`, and optional `metadata` for each example.
-- An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, latency, tokens, cost, and rubric judges.
+- An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, retrieval recall, citation precision and recall, latency, tokens, cost, and rubric judges.
 - An eval produces `summary.json` and `results.jsonl` artifacts, with optional raw JSON and JUnit XML output.
 
 ## Boundary
@@ -63,12 +63,12 @@ stable ID must differ from the file path.
 
 ## Dataset fields
 
-| Field       | Meaning                                                    |
-| ----------- | ---------------------------------------------------------- |
-| `id`        | Stable example identifier used in reports.                 |
-| `input`     | Prompt or structured input sent to the target agent.       |
-| `reference` | Expected answer, JSON object, or rubric reference.         |
-| `metadata`  | Tags, split names, difficulty, owner, or traceable labels. |
+| Field       | Meaning                                                                |
+| ----------- | ---------------------------------------------------------------------- |
+| `id`        | Stable example identifier used in reports.                             |
+| `input`     | Prompt, structured agent input, or source data mapped into tool input. |
+| `reference` | Expected answer, JSON object, or rubric reference.                     |
+| `metadata`  | Tags, split names, difficulty, owner, or traceable labels.             |
 
 ## Agent behavior
 
@@ -100,6 +100,14 @@ export default evalAgent({
 Live AG-UI evals normalize tool names, IDs, status, input, and output into
 `record.trace.toolCalls`. Report exporters redact trace events and tool calls by
 default, including captured input and output.
+
+## Tool behavior
+
+Use `evalTool` when the eval should measure one tool directly instead of an
+agent deciding whether to call that tool. Tool evals write the dataset example to
+`record.input` and the actual mapped tool input to `record.executionInput`.
+Direct tool calls are normalized into `record.trace.toolCalls`, so the same tool
+metrics and checks can assert input, output, status, and call count.
 
 ## Studio integration
 

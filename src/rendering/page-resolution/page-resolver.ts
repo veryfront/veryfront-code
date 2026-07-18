@@ -65,6 +65,7 @@ export class PageResolver {
       "routing.resolve_page",
       async () => {
         const appDirName = this.config.directories?.app ?? "app";
+        const pagesDirName = this.config.directories?.pages ?? "pages";
         const cacheKey = this.projectId ?? this.projectDir;
 
         let pageInfo: EntityInfo | null | undefined;
@@ -80,7 +81,12 @@ export class PageResolver {
             primeRouterDetectionCache(cacheKey, "app");
           }
         } else if (this.config.router === "pages") {
-          pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
+          pageInfo = await getEntityBySlug(
+            this.projectDir,
+            slug,
+            this.adapter,
+            pagesDirName,
+          );
           if (pageInfo) {
             primeRouterDetectionCache(cacheKey, "pages");
           }
@@ -102,10 +108,20 @@ export class PageResolver {
               appDirName,
             );
             if (!pageInfo) {
-              pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
+              pageInfo = await getEntityBySlug(
+                this.projectDir,
+                slug,
+                this.adapter,
+                pagesDirName,
+              );
             }
           } else {
-            pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
+            pageInfo = await getEntityBySlug(
+              this.projectDir,
+              slug,
+              this.adapter,
+              pagesDirName,
+            );
           }
         }
 

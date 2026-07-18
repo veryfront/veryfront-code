@@ -9,6 +9,8 @@ export interface HTMLGeneratorConfig {
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   mode: "development" | "production";
+  /** Whether project filesystem URLs are trusted for browser access. */
+  isLocalProject?: boolean;
 }
 
 export interface HTMLGenerationContext {

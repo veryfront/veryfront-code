@@ -230,6 +230,16 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs(["--help"]).help, true);
     });
 
+    it("should not consume commands or positionals after documented boolean flags", () => {
+      const globalFlag = parseCliArgs(["--json", "config"]);
+      assertEquals(globalFlag.json, true);
+      assertEquals(globalFlag._, ["config"]);
+
+      const commandFlag = parseCliArgs(["init", "--force", "my-project"]);
+      assertEquals(commandFlag.force, true);
+      assertEquals(commandFlag._, ["init", "my-project"]);
+    });
+
     it("should resolve short aliases", () => {
       assertEquals(parseCliArgs(["-p", "9000"]).port, "9000");
     });

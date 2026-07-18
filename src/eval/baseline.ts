@@ -1,8 +1,10 @@
 import type {
+  EvalBudgetDeltaSummary,
   EvalMetricDeltaSummary,
   EvalMetricSummary,
   EvalReport,
   EvalReportComparison,
+  EvalReportComparisonPolicy,
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
@@ -46,16 +48,23 @@ function nullableDelta(current: number | null, baseline: number | null): number 
 function metricRegressed(
   current: EvalMetricSummary | undefined,
   baseline: EvalMetricSummary | undefined,
+  policy: Required<
+    Pick<EvalReportComparisonPolicy, "metricPassRateDropThreshold" | "failedDeltaThreshold">
+  >,
 ): boolean {
   if (!baseline) return false;
   if (!current) return true;
-  return current.passRate < baseline.passRate || current.failed > baseline.failed;
+  return baseline.passRate - current.passRate > policy.metricPassRateDropThreshold ||
+    current.failed - baseline.failed > policy.failedDeltaThreshold;
 }
 
 function createMetricDelta(
   key: string,
   current: Map<string, EvalMetricSummary>,
   baseline: Map<string, EvalMetricSummary>,
+  policy: Required<
+    Pick<EvalReportComparisonPolicy, "metricPassRateDropThreshold" | "failedDeltaThreshold">
+  >,
 ): EvalMetricDeltaSummary {
   const metric = firstMetricForKey(key, current, baseline);
   const currentMetric = current.get(key);
@@ -75,8 +84,101 @@ function createMetricDelta(
     baselineFailed,
     currentFailed,
     failedDelta: nullableDelta(currentFailed, baselineFailed),
-    regressed: metricRegressed(currentMetric, baselineMetric),
+    regressed: metricRegressed(currentMetric, baselineMetric, policy),
   };
+}
+
+function positiveOrZero(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function createPercentDelta(current: number, baseline: number): number | null {
+  if (baseline === 0) return null;
+  return (current - baseline) / Math.abs(baseline);
+}
+
+function budgetRegressed(
+  current: number,
+  baseline: number,
+  threshold: number | undefined,
+): boolean {
+  if (threshold === undefined) return false;
+  if (baseline === 0) return current > baseline;
+  return (current - baseline) / Math.abs(baseline) > threshold;
+}
+
+function createBudgetDelta(
+  name: string,
+  family: EvalBudgetDeltaSummary["family"],
+  current: number | undefined,
+  baseline: number | undefined,
+  threshold: number | undefined,
+): EvalBudgetDeltaSummary | undefined {
+  const currentValue = positiveOrZero(current);
+  const baselineValue = positiveOrZero(baseline);
+  if (currentValue === undefined || baselineValue === undefined) return undefined;
+
+  return {
+    name,
+    family,
+    baselineValue,
+    currentValue,
+    delta: currentValue - baselineValue,
+    percentDelta: createPercentDelta(currentValue, baselineValue),
+    threshold: threshold ?? null,
+    regressed: budgetRegressed(currentValue, baselineValue, threshold),
+  };
+}
+
+function createBudgetDeltas(
+  current: EvalReport,
+  baseline: EvalReport,
+  policy: Pick<EvalReportComparisonPolicy, "usageIncreaseThreshold" | "latencyIncreaseThreshold">,
+): EvalBudgetDeltaSummary[] {
+  return [
+    createBudgetDelta(
+      "totalTokens",
+      "usage",
+      current.summary.usage?.totalTokens,
+      baseline.summary.usage?.totalTokens,
+      policy.usageIncreaseThreshold,
+    ),
+    createBudgetDelta(
+      "costUsd",
+      "usage",
+      current.summary.usage?.costUsd,
+      baseline.summary.usage?.costUsd,
+      policy.usageIncreaseThreshold,
+    ),
+    createBudgetDelta(
+      "veryfrontChargeUsd",
+      "usage",
+      current.summary.usage?.veryfrontChargeUsd,
+      baseline.summary.usage?.veryfrontChargeUsd,
+      policy.usageIncreaseThreshold,
+    ),
+    createBudgetDelta(
+      "veryfrontBilledUsd",
+      "usage",
+      current.summary.usage?.veryfrontBilledUsd,
+      baseline.summary.usage?.veryfrontBilledUsd,
+      policy.usageIncreaseThreshold,
+    ),
+    createBudgetDelta(
+      "costCredits",
+      "usage",
+      current.summary.usage?.costCredits,
+      baseline.summary.usage?.costCredits,
+      policy.usageIncreaseThreshold,
+    ),
+    createBudgetDelta(
+      "p95Ms",
+      "latency",
+      current.summary.duration?.p95Ms,
+      baseline.summary.duration?.p95Ms,
+      policy.latencyIncreaseThreshold,
+    ),
+  ].filter((delta): delta is EvalBudgetDeltaSummary => delta !== undefined);
 }
 
 function failedExampleIds(report: EvalReport): Set<string> {
@@ -91,11 +193,19 @@ function sortedDifference(left: Set<string>, right: Set<string>): string[] {
 export function compareEvalReports(
   current: EvalReport,
   baseline: EvalReport,
+  policy: EvalReportComparisonPolicy = {},
 ): EvalReportComparison {
+  const resolvedPolicy = {
+    passRateDropThreshold: policy.passRateDropThreshold ?? 0,
+    metricPassRateDropThreshold: policy.metricPassRateDropThreshold ?? 0,
+    failedDeltaThreshold: policy.failedDeltaThreshold ?? 0,
+    usageIncreaseThreshold: policy.usageIncreaseThreshold,
+    latencyIncreaseThreshold: policy.latencyIncreaseThreshold,
+  };
   const currentMetrics = createMetricIndex(current);
   const baselineMetrics = createMetricIndex(baseline);
   const metricDeltas = createMetricOrder(current, baseline).map((key) =>
-    createMetricDelta(key, currentMetrics, baselineMetrics)
+    createMetricDelta(key, currentMetrics, baselineMetrics, resolvedPolicy)
   );
   const currentFailedExamples = failedExampleIds(current);
   const baselineFailedExamples = failedExampleIds(baseline);
@@ -103,6 +213,7 @@ export function compareEvalReports(
   const fixedExamples = sortedDifference(baselineFailedExamples, currentFailedExamples);
   const passRateDelta = current.summary.passRate - baseline.summary.passRate;
   const failedDelta = current.summary.failed - baseline.summary.failed;
+  const budgetDeltas = createBudgetDeltas(current, baseline, resolvedPolicy);
 
   return {
     kind: "eval-report-comparison",
@@ -112,9 +223,13 @@ export function compareEvalReports(
     passedDelta: current.summary.passed - baseline.summary.passed,
     failedDelta,
     metricDeltas,
+    budgetDeltas,
     newFailedExamples,
     fixedExamples,
-    regressed: passRateDelta < 0 || failedDelta > 0 || newFailedExamples.length > 0 ||
-      metricDeltas.some((metric) => metric.regressed),
+    regressed: passRateDelta < -resolvedPolicy.passRateDropThreshold ||
+      failedDelta > resolvedPolicy.failedDeltaThreshold ||
+      newFailedExamples.length > 0 ||
+      metricDeltas.some((metric) => metric.regressed) ||
+      budgetDeltas.some((delta) => delta.regressed),
   };
 }

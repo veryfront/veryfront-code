@@ -8,35 +8,114 @@
  * @module extensions/eval/eval-report-exporter
  */
 
-import type {
-  EvalMetricResult,
-  EvalRecord,
-  EvalReport,
-  EvalReportExportContext,
-  EvalReportExporter,
-  EvalReportExporterRegistry,
-  EvalReportExportRedaction,
-  EvalReportExportResult,
-  EvalReportExportSuccess,
-} from "#veryfront/eval/types.ts";
-
-export type {
-  EvalReportExportContext,
-  EvalReportExporter,
-  EvalReportExporterRegistry,
-  EvalReportExportFailure,
-  EvalReportExportReceipt,
-  EvalReportExportRedaction,
-  EvalReportExportResult,
-  EvalReportExportSuccess,
-  EvalReportExportTraceContext,
-} from "#veryfront/eval/types.ts";
+import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval/types.ts";
 
 /** Contract name used for `resolve()` / `provide()`. */
 export const EvalReportExporterRegistryName = "EvalReportExporterRegistry" as const;
 
+/** Value that can be returned synchronously or as a promise. */
+type EvalReportExportMaybePromise<T> = T | Promise<T>;
+
 /** Sentinel used when record payload fields are removed for external export. */
 export const EvalReportRedactedValue = "[redacted]" as const;
+
+/** Redaction policy applied before reports leave the process. */
+export interface EvalReportExportRedaction {
+  /** Include dataset input payloads. Defaults to false. */
+  includeInputs?: boolean;
+  /** Include target output payloads. Defaults to false. */
+  includeOutputs?: boolean;
+  /** Include reference answer payloads. Defaults to false. */
+  includeReferences?: boolean;
+  /** Include trace events and tool-call metadata. Defaults to false. */
+  includeTraces?: boolean;
+  /** Include retrieved RAG context passages. Defaults to false. */
+  includeRetrievedContext?: boolean;
+  /** Include answer citation payloads. Defaults to false. */
+  includeCitations?: boolean;
+  /** Include metric/check explanations. Defaults to false. */
+  includeMetricExplanations?: boolean;
+  /** Include metric/check evidence payloads. Defaults to false. */
+  includeMetricEvidence?: boolean;
+  /** Include dataset source paths. Defaults to false. */
+  includeDatasetPath?: boolean;
+  /** Record and export context metadata keys that can be exported. Defaults to none. */
+  metadataAllowlist?: string[];
+}
+
+/** Trace correlation fields that connect eval exports to runtime spans. */
+export interface EvalReportExportTraceContext {
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+}
+
+/** Context passed to eval report exporters. */
+export interface EvalReportExportContext {
+  projectId?: string;
+  projectReference?: string;
+  evalId?: string;
+  sourcePath?: string;
+  reportPath?: string;
+  environment?: string;
+  branch?: string;
+  commitSha?: string;
+  runUrl?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  trace?: EvalReportExportTraceContext;
+  redaction?: EvalReportExportRedaction;
+}
+
+/** Optional receipt returned by a vendor exporter. */
+export interface EvalReportExportReceipt {
+  externalRunId?: string;
+  url?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Vendor or backend implementation that receives sanitized eval reports. */
+export interface EvalReportExporter {
+  /** Stable exporter id, for example `braintrust`, `langfuse`, or `langsmith`. */
+  readonly id: string;
+  export(
+    report: EvalReport,
+    context: EvalReportExportContext,
+  ): EvalReportExportMaybePromise<EvalReportExportReceipt | void>;
+}
+
+/** Successful exporter result. */
+export interface EvalReportExportSuccess {
+  exporterId: string;
+  ok: true;
+  receipt?: EvalReportExportReceipt;
+}
+
+/** Failed exporter result. Failures are captured so later exporters still run. */
+export interface EvalReportExportFailure {
+  exporterId: string;
+  ok: false;
+  error: string;
+}
+
+/** Result for one exporter invocation. */
+export type EvalReportExportResult =
+  | EvalReportExportSuccess
+  | EvalReportExportFailure;
+
+/** Registry contract. Single impl created at bootstrap. */
+export interface EvalReportExporterRegistry {
+  register(exporter: EvalReportExporter): void;
+  unregister(id: string): void;
+  get(id: string): EvalReportExporter | undefined;
+  require(id: string): EvalReportExporter;
+  list(): EvalReportExporter[];
+  has(id: string): boolean;
+  export(
+    report: EvalReport,
+    context?: EvalReportExportContext,
+  ): Promise<EvalReportExportResult[]>;
+}
 
 function filterMetadata(
   metadata: Record<string, unknown>,
@@ -56,6 +135,11 @@ function redactRecord(
   const redacted: EvalRecord = {
     ...record,
     input: redaction.includeInputs ? record.input : EvalReportRedactedValue,
+    ...(Object.hasOwn(record, "executionInput")
+      ? {
+        executionInput: redaction.includeInputs ? record.executionInput : EvalReportRedactedValue,
+      }
+      : {}),
     output: redaction.includeOutputs ? record.output : EvalReportRedactedValue,
     metadata: filterMetadata(record.metadata, redaction.metadataAllowlist),
     trace: redaction.includeTraces ? record.trace : { events: [], toolCalls: [] },
@@ -65,6 +149,12 @@ function redactRecord(
 
   if (Object.hasOwn(record, "reference")) {
     redacted.reference = redaction.includeReferences ? record.reference : EvalReportRedactedValue;
+  }
+  if (Object.hasOwn(record, "retrievedContext")) {
+    redacted.retrievedContext = redaction.includeRetrievedContext ? record.retrievedContext : [];
+  }
+  if (Object.hasOwn(record, "citations")) {
+    redacted.citations = redaction.includeCitations ? record.citations : [];
   }
 
   return redacted;
@@ -86,6 +176,49 @@ function redactMetricResults(
   });
 }
 
+function cloneRedaction(
+  redaction: EvalReportExportRedaction | undefined,
+): EvalReportExportRedaction | undefined {
+  if (!redaction) return undefined;
+  return {
+    ...redaction,
+    ...(redaction.metadataAllowlist ? { metadataAllowlist: [...redaction.metadataAllowlist] } : {}),
+  };
+}
+
+function redactDatasetMetadata(
+  dataset: EvalReport["dataset"],
+  redaction: EvalReportExportRedaction,
+): EvalReport["dataset"] {
+  if (!dataset || redaction.includeDatasetPath || !Object.hasOwn(dataset, "path")) {
+    return dataset;
+  }
+  const redactedDataset = { ...dataset };
+  delete redactedDataset.path;
+  return redactedDataset;
+}
+
+function redactEvalReportExportContext(
+  context: EvalReportExportContext,
+  redaction: EvalReportExportRedaction,
+): EvalReportExportContext {
+  const exportContext: EvalReportExportContext = {
+    ...context,
+    ...(context.tags ? { tags: [...context.tags] } : {}),
+    ...(context.trace ? { trace: { ...context.trace } } : {}),
+    ...(context.metadata
+      ? { metadata: filterMetadata(context.metadata, redaction.metadataAllowlist) }
+      : {}),
+  };
+  const redactionCopy = cloneRedaction(redaction);
+  if (context.redaction && redactionCopy) {
+    exportContext.redaction = redactionCopy;
+  } else {
+    delete exportContext.redaction;
+  }
+  return exportContext;
+}
+
 /** Create an eval report copy with external-export redaction applied. */
 export function redactEvalReportForExport(
   report: EvalReport,
@@ -94,6 +227,7 @@ export function redactEvalReportForExport(
   const cloned = structuredClone(report) as EvalReport;
   return {
     ...cloned,
+    ...(cloned.dataset ? { dataset: redactDatasetMetadata(cloned.dataset, redaction) } : {}),
     records: cloned.records.map((record) => redactRecord(record, redaction)),
   };
 }
@@ -142,11 +276,13 @@ class EvalReportExporterRegistryImpl implements EvalReportExporterRegistry {
     context: EvalReportExportContext = {},
   ): Promise<EvalReportExportResult[]> {
     const results: EvalReportExportResult[] = [];
+    const redaction = cloneRedaction(context.redaction) ?? {};
 
     for (const exporter of this.exporters.values()) {
       try {
-        const sanitizedReport = redactEvalReportForExport(report, context.redaction);
-        const receipt = await exporter.export(sanitizedReport, context);
+        const sanitizedReport = redactEvalReportForExport(report, redaction);
+        const exportContext = redactEvalReportExportContext(context, redaction);
+        const receipt = await exporter.export(sanitizedReport, exportContext);
         const result: EvalReportExportSuccess = { exporterId: exporter.id, ok: true };
         if (receipt !== undefined) result.receipt = receipt;
         results.push(result);

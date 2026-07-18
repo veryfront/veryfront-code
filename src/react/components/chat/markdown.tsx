@@ -1,7 +1,5 @@
 import * as React from "react";
 import { cn } from "./theme.ts";
-import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
-import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { CodeBlock as SyntaxCodeBlock } from "../ui/code-block.tsx";
 
 /**
@@ -26,8 +24,6 @@ export interface MarkdownProps {
   children: string;
   /** Additional class name */
   className?: string;
-  /** Enable mermaid diagram rendering (default: true, client-side only) */
-  enableMermaid?: boolean;
   /** Custom code block renderer */
   renderCodeBlock?: (props: CodeBlockProps) => React.ReactNode;
   /**
@@ -50,10 +46,10 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-const ESM_REACT_MARKDOWN =
-  "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
+export function getReactMarkdownModuleUrl(reactVersion = React.version): string {
+  return `https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@${reactVersion}`;
+}
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
-const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
 // Self-contained prose styling. Studio's ChatMessageText leans on the
 // `@tailwindcss/typography` `prose` plugin for element defaults (list markers,
 // heading sizes, spacing). This package is dependency-light and must not
@@ -88,17 +84,6 @@ const MARKDOWN_CONTAINER_CLASS = [
 ].join(" ");
 
 type DefaultModule<T> = { default: T };
-
-type MermaidModule = {
-  default: {
-    initialize(config: {
-      startOnLoad: boolean;
-      theme: string;
-      securityLevel: string;
-    }): void;
-    render(id: string, code: string): Promise<{ svg: string }>;
-  };
-};
 
 /**
  * Opaque remark/rehype plugin handle. The plugin internals are not used
@@ -169,96 +154,6 @@ function extractText(node: React.ReactNode): string {
   return "";
 }
 
-let mermaidPromise: Promise<MermaidModule> | null = null;
-let mermaidModule: MermaidModule | null = null;
-
-async function loadMermaid(): Promise<MermaidModule | null> {
-  if (!isBrowserEnvironment()) return null;
-  if (mermaidModule) return mermaidModule;
-
-  mermaidPromise ??= importFromUrl<MermaidModule>(ESM_MERMAID);
-  mermaidModule = await mermaidPromise;
-
-  mermaidModule.default.initialize({
-    startOnLoad: false,
-    theme: "neutral",
-    securityLevel: "strict",
-  });
-
-  return mermaidModule;
-}
-
-function MermaidDiagram({ code }: { code: string }): React.ReactElement {
-  const [svg, setSvg] = React.useState<string>("");
-  const [error, setError] = React.useState<string>("");
-
-  React.useEffect(() => {
-    if (!isBrowserEnvironment()) return;
-
-    let cancelled = false;
-
-    async function render(): Promise<void> {
-      try {
-        const mermaid = await loadMermaid();
-        if (!mermaid) return;
-
-        const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-        const { svg: renderedSvg } = await mermaid.default.render(id, code);
-
-        if (cancelled) return;
-        setSvg(validateTrustedHtml(renderedSvg, { strict: true }));
-        setError("");
-      } catch (error) {
-        if (cancelled) return;
-        setError(
-          error instanceof Error ? error.message : "Failed to render diagram",
-        );
-      }
-    }
-
-    render();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [code]);
-
-  if (!isBrowserEnvironment()) {
-    return (
-      <pre className="my-4 overflow-auto rounded-[var(--radius-lg)] bg-[var(--secondary)] p-4">
-        <code>{code}</code>
-      </pre>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="my-4 rounded-[var(--radius-lg)] bg-red-50 p-4 text-sm text-red-600">
-        <p className="font-medium">Mermaid Error</p>
-        <p>{error}</p>
-        <pre className="mt-2 text-xs overflow-auto">{code}</pre>
-      </div>
-    );
-  }
-
-  if (!svg) {
-    return (
-      <div className="my-4 animate-pulse rounded-[var(--radius-lg)] bg-[var(--secondary)] p-4">
-        <div className="flex h-32 items-center justify-center text-[var(--faint)]">
-          Loading diagram...
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="my-4 flex justify-center overflow-auto"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
-  );
-}
-
 /**
  * Render a fenced (block) code region. Inline code is NOT handled here — it
  * renders as a bare `<code>` styled by the container class (see
@@ -268,18 +163,12 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 function CodeBlock({
   language,
   code,
-  enableMermaid,
   renderCodeBlock,
 }: Omit<CodeBlockProps, "inline"> & {
-  enableMermaid: boolean;
   renderCodeBlock?: MarkdownProps["renderCodeBlock"];
 }): React.ReactElement {
   if (renderCodeBlock) {
     return <>{renderCodeBlock({ language, code, inline: false })}</>;
-  }
-
-  if (enableMermaid && language === "mermaid") {
-    return <MermaidDiagram code={code} />;
   }
 
   // Block fences render through the shared syntax-highlight primitive (shiki +
@@ -302,7 +191,6 @@ function FallbackMarkdown({
 export function Markdown({
   children,
   className,
-  enableMermaid = true,
   renderCodeBlock,
   components,
   remarkPlugins,
@@ -321,7 +209,7 @@ export function Markdown({
       try {
         if (!ReactMarkdown) {
           const [rmModule, gfmModule] = await Promise.all([
-            importFromUrl<DefaultModule<unknown>>(ESM_REACT_MARKDOWN),
+            importFromUrl<DefaultModule<unknown>>(getReactMarkdownModuleUrl()),
             importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
           ]);
 
@@ -374,7 +262,6 @@ export function Markdown({
         <CodeBlock
           language={language}
           code={code}
-          enableMermaid={enableMermaid}
           renderCodeBlock={renderCodeBlock}
         />
       );

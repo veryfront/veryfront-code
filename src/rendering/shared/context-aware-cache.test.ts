@@ -164,7 +164,7 @@ describe("rendering/shared/context-aware-cache", () => {
 
     it("should handle TTL-based expiration", async () => {
       const store = createInMemoryStore();
-      const cache = new ContextAwareCacheCoordinator({ store, ttlMs: 1 });
+      const cache = new ContextAwareCacheCoordinator({ store, ttlMs: 1, staleMs: 0 });
       const ctx = makeMockCtx();
 
       const renderResult = {
@@ -185,9 +185,59 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(typeof lookup.lookupDurationMs, "number");
     });
 
+    it("should serve stale cached results inside the stale window", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store, ttlMs: 1, staleMs: 1_000 });
+      const ctx = makeMockCtx();
+
+      const renderResult = {
+        html: "<h1>Stale</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale",
+      };
+
+      await cache.persistResult(renderResult as any, "stale-page", ctx);
+      await new Promise((r) => setTimeout(r, 10));
+
+      const lookup = await cache.checkCache("stale-page", ctx);
+      assertEquals(lookup.hit, true);
+      assertEquals(lookup.status, "stale");
+      assertEquals(lookup.cachedResult?.html, "<h1>Stale</h1>");
+      assertEquals(typeof lookup.lookupDurationMs, "number");
+    });
+
+    it("should expire preview entries instead of serving stale without a refresh path", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store, ttlMs: 1, staleMs: 1_000 });
+      const ctx = makeMockCtx({
+        mode: "development",
+        environment: "preview",
+        cachePrefix: "proj-1:preview:branch-main",
+        contentSourceId: "branch-main",
+      });
+
+      const renderResult = {
+        html: "<h1>Preview stale</h1>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "preview-stale",
+      };
+
+      await cache.persistResult(renderResult as any, "preview-page", ctx);
+      await new Promise((r) => setTimeout(r, 10));
+
+      const lookup = await cache.checkCache("preview-page", ctx);
+      assertEquals(lookup.hit, false);
+      assertEquals(lookup.status, "expired");
+      assertEquals(lookup.cachedResult, undefined);
+    });
+
     it("should report expired when the memory store TTL path is enabled", async () => {
       await withStoreTtlEnabled(async () => {
-        const cache = new ContextAwareCacheCoordinator({ ttlMs: 1 });
+        const cache = new ContextAwareCacheCoordinator({ ttlMs: 1, staleMs: 0 });
         const ctx = makeMockCtx();
 
         const renderResult = {

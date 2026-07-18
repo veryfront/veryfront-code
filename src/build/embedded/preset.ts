@@ -6,11 +6,13 @@ import { compileMDXToJS } from "../compiler/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 
-interface BuildEmbeddedOptions {
+export interface BuildEmbeddedOptions {
   projectDir: string;
   outDir: string;
   runtime: "deno" | "node" | "bun";
+  config?: VeryfrontConfig;
 }
 
 /**
@@ -23,115 +25,143 @@ interface BuildEmbeddedOptions {
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
 ): Promise<{ manifest: EmbeddedBundleManifest }> {
-  const { projectDir, outDir } = options;
-  const embeddedDir = join(outDir, "embedded");
-  const fs = createFileSystem();
-  const adapter = await runtime.get();
+  let buildResult: { manifest: EmbeddedBundleManifest } | undefined;
+  let buildFailed = false;
+  let buildError: unknown;
 
-  await fs.mkdir(embeddedDir, { recursive: true });
-  await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
+  try {
+    const { projectDir, outDir } = options;
+    const embeddedDir = join(outDir, "embedded");
+    const fs = createFileSystem();
+    const adapter = await runtime.get();
+    const config = options.config ?? await getConfig(projectDir, adapter);
+    const appDirectory = config.directories?.app ?? "app";
+    const pagesDirectory = config.directories?.pages ?? "pages";
 
-  const entryPath = await findOrCreateEntryPath(fs, projectDir);
-  const appOut = join(embeddedDir, "app.js");
+    await fs.mkdir(embeddedDir, { recursive: true });
+    await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
-  const bundledAppCode = await bundleEmbeddedApp({
-    fs,
-    entryPath,
-    projectDir,
-    adapter: adapter as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-  });
+    const entryPath = await findOrCreateEntryPath(
+      fs,
+      projectDir,
+      appDirectory,
+      pagesDirectory,
+    );
+    const appOut = join(embeddedDir, "app.js");
+    const bundledAppCode = await bundleEmbeddedApp({
+      fs,
+      entryPath,
+      projectDir,
+      adapter: adapter as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+    });
 
-  await fs.writeTextFile(appOut, bundledAppCode);
+    await fs.writeTextFile(appOut, bundledAppCode);
 
-  const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
-  const discovered = [
-    ...(await discoverAppRoutes(fs, projectDir, embeddedDir)),
-    ...(await discoverPagesRoutes(fs, projectDir, embeddedDir)),
-  ];
+    const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
+    const discovered = [
+      ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
+      ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
+    ];
 
-  for (const r of discovered) {
-    try {
-      const mdxContent = await fs.readTextFile(r.sourcePath);
-      const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
-        projectDir,
-        mode: "production",
-        adapter,
-      });
+    for (const r of discovered) {
+      try {
+        const mdxContent = await fs.readTextFile(r.sourcePath);
+        const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
+          projectDir,
+          mode: "production",
+          adapter,
+        });
 
-      await fs.mkdir(presetDirname(r.filePath), { recursive: true });
-      await fs.writeTextFile(r.filePath, compiled.code);
+        await fs.mkdir(presetDirname(r.filePath), { recursive: true });
+        await fs.writeTextFile(r.filePath, compiled.code);
 
-      const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
-      routes.push({
-        path: r.routePath,
-        file: `embedded/${fileRel}`,
-        type: "page",
-      });
-    } catch (e) {
-      logger.warn("embedded: failed to compile route MDX", {
-        route: r.routePath,
-        error: String(e),
+        const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
+        routes.push({
+          path: r.routePath,
+          file: `embedded/${fileRel}`,
+          type: "page",
+        });
+      } catch (e) {
+        logger.warn("embedded: failed to compile route MDX", {
+          route: r.routePath,
+          error: String(e),
+        } as unknown);
+      }
+    }
+
+    routes.unshift({ path: "/", file: "embedded/app.js", type: "page" });
+
+    const rscFiles = [
+      new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
+      new URL("../../rendering/rsc/hydrate-client.ts", import.meta.url),
+    ];
+
+    for (const url of rscFiles) {
+      try {
+        const srcPath = url.pathname;
+        const src = await fs.readTextFile(srcPath);
+        const res = await esbuild.transform(src, {
+          loader: "ts",
+          target: "es2020",
+          format: "esm",
+        });
+        const name = presetBasename(srcPath).replace(/\.tsx?$/, ".js");
+        await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
+      } catch (e) {
+        logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
+      }
+    }
+
+    const manifest: EmbeddedBundleManifest = {
+      version: 1,
+      routes,
+      assets: [
+        {
+          path: "/_veryfront/rsc/dom.js",
+          file: "embedded/rsc/client-dom.js",
+          contentType: "application/javascript",
+        },
+        {
+          path: "/_veryfront/rsc/hydrate-client.js",
+          file: "embedded/rsc/hydrate-client.js",
+          contentType: "application/javascript",
+        },
+      ],
+    };
+
+    await fs.writeTextFile(
+      join(embeddedDir, "manifest.json"),
+      JSON.stringify(manifest, null, 2),
+    );
+
+    logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
+
+    buildResult = { manifest };
+  } catch (error) {
+    buildFailed = true;
+    buildError = error;
+  }
+
+  let stopFailed = false;
+  let stopError: unknown;
+  try {
+    await esbuild.stop();
+  } catch (error) {
+    stopFailed = true;
+    stopError = error;
+  }
+
+  if (buildFailed) {
+    if (stopFailed) {
+      logger.warn("Failed to stop esbuild after embedded preset build error", {
+        error: String(stopError),
       } as unknown);
     }
+    throw buildError;
   }
 
-  routes.unshift({ path: "/", file: "embedded/app.js", type: "page" });
-
-  const rscFiles = [
-    new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
-    new URL("../../rendering/rsc/hydrate-client.ts", import.meta.url),
-  ];
-
-  for (const url of rscFiles) {
-    try {
-      const srcPath = url.pathname;
-      const src = await fs.readTextFile(srcPath);
-      const res = await esbuild.transform(src, {
-        loader: "ts",
-        target: "es2020",
-        format: "esm",
-      });
-      const name = presetBasename(srcPath).replace(/\.tsx?$/, ".js");
-      await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
-    } catch (e) {
-      logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
-    }
-  }
-
-  const manifest: EmbeddedBundleManifest = {
-    version: 1,
-    routes,
-    assets: [
-      {
-        path: "/_veryfront/rsc/dom.js",
-        file: "embedded/rsc/client-dom.js",
-        contentType: "application/javascript",
-      },
-      {
-        path: "/_veryfront/rsc/hydrate-client.js",
-        file: "embedded/rsc/hydrate-client.js",
-        contentType: "application/javascript",
-      },
-    ],
-  };
-
-  await fs.writeTextFile(
-    join(embeddedDir, "manifest.json"),
-    JSON.stringify(manifest, null, 2),
-  );
-
-  logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
-
-  // Only stop esbuild if not in test mode with global initialization
-  if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
-    try {
-      esbuild.stop();
-    } catch (_) {
-      /* expected: esbuild service may not be running */
-    }
-  }
-
-  return { manifest };
+  if (stopFailed) throw stopError;
+  return buildResult!;
 }
 
 /** @internal — exported for testing */
@@ -166,12 +196,14 @@ export function isPageFile(name: string): boolean {
 async function findOrCreateEntryPath(
   fs: ReturnType<typeof createFileSystem>,
   projectDir: string,
+  appDirectory: string,
+  pagesDirectory: string,
 ): Promise<string> {
   const candidates = [
-    join(projectDir, "app", "page.mdx"),
-    join(projectDir, "app", "page.md"),
-    join(projectDir, "pages", "index.mdx"),
-    join(projectDir, "pages", "index.md"),
+    join(projectDir, appDirectory, "page.mdx"),
+    join(projectDir, appDirectory, "page.md"),
+    join(projectDir, pagesDirectory, "index.mdx"),
+    join(projectDir, pagesDirectory, "index.md"),
   ];
 
   for (const c of candidates) {
@@ -255,9 +287,10 @@ async function discoverAppRoutes(
   fs: ReturnType<typeof createFileSystem>,
   projectDir: string,
   embeddedDir: string,
+  appDirectory: string,
 ): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
   const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
-  const base = join(projectDir, "app");
+  const base = join(projectDir, appDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
     for await (const ent of fs.readDir(dir)) {
@@ -292,9 +325,10 @@ async function discoverPagesRoutes(
   fs: ReturnType<typeof createFileSystem>,
   projectDir: string,
   embeddedDir: string,
+  pagesDirectory: string,
 ): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
   const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
-  const base = join(projectDir, "pages");
+  const base = join(projectDir, pagesDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
     for await (const ent of fs.readDir(dir)) {

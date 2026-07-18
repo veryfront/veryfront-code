@@ -15,6 +15,8 @@ export type InitRuntime = "node" | "bun" | "deno";
 
 export interface InitOptions {
   name?: string;
+  /** Parent directory for a named project. Defaults to the current directory. */
+  parentDir?: string;
   template?: InitTemplate;
   skipInstall?: boolean;
   skipEnvPrompt?: boolean;

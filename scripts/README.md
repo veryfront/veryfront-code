@@ -7,6 +7,7 @@ Utility scripts for build, release, quality, and development.
 ```
 scripts/
   build/          # Build & packaging
+  codemods/       # Maintainer source migrations
   lint/           # Code quality & architecture checks
   hooks/          # Git hooks
   split-mode/     # Local split-mode debug config
@@ -14,6 +15,15 @@ scripts/
 
 Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and
 `tests/bun/`.
+
+## codemods/
+
+| Script                        | Task           | Purpose                                      |
+| ----------------------------- | -------------- | -------------------------------------------- |
+| `migrate-chat-composition.ts` | `codemod:chat` | Migrates removed chat compatibility APIs     |
+
+See the [chat composition codemod how-to](./codemods/README.md) before running
+the task against an application checkout.
 
 ## build/
 

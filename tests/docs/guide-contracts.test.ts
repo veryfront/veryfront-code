@@ -212,6 +212,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "guides/deploying.md": {
     references: [
       "../api-reference/veryfront/index.md",
+      "../api-reference/veryfront/cli.md",
       "../api-reference/veryfront/server.md",
       "../api-reference/veryfront/observability.md",
       "../api-reference/veryfront/utils.md",
@@ -220,8 +221,29 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Pick one production path",
       "veryfront build",
       "veryfront serve",
-      "veryfront deploy",
+      "veryfront push --branch main --yes",
+      "veryfront deploy --branch main --env production --yes",
       "veryfront open",
+    ],
+  },
+  "guides/deploy-from-ci.md": {
+    references: [
+      "../api-reference/veryfront/cli.md",
+      "./configuration.md",
+      "./deploying.md",
+    ],
+    snippets: [
+      "veryfront push --branch main --dry-run",
+      "veryfront push --branch main --yes",
+      "veryfront deploy --branch main --env staging --yes",
+      "veryfront deploy --branch main --env production --yes",
+      ".veryfront/push-receipt.json",
+      "cancel-in-progress: false",
+      "Do not edit or publish directly from Studio `main`",
+      "supported text files only",
+      "RUNNER_TEMP",
+      "NDJSON records",
+      "git revert",
     ],
   },
   "guides/extension-authoring.md": {
@@ -252,6 +274,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "datasets.inline",
       "metrics.answer.contains",
       "metrics.agent.noFailedTools",
+      "metrics.knowledge.citationPrecision",
       "createEvalSourceDocument",
       "veryfront eval deep-research",
       "--junit",
@@ -303,6 +326,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Workflows",
       "Extensions",
       "Build and deploy",
+      "Deploy from CI",
+      "Move Studio changes into Git",
     ],
   },
   "concepts/index.md": {
@@ -469,7 +494,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/integrations.md": {
     references: ["../api-reference/veryfront/integrations.md"],
-    snippets: ["integrations", "perUser", "Available integrations"],
+    snippets: [
+      "agent source",
+      "Project integration policy",
+      "Connection inventory",
+      "veryfront.config.ts",
+      "Managed OAuth",
+      "Available integrations",
+    ],
   },
   "guides/runs.md": {
     references: ["../api-reference/veryfront/runs.md"],
@@ -615,8 +647,28 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "veryfront build",
       "veryfront serve",
-      "veryfront deploy",
+      "veryfront push --branch main --yes",
+      "veryfront deploy --branch main --env production --yes",
       "veryfront open",
+    ],
+  },
+  "guides/move-studio-changes-to-git.md": {
+    references: [
+      "../api-reference/veryfront/cli.md",
+      "./configuration.md",
+      "./deploy-from-ci.md",
+    ],
+    snippets: [
+      "immutable release",
+      "veryfront pull --release",
+      "--prune --dry-run",
+      "BASE_GIT_SHA",
+      "git switch --create",
+      "gh pr create",
+      "does not perform a three-way merge",
+      "git merge origin/main",
+      "Resolve conflicts in Git",
+      "git push --set-upstream origin HEAD",
     ],
   },
   "guides/sandbox.md": {

@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-writer
  */
 
-import { join } from "#veryfront/compat/path";
+import { join, toFileUrl } from "#veryfront/compat/path";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
@@ -36,6 +36,7 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { LOG_PREFIX_MDX_LOADER, LOG_PREFIX_MDX_RENDERER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { ssrVfModulesPlugin } from "../../pipeline/stages/ssr-vf-modules.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
@@ -69,10 +70,15 @@ const mdxWriteFlight = new Singleflight<void>();
  * Note: We always cache HTTP imports for consistency between compiled and
  * non-compiled modes, allowing them to share the same cache.
  */
-async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
+async function cacheHttpImports(
+  code: string,
+  importMap: ImportMapConfig,
+  reactVersion?: string,
+): Promise<string> {
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
+    reactVersion,
   });
   return result.code;
 }
@@ -140,7 +146,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports START`, { projectSlug });
     rewritten = await withSpan(
       SpanNames.MDX_CACHE_HTTP,
-      () => cacheHttpImports(rewritten, importMap),
+      () => cacheHttpImports(rewritten, importMap, context.reactVersion),
       { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports DONE`, { projectSlug });
@@ -158,7 +164,8 @@ export async function doLoadModuleESM(
     }
 
     let codeHash = hashString(rewritten);
-    const namespaceKey = encodeURIComponent(context.projectId);
+    const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+    const namespaceKey = await computeHash(`${context.projectId}:react-${effectiveReactVersion}`);
     let compositeKey = `${namespaceKey}:${codeHash}`;
 
     const cached = context.moduleCache.get(compositeKey);
@@ -246,6 +253,7 @@ export async function doLoadModuleESM(
           const refreshResult = await cacheHttpImportsToLocal(rewritten, {
             cacheDir,
             importMap,
+            reactVersion: context.reactVersion,
           });
           rewritten = refreshResult.code;
 
@@ -389,7 +397,7 @@ export async function doLoadModuleESM(
 
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
-      () => import(`file://${filePath}?v=${codeHash}`),
+      () => import(`${toFileUrl(filePath).href}?v=${codeHash}`),
       { "mdx.file_path": filePath.split("/").pop() || filePath },
     ) as Record<string, unknown> & { __vfLayout?: React.ComponentType };
 

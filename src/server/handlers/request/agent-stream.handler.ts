@@ -63,6 +63,9 @@ import {
   filterRuntimeProjectEnv,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
+import { getConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -367,6 +370,20 @@ function createStaticRemoteToolSource(
   };
 }
 
+async function resolveAgentSourceConfig(
+  ctx: HandlerContext,
+  sourceContext: RuntimeAgentSourceContext,
+): Promise<VeryfrontConfig> {
+  const cacheKey = ctx.projectId ?? ctx.projectSlug;
+  if (!cacheKey) {
+    throw new Error("Explicit agent source requires a project identity");
+  }
+  return await getConfig(ctx.projectDir, ctx.adapter, {
+    cacheKey,
+    sourceContext: buildAgentSourceRunOptions(sourceContext),
+  });
+}
+
 async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -536,7 +553,7 @@ function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
       return {
         productionMode: true,
         environmentName: sourceContext.environmentName,
-        releaseId: sourceContext.releaseId ?? null,
+        releaseId: sourceContext.releaseId,
       };
     case "release":
       return {
@@ -573,14 +590,10 @@ function setResponseHeader(target: Response, key: string, value: string): Respon
 
 function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
   const internalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
-  const invocation = RuntimeAgentRunInvocationSchema.safeParse(rawPayload);
-  if (invocation.success) {
-    return internalAgentStreamRequestSchema.parse(
-      buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation.data),
-    );
-  }
-
-  return internalAgentStreamRequestSchema.parse(rawPayload);
+  const invocation = RuntimeAgentRunInvocationSchema.parse(rawPayload);
+  return internalAgentStreamRequestSchema.parse(
+    buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation),
+  );
 }
 
 function getPathRunId(pathname: string): string | null {
@@ -603,13 +616,9 @@ export class AgentStreamHandler extends BaseHandler {
 
   private withAgentSourceContext<T>(
     ctx: HandlerContext,
-    sourceContext: RuntimeAgentSourceContext | undefined,
+    sourceContext: RuntimeAgentSourceContext,
     fn: () => Promise<T>,
   ): Promise<T> {
-    if (!sourceContext) {
-      return fn();
-    }
-
     const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
     if (!ctx.projectSlug || !fsWrapper.isMultiProjectMode?.() || !fsWrapper.runWithContext) {
       throw INVALID_ARGUMENT.create({
@@ -655,7 +664,7 @@ export class AgentStreamHandler extends BaseHandler {
       if (!pathRunId || pathRunId !== payload.runId) {
         return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
       }
-      await verifyControlPlaneRequest(req, ctx, rawBody, {
+      const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
@@ -676,7 +685,7 @@ export class AgentStreamHandler extends BaseHandler {
         projectSlug: requestScopedContext.projectSlug,
         messageCount: payload.messages.length,
         toolCount: payload.tools.length,
-        hasAgentSource: Boolean(payload.agentSource),
+        agentSourceType: payload.agentSource.type,
         hasAgentConfig: Boolean(payload.agentConfig),
       });
 
@@ -685,107 +694,126 @@ export class AgentStreamHandler extends BaseHandler {
           requestScopedContext,
           payload.agentSource,
           async () => {
-            await this.deps.ensureProjectDiscovery(requestScopedContext);
+            const sourceConfig = await resolveAgentSourceConfig(
+              requestScopedContext,
+              payload.agentSource,
+            );
+            const sourceScopedContext: HandlerContext = {
+              ...requestScopedContext,
+              config: sourceConfig,
+            };
+            const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
+              sourceConfig.integrations,
+            );
 
-            const agent = this.deps.getAgent(payload.agentId);
-            if (!agent) {
-              logger.warn("Internal agent stream request referenced unknown agent", {
-                runId: payload.runId,
-                agentId: payload.agentId,
-                projectId: requestScopedContext.projectId,
-                projectSlug: requestScopedContext.projectSlug,
-              });
-              return this.respond(builder.json({ error: "Agent not found" }, 404));
-            }
+            return await runWithExactSourceIntegrationPolicy(
+              sourceIntegrationPolicy,
+              async () => {
+                await this.deps.ensureProjectDiscovery(sourceScopedContext);
 
-            // veryfront-api is the trusted control-plane caller; it resolves
-            // authorization before attaching request-scoped project-agent config.
-            const runtimeBaseAgent = payload.agentConfig
-              ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
-              : agent;
-            const runtimeInput = sanitizeRuntimeRunAgentInput(toRuntimeRunAgentInput(payload));
-            const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
-            const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
-              agent: runtimeBaseAgent as Agent,
-              token: apiAuthToken || null,
-              projectId: requestScopedContext.projectId ?? null,
-              availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-            });
-            const runtimeAgent = withVeryfrontStudioRemoteTools({
-              agent: platformRuntimeAgent,
-              token: apiAuthToken || null,
-              projectId: requestScopedContext.projectId ?? null,
-              forwardedProps: runtimeInput.forwardedProps,
-              availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-              conversationId: runtimeInput.threadId,
-            });
+                const agent = this.deps.getAgent(payload.agentId);
+                if (!agent) {
+                  logger.warn("Internal agent stream request referenced unknown agent", {
+                    runId: payload.runId,
+                    agentId: payload.agentId,
+                    projectId: sourceScopedContext.projectId,
+                    projectSlug: sourceScopedContext.projectSlug,
+                  });
+                  return this.respond(builder.json({ error: "Agent not found" }, 404));
+                }
 
-            // Load project env vars so source-defined MCP tool headers resolve
-            // via _getProjectEnv(). Control-plane requests don't go through the proxy and
-            // therefore don't carry x-environment-id, so we discover the production env ID
-            // from the API (one fetch per project per server lifetime, then cached).
-            let envVarsForAgent: Record<string, string> = {};
-            if (requestScopedContext.projectSlug && apiAuthToken) {
-              const environmentId = requestScopedContext.environmentId ??
-                await _resolveProductionEnvironmentId(
-                  requestScopedContext.projectSlug,
-                  apiAuthToken,
+                // veryfront-api is the trusted control-plane caller; it resolves
+                // authorization before attaching request-scoped project-agent config.
+                const runtimeBaseAgent = payload.agentConfig
+                  ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
+                  : agent;
+                const runtimeInput = sanitizeRuntimeRunAgentInput(
+                  toRuntimeRunAgentInput(payload),
                 );
-              if (environmentId) {
-                envVarsForAgent = await _agentEnvVarCache.get(
-                  environmentId,
-                  apiAuthToken,
-                  requestScopedContext.projectSlug,
-                );
-                logger.debug("Agent stream env vars loaded", {
-                  runId: payload.runId,
-                  projectSlug: requestScopedContext.projectSlug,
-                  environmentId,
-                  count: Object.keys(envVarsForAgent).length,
+                const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
+                const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+                  agent: runtimeBaseAgent as Agent,
+                  token: apiAuthToken || null,
+                  projectId: sourceScopedContext.projectId ?? null,
+                  availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                 });
-              }
-            }
+                const runtimeAgent = withVeryfrontStudioRemoteTools({
+                  agent: platformRuntimeAgent,
+                  token: apiAuthToken || null,
+                  projectId: sourceScopedContext.projectId ?? null,
+                  forwardedProps: runtimeInput.forwardedProps,
+                  availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                  conversationId: runtimeInput.threadId,
+                });
 
-            const runAgentStream = () =>
-              createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
-                ...this.deps,
-                localTools,
-                projectAgentSandbox: {
-                  apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-                  authToken: apiAuthToken || undefined,
-                  projectId: requestScopedContext.projectId ?? null,
-                },
-              });
-            const shouldIsolateEnv = apiAuthToken.length > 0;
-            const response = shouldIsolateEnv
-              ? await runWithProjectEnv(
-                buildAgentStreamEnv({
-                  envVars: envVarsForAgent,
-                  proxyToken: apiAuthToken,
-                  projectSlug: requestScopedContext.projectSlug,
-                }),
-                runAgentStream,
-              )
-              : await runAgentStream();
-            logger.info("Internal agent stream response created", {
-              runId: payload.runId,
-              threadId: payload.threadId,
-              agentId: payload.agentId,
-              projectId: requestScopedContext.projectId,
-              projectSlug: requestScopedContext.projectSlug,
-            });
-            const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
-              null;
-            const responseWithOwner = runtimeOwnerInvokeUrl
-              ? setResponseHeader(
-                response,
-                RUNTIME_OWNER_INVOKE_URL_HEADER,
-                runtimeOwnerInvokeUrl,
-              )
-              : response;
-            return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
+                // Load project env vars so source-defined MCP tool headers resolve
+                // via _getProjectEnv(). Control-plane requests don't go through the proxy and
+                // therefore don't carry x-environment-id, so we discover the production env ID
+                // from the API (one fetch per project per server lifetime, then cached).
+                let envVarsForAgent: Record<string, string> = {};
+                if (sourceScopedContext.projectSlug && apiAuthToken) {
+                  const environmentId = sourceScopedContext.environmentId ??
+                    await _resolveProductionEnvironmentId(
+                      sourceScopedContext.projectSlug,
+                      apiAuthToken,
+                    );
+                  if (environmentId) {
+                    envVarsForAgent = await _agentEnvVarCache.get(
+                      environmentId,
+                      apiAuthToken,
+                      sourceScopedContext.projectSlug,
+                    );
+                    logger.debug("Agent stream env vars loaded", {
+                      runId: payload.runId,
+                      projectSlug: sourceScopedContext.projectSlug,
+                      environmentId,
+                      count: Object.keys(envVarsForAgent).length,
+                    });
+                  }
+                }
+
+                const runAgentStream = () =>
+                  createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+                    ...this.deps,
+                    localTools,
+                    projectAgentSandbox: {
+                      apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+                      authToken: apiAuthToken || undefined,
+                      projectId: sourceScopedContext.projectId ?? null,
+                    },
+                  });
+                const shouldIsolateEnv = apiAuthToken.length > 0;
+                const response = shouldIsolateEnv
+                  ? await runWithProjectEnv(
+                    buildAgentStreamEnv({
+                      envVars: envVarsForAgent,
+                      proxyToken: apiAuthToken,
+                      projectSlug: sourceScopedContext.projectSlug,
+                    }),
+                    runAgentStream,
+                  )
+                  : await runAgentStream();
+                logger.info("Internal agent stream response created", {
+                  runId: payload.runId,
+                  threadId: payload.threadId,
+                  agentId: payload.agentId,
+                  projectId: sourceScopedContext.projectId,
+                  projectSlug: sourceScopedContext.projectSlug,
+                });
+                const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
+                  null;
+                const responseWithOwner = runtimeOwnerInvokeUrl
+                  ? setResponseHeader(
+                    response,
+                    RUNTIME_OWNER_INVOKE_URL_HEADER,
+                    runtimeOwnerInvokeUrl,
+                  )
+                  : response;
+                return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
+              },
+            );
           },
-        ));
+        ), { verifiedControlPlaneClaims: verifiedClaims });
     } catch (error) {
       if (error instanceof InternalAgentRequestBodyTooLargeError) {
         return this.respond(builder.json({ error: error.message }, error.status));

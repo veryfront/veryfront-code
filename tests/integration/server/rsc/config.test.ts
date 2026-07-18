@@ -11,8 +11,18 @@ import { assert, assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+
+function getHeadingText(html: string): string | null {
+  const dom = new JSDOM(html);
+  try {
+    return dom.window.document.querySelector("h1")?.textContent ?? null;
+  } finally {
+    dom.window.close();
+  }
+}
 
 describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
@@ -54,9 +64,8 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
         }`,
       );
 
-      await mkdir(join(context.projectDir, "app", "hello"), { recursive: true });
       await writeTextFile(
-        join(context.projectDir, "app", "hello", "page.tsx"),
+        join(context.projectDir, "app", "page.tsx"),
         `export default function HelloPage({ searchParams }: { searchParams: { name?: string } }) {
           const name = searchParams?.name || 'World';
           return (
@@ -86,13 +95,15 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
       const payload = await payloadResponse.json();
 
       assert(typeof payload === "object" && payload !== null, "Payload should be an object");
-      assert(
-        Array.isArray(payload.modules) && payload.modules.length > 0,
-        "Payload should contain module references",
+      assert(typeof payload.html === "string", "Payload should include HTML");
+      assertEquals(
+        getHeadingText(payload.html),
+        "Hello World",
+        "Payload should contain the default heading",
       );
       assert(
-        payload.slots && typeof payload.slots.root === "string",
-        "Payload should include root slot",
+        payload.clientRefs && typeof payload.clientRefs === "object",
+        "Payload should include client references",
       );
 
       const paramResponse = await fetch(`${baseUrl}/payload?name=Alice`);
@@ -100,7 +111,11 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
       const paramPayload = await paramResponse.json();
 
       assert(typeof paramPayload?.html === "string", "Parameterized payload should include HTML");
-      assert(paramPayload.html.includes("Hello Alice"), "Should render with parameter");
+      assertEquals(
+        getHeadingText(paramPayload.html),
+        "Hello Alice",
+        "Parameterized payload should contain the requested heading",
+      );
 
       const manifestResponse = await fetch(`${baseUrl}/manifest`);
       assertEquals(manifestResponse.status, 200, "Manifest endpoint should return 200");

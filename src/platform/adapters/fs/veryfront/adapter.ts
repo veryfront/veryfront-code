@@ -730,6 +730,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
+  async readOptionalTextFile(path: string): Promise<string> {
+    await this.ensureInitialized();
+    return this.withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
+  }
+
   async readdir(path: string): Promise<DirectoryEntry[]> {
     await this.ensureInitialized();
     return this.withBranchSnapshotRecovery(
@@ -878,10 +883,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setRequestToken(token: string): void {
     this.client.setRequestToken(token);
+    this.wsManager.setApiToken(token);
   }
 
   clearRequestToken(): void {
     this.client.clearRequestToken();
+    this.wsManager.setApiToken(this.apiToken);
   }
 
   setRequestBranch(branch: string | null): void {

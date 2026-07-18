@@ -1,5 +1,7 @@
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
+import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import { HYDRATION_DATA_ID } from "#veryfront/rendering/rsc/constants.ts";
 
 /**
  * Serialize a value as a JSON string literal that is safe to embed inside an
@@ -23,6 +25,12 @@ function jsonForScript(value: unknown): string {
 }
 
 export class PageHandler {
+  constructor(
+    private readonly isDevelopment: boolean = false,
+    private readonly reactVersion?: string,
+    private readonly clientModuleStrategy?: ClientModuleStrategy,
+  ) {}
+
   handle(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
     const html = this.buildHtml(pathname, searchParams, nonce);
 
@@ -37,6 +45,11 @@ export class PageHandler {
     const nonceAttr = buildNonceAttribute(nonce);
     const renderUrlJs = jsonForScript(renderUrl);
     const trustedHtmlValidatorScript = buildTrustedHtmlValidatorScript();
+    const hydrationData = jsonForScript({
+      clientModuleStrategy: this.clientModuleStrategy,
+      dev: this.isDevelopment,
+      reactVersion: this.reactVersion,
+    });
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -44,7 +57,8 @@ export class PageHandler {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Veryfront RSC</title>
-  <script${nonceAttr}>window.__VERYFRONT_DEV__ = true;</script>
+  <script id="${HYDRATION_DATA_ID}" type="application/json"${nonceAttr}>${hydrationData}</script>
+  <script${nonceAttr}>window.__VERYFRONT_DEV__ = ${this.isDevelopment};</script>
 </head>
 <body>
   <div id="rsc-root"></div>
@@ -66,7 +80,6 @@ export class PageHandler {
       const renderUrl = ${renderUrlJs};
       const payload =
         (await fetchPayload(renderUrl)) ??
-        (await fetchPayload('/_veryfront/rsc/payload')) ??
         { html: '<p>RSC unavailable</p>', clientRefs: [] };
 
       const safeHtml = validateTrustedHtml(String(payload.html || ''));

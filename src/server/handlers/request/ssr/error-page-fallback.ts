@@ -8,6 +8,7 @@ import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
@@ -41,7 +42,10 @@ export async function tryErrorPageFallback(
   const { statusCode, error, pathname } = options;
 
   try {
-    const pagesDir = joinPath(ctx.projectDir, "pages");
+    const pagesDir = joinPath(
+      ctx.projectDir,
+      ctx.config?.directories?.pages ?? "pages",
+    );
 
     try {
       const st = await ctx.adapter.fs.stat(pagesDir);
@@ -51,6 +55,11 @@ export async function tryErrorPageFallback(
       return null;
     }
 
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: ctx.projectDir,
+      config: ctx.config,
+    });
+
     const specificPage: ErrorPageType | null = statusCode === 404
       ? "404"
       : statusCode === 500
@@ -58,7 +67,12 @@ export async function tryErrorPageFallback(
       : null;
 
     if (specificPage) {
-      const ErrorComponent = await tryLoadErrorPage(pagesDir, specificPage, ctx);
+      const ErrorComponent = await tryLoadErrorPage(
+        pagesDir,
+        specificPage,
+        ctx,
+        reactVersion,
+      );
       if (ErrorComponent) {
         logger.debug(`Found pages/${specificPage}.tsx`);
         return renderErrorPage(
@@ -69,11 +83,17 @@ export async function tryErrorPageFallback(
           statusCode,
           error,
           pathname,
+          reactVersion,
         );
       }
     }
 
-    const GenericErrorComponent = await tryLoadErrorPage(pagesDir, "_error", ctx);
+    const GenericErrorComponent = await tryLoadErrorPage(
+      pagesDir,
+      "_error",
+      ctx,
+      reactVersion,
+    );
     if (!GenericErrorComponent) return null;
 
     logger.debug("Found pages/_error.tsx");
@@ -85,6 +105,7 @@ export async function tryErrorPageFallback(
       statusCode,
       error,
       pathname,
+      reactVersion,
     );
   } catch (e) {
     // The user's custom error page failed to compile/load. Surface at warn so
@@ -132,6 +153,7 @@ async function tryLoadErrorPage(
   pagesDir: string,
   pageType: ErrorPageType,
   ctx: HandlerContext,
+  reactVersion: string,
 ): Promise<React.ComponentType<unknown> | null> {
   const cacheKey = buildErrorPageCacheKey(ctx.projectId, ctx.projectDir, pageType);
 
@@ -140,14 +162,14 @@ async function tryLoadErrorPage(
     if (!cachedPath) return null;
 
     try {
-      return await loadErrorComponent(cachedPath, ctx);
+      return await loadErrorComponent(cachedPath, ctx, reactVersion);
     } catch (_) {
       // expected: cached path no longer valid, clear and re-resolve
       await deleteCachedPath(cacheKey);
     }
   }
 
-  const basePath = joinPath(ctx.projectDir, "pages", pageType);
+  const basePath = joinPath(pagesDir, pageType);
 
   if (ctx.adapter.fs.resolveFile) {
     try {
@@ -158,7 +180,7 @@ async function tryLoadErrorPage(
       }
 
       const fullPath = joinPath(ctx.projectDir, resolvedPath);
-      const component = await loadErrorComponent(fullPath, ctx);
+      const component = await loadErrorComponent(fullPath, ctx, reactVersion);
       if (component) {
         await setCachedPath(cacheKey, fullPath);
         return component;
@@ -177,7 +199,7 @@ async function tryLoadErrorPage(
       const stat = await ctx.adapter.fs.stat(filePath);
       if (!stat.isFile) continue;
 
-      const component = await loadErrorComponent(filePath, ctx);
+      const component = await loadErrorComponent(filePath, ctx, reactVersion);
       if (component) {
         await setCachedPath(cacheKey, filePath);
         return component;
@@ -194,6 +216,7 @@ async function tryLoadErrorPage(
 async function loadErrorComponent(
   filePath: string,
   ctx: HandlerContext,
+  reactVersion: string,
 ): Promise<React.ComponentType<unknown> | null> {
   const src = await ctx.adapter.fs.readFile(filePath);
   const { loadComponentFromSource } = await import(
@@ -218,6 +241,7 @@ async function loadErrorComponent(
       projectId: ctx.projectId ?? ctx.projectDir,
       dev: isLocal,
       contentSourceId,
+      reactVersion,
     },
   );
 
@@ -232,11 +256,12 @@ async function renderErrorPage(
   statusCode: number,
   error?: Error,
   pathname?: string,
+  reactVersion?: string,
 ): Promise<Response> {
-  const React = await import("react");
-  const { renderToStringAdapter } = await import(
+  const { getProjectReact, renderToStringAdapter } = await import(
     "#veryfront/react/compat/ssr-adapter/index.ts"
   );
+  const React = await getProjectReact(reactVersion);
 
   const errorProps = { statusCode, err: error, pathname };
 
@@ -246,7 +271,9 @@ async function renderErrorPage(
   );
 
   try {
-    const inner = await renderToStringAdapter(element as React.ReactElement);
+    const inner = await renderToStringAdapter(element as React.ReactElement, {
+      reactVersion,
+    });
 
     const html = `<!DOCTYPE html>
 <html lang="en">

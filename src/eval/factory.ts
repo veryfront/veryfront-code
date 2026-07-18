@@ -1,5 +1,12 @@
 import { datasets } from "./datasets.ts";
-import type { EvalAgentInput, EvalDataset, EvalDefinition, EvalExampleInput } from "./types.ts";
+import type {
+  EvalAgentInput,
+  EvalDataset,
+  EvalDefinition,
+  EvalExampleInput,
+  EvalTargetKind,
+  EvalToolInput,
+} from "./types.ts";
 import { createEvalValidationError } from "./validation.ts";
 
 function isEvalDataset(value: unknown): value is EvalDataset {
@@ -23,15 +30,17 @@ function normalizeRepetitions(repetitions: number | undefined): number {
   return value;
 }
 
-/** Define a V1 eval that targets a Veryfront agent. */
-export function evalAgent(input: EvalAgentInput): EvalDefinition {
+function createEvalDefinition(
+  targetKind: EvalTargetKind,
+  input: EvalAgentInput | EvalToolInput,
+): EvalDefinition {
   if (typeof input.target !== "string" || input.target.trim() === "") {
     throw createEvalValidationError("Eval target must be a non-empty string");
   }
 
   return {
     kind: "eval",
-    targetKind: "agent",
+    targetKind,
     id: input.id ?? "",
     name: input.name ?? input.id ?? input.target,
     ...(input.description ? { description: input.description } : {}),
@@ -41,8 +50,19 @@ export function evalAgent(input: EvalAgentInput): EvalDefinition {
     repetitions: normalizeRepetitions(input.repetitions),
     tags: input.tags ?? [],
     metadata: input.metadata ?? {},
+    ...("input" in input && input.input ? { input: input.input } : {}),
     ...(input.check ? { check: input.check } : {}),
   };
+}
+
+/** Define an eval that targets a Veryfront agent. */
+export function evalAgent(input: EvalAgentInput): EvalDefinition {
+  return createEvalDefinition("agent", input);
+}
+
+/** Define an eval that targets a Veryfront tool. */
+export function evalTool(input: EvalToolInput): EvalDefinition {
+  return createEvalDefinition("tool", input);
 }
 
 /** Check whether a value is a normalized eval definition. */
@@ -50,7 +70,7 @@ export function isEvalDefinition(value: unknown): value is EvalDefinition {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<EvalDefinition>;
   return candidate.kind === "eval" &&
-    candidate.targetKind === "agent" &&
+    (candidate.targetKind === "agent" || candidate.targetKind === "tool") &&
     typeof candidate.target === "string" &&
     isEvalDataset(candidate.dataset) &&
     Array.isArray(candidate.metrics) &&

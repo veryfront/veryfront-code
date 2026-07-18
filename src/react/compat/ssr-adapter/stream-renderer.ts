@@ -1,6 +1,6 @@
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getReactVersionInfo, hasFeature } from "../version-detector/index.ts";
+import { getReactVersionInfo } from "../version-detector/index.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
@@ -229,19 +229,19 @@ export async function renderToStreamAdapter(
   options: SSROptions = {},
 ): Promise<SSRResult> {
   const debug = isDebugMode();
-  const server = await getReactDOMServer();
+  const server = await getReactDOMServer(options.reactVersion);
 
-  if (hasFeature("renderToReadableStream") && server.renderToReadableStream) {
+  if (server.renderToReadableStream) {
     if (debug) logger.info("SSR using renderToReadableStream");
     return renderToReadableStreamImpl(element, options, server);
   }
 
-  if (hasFeature("renderToPipeableStream") && server.renderToPipeableStream) {
+  if (server.renderToPipeableStream) {
     if (debug) logger.info("SSR using renderToPipeableStream");
     return renderToPipeableStreamImpl(element, options, server);
   }
 
-  const { version } = getReactVersionInfo();
+  const version = options.reactVersion ?? getReactVersionInfo().version;
   if (debug) logger.info("SSR using string rendering", { reactVersion: version });
 
   try {

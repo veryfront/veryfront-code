@@ -39,7 +39,7 @@ export { ChatStyleProvider, type ChatStyleProviderProps } from "./chat-style-pro
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export { Chat, ChatComponents, type ChatProps } from "./chat.tsx";
+export { Chat, type ChatAgentInfo, type ChatProps } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Composition building blocks
@@ -56,8 +56,10 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
+  type ChatInputExportProps,
   type ChatInputProps,
   ChatMessageList,
+  type ChatMessageListContentProps,
   type ChatMessageListProps,
   ChatRoot,
   type ChatRootProps,
@@ -66,8 +68,10 @@ export {
   Message,
   type MessageProps,
   type MessageRootProps,
+  type MessageTokensProps,
   ModelAvatar,
   type ModelAvatarProps,
+  type TokenRowProps,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -80,12 +84,23 @@ export {
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
+  type MessagePartsData,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
+  useMessageParts,
+} from "./chat.tsx";
+
+// ---------------------------------------------------------------------------
+// Chat - Conversation session
+// ---------------------------------------------------------------------------
+export {
+  useConversationChat,
+  type UseConversationChatOptions,
+  type UseConversationChatResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -116,7 +131,7 @@ export {
   MessageFeedback,
   ModelSelector,
   QuickActions,
-  ReasoningCard,
+  Reasoning,
   RichCodeBlock,
   Shimmer,
   SkillBadge,
@@ -125,19 +140,22 @@ export {
   Suggestion,
   Suggestions,
   TabSwitcher,
-  ToolCallCard,
+  ToolCall,
   ToolStatusBadge,
+  useReasoning,
+  useToolCall,
   useUpload,
 } from "./chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
   AttachmentsPanelProps,
+  BranchPickerActionProps,
+  BranchPickerCountProps,
   BranchPickerProps,
   ChatSidebarComponent,
   ChatSidebarEmptyProps,
   ChatSidebarGroupProps,
-  ChatSidebarIcons,
   ChatSidebarItemProps,
   ChatSidebarListProps,
   ChatSidebarNewButtonProps,
@@ -149,15 +167,23 @@ export type {
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
+  InlineCitationCardProps,
   InlineCitationProps,
+  InlineCitationTriggerProps,
+  MessageActionBarActionProps,
   MessageActionBarProps,
   MessageEditFormProps,
+  MessageFeedbackActionProps,
   MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  ModelSelectorSearchProps,
   PartGroup,
   QuickAction,
   QuickActionsProps,
+  ReasoningContextValue,
+  ReasoningProps,
+  ReasoningTriggerProps,
   SkillBadgeProps,
   Source,
   SourcesProps,
@@ -165,6 +191,9 @@ export type {
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
+  ToolCallContextValue,
+  ToolCallProps,
+  ToolCallTriggerProps,
   UploadedFile,
   UseUploadOptions,
   UseUploadResult,

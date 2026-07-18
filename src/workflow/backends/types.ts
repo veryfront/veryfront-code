@@ -7,6 +7,51 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+/** Run state that may change after the immutable run snapshot is created. */
+export type WorkflowRunUpdate = Partial<
+  Pick<
+    WorkflowRun,
+    | "status"
+    | "output"
+    | "nodeStates"
+    | "currentNodes"
+    | "context"
+    | "error"
+    | "startedAt"
+    | "heartbeatAt"
+    | "completedAt"
+    | "workerId"
+  >
+>;
+
+const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
+  "status",
+  "output",
+  "nodeStates",
+  "currentNodes",
+  "context",
+  "error",
+  "startedAt",
+  "heartbeatAt",
+  "completedAt",
+  "workerId",
+]);
+
+/** Reject untyped callers that attempt to rewrite immutable run state. */
+export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
+  const immutableFields = Object.keys(patch).filter((field) =>
+    !WORKFLOW_RUN_UPDATE_FIELDS.has(field as keyof WorkflowRunUpdate)
+  );
+  if (immutableFields.length > 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Workflow run fields are immutable after creation: ${
+        immutableFields.sort().join(", ")
+      }`,
+    });
+  }
+}
 
 /** Configuration used by backend. */
 export interface BackendConfig {
@@ -27,19 +72,19 @@ export interface Lock {
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
   getRun(runId: string): Promise<WorkflowRun | null>;
-  updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void>;
+  updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
   /** Apply a run patch only when its current status matches one of the expected statuses. */
   updateRunIfStatus?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
   ): Promise<boolean>;
   /** Apply a run patch only while both status and worker ownership match. */
   updateRunIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;

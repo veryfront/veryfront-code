@@ -16,6 +16,10 @@ import {
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import {
+  type HostedRuntimeSourceIdentity,
+  verifyHostedRuntimeSourceBinding,
+} from "./runtime-source-binding.ts";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -67,9 +71,17 @@ export type ParseHostedChatRequestOptions = {
   }) => Promise<HostedChatProjectAccessResult>;
 };
 
+/** Options accepted when parsing a signed control-plane runtime invocation. */
+export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
+  & ParseHostedChatRequestOptions
+  & {
+    runtimeSource: HostedRuntimeSourceIdentity | undefined;
+  };
+
 async function parseRequestJson(request: Request): Promise<unknown | Response> {
+  let body: string;
   try {
-    return JSON.parse(await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES));
+    body = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   } catch (error) {
     if (isRequestBodyTooLargeError(error)) {
       return Response.json(
@@ -80,6 +92,11 @@ async function parseRequestJson(request: Request): Promise<unknown | Response> {
         { status: 413 },
       );
     }
+    return null;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
     return null;
   }
 }
@@ -217,7 +234,7 @@ export async function parseHostedChatRequestFromRequest(
 /** Request payload for parse runtime agent run invocation hosted chat request from. */
 export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
   request: Request,
-  options: ParseHostedChatRequestOptions,
+  options: ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
 ): Promise<ParsedHostedChatRequest | Response> {
   const authenticatedRequest = await options.authenticate(request);
   if (authenticatedRequest instanceof Response) {
@@ -245,7 +262,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
-  return await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
@@ -253,4 +270,20 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     agentConfig: invocation.data.agentConfig,
     verifyProjectAccess: options.verifyProjectAccess,
   });
+  if (parsedRequest instanceof Response) {
+    return parsedRequest;
+  }
+
+  const sourceBindingError = verifyHostedRuntimeSourceBinding(
+    options.runtimeSource,
+    invocation.data.agentSource,
+  );
+  if (sourceBindingError) {
+    return Response.json(
+      { errorCode: sourceBindingError.errorCode },
+      { status: sourceBindingError.status },
+    );
+  }
+
+  return parsedRequest;
 }

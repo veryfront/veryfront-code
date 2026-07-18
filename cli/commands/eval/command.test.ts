@@ -1,15 +1,30 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgentResponse } from "veryfront/agent";
-import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
+import type { Agent, AgentResponse } from "veryfront/agent";
+import {
+  compareEvalReports,
+  type DiscoveredEval,
+  EVAL_REPORT_SCHEMA_VERSION,
+  evalAgent,
+  type EvalReport,
+  evalTool,
+} from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
+import type { Tool } from "veryfront/tool";
+import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
+import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
+import {
+  normalizeSourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "../../../src/integrations/source-policy.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import {
   applyGatewayBillingGroupFinalization,
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
+  createEvalCliExportConfig,
   createEvalExitCode,
   createEvalMarkdownReport,
   createEvalModelArtifactPaths,
@@ -19,6 +34,8 @@ import {
   createResolvedEvalModelComparisonConfig,
   createResultsJsonl,
   createSummaryArtifact,
+  createToolAdapter,
+  type EvalOptions,
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
@@ -28,6 +45,10 @@ import {
   normalizeEvalInputForAgent,
   normalizeToolCalls,
   normalizeUsage,
+  resolveEvalExporterIds,
+  resolveEvalExportRedactionFromEnv,
+  resolveToolTargetId,
+  runEvalCommand,
   runEvalWithGatewayBillingGroup,
   summarizeReportForCli,
   writeEvalArtifacts,
@@ -38,7 +59,21 @@ const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
+const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
 const originalFetch = globalThis.fetch;
+const redactionEnvNames = [
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_REFERENCES",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_TRACES",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE",
+  "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS",
+  "VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST",
+] as const;
+const originalRedactionEnv = Object.fromEntries(
+  redactionEnvNames.map((name) => [name, Deno.env.get(name)]),
+) as Record<(typeof redactionEnvNames)[number], string | undefined>;
 
 function restoreEnv(): void {
   if (originalApiToken === undefined) {
@@ -65,16 +100,43 @@ function restoreEnv(): void {
     Deno.env.set("XDG_CONFIG_HOME", originalXdgConfigHome);
   }
 
+  if (originalEvalExport === undefined) {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+  } else {
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", originalEvalExport);
+  }
+
+  if (originalEvalExporters === undefined) {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+  } else {
+    Deno.env.set("VERYFRONT_EVAL_EXPORTERS", originalEvalExporters);
+  }
+
+  for (const name of redactionEnvNames) {
+    const original = originalRedactionEnv[name];
+    if (original === undefined) {
+      Deno.env.delete(name);
+    } else {
+      Deno.env.set(name, original);
+    }
+  }
+
   globalThis.fetch = originalFetch;
 }
 
 function createReport(): EvalReport {
   return {
     kind: "eval-report",
+    schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
     runId: "evalrun_test",
     definitionId: "eval:answers",
     targetKind: "agent",
     target: "agent:assistant",
+    dataset: {
+      kind: "inline",
+      examples: 2,
+      hash: "sha256:fixture-dataset",
+    },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: "2026-01-01T00:00:01.000Z",
     summary: {
@@ -166,6 +228,25 @@ function createReport(): EvalReport {
   };
 }
 
+function createProjectRuntimeDiscovery(
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest,
+): ProjectAgentRuntimeDiscovery {
+  return {
+    tools: new Map(),
+    agents: new Map(),
+    skills: new Map(),
+    resources: new Map(),
+    prompts: new Map(),
+    workflows: new Map(),
+    tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
+    evals: new Map(),
+    errors: [],
+    sourceIntegrationPolicy,
+  };
+}
+
 describe("eval CLI command helpers", () => {
   afterEach(() => {
     restoreEnv();
@@ -181,6 +262,11 @@ describe("eval CLI command helpers", () => {
       junit: "reports/eval.xml",
       baseline: "reports/baseline.json",
       "write-baseline": "reports/next-baseline.json",
+      "baseline-pass-rate-drop-threshold": 0.02,
+      "baseline-metric-pass-rate-drop-threshold": 0.03,
+      "baseline-failed-delta-threshold": 1,
+      "baseline-usage-increase-threshold": 0.15,
+      "baseline-latency-increase-threshold": 0.2,
       export: "braintrust,langfuse",
       debug: true,
       "baseline-model": "anthropic/claude-opus-4-6",
@@ -197,6 +283,11 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.junit, "reports/eval.xml");
       assertEquals(parsed.data.baseline, "reports/baseline.json");
       assertEquals(parsed.data.writeBaseline, "reports/next-baseline.json");
+      assertEquals(parsed.data.baselinePassRateDropThreshold, 0.02);
+      assertEquals(parsed.data.baselineMetricPassRateDropThreshold, 0.03);
+      assertEquals(parsed.data.baselineFailedDeltaThreshold, 1);
+      assertEquals(parsed.data.baselineUsageIncreaseThreshold, 0.15);
+      assertEquals(parsed.data.baselineLatencyIncreaseThreshold, 0.2);
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
       assertEquals(parsed.data.debug, true);
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
@@ -210,6 +301,113 @@ describe("eval CLI command helpers", () => {
     assertEquals(normalizeEvalCliId("eval:deep-research"), "eval:deep-research");
   });
 
+  it("resolves eval exporters from CLI flags instead of environment defaults", () => {
+    Deno.env.set("VERYFRONT_EVAL_EXPORTERS", "mlflow,braintrust");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
+
+    assertEquals(resolveEvalExporterIds({ exporters: ["custom"] }), ["custom"]);
+  });
+
+  it("resolves plural eval exporter env before the legacy env var", () => {
+    Deno.env.set("VERYFRONT_EVAL_EXPORTERS", "mlflow,braintrust");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
+
+    assertEquals(resolveEvalExporterIds({ exporters: [] }), ["mlflow", "braintrust"]);
+  });
+
+  it("uses the legacy eval exporter env var only when the plural env var is unset", () => {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
+
+    assertEquals(resolveEvalExporterIds({ exporters: [] }), ["langfuse"]);
+  });
+
+  it("keeps eval export redaction safe by default", () => {
+    for (const name of redactionEnvNames) Deno.env.delete(name);
+
+    assertEquals(resolveEvalExportRedactionFromEnv(), {});
+  });
+
+  it("threads the runtime project slug into eval export context", () => {
+    const registry = createEvalReportExporterRegistry();
+    const config = createEvalCliExportConfig(
+      {
+        id: "eval:answers",
+        filePath: "/repo/evals/answers.eval.ts",
+        exportName: "default",
+        definition: {
+          id: "eval:answers",
+          target: "agent:assistant",
+          targetKind: "agent",
+          dataset: { kind: "inline", examples: [] },
+          metrics: [],
+        },
+      } as unknown as DiscoveredEval,
+      { exporters: ["mlflow"] } as EvalOptions,
+      "/repo",
+      createEvalArtifactPaths("/tmp/report"),
+      registry,
+      { projectSlug: "customer-support-agent" },
+    );
+
+    assertEquals(config?.context?.projectReference, "customer-support-agent");
+  });
+
+  it("lists evals without initializing selected exporter extensions", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const command = new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--allow-all",
+          new URL("../../main.ts", import.meta.url).pathname,
+          "eval",
+          "--list",
+          "--export",
+          "mlflow",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: {
+          HOME: Deno.env.get("HOME") ?? projectDir,
+          PATH: Deno.env.get("PATH") ?? "",
+          NO_COLOR: "1",
+          MLFLOW_TRACKING_URI: "file:///tmp/mlruns",
+        },
+      });
+
+      const result = await command.output();
+      const output = `${new TextDecoder().decode(result.stdout)}${
+        new TextDecoder().decode(result.stderr)
+      }`;
+
+      assertEquals(result.code, 0, output);
+      assertStringIncludes(output, "No evals found.");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("resolves eval export redaction from exact global env toggles", () => {
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS", "true");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS", "1");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_REFERENCES", "yes");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_TRACES", "on");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE", "true");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS", "true");
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST", "topic,tenantId topic");
+
+    assertEquals(resolveEvalExportRedactionFromEnv(), {
+      includeInputs: true,
+      includeOutputs: true,
+      includeReferences: true,
+      includeTraces: true,
+      includeMetricEvidence: true,
+      includeMetricExplanations: true,
+      metadataAllowlist: ["topic", "tenantId"],
+    });
+  });
+
   it("finds explicit eval ids without forcing the namespace", () => {
     const evals = [
       { id: "custom-capital" },
@@ -219,6 +417,11 @@ describe("eval CLI command helpers", () => {
     assertEquals(findEvalForCliId(evals, "custom-capital")?.id, "custom-capital");
     assertEquals(findEvalForCliId(evals, "deep-research")?.id, "eval:deep-research");
     assertEquals(findEvalForCliId(evals, "eval:custom-capital")?.id, "custom-capital");
+  });
+
+  it("normalizes tool target ids", () => {
+    assertEquals(resolveToolTargetId("lookup_order"), "lookup_order");
+    assertEquals(resolveToolTargetId("tool:lookup_order"), "lookup_order");
   });
 
   it("normalizes structured eval inputs into agent prompts", () => {
@@ -342,6 +545,244 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("creates a CLI tool adapter for direct tool evals", async () => {
+    const contexts: Array<Parameters<Tool["execute"]>[1]> = [];
+    const tool = {
+      id: "lookup_order",
+      type: "function",
+      description: "Lookup an order.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: async (input: unknown, context?: Parameters<Tool["execute"]>[1]) => {
+        contexts.push(context);
+        return {
+          input,
+          toolCallId: context?.toolCallId,
+          runId: context?.runId,
+          projectSlug: context?.projectSlug,
+        };
+      },
+    } as Tool;
+
+    const adapter = createToolAdapter(tool, { projectSlug: "support-app" });
+    const result = await adapter({
+      definition: {
+        kind: "eval",
+        targetKind: "tool",
+        id: "eval:lookup-tool",
+        name: "Lookup tool",
+        target: "tool:lookup_order",
+        dataset: {} as never,
+        metrics: [],
+        repetitions: 1,
+        tags: [],
+        metadata: {},
+      },
+      example: { id: "order-1", input: { orderId: "A1049" } },
+      repetition: 1,
+      runId: "evalrun_lookup",
+      input: { orderId: "A1049" },
+    });
+    const nextResult = await adapter({
+      definition: {
+        kind: "eval",
+        targetKind: "tool",
+        id: "eval:lookup-tool",
+        name: "Lookup tool",
+        target: "tool:lookup_order",
+        dataset: {} as never,
+        metrics: [],
+        repetitions: 1,
+        tags: [],
+        metadata: {},
+      },
+      example: { id: "order-1", input: { orderId: "A1049" } },
+      repetition: 2,
+      runId: "evalrun_lookup",
+      input: { orderId: "A1049" },
+    });
+
+    assertEquals(result.completed, true);
+    assertEquals(result.toolCallId, contexts[0]?.toolCallId);
+    assertStringIncludes(result.toolCallId ?? "", "eval-lookup_order-order-1-1-");
+    assertStringIncludes(nextResult.toolCallId ?? "", "eval-lookup_order-order-1-2-");
+    assertEquals(result.toolCallId === nextResult.toolCallId, false);
+    assertEquals(result.output, {
+      input: { orderId: "A1049" },
+      toolCallId: result.toolCallId,
+      runId: "evalrun_lookup",
+      projectSlug: "support-app",
+    });
+  });
+
+  it("keeps the exact source policy active while a tool eval executes", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-policy-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-policy-auth-" });
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { confluence: { allowedTools: ["search_content"] } },
+    });
+    const observedPolicies: Array<SourceIntegrationPolicyManifest | undefined> = [];
+    const observePolicyTool = {
+      id: "observe_policy",
+      type: "function",
+      description: "Observe the source policy during eval execution.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: async () => {
+        await Promise.resolve();
+        const policy = getActiveSourceIntegrationPolicy();
+        observedPolicies.push(policy);
+        return { policy };
+      },
+    } as Tool;
+    const definition = evalTool({
+      id: "eval:source-policy",
+      target: "tool:observe_policy",
+      dataset: [{ id: "policy", input: {} }],
+    });
+    definition.source = {
+      filePath: `${projectDir}/evals/source-policy.eval.ts`,
+      exportName: "default",
+    };
+    const runtime = createProjectRuntimeDiscovery(sourceIntegrationPolicy);
+    runtime.tools.set(observePolicyTool.id, observePolicyTool);
+    runtime.evals.set(definition.id, definition);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const exitCode = await runEvalCommand(
+        {
+          id: "source-policy",
+          list: false,
+          exporters: [],
+          debug: false,
+          candidateModels: [],
+          projectDir,
+          reportDir: `${projectDir}/report`,
+        },
+        {
+          discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+        },
+      );
+
+      assertEquals(exitCode, 0);
+      assertEquals(observedPolicies, [sourceIntegrationPolicy]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps the exact source policy active across every model comparison run", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-model-policy-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-model-policy-auth-" });
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { github: { allowedTools: ["list_repos"] } },
+    });
+    const observations: Array<{
+      model: string | undefined;
+      policy: SourceIntegrationPolicyManifest | undefined;
+    }> = [];
+    const observePolicyAgent = {
+      id: "observe_policy",
+      config: {},
+      generate: async (input: { model?: string }) => {
+        await Promise.resolve();
+        observations.push({
+          model: input.model,
+          policy: getActiveSourceIntegrationPolicy(),
+        });
+        return {
+          text: "ok",
+          messages: [],
+          status: "completed",
+          toolCalls: [],
+        } satisfies AgentResponse;
+      },
+    } as unknown as Agent;
+    const definition = evalAgent({
+      id: "eval:model-source-policy",
+      target: "agent:observe_policy",
+      dataset: [{ id: "policy", input: "observe" }],
+    });
+    definition.source = {
+      filePath: `${projectDir}/evals/model-source-policy.eval.ts`,
+      exportName: "default",
+    };
+    const runtime = createProjectRuntimeDiscovery(sourceIntegrationPolicy);
+    runtime.agents.set(observePolicyAgent.id, observePolicyAgent);
+    runtime.evals.set(definition.id, definition);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const exitCode = await runEvalCommand(
+        {
+          id: "model-source-policy",
+          list: false,
+          exporters: [],
+          debug: false,
+          baselineModel: "test/baseline",
+          candidateModels: ["test/candidate"],
+          projectDir,
+          reportDir: `${projectDir}/report`,
+        },
+        {
+          discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+        },
+      );
+
+      assertEquals(exitCode, 0);
+      assertEquals(observations, [
+        { model: "test/baseline", policy: sourceIntegrationPolicy },
+        { model: "test/candidate", policy: sourceIntegrationPolicy },
+      ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("marks CLI tool adapter error-marker outputs as failed", async () => {
+    const tool = {
+      id: "lookup_order",
+      type: "function",
+      description: "Lookup an order.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: async () => ({ error: "Rate limited" }),
+    } as Tool;
+
+    const result = await createToolAdapter(tool)({
+      definition: {
+        kind: "eval",
+        targetKind: "tool",
+        id: "eval:lookup-tool",
+        name: "Lookup tool",
+        target: "tool:lookup_order",
+        dataset: {} as never,
+        metrics: [],
+        repetitions: 1,
+        tags: [],
+        metadata: {},
+      },
+      example: { id: "order-1", input: { orderId: "A1049" } },
+      repetition: 1,
+      runId: "evalrun_lookup",
+      input: { orderId: "A1049" },
+    });
+
+    assertEquals(result.completed, false);
+    assertEquals(result.error, "Rate limited");
+    assertEquals(result.output, { error: "Rate limited" });
+  });
+
   it("hydrates runtime auth from the stored login token and eval project config", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-command-" });
     const configHome = await Deno.makeTempDir({ prefix: "vf-eval-auth-" });
@@ -438,10 +879,12 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(createSummaryArtifact(report, baseline), {
       kind: "eval-summary",
+      schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
       runId: "evalrun_test",
       definitionId: "eval:answers",
       targetKind: "agent",
       target: "agent:assistant",
+      dataset: report.dataset,
       startedAt: "2026-01-01T00:00:00.000Z",
       endedAt: "2026-01-01T00:00:01.000Z",
       summary: report.summary,
@@ -685,6 +1128,76 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("keeps local eval artifacts writable when selected exporters fail unexpectedly", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      const report = createReport();
+      const exported = await exportEvalReportForCli(report, {
+        exporterIds: ["braintrust", "langfuse"],
+        registry: {
+          register() {},
+          unregister() {},
+          get() {
+            throw new Error("gateway registry crashed");
+          },
+          require() {
+            throw new Error("not implemented");
+          },
+          list() {
+            return [];
+          },
+          has() {
+            return false;
+          },
+          export() {
+            throw new Error("not implemented");
+          },
+        },
+      });
+      const paths = createEvalArtifactPaths(`${tempDir}/eval-report`);
+
+      await writeEvalArtifacts(exported, paths);
+      await Deno.writeTextFile(`${tempDir}/junit.xml`, createJunitXml(exported));
+
+      const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
+        exports?: Array<{ exporterId: string; ok: boolean; error?: string }>;
+      };
+      const junit = await Deno.readTextFile(`${tempDir}/junit.xml`);
+
+      assertEquals(exported.exports, [
+        {
+          exporterId: "braintrust",
+          ok: false,
+          error: "gateway registry crashed",
+        },
+        {
+          exporterId: "langfuse",
+          ok: false,
+          error: "gateway registry crashed",
+        },
+      ]);
+      assertEquals(summary.exports, exported.exports);
+      assertStringIncludes(junit, '<testsuite name="eval:answers"');
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports unknown CLI eval exporters as failed export results", async () => {
+    const exported = await exportEvalReportForCli(createReport(), {
+      registry: createEvalReportExporterRegistry(),
+      exporterIds: ["missing"],
+    });
+
+    assertEquals(exported.exports, [
+      {
+        exporterId: "missing",
+        ok: false,
+        error: 'No EvalReportExporter registered for "missing".',
+      },
+    ]);
+  });
+
   it("renders a markdown eval report", () => {
     const markdown = createEvalMarkdownReport(createReport());
 
@@ -738,12 +1251,20 @@ describe("eval CLI command helpers", () => {
 
       const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
         kind: string;
+        schemaVersion?: number;
+        dataset?: { kind: string; examples: number; hash: string };
         summary: { records: number };
       };
       const results = (await Deno.readTextFile(paths.results)).trimEnd().split("\n");
       const markdown = await Deno.readTextFile(paths.reportMarkdown);
 
       assertEquals(summary.kind, "eval-summary");
+      assertEquals(summary.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
+      assertEquals(summary.dataset, {
+        kind: "inline",
+        examples: 2,
+        hash: "sha256:fixture-dataset",
+      });
       assertEquals(summary.summary.records, 2);
       assertEquals(results.length, 2);
       assertStringIncludes(markdown, "# Eval report: eval:answers");

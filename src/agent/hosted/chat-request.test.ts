@@ -20,6 +20,7 @@ const userId = "10000000-1000-4000-8000-100000000004";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
 const environmentId = "10000000-1000-4000-8000-100000000008";
+const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
 function createRuntimeInvocation() {
   return RuntimeAgentRunInvocationSchema.parse({
@@ -52,6 +53,7 @@ function createRuntimeInvocation() {
       },
     }],
     context: [{ type: "text", text: "Current file: app.tsx" }],
+    agentSource: runtimeSource,
     forwardedProps: { activeChatId: "chat_123" },
   });
 }
@@ -152,6 +154,7 @@ describe("agent/hosted-chat-request", () => {
       branchId,
       runtimeTargetKind: "preview_branch",
     });
+    assertEquals("agentSource" in request, false);
     assertEquals(request.durableRootRun, {
       runId: "run_root_1",
       messageId,
@@ -304,6 +307,7 @@ describe("agent/hosted-chat-request", () => {
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
         verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
       },
     );
 
@@ -335,6 +339,7 @@ describe("agent/hosted-chat-request", () => {
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
         verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
       },
     );
 
@@ -395,6 +400,7 @@ describe("agent/hosted-chat-request", () => {
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
         verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
       },
     );
 
@@ -456,6 +462,7 @@ describe("agent/hosted-chat-request", () => {
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
         verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
       },
     );
 
@@ -470,5 +477,90 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.forwardedProps?.runtimeContext, invocation.context);
     assertEquals(parsed.forwardedProps?.runtimeTools, invocation.tools);
     assertEquals(parsed.durableRootRun?.runId, "run_root_1");
+  });
+
+  it("fails closed when a control-plane invocation is not bound to this service source", async () => {
+    const invocation = createRuntimeInvocation();
+
+    for (
+      const [boundSource, expectedErrorCode, expectedStatus] of [
+        [undefined, "CONTROL_PLANE_AGENT_SOURCE_UNBOUND", 503],
+        [{ type: "release", releaseId: "release-43" }, "CONTROL_PLANE_AGENT_SOURCE_MISMATCH", 409],
+      ] as const
+    ) {
+      const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          body: JSON.stringify(invocation),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          runtimeSource: boundSource,
+        },
+      );
+
+      if (!(response instanceof Response)) {
+        throw new Error("Expected source binding error response");
+      }
+      assertEquals(response.status, expectedStatus);
+      assertEquals(await response.json(), { errorCode: expectedErrorCode });
+    }
+  });
+
+  it("does not reveal source binding errors before project access succeeds", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify(createRuntimeInvocation()),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () =>
+          Promise.resolve({
+            success: false,
+            error: {
+              errorCode: "PROJECT_ACCESS_DENIED",
+              message: "Project access denied",
+              statusCode: 403,
+            },
+          }),
+        runtimeSource: undefined,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected project access error response");
+    }
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "PROJECT_ACCESS_DENIED",
+      message: "Project access denied",
+    });
+  });
+
+  it("rejects mutable branch source selection for a standalone service", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          agentSource: { type: "branch", branch: "main" },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected unsupported source error response");
+    }
+    assertEquals(response.status, 409);
+    assertEquals(await response.json(), {
+      errorCode: "CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED",
+    });
   });
 });

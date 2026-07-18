@@ -40,8 +40,9 @@ describe("rendering/rsc/client-module-strategy", () => {
       buildClientModuleUrl({
         strategy: "fs",
         rel: "app/page.tsx",
+        version: "abc123",
       }),
-      "/_veryfront/fs/YXBwL3BhZ2UudHN4.js",
+      "/_veryfront/fs/YXBwL3BhZ2UudHN4.js?v=abc123",
     );
     assertEquals(
       buildClientModuleUrl({
@@ -67,5 +68,16 @@ describe("rendering/rsc/client-module-strategy", () => {
     const specifiers = getHydrationReactImportSpecifiers(doc);
     assertEquals(specifiers.react, "react");
     assertEquals(specifiers.reactDomClient, "react-dom/client");
+  });
+
+  it("uses the server-provided React version when the page has no import map", () => {
+    const doc = {
+      querySelector: () => null,
+    } as unknown as Document;
+
+    const specifiers = getHydrationReactImportSpecifiers(doc, "18.3.1");
+
+    assertEquals(specifiers.react.includes("react@18.3.1"), true);
+    assertEquals(specifiers.reactDomClient.includes("react-dom@18.3.1/client"), true);
   });
 });

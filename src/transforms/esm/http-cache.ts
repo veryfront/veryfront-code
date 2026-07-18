@@ -11,7 +11,6 @@ import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
-import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { replaceSpecifiers } from "./lexer.ts";
@@ -33,12 +32,19 @@ import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
 import {
+  buildHttpCacheIdentity,
+  buildHttpCacheIdentityMetadata,
   type CacheOptions,
   ensureAbsoluteDir,
+  ensurePreparedHttpCacheRequestOptions,
+  getEffectiveHttpCacheRequest,
+  hashHttpCacheIdentity,
   hasIncompatibleFilePaths,
+  type HttpCacheIdentityOptions,
   type HttpCacheLike,
   isHttpUrl,
   normalizeHttpUrl,
+  prepareHttpCacheRequestOptions,
   type SetLike,
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-validator.ts";
@@ -90,7 +96,9 @@ export { __injectCachesForTests };
 async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
-  const cacheKey = `${cacheDir}:${normalizedUrl}`;
+  const cacheIdentity = await buildHttpCacheIdentity(normalizedUrl, options);
+  const identityMetadata = await buildHttpCacheIdentityMetadata(normalizedUrl, options);
+  const cacheKey = `${cacheDir}:${cacheIdentity}`;
 
   const existing = getCachedPaths().get(cacheKey);
   if (existing) {
@@ -98,7 +106,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     getCachedPaths().delete(cacheKey);
   }
 
-  const hash = simpleHash(normalizedUrl);
+  const hash = await hashHttpCacheIdentity(cacheIdentity);
   const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
@@ -121,6 +129,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           code,
           cacheDir,
           normalizedUrl,
+          identityMetadata,
           getLastDistributedRefresh,
         );
         trackBundleAccumulator(hash, normalizedUrl, cachePath);
@@ -128,14 +137,21 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       }
     } else {
       getCachedPaths().set(cacheKey, cachePath);
-      refreshDistributedCacheAsync(hash, code, cacheDir, normalizedUrl, getLastDistributedRefresh);
+      refreshDistributedCacheAsync(
+        hash,
+        code,
+        cacheDir,
+        normalizedUrl,
+        identityMetadata,
+        getLastDistributedRefresh,
+      );
       trackBundleAccumulator(hash, normalizedUrl, cachePath);
       return cachePath;
     }
   }
 
   const processingStack = getProcessingStack();
-  if (processingStack.has(normalizedUrl)) {
+  if (processingStack.has(cacheIdentity)) {
     if (await exists(cachePath)) {
       httpCacheLog.debug("Circular dependency detected, file exists", {
         url: normalizedUrl,
@@ -282,11 +298,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       });
     }
 
-    processingStack.add(normalizedUrl);
+    processingStack.add(cacheIdentity);
     try {
       code = await rewriteModuleImports(code, normalizedUrl, options, cacheHttpModule);
     } finally {
-      processingStack.delete(normalizedUrl);
+      processingStack.delete(cacheIdentity);
     }
 
     code = embedSourceUrl(code, normalizedUrl);
@@ -307,6 +323,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         asLocalModuleCode(code),
         normalizedUrl,
         HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+        identityMetadata,
       );
     } catch (error) {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
@@ -338,11 +355,18 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 }
 
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
+  const preparedOptions = ensurePreparedHttpCacheRequestOptions(options);
+  const effective = getEffectiveHttpCacheRequest(url, preparedOptions);
+  const effectiveOptions = effective.options;
+
   if (hasInjectedProcessingStack() || processingStackStorage.getStore()) {
-    return cacheHttpModuleInternal(url, options);
+    return cacheHttpModuleInternal(effective.url, effectiveOptions);
   }
 
-  return processingStackStorage.run(new Set(), () => cacheHttpModuleInternal(url, options));
+  return processingStackStorage.run(
+    new Set(),
+    () => cacheHttpModuleInternal(effective.url, effectiveOptions),
+  );
 }
 
 /** Result of cacheHttpImportsToLocal including bundle manifest info. */
@@ -359,8 +383,14 @@ export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<CacheHttpImportsResult> {
+  const requestOptions = prepareHttpCacheRequestOptions(options);
   return bundleAccumulatorStorage.run([], async () => {
-    const replacements = await buildReplacements(code, undefined, options, cacheHttpModule);
+    const replacements = await buildReplacements(
+      code,
+      undefined,
+      requestOptions,
+      cacheHttpModule,
+    );
     if (replacements.size === 0) return { code };
 
     httpCacheLog.debug("Cached HTTP imports", { count: replacements.size });
@@ -391,11 +421,15 @@ export function cacheHttpImportsToLocal(
 /**
  * Cache a specific HTTP module URL and return its local file:// path.
  */
-export async function cacheModuleToLocal(url: string, cacheDir: string): Promise<string> {
+export async function cacheModuleToLocal(
+  url: string,
+  cacheDir: string,
+  reactVersion?: string,
+): Promise<string> {
   if (!isHttpUrl(url)) return url;
 
   const importMap = { imports: {}, scopes: {} };
-  const cached = await cacheHttpModule(url, { cacheDir, importMap });
+  const cached = await cacheHttpModule(url, { cacheDir, importMap, reactVersion });
 
   return cached ? `file://${cached}` : url;
 }
@@ -408,8 +442,9 @@ export function recoverHttpBundleByHash(
   hash: string,
   cacheDir: string,
   parentCode?: string,
+  identity?: HttpCacheIdentityOptions,
 ): Promise<boolean> {
-  return recoverHttpBundleByHashImpl(hash, cacheDir, cacheHttpModule, parentCode);
+  return recoverHttpBundleByHashImpl(hash, cacheDir, cacheHttpModule, parentCode, identity);
 }
 
 /**
@@ -419,8 +454,9 @@ export function recoverHttpBundleByHash(
 export function ensureHttpBundlesExist(
   bundlePaths: Array<{ path: string; hash: string }>,
   cacheDir: string,
+  identity?: HttpCacheIdentityOptions,
 ): Promise<string[]> {
-  return ensureHttpBundlesExistImpl(bundlePaths, cacheDir, cacheHttpModule);
+  return ensureHttpBundlesExistImpl(bundlePaths, cacheDir, cacheHttpModule, identity);
 }
 
 /**

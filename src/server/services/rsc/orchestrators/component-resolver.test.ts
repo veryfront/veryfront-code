@@ -96,6 +96,12 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
       const result = await resolveComponentPath("/docs/api/v2", "/project", fs);
       assertEquals(result, "/project/app/docs/api/v2/page.tsx");
     });
+
+    it("resolves routes from the configured app directory", async () => {
+      const fs = createMockFs(new Set(["/project/frontend/about/page.tsx"]));
+      const result = await resolveComponentPath("/about", "/project", fs, "frontend");
+      assertEquals(result, "/project/frontend/about/page.tsx");
+    });
   });
 
   describe("extractParams", () => {

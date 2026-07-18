@@ -18,7 +18,13 @@ let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | n
 
 export type { CacheKeyContext };
 
-const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext>();
+export interface RegistryScopeContext {
+  scopeId: string;
+  /** Whether completed discovery is safe to retain for this immutable source. */
+  immutable: boolean;
+}
+
+const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
 
 function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
   return CacheKeyContextSchema.parse(ctx);
@@ -35,6 +41,17 @@ export function getContentHashKey(
 
 export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T {
   return cacheKeyContextStorage.run(validateCacheKeyContext(ctx), fn);
+}
+
+/**
+ * Suppress an inherited explicit cache scope for a callback. This is used when
+ * a restored tenant has a mutable source (for example, a production
+ * environment without a pinned release) that cannot safely use distributed
+ * caching. Ambient request context remains available for in-process registry
+ * isolation.
+ */
+export function runWithoutCacheKeyContext<T>(fn: () => T): T {
+  return cacheKeyContextStorage.run(null, fn);
 }
 
 export function getCurrentCacheKeyContext(): CacheKeyContext {
@@ -100,6 +117,67 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
+}
+
+/**
+ * Returns a stable scope identifier for in-process registry isolation.
+ *
+ * Unlike tryGetCacheKeyContext(), this function does NOT return null when the
+ * request context lacks a field that would be required for a safe distributed
+ * cache key (e.g. productionMode=true without a releaseId). For in-process
+ * registries (ProjectScopedRegistryManager), project identity and the active
+ * content source still provide a safe process-local scope. Collapsing to
+ * "__default__" would let concurrent projects overwrite one another's
+ * registered skills, tools, and agents.
+ *
+ * Returns null only when no project identity is available at all (e.g. CLI /
+ * local dev without a multi-project context), in which case the caller should
+ * fall back to DEFAULT_SCOPE_ID.
+ */
+export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
+  // Explicit contexts are authoritative for workflows and other callers that
+  // intentionally override ambient filesystem tenancy.
+  const cacheCtx = cacheKeyContextStorage.getStore();
+  if (cacheCtx) {
+    return {
+      scopeId: `${cacheCtx.projectId}:${cacheCtx.mode}:${cacheCtx.versionId}`,
+      immutable: cacheCtx.mode === "production",
+    };
+  }
+
+  const reqCtx = getRequestContextFn()?.();
+  if (reqCtx) {
+    const projectId = reqCtx.projectId || reqCtx.projectSlug;
+    if (!projectId) return null;
+
+    if (reqCtx.productionMode) {
+      if (reqCtx.releaseId) {
+        return {
+          scopeId: `${projectId}:production:${reqCtx.releaseId}`,
+          immutable: true,
+        };
+      }
+
+      // Match ProxyFSAdapterManager's canonical default so registry,
+      // discovery, and adapter caches all describe the same content source.
+      const environmentName = reqCtx.environmentName || "production";
+      return {
+        scopeId: `${projectId}:production:environment:${environmentName}`,
+        immutable: false,
+      };
+    }
+
+    return {
+      scopeId: `${projectId}:preview:${reqCtx.branch || "main"}`,
+      immutable: false,
+    };
+  }
+
+  return null;
+}
+
+export function tryGetRegistryScopeId(): string | null {
+  return tryGetRegistryScopeContext()?.scopeId ?? null;
 }
 
 function buildProjectScopedKey(prefix: string, resourceKey: string, ctx: CacheKeyContext): string {

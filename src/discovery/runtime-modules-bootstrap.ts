@@ -9,6 +9,7 @@ import * as workflowMod from "#veryfront/workflow";
 import * as evalMod from "#veryfront/eval";
 import * as metricsMod from "#veryfront/metrics";
 import * as schemasMod from "#veryfront/schemas";
+import * as integrationsMod from "#veryfront/integrations/index.ts";
 import * as chatUploadsMod from "#veryfront/chat/uploads";
 import { registerDiscoveryRuntimeModules } from "./runtime-modules.ts";
 
@@ -24,5 +25,6 @@ registerDiscoveryRuntimeModules({
   "veryfront/eval": evalMod,
   "veryfront/metrics": metricsMod,
   "veryfront/schemas": schemasMod,
+  "veryfront/integrations": integrationsMod,
   "veryfront/chat/uploads": chatUploadsMod,
 });

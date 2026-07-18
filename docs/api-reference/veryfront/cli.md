@@ -41,7 +41,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront lock` | Manage remote import lockfile for reproducible builds |
 | `veryfront merge` | Merge a branch into main (or another branch) |
 | `veryfront pull` | Download project files from Veryfront remote |
-| `veryfront push` | Create a branch and upload local files to Veryfront |
+| `veryfront push` | Upload local source files to a Veryfront branch |
 | `veryfront up` | Deploy your app with one command (login, create, push, deploy) |
 
 ### Project

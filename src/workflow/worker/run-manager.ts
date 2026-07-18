@@ -21,6 +21,10 @@ import {
   type WorkflowBackend,
 } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
+import {
+  requireWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
 import { generateId } from "../types.ts";
 import type { RunExecutionConfig, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
@@ -458,7 +462,10 @@ export class WorkflowRunManager {
       debug: this.config.debug,
     };
 
+    let claimed = false;
     try {
+      requireWorkflowSourceIntegrationPolicy(run);
+
       // Mark running BEFORE spawning the execution. If we spawned first and then
       // crashed before this update, a live process would sit behind a "pending"
       // run that the next poll would execute again (duplicate execution). With
@@ -468,7 +475,7 @@ export class WorkflowRunManager {
       if (run.status !== "pending" && run.status !== "waiting" && run.status !== "running") {
         return;
       }
-      const claimed = await updateRunIfStatus(this.config.backend, run.id, [run.status], {
+      claimed = await updateRunIfStatus(this.config.backend, run.id, [run.status], {
         status: "running",
         startedAt: new Date(),
         heartbeatAt: new Date(),
@@ -476,7 +483,10 @@ export class WorkflowRunManager {
       });
       if (!claimed) return;
 
-      await this.config.executor.createRunExecution(executionConfig);
+      await runWithWorkflowSourceIntegrationPolicy(
+        run,
+        () => this.config.executor.createRunExecution(executionConfig),
+      );
 
       const tracked: TrackedExecution = {
         executionId,
@@ -496,15 +506,31 @@ export class WorkflowRunManager {
       logger.error(`Failed to create run execution for ${run.id}:`, error);
       this.stats.executionsFailed++;
 
-      await updateRunIfStatus(this.config.backend, run.id, ["running"], {
-        status: "failed",
+      const failure = {
+        status: "failed" as const,
         error: {
           message: `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
         completedAt: new Date(),
-      }, workerId);
+      };
+
+      if (claimed) {
+        // We own the run: only fail it while it is still running under our id, so
+        // a run reclaimed by a new owner after a lock loss is left untouched.
+        await updateRunIfStatus(this.config.backend, run.id, ["running"], failure, workerId);
+      } else {
+        // The failure happened before we claimed the run (e.g. a missing source
+        // policy snapshot). The run is still unowned, so fail it while it remains
+        // in a pre-execution state rather than clobbering a terminal run.
+        await updateRunIfStatus(
+          this.config.backend,
+          run.id,
+          ["pending", "waiting", "running"],
+          failure,
+        );
+      }
     }
   }
 

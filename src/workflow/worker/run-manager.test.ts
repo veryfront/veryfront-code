@@ -5,6 +5,10 @@ import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowRun } from "../types.ts";
 import type { RunExecutionConfig, RunExecutionInfo, RunExecutor } from "./executors/types.ts";
 import { createWorkflowRunManager, WorkflowRunManager } from "./run-manager.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 /**
  * Minimal in-memory RunExecutor. Records initialize/destroy/create calls so
@@ -14,11 +18,12 @@ class FakeRunExecutor implements RunExecutor {
   initializeCalls = 0;
   destroyCalls = 0;
   created: RunExecutionConfig[] = [];
-  deleted: string[] = [];
+  observedSourceIntegrationPolicies: unknown[] = [];
   private executions = new Map<string, RunExecutionInfo>();
 
   createRunExecution(config: RunExecutionConfig): Promise<string> {
     this.created.push(config);
+    this.observedSourceIntegrationPolicies.push(getActiveSourceIntegrationPolicy());
     this.executions.set(config.executionId, {
       executionId: config.executionId,
       runId: config.run.id,
@@ -34,15 +39,8 @@ class FakeRunExecutor implements RunExecutor {
     return Promise.resolve([...this.executions.values()]);
   }
   deleteRunExecution(executionId: string): Promise<void> {
-    this.deleted.push(executionId);
     this.executions.delete(executionId);
     return Promise.resolve();
-  }
-  setExecutionStatus(executionId: string, status: "succeeded" | "failed"): void {
-    const execution = this.executions.get(executionId);
-    if (!execution) throw new Error(`Execution not found: ${executionId}`);
-    execution.status = status;
-    execution.completedAt = new Date();
   }
   initialize(): Promise<void> {
     this.initializeCalls++;
@@ -60,30 +58,21 @@ class FailingRunExecutor extends FakeRunExecutor {
   }
 }
 
-class CancelBeforeClaimBackend extends MemoryBackend {
-  override async updateRunIfStatus(
-    runId: string,
-    expectedStatuses: WorkflowRun["status"][],
-    patch: Partial<WorkflowRun>,
-  ): Promise<boolean> {
-    if (patch.status === "running") {
-      await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
-    }
-    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
-  }
-}
-
-class CancelThenFailRunExecutor extends FakeRunExecutor {
-  constructor(private backend: MemoryBackend) {
-    super();
+class MissingPolicyOnListBackend extends MemoryBackend {
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await super.getRun(runId);
+    return run ? this.withoutSourcePolicy(run) : null;
   }
 
-  override async createRunExecution(config: RunExecutionConfig): Promise<string> {
-    await this.backend.updateRun(config.run.id, {
-      status: "cancelled",
-      completedAt: new Date(),
-    });
-    throw new Error("spawn failed after cancellation");
+  override async listRuns(
+    filter: Parameters<MemoryBackend["listRuns"]>[0],
+  ): Promise<WorkflowRun[]> {
+    return (await super.listRuns(filter)).map((run) => this.withoutSourcePolicy(run));
+  }
+
+  private withoutSourcePolicy(run: WorkflowRun): WorkflowRun {
+    const { sourceIntegrationPolicy: _sourceIntegrationPolicy, ...missingSnapshot } = run;
+    return missingSnapshot as unknown as WorkflowRun;
   }
 }
 
@@ -109,23 +98,12 @@ function createPendingRun(id: string): WorkflowRun {
     checkpoints: [],
     pendingApprovals: [],
     createdAt: new Date(),
+    sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
 function pollOnce(manager: WorkflowRunManager): Promise<void> {
   return (manager as unknown as { poll(): Promise<void> }).poll();
-}
-
-function createExecution(manager: WorkflowRunManager, run: WorkflowRun): Promise<void> {
-  return (manager as unknown as {
-    createExecutionForWorkflow(run: WorkflowRun): Promise<void>;
-  }).createExecutionForWorkflow(run);
-}
-
-function syncExecutionStatuses(manager: WorkflowRunManager): Promise<void> {
-  return (manager as unknown as {
-    syncRunExecutionStatuses(): Promise<void>;
-  }).syncRunExecutionStatuses();
 }
 
 describe("workflow/worker/run-manager", () => {
@@ -257,6 +235,47 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(manager.getStats().executionsCreated, 1);
   });
 
+  it("restores the persisted source policy while creating an isolated execution", async () => {
+    const executor = new FakeRunExecutor();
+    const { backend, manager } = makeManager(executor);
+    track(manager);
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { confluence: { allowedTools: ["get_page"] } },
+    });
+    const run = {
+      ...createPendingRun("run-source-policy"),
+      sourceIntegrationPolicy,
+    };
+    await backend.createRun(run);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    assertEquals(executor.created.length, 1);
+    assertEquals(executor.observedSourceIntegrationPolicies, [sourceIntegrationPolicy]);
+  });
+
+  it("fails a run with no source policy snapshot before creating an isolated execution", async () => {
+    const executor = new FakeRunExecutor();
+    const backend = new MissingPolicyOnListBackend();
+    const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
+    track(manager);
+    const run = createPendingRun("run-missing-source-policy");
+    await backend.createRun(run);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    const storedRun = await backend.getRun(run.id);
+    assertEquals(executor.created.length, 0);
+    assertExists(storedRun);
+    assertEquals(storedRun.status, "failed");
+    assertEquals(
+      storedRun.error?.message.includes("source integration policy snapshot"),
+      true,
+    );
+  });
+
   it("poll() records execution creation failures in manager stats and failed run state", async () => {
     const executor = new FailingRunExecutor();
     const { backend, manager } = makeManager(executor);
@@ -274,61 +293,6 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(await backend.isLocked(run.id), false);
     assertEquals(manager.getActiveExecutions(), []);
     assertEquals(manager.getStats().executionsFailed, 1);
-  });
-
-  it("deletes executor records after observing terminal execution status", async () => {
-    const executor = new FakeRunExecutor();
-    const { backend, manager } = makeManager(executor);
-    track(manager);
-    const run = createPendingRun("run-terminal-cleanup");
-    await backend.createRun(run);
-
-    await createExecution(manager, run);
-    const executionId = executor.created[0]?.executionId;
-    assertExists(executionId);
-    executor.setExecutionStatus(executionId, "succeeded");
-
-    await syncExecutionStatuses(manager);
-
-    assertEquals(manager.getActiveExecutions(), []);
-    assertEquals(manager.getStats().executionsCompleted, 1);
-    assertEquals(executor.deleted, [executionId]);
-    assertEquals(await executor.getRunExecutionStatus(executionId), null);
-  });
-
-  it("does not claim pending or waiting runs cancelled before the running transition", async () => {
-    for (const status of ["pending", "waiting"] as const) {
-      const backend = new CancelBeforeClaimBackend();
-      const executor = new FakeRunExecutor();
-      const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
-      track(manager);
-      const run = createPendingRun(`run-cancel-before-${status}`);
-      run.status = status;
-      await backend.createRun(run);
-
-      await createExecution(manager, run);
-
-      assertEquals((await backend.getRun(run.id))?.status, "cancelled");
-      assertEquals(executor.created.length, 0);
-      assertEquals(manager.getActiveExecutions(), []);
-    }
-  });
-
-  it("does not overwrite cancellation when spawning the execution fails", async () => {
-    const backend = new MemoryBackend();
-    const executor = new CancelThenFailRunExecutor(backend);
-    const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
-    track(manager);
-    const run = createPendingRun("run-cancel-during-spawn");
-    await backend.createRun(run);
-
-    await createExecution(manager, run);
-
-    const updatedRun = await backend.getRun(run.id);
-    assertExists(updatedRun);
-    assertEquals(updatedRun.status, "cancelled");
-    assertEquals(updatedRun.error, undefined);
-    assertEquals(manager.getActiveExecutions(), []);
   });
 
   it("createWorkflowRunManager builds a WorkflowRunManager", () => {

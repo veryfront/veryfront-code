@@ -35,7 +35,7 @@ export function useReasoning(): ReasoningContextValue {
   return ctx;
 }
 
-/** Props accepted by `Reasoning` / `Reasoning.Root` (aka `ReasoningCard`). */
+/** Props accepted by `Reasoning` / `Reasoning.Root`. */
 export interface ReasoningProps {
   text: string;
   isStreaming?: boolean;
@@ -56,89 +56,89 @@ export interface ReasoningProps {
   onOpenChange?: (open: boolean) => void;
   /** Compose your own disclosure; when omitted, the default anatomy renders. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
  * `Reasoning.Root` — context provider + wrapper. No children renders the
  * default anatomy (`Trigger` + `Content`); pass children to recompose.
  */
-const ReasoningRoot = React.forwardRef<HTMLDivElement, ReasoningProps>(
-  function Reasoning(
-    {
-      text,
-      isStreaming = false,
-      className,
-      icon,
-      labels,
-      open,
-      defaultOpen,
-      onOpenChange,
-      children,
-    },
+function ReasoningRoot(
+  {
+    text,
+    isStreaming = false,
+    className,
+    icon,
+    labels,
+    open,
+    defaultOpen,
+    onOpenChange,
+    children,
     ref,
-  ) {
-    const isControlled = open !== undefined;
-    // Uncontrolled default: open only if we mount mid-stream. A completed /
-    // reloaded card (isStreaming === false) starts collapsed, so it never
-    // plays the open-then-collapse animation.
-    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
-      defaultOpen ?? isStreaming,
-    );
-    const isOpen = isControlled ? open : uncontrolledOpen;
-    const userToggledRef = React.useRef(false);
-    // Tracks whether this card has ever streamed during its lifetime. We only
-    // auto-collapse once streaming actually ends — a card that was never
-    // streaming (history reload) has nothing to animate away from.
-    const hasStreamedRef = React.useRef(isStreaming);
+  }: ReasoningProps,
+): React.ReactElement {
+  const isControlled = open !== undefined;
+  // Uncontrolled default: open only if we mount mid-stream. A completed /
+  // reloaded card (isStreaming === false) starts collapsed, so it never
+  // plays the open-then-collapse animation.
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
+    defaultOpen ?? isStreaming,
+  );
+  const isOpen = isControlled ? open : uncontrolledOpen;
+  const userToggledRef = React.useRef(false);
+  // Tracks whether this card has ever streamed during its lifetime. We only
+  // auto-collapse once streaming actually ends — a card that was never
+  // streaming (history reload) has nothing to animate away from.
+  const hasStreamedRef = React.useRef(isStreaming);
 
-    React.useEffect(() => {
-      // Parent owns state when controlled, and a manual toggle opts out of the
-      // stream-driven open/collapse entirely.
-      if (isControlled || userToggledRef.current) return;
+  React.useEffect(() => {
+    // Parent owns state when controlled, and a manual toggle opts out of the
+    // stream-driven open/collapse entirely.
+    if (isControlled || userToggledRef.current) return;
 
-      if (isStreaming) {
-        hasStreamedRef.current = true;
-        if (!isOpen) {
-          setUncontrolledOpen(true);
-          onOpenChange?.(true);
-        }
-        return;
+    if (isStreaming) {
+      hasStreamedRef.current = true;
+      if (!isOpen) {
+        setUncontrolledOpen(true);
+        onOpenChange?.(true);
       }
+      return;
+    }
 
-      // Streaming just finished in this session — collapse after a beat. If we
-      // never streamed (reloaded chat), leave the card exactly as it mounted.
-      if (!hasStreamedRef.current || !isOpen) return;
+    // Streaming just finished in this session — collapse after a beat. If we
+    // never streamed (reloaded chat), leave the card exactly as it mounted.
+    if (!hasStreamedRef.current || !isOpen) return;
 
-      const timer = setTimeout(() => {
-        setUncontrolledOpen(false);
-        onOpenChange?.(false);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }, [isControlled, isStreaming, isOpen, onOpenChange]);
+    const timer = setTimeout(() => {
+      setUncontrolledOpen(false);
+      onOpenChange?.(false);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [isControlled, isStreaming, isOpen, onOpenChange]);
 
-    const toggle = React.useCallback(() => {
-      userToggledRef.current = true;
-      const next = !isOpen;
-      if (!isControlled) setUncontrolledOpen(next);
-      onOpenChange?.(next);
-    }, [isControlled, isOpen, onOpenChange]);
+  const toggle = React.useCallback(() => {
+    userToggledRef.current = true;
+    const next = !isOpen;
+    if (!isControlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  }, [isControlled, isOpen, onOpenChange]);
 
-    const context: ReasoningContextValue = { text, isStreaming, isOpen, toggle };
+  const context: ReasoningContextValue = { text, isStreaming, isOpen, toggle };
 
-    return (
-      <ReasoningContext.Provider value={context}>
-        <div ref={ref} className={cn("not-prose mb-3", className)}>
-          {children ?? (
-            <>
-              <ReasoningTrigger icon={icon} labels={labels} />
-              <ReasoningContent />
-            </>
-          )}
-        </div>
-      </ReasoningContext.Provider>
-    );
-  },
-);
+  return (
+    <ReasoningContext.Provider value={context}>
+      <div ref={ref} className={cn("not-prose mb-3", className)}>
+        {children ?? (
+          <>
+            <ReasoningTrigger icon={icon} labels={labels} />
+            <ReasoningContent />
+          </>
+        )}
+      </div>
+    </ReasoningContext.Provider>
+  );
+}
 ReasoningRoot.displayName = "Reasoning.Root";
 
 /** Props for `Reasoning.Trigger` — the disclosure button. */
@@ -210,6 +210,3 @@ export const Reasoning = Object.assign(ReasoningRoot, {
   Trigger: ReasoningTrigger,
   Content: ReasoningContent,
 });
-
-/** Back-compat alias — `message.tsx` and `agent-card.tsx` import `ReasoningCard`. */
-export const ReasoningCard = ReasoningRoot;

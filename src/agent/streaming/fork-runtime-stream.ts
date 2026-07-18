@@ -34,6 +34,10 @@ import {
   shouldContinueForkRuntimeStep,
 } from "./fork-runtime-step-progress.ts";
 import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
+import {
+  applySourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 
 export type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
 
@@ -86,6 +90,13 @@ type ForkRuntimeStepPreparationInput = {
 type ForkRuntimeStepPreparation = {
   messages: AgentMessage[];
   system: string;
+  /**
+   * When present (returned by a step preparer that reads from the live
+   * activated-tool context), this overrides `input.forkToolNames` for the
+   * current step so newly activated remote tool schemas are exposed to the
+   * provider without mutating the run-level fixed array.
+   */
+  forkToolNames?: readonly string[];
 };
 
 /** Public API contract for fork runtime step preparer. */
@@ -114,6 +125,7 @@ export type StartAgentRuntimeForkInput = {
   forkToolNames: string[];
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
   buildInstructions: () => string;
@@ -154,13 +166,16 @@ export function startAgentRuntimeForkWithHostTools<
     ? traceHostTools(input.forkTools, input.traceTools)
     : input.forkTools;
   const runtimeTools = createToolsFromHostDefinitions(forkTools);
-  const forkToolNames = input.forkToolNames
+  const requestedForkToolNames = input.forkToolNames
     ? [...input.forkToolNames]
     : getForkRuntimeAllowedToolNames({
       provider: input.provider,
       forkModel: input.forkModel,
-      forkTools: input.forkTools,
+      forkTools,
     });
+  const forkToolNames = input.sourceIntegrationPolicy
+    ? applySourceIntegrationPolicy(requestedForkToolNames, input.sourceIntegrationPolicy)
+    : requestedForkToolNames;
   const providerNativeToolNames = new Set(
     getProviderNativeToolNames({
       provider: input.provider,
@@ -184,6 +199,7 @@ export function startAgentRuntimeForkWithHostTools<
       forkToolNames,
       providerToolNames,
       runtimeTools,
+      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       providerOptions: input.providerOptions,
       reasoning: input.reasoning,
       buildInstructions: input.buildInstructions,
@@ -249,6 +265,7 @@ export type RunAgentRuntimeForkStepInput = {
   forkToolNames: string[];
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
 };
@@ -299,6 +316,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       }
       : {}),
     __vfAllowedRemoteTools: input.forkToolNames,
+    ...(input.sourceIntegrationPolicy
+      ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
   };
   const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 
@@ -356,6 +376,9 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     forkToolNames: input.forkToolNames,
     ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
     runtimeTools: input.frameworkTools,
+    ...(input.sourceIntegrationPolicy
+      ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
     ...(input.reasoning ? { reasoning: input.reasoning } : {}),
   });
@@ -471,6 +494,13 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           });
           const state = createForkRuntimeStreamMappingState({ logger: input.logger });
           const streamedStepState = createStreamedStepState();
+          // If the step preparer returned a live forkToolNames (pinned ∪ activated),
+          // use it for this step so newly activated tool schemas reach the provider.
+          // Spread into a mutable array: RunAgentRuntimeForkStepInput.forkToolNames
+          // is typed as string[] (mutable) while prepared.forkToolNames is readonly.
+          const effectiveForkToolNames: string[] = [
+            ...(prepared.forkToolNames ?? input.forkToolNames),
+          ];
           const { stream, responsePromise } = await runStep({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
@@ -479,9 +509,12 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             messages: prepared.messages,
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            forkToolNames: input.forkToolNames,
+            forkToolNames: effectiveForkToolNames,
             ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
             runtimeTools: input.runtimeTools,
+            ...(input.sourceIntegrationPolicy
+              ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+              : {}),
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
             ...(input.reasoning ? { reasoning: input.reasoning } : {}),
           });

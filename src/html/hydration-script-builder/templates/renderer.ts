@@ -44,12 +44,31 @@ export const getRendererScript = () => `
         let pageModule;
         const pagePath = typeof data.pagePath === 'string' ? data.pagePath : '';
         const normalizedPagePath = pagePath.replace(/^\\/+/, '');
+        const normalizedAppRouterRoot =
+          typeof data.appRouterRoot === 'string' && data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
+            ? data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
+            : 'app';
+
+        function isAppRouterPath(path) {
+          const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
+          return normalizedPath === normalizedAppRouterRoot ||
+            normalizedPath.startsWith(normalizedAppRouterRoot + '/');
+        }
+
+        function isRootAppLayoutPath(path) {
+          const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
+          const pathWithoutExtension = normalizedPath.replace(/\\.(?:tsx|jsx|ts|js)$/, '');
+          return pathWithoutExtension === normalizedAppRouterRoot + '/layout';
+        }
+
         const shouldRenderRscClientPage =
-          data.clientModuleStrategy === 'rsc-module' && normalizedPagePath.startsWith('app/');
+          data.clientModuleStrategy === 'rsc-module' && isAppRouterPath(normalizedPagePath);
+        const isolatedClientPage =
+          shouldRenderRscClientPage && data.isolatedClientPage === true;
 
         async function loadHydrationComponent(path, preferRscModule) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
-          if (preferRscModule && normalizedPath.startsWith('app/')) {
+          if (preferRscModule && isAppRouterPath(normalizedPath)) {
             const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
             log('Loading App Router component from RSC module:', moduleUrl);
             const module = await import(moduleUrl);
@@ -128,15 +147,19 @@ export const getRendererScript = () => `
             );
             if (LayoutComponent) {
               const WrappedLayoutComponent =
-                shouldRenderRscClientPage && layouts[i].path === 'app/layout.tsx'
+                shouldRenderRscClientPage && isRootAppLayoutPath(layouts[i].path)
                   ? unwrapAppRouterDocumentLayout(LayoutComponent)
                   : LayoutComponent;
-              tree = React.createElement(WrappedLayoutComponent, { children: tree });
+              const layoutProps = data.layoutProps?.[layouts[i].path] || {};
+              tree = React.createElement(
+                WrappedLayoutComponent,
+                { ...layoutProps, children: tree },
+              );
             }
           }
         }
 
-        if (data.appPath) {
+        if (data.appPath && !isolatedClientPage) {
           const AppComponent = await loadHydrationComponent(data.appPath, shouldRenderRscClientPage);
           if (AppComponent) {
             tree = React.createElement(AppComponent, { children: tree });
@@ -157,8 +180,15 @@ export const getRendererScript = () => `
         tree = React.createElement(PageContextProvider, { pageContext, children: tree });
         tree = React.createElement(RouterProvider, { router, children: tree });
 
-        const container = document.getElementById('root');
-        if (!container) return;
+        const container = isolatedClientPage
+          ? document.getElementById('veryfront-page-island')
+          : document.getElementById('root');
+        if (!container) {
+          if (isolatedClientPage) {
+            throw new Error('Isolated client page root not found');
+          }
+          return;
+        }
 
         if (container.__reactRoot) {
           container.__reactRoot.render(tree);

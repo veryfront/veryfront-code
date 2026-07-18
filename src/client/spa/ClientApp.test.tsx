@@ -21,14 +21,14 @@ async function writeModule(
 }
 
 async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Promise<T> {
-  const globalRecord = globalThis as typeof globalThis & {
+  const globalRecord = globalThis as unknown as {
     MODULE_SERVER_URL?: string;
-    window?: typeof globalThis;
+    window?: unknown;
   };
-  const previousModuleServerUrl = globalThis.MODULE_SERVER_URL;
+  const previousModuleServerUrl = globalRecord.MODULE_SERVER_URL;
   const previousWindow = globalRecord.window;
   globalRecord.window = globalThis;
-  globalThis.MODULE_SERVER_URL = createFileModuleServerUrl(tempDir);
+  globalRecord.MODULE_SERVER_URL = createFileModuleServerUrl(tempDir);
   clearComponentCache();
 
   try {
@@ -37,9 +37,9 @@ async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Pr
     clearComponentCache();
 
     if (previousModuleServerUrl === undefined) {
-      delete globalThis.MODULE_SERVER_URL;
+      delete globalRecord.MODULE_SERVER_URL;
     } else {
-      globalThis.MODULE_SERVER_URL = previousModuleServerUrl;
+      globalRecord.MODULE_SERVER_URL = previousModuleServerUrl;
     }
 
     if (previousWindow === undefined) {

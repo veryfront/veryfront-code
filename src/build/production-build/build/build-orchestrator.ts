@@ -46,107 +46,111 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         {},
       );
 
-      const outputDir = normalizedOptions.outputDir ?? "";
-      const dryRun = normalizedOptions.dryRun ?? false;
-      const enableSplitting = normalizedOptions.enableSplitting ?? true;
-      const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
-      const enableCompression = normalizedOptions.enableCompression ?? true;
-      const ssg = normalizedOptions.ssg ?? false;
+      try {
+        const outputDir = normalizedOptions.outputDir ?? "";
+        const dryRun = normalizedOptions.dryRun ?? false;
+        const enableSplitting = normalizedOptions.enableSplitting ?? true;
+        const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
+        const enableCompression = normalizedOptions.enableCompression ?? true;
+        const ssg = normalizedOptions.ssg ?? false;
 
-      await withSpan(
-        "build.setupDirectories",
-        () => setupBuildDirectories(context.adapter, outputDir, dryRun),
-        {},
-      );
+        await withSpan(
+          "build.setupDirectories",
+          () => setupBuildDirectories(context.adapter, outputDir, dryRun),
+          {},
+        );
 
-      const releaseAssetManifest = await withSpan(
-        "build.localReleaseAssets",
-        () =>
-          generateLocalReleaseAssetManifest({
-            adapter: context.adapter,
-            projectDir: normalizedOptions.projectDir,
-            outputDir,
-            dryRun,
-          }),
-        {},
-      );
+        const releaseAssetManifest = await withSpan(
+          "build.localReleaseAssets",
+          () =>
+            generateLocalReleaseAssetManifest({
+              adapter: context.adapter,
+              projectDir: normalizedOptions.projectDir,
+              outputDir,
+              dryRun,
+              config: context.config,
+            }),
+          {},
+        );
 
-      const routes = await withSpan(
-        "build.collectRoutes",
-        () =>
-          collectAllRoutes(
-            context.adapter,
-            normalizedOptions.projectDir,
-            ssg,
-            normalizedOptions.include,
-            normalizedOptions.exclude,
-          ),
-        {},
-      );
+        const routes = await withSpan(
+          "build.collectRoutes",
+          () =>
+            collectAllRoutes(
+              context.adapter,
+              normalizedOptions.projectDir,
+              ssg,
+              normalizedOptions.include,
+              normalizedOptions.exclude,
+              context.config,
+            ),
+          {},
+        );
 
-      const splitResult = await withSpan(
-        "build.codeSplitting",
-        () =>
-          runCodeSplitting(
-            normalizedOptions.projectDir,
-            outputDir,
-            routes.pages,
-            enableSplitting,
-            dryRun,
-          ),
-        {},
-      );
-      context.stats.chunks = splitResult.chunks;
+        const splitResult = await withSpan(
+          "build.codeSplitting",
+          () =>
+            runCodeSplitting(
+              normalizedOptions.projectDir,
+              outputDir,
+              routes.pages,
+              enableSplitting,
+              dryRun,
+            ),
+          {},
+        );
+        context.stats.chunks = splitResult.chunks;
 
-      const buildResult = await withSpan(
-        "build.execute",
-        () =>
-          executeBuild(routes.pages, routes.app, {
-            adapter: context.adapter,
-            projectDir: normalizedOptions.projectDir,
-            outputDir,
-            renderer: context.renderer,
-            config: context.config,
-            enablePrefetch,
-            chunkManifest: splitResult.manifest,
-            baseUrl: "",
-            dryRun,
-            releaseAssetManifest,
-          }),
-        {},
-      );
+        const buildResult = await withSpan(
+          "build.execute",
+          () =>
+            executeBuild(routes.pages, routes.app, {
+              adapter: context.adapter,
+              projectDir: normalizedOptions.projectDir,
+              outputDir,
+              renderer: context.renderer,
+              config: context.config,
+              enablePrefetch,
+              chunkManifest: splitResult.manifest,
+              baseUrl: "",
+              dryRun,
+              releaseAssetManifest,
+            }),
+          {},
+        );
 
-      context.stats.pages = buildResult.pages;
-      context.stats.totalSize = buildResult.totalSize;
+        context.stats.pages = buildResult.pages;
+        context.stats.totalSize = buildResult.totalSize;
+        context.stats.ssgPaths = buildResult.ssgPaths;
 
-      await withSpan(
-        "build.generateOutputs",
-        () =>
-          generateAllOutputs({
-            adapter: context.adapter,
-            projectDir: normalizedOptions.projectDir,
-            outputDir,
-            routes: routes.pages,
-            appRoutes: routes.app,
-            stats: context.stats,
-            enableSplitting,
-            enablePrefetch,
-            enableCompression,
-            chunkManifest: splitResult.manifest,
-            dryRun,
-            releaseAssetManifest,
-          }),
-        {},
-      );
+        await withSpan(
+          "build.generateOutputs",
+          () =>
+            generateAllOutputs({
+              adapter: context.adapter,
+              projectDir: normalizedOptions.projectDir,
+              outputDir,
+              routes: routes.pages,
+              appRoutes: routes.app,
+              stats: context.stats,
+              enableSplitting,
+              enablePrefetch,
+              enableCompression,
+              chunkManifest: splitResult.manifest,
+              dryRun,
+              config: context.config,
+              releaseAssetManifest,
+            }),
+          {},
+        );
 
-      context.stats.duration = Date.now() - startTime;
-      logBuildCompletion(context.stats);
+        context.stats.duration = Date.now() - startTime;
+        logBuildCompletion(context.stats);
 
-      await performCleanup(context.renderer);
-
-      context.stats.ssgPaths = buildResult.ssgPaths;
-
-      return context.stats;
+        return context.stats;
+      } finally {
+        await performCleanup(context.renderer);
+      }
     },
     { "build.projectDir": options.projectDir },
   );

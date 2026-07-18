@@ -24,7 +24,7 @@ export async function renderToStringAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
-  const server = await getReactDOMServer();
+  const server = await getReactDOMServer(options.reactVersion);
   const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
 
   if (canUseReadableStream) {
@@ -64,7 +64,7 @@ export async function renderToStaticMarkupAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
-  const { renderToStaticMarkup } = await getReactDOMServer();
+  const { renderToStaticMarkup } = await getReactDOMServer(options.reactVersion);
 
   try {
     return renderToStaticMarkup(element);

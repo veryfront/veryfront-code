@@ -1,6 +1,8 @@
 import type {
+  EvalDataset,
   EvalDefinition,
   EvalDurationSummary,
+  EvalExample,
   EvalFailedExampleSummary,
   EvalFlakeSummary,
   EvalGateFailureSummary,
@@ -8,10 +10,14 @@ import type {
   EvalMetricSummary,
   EvalRecord,
   EvalReport,
+  EvalReportDatasetMetadata,
   EvalReportMetadata,
   EvalReportSummary,
   EvalUsageSummary,
 } from "./types.ts";
+
+/** Additive eval report contract version written by new reports and summary artifacts. */
+export const EVAL_REPORT_SCHEMA_VERSION = 2;
 
 const USAGE_NUMERIC_KEYS = [
   "inputTokens",
@@ -33,6 +39,53 @@ const USAGE_NUMERIC_KEYS = [
   "veryfrontBilledUsd",
   "costCredits",
 ] as const satisfies ReadonlyArray<keyof EvalUsageSummary>;
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!value || typeof value !== "object") return value;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
+  }
+  return sorted;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
+  return {
+    kind: dataset.kind,
+    examples: examples.map((example) => ({
+      id: example.id,
+      input: example.input,
+      ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
+      ...(example.metadata ? { metadata: example.metadata } : {}),
+    })),
+  };
+}
+
+/** Create stable dataset metadata for report consumers and CI artifacts. */
+export async function createEvalDatasetMetadata(
+  dataset: EvalDataset,
+  examples: EvalExample[],
+): Promise<EvalReportDatasetMetadata> {
+  const hashInput = createDatasetHashInput(dataset, examples);
+  return {
+    kind: dataset.kind,
+    ...(dataset.path ? { path: dataset.path } : {}),
+    examples: examples.length,
+    hash: `sha256:${await sha256Hex(stableStringify(hashInput))}`,
+  };
+}
 
 function isBlockingFailure(result: EvalMetricResult): boolean {
   return !result.skipped && result.pass === false &&
@@ -282,14 +335,17 @@ export function createEvalReport(input: {
   runId: string;
   startedAt: Date;
   endedAt: Date;
+  dataset?: EvalReportDatasetMetadata;
   metadata?: EvalReportMetadata;
 }): EvalReport {
   return {
     kind: "eval-report",
+    schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
     runId: input.runId,
     definitionId: input.definition.id,
     targetKind: input.definition.targetKind,
     target: input.definition.target,
+    ...(input.dataset ? { dataset: input.dataset } : {}),
     startedAt: input.startedAt.toISOString(),
     endedAt: input.endedAt.toISOString(),
     summary: summarizeEvalRecords(input.records),

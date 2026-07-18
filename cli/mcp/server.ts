@@ -32,32 +32,22 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
-const MAX_HTTP_REQUEST_BODY_SIZE = 1_048_576;
+const ALLOWED_HTTP_ORIGIN_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "veryfront.me",
+]);
 
-function isAllowedHTTPOrigin(origin: string): boolean {
+function isAllowedHttpOrigin(origin: string): boolean {
   if (!origin) return true;
 
   try {
     const url = new URL(origin);
-    if (url.protocol !== "http:") return false;
-
-    return url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "veryfront.me";
+    return url.protocol === "http:" && ALLOWED_HTTP_ORIGIN_HOSTS.has(url.hostname);
   } catch {
     return false;
   }
-}
-
-function requestBodyTooLargeResponse(headers: Record<string, string>): Response {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: null,
-      error: { code: -32600, message: "Request body too large" },
-    }),
-    { status: 413, headers },
-  );
 }
 
 export interface MCPServerConfig {
@@ -129,7 +119,7 @@ export class MCPDevServer {
 
       // CORS headers - allow localhost and veryfront dev domains
       const origin = req.headers.get("Origin") ?? "";
-      const isAllowedOrigin = isAllowedHTTPOrigin(origin);
+      const isAllowedOrigin = isAllowedHttpOrigin(origin);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -168,18 +158,32 @@ export class MCPDevServer {
       }
 
       const contentLength = req.headers.get("content-length");
-      if (contentLength && Number(contentLength) > MAX_HTTP_REQUEST_BODY_SIZE) {
-        return requestBodyTooLargeResponse(headers);
+      if (contentLength && Number(contentLength) > 1_048_576) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Request body too large" },
+          }),
+          { status: 413, headers },
+        );
       }
 
       try {
-        const bodyText = await readBodyWithLimit(req, MAX_HTTP_REQUEST_BODY_SIZE);
+        const bodyText = await readBodyWithLimit(req, 1_048_576);
         const body = JSONRPCRequestSchema.parse(JSON.parse(bodyText));
         const response = await this.handleRequest(body);
         return new Response(JSON.stringify(response), { headers });
       } catch (e) {
         if (isRequestBodyTooLargeError(e)) {
-          return requestBodyTooLargeResponse(headers);
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32600, message: "Request body too large" },
+            }),
+            { status: 413, headers },
+          );
         }
         return new Response(JSON.stringify(parseError(e)), { status: 400, headers });
       }
@@ -353,8 +357,8 @@ export class MCPDevServer {
         },
         {
           uri: "veryfront://config",
-          name: "Project Config",
-          description: "Resolved project configuration",
+          name: "Runtime Config",
+          description: "Non-sensitive runtime configuration",
           mimeType: "application/json",
         },
         {
@@ -438,11 +442,23 @@ export class MCPDevServer {
         if (uri === "veryfront://config") {
           const { getEnvironmentConfig } = await import("veryfront/config");
           const config = getEnvironmentConfig();
+          const safeConfig = {
+            nodeEnv: config.nodeEnv,
+            veryfrontEnv: config.veryfrontEnv,
+            veryfrontMode: config.veryfrontMode,
+            proxyMode: config.proxyMode,
+            debug: config.debug,
+            ci: config.ci,
+            denoTesting: config.denoTesting,
+            perfEnabled: config.perfEnabled,
+            experimentalRsc: config.experimentalRsc,
+            port: config.port,
+          };
           return {
             contents: [{
               uri,
               mimeType: "application/json",
-              text: JSON.stringify(config, null, 2),
+              text: JSON.stringify(safeConfig, null, 2),
             }],
           };
         }

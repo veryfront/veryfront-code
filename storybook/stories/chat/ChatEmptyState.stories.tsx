@@ -172,7 +172,7 @@ const suggestions = [
 
 export const CustomAgent: Story = {
   name: "Custom Agent",
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {

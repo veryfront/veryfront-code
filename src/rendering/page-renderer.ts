@@ -13,6 +13,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { ComponentRegistry } from "./ssr/component-registry.ts";
 import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -50,6 +51,7 @@ export class PageRenderer {
     filePath?: string,
   ) => Promise<PageBundle>;
   private readonly moduleServerUrl?: string;
+  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(options: {
     projectDir: string;
@@ -78,6 +80,14 @@ export class PageRenderer {
       ...createDefaultMDXComponents(),
       ...this.componentRegistry.getAllAsComponents(),
     };
+  }
+
+  private getReactVersion(): Promise<string> {
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.projectDir,
+      config: this.config,
+    });
+    return this.reactVersionPromise;
   }
 
   private detectPageType(pageInfo: EntityInfo): {
@@ -135,10 +145,16 @@ export class PageRenderer {
           return { collectedMetadata: {}, scriptResult };
         }
 
+        const reactVersion = await this.getReactVersion();
+
         if (pageType.type === "component") {
           let params = options?.params;
           if (!params || Object.keys(params).length === 0) {
-            const extracted = extractRouteParams(pageInfo.entity.path, slug);
+            const extracted = extractRouteParams(
+              pageInfo.entity.path,
+              slug,
+              this.config.directories,
+            );
             params = extracted.matched ? extracted.params : undefined;
           }
 
@@ -166,6 +182,7 @@ export class PageRenderer {
                   studioEmbed: options?.studioEmbed,
                   mode: this.mode,
                   contentSourceId: options?.contentSourceId,
+                  reactVersion,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },
@@ -198,6 +215,7 @@ export class PageRenderer {
                 studioEmbed: options?.studioEmbed,
                 projectSlug: options?.projectSlug,
                 contentSourceId: options?.contentSourceId,
+                reactVersion,
               },
             ),
           { "render.mdx_path": pageInfo.entity.path },

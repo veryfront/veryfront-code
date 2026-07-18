@@ -1,5 +1,5 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
-import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
+import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -82,7 +82,13 @@ function getRelativePagePath(
   const normalized = fullPath.replace(/\\/g, "/");
   if (!projectDir) return normalized.replace(/^\//, "");
 
-  return resolveRelativePath(normalized, projectDir);
+  const projectRoot = resolve(projectDir).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const candidate = resolve(isAbsolute(normalized) ? normalized : `${projectRoot}/${normalized}`)
+    .replace(/\\/g, "/");
+  const projectPrefix = projectRoot.endsWith("/") ? projectRoot : `${projectRoot}/`;
+
+  if (!candidate.startsWith(projectPrefix)) return "";
+  return candidate.slice(projectPrefix.length);
 }
 
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
@@ -109,7 +115,7 @@ function generateModulePreloadHints(
 
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
-    hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
+    hints.push(`<link rel="modulepreload" href="${escapeHTML(moduleUrl)}">`);
     addedUrls.add(moduleUrl);
   }
 
@@ -162,14 +168,15 @@ function generateModulePreloadHints(
       50,
     )
   ) {
-    const rawHref = hint.match(/href="([^"]+)"/)?.[1];
+    const hintPrefix = '<link rel="modulepreload" href="';
+    const hintSuffix = '">';
+    if (!hint.startsWith(hintPrefix) || !hint.endsWith(hintSuffix)) continue;
+
+    const rawHref = hint.slice(hintPrefix.length, -hintSuffix.length);
     const href = rawHref && fallbackReleaseId && rawHref.startsWith("/_vf_modules/")
       ? appendReleaseModuleVersion(rawHref, fallbackReleaseId)
       : rawHref;
-    if (!href || addedUrls.has(href)) continue;
-
-    hints.push(href === rawHref ? hint : hint.replace(/href="([^"]+)"/, `href="${href}"`));
-    addedUrls.add(href);
+    addHint(href);
   }
 
   return hints.join("\n  ");
@@ -303,7 +310,7 @@ async function generateHTMLShellPartsImpl(
   // jsx-runtime is discovered late (only when modules execute), adding ~500ms latency.
   const jsxRuntimeUrl = importMap.imports["react/jsx-runtime"];
   const criticalDepsPreload = jsxRuntimeUrl
-    ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
+    ? `<link rel="modulepreload" href="${escapeHTML(jsxRuntimeUrl)}">`
     : "";
   const prodHydrationModulePreload = useDevScripts
     ? ""

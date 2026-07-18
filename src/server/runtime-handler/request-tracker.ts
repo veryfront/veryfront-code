@@ -218,6 +218,20 @@ class RequestTracker {
     logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
   }
 
+  markLongLived(requestId: string): void {
+    const tracked = this.inFlight.get(requestId);
+    if (!tracked) return;
+
+    if (tracked.slowTimer) {
+      clearTimeout(tracked.slowTimer);
+      delete tracked.slowTimer;
+    }
+    if (tracked.verySlowTimer) {
+      clearTimeout(tracked.verySlowTimer);
+      delete tracked.verySlowTimer;
+    }
+  }
+
   getInFlightCount(): number {
     return this.inFlight.size;
   }

@@ -26,7 +26,7 @@ import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
   const chat = useChat();
-  return <Chat {...chat} placeholder="Ask me anything..." />;
+  return <Chat chat={chat} placeholder="Ask me anything..." />;
 }
 ```
 
@@ -63,28 +63,28 @@ not instructions.
 
 ## Customize the preset
 
-Pass props to enable common chat features:
+Configure the preset's content, theme, and agent options. The preset always
+includes sources, multi-step rendering, message actions, scroll-to-bottom, and
+attachments:
 
 ```tsx
 <Chat
-  {...chat}
+  chat={chat}
   placeholder="Ask about your project"
   suggestions={["Summarize this repo", "Find deployment risks"]}
-  onSuggestionClick={(value) => chat.setInput(value)}
-  showSources
-  showMessageActions
+  onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
   theme={{
-    colors: {
-      primary: "#2563eb",
-      background: "#ffffff",
+    container: "bg-white text-slate-950",
+    message: {
+      user: "rounded-lg bg-blue-600 px-4 py-3 text-white",
     },
   }}
-  models={[
-    { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet" },
-    { value: "openai/gpt-4o", label: "GPT-4o" },
-  ]}
-  model={chat.model}
-  onModelChange={chat.setModel}
+  agent={{
+    models: [
+      { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet" },
+      { value: "openai/gpt-4o", label: "GPT-4o" },
+    ],
+  }}
 />;
 ```
 
@@ -105,7 +105,7 @@ export const { POST, GET, DELETE } = createChatUploadHandler({ authorize });
 
 ```tsx
 <Chat
-  {...chat}
+  chat={chat}
   uploadApi="/api/uploads"
   attachAccept=".pdf,.docx,.txt"
 />;
@@ -127,20 +127,34 @@ export default function CustomLayout() {
   const chat = useChat();
 
   return (
-    <Chat.Root {...chat}>
+    <Chat.Root
+      messages={chat.messages}
+      input={chat.input}
+      setInput={chat.setInput}
+      onSubmit={chat.handleSubmit}
+      onStop={chat.stop}
+      onReload={chat.reload}
+    >
       <header className="border-b p-4">
         <h1>Assistant</h1>
       </header>
       <Chat.MessageList messages={chat.messages} />
-      <Chat.Input
+      <Chat.Input.Root
         input={chat.input}
         onChange={chat.handleInputChange}
         onSubmit={chat.handleSubmit}
-      />
+        stop={chat.stop}
+      >
+        <Chat.Input.Field placeholder="Ask me anything..." />
+        <Chat.Input.Toolbar>
+          <Chat.Input.Export messages={chat.messages} />
+          <Chat.Input.Send />
+        </Chat.Input.Toolbar>
+      </Chat.Input.Root>
       <Chat.Empty
         title="What can I help with?"
         suggestions={["Explain React hooks", "Write a regex"]}
-        onSuggestionClick={(value) => chat.setInput(value)}
+        onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
       />
     </Chat.Root>
   );
@@ -155,27 +169,38 @@ import { Message } from "veryfront/chat";
 <Message.Root message={message}>
   <Message.Avatar />
   <Message.Content />
+  <Message.Sources />
   <Message.Actions />
 </Message.Root>;
 ```
 
-## Migrate from older chat APIs
+## Theming and the token scope
 
-This release completes the chat API migration. Use the new conversation and
-composition names instead of the older Thread and Composer exports:
+The chat and `veryfront/ui` primitives resolve their `var(--token)` styles
+against a **scoped** design-token stylesheet, so the tokens never leak to the
+rest of your page. The canonical scope attribute is **`data-vf-ui`**;
+`data-vf-chat` is kept as a **compatibility alias** (both are set on every scope
+element, and every token rule matches both), so existing selectors keep working.
 
-| Older export                | Use instead                                           |
-| --------------------------- | ----------------------------------------------------- |
-| `ChatComposer`              | `ChatInput` or `Chat.Input`                           |
-| `MessageActions`            | `MessageActionBar` or `Message.Actions`               |
-| `UploadsPanel`              | `AttachmentsPanel`                                    |
-| `StandaloneMessage`         | `Message`                                             |
-| `StreamingMessage`          | `Message`                                             |
-| `ChatWithSidebar`           | `ConversationsProvider` with `ChatSidebar` and `Chat` |
-| `useThreads`                | `useConversations`                                    |
-| `ThreadListContextProvider` | `ConversationsProvider`                               |
+`<Chat>` establishes the scope for itself. When you compose the primitives
+_around_ `<Chat>` — a sidebar, header, or uploads panel in your own shell — wrap
+that shell in one `ChatThemeScope` so everything inside it is themed:
 
-For conversation navigation, wrap the chat + sidebar in a `ConversationsProvider`.
+```tsx
+import { ChatThemeScope } from "veryfront/chat";
+
+<ChatThemeScope className="h-screen">
+  <AppShell>{/* sidebar + <Chat /> + panels */}</AppShell>
+</ChatThemeScope>;
+```
+
+If you target the scope from your own CSS or DOM queries, prefer `[data-vf-ui]`.
+`[data-vf-chat]` remains supported and will only be removed in a future major
+release.
+
+## Add conversation navigation
+
+Wrap the chat and sidebar in a `ConversationsProvider`.
 The provider owns the conversation list and persistence; `<ChatSidebar>` and
 `<Chat>` both read it from context, so neither needs wiring:
 
@@ -203,7 +228,7 @@ Run `veryfront dev` and open the page that renders the chat UI:
 
 - The composer renders and accepts input.
 - A submitted message streams tokens from `/api/ag-ui`.
-- Preset props render the expected controls.
+- The preset renders its default controls.
 - Custom layouts keep the message list and composer wired to the same AG-UI
   stream.
 

@@ -159,6 +159,42 @@ describe("agent/runtime-step", () => {
     });
   });
 
+  it("stamps the validated source policy into child-visible tool context", async () => {
+    const sourceIntegrationPolicy = {
+      schemaVersion: 1 as const,
+      mode: "allowlist" as const,
+      integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+    };
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "root-agent",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "system", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: undefined,
+      sourceIntegrationPolicy,
+      resolveRuntimeState: async () => ({
+        systemPrompt: "system",
+        context: {
+          __vfSourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+        },
+      }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "system",
+      toolContextBase: {
+        __vfSourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      },
+    });
+
+    assertEquals(prepared.toolContext.__vfSourceIntegrationPolicy, sourceIntegrationPolicy);
+  });
+
   it("skips tool loading for local models", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",

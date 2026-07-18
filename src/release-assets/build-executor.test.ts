@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../transforms/plugins/__tests__/code-parser-setup.ts";
 
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
@@ -20,6 +26,7 @@ import {
   runReleaseAssetBuild,
 } from "./build-executor.ts";
 import { parseReleaseAssetManifest } from "./manifest-schema.ts";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 interface Recorded {
   began: boolean;
@@ -163,6 +170,10 @@ describe("release asset build executor", () => {
     for (const dir of tempDirs.splice(0)) {
       await Deno.remove(dir, { recursive: true }).catch(() => undefined);
     }
+  });
+
+  afterAll(async () => {
+    await stopEsbuild();
   });
 
   it("assembles a ready manifest from the module closure", async () => {
@@ -1346,6 +1357,372 @@ describe("release asset build executor", () => {
     await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     assertEquals(seenStylesheet, '@import "tailwindcss"; /* custom */');
+  });
+
+  it("loads release config from materialized files for CSS compilation", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";
+export default defineConfig({ tailwind: { stylesheet: "src/styles/app.css" } });`,
+      },
+      { path: "globals.css", content: "/* fallback stylesheet that should not be used */" },
+      { path: "src/styles/app.css", content: '@import "tailwindcss"; /* release-config */' },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"p-4\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    let seenConfig: VeryfrontConfig | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet, options) => {
+        seenStylesheet = stylesheet;
+        seenConfig = options?.config;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(seenStylesheet, '@import "tailwindcss"; /* release-config */');
+    assertEquals(seenConfig?.tailwind?.stylesheet, "src/styles/app.css");
+  });
+
+  it("prefers release-file config over stale request-context stylesheet input", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";
+export default defineConfig({ tailwind: { stylesheet: "src/styles/release.css" } });`,
+      },
+      { path: "src/styles/stale.css", content: "/* stale request-context config */" },
+      {
+        path: "src/styles/release.css",
+        content: '@import "tailwindcss"; /* release config wins */',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"p-4\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      stylesheetPath: "src/styles/stale.css",
+    }, await tmp());
+
+    assertEquals(seenStylesheet, '@import "tailwindcss"; /* release config wins */');
+  });
+
+  it("loads config relative imports from the materialized release file tree", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";
+import { stylesheet } from "./style-config.ts";
+export default defineConfig({ tailwind: { stylesheet } });`,
+      },
+      { path: "style-config.ts", content: 'export const stylesheet = "src/styles/imported.css";' },
+      { path: "globals.css", content: "/* fallback stylesheet that should not be used */" },
+      {
+        path: "src/styles/imported.css",
+        content: '@import "tailwindcss"; /* imported release config */',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class="p-4"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    let seenConfig: VeryfrontConfig | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet, options) => {
+        seenStylesheet = stylesheet;
+        seenConfig = options?.config;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(seenStylesheet, '@import "tailwindcss"; /* imported release config */');
+    assertEquals(seenConfig?.tailwind?.stylesheet, "src/styles/imported.css");
+  });
+
+  it("fails the build when materialized release config has unknown keys", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";
+export default defineConfig({ tailwind: { stylesheet: "globals.css" }, typoKey: true });`,
+      },
+      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (s: string) => Promise.resolve(s);
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assertStringIncludes(result.error ?? "", "Unknown config keys: typoKey");
+    assertEquals(rec.states.length, 1);
+    assertEquals(rec.states[0]?.state, "failed");
+    assertStringIncludes(rec.states[0]?.error ?? "", "Unknown config keys: typoKey");
+  });
+
+  it("loads release config that uses framework config helpers", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: `import { defineConfigWithEnv, mergeConfigs } from "veryfront";
+const shared = { tailwind: { stylesheet: "src/styles/helper.css" } };
+export default defineConfigWithEnv((env) =>
+  mergeConfigs(shared, { react: { version: env === "production" ? "19.2.8" : "19.2.9" } })
+);`,
+      },
+      {
+        path: "src/styles/helper.css",
+        content: '@import "tailwindcss"; /* helper config */',
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    let seenStylesheet: string | undefined;
+    const seenReactVersions: Array<string | undefined> = [];
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".helper{}", styleProfileHash: "sp-helper" });
+      },
+    });
+    const transform: ReleaseAssetBuildInput["transform"] = (
+      _source,
+      _sourceFile,
+      _projectDir,
+      _adapter,
+      options,
+    ) => {
+      seenReactVersions.push(options.reactVersion);
+      return Promise.resolve("export default () => null;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(seenStylesheet, '@import "tailwindcss"; /* helper config */');
+    assert(seenReactVersions.length > 0);
+    assert(seenReactVersions.every((version) => version === "19.2.8"));
+  });
+
+  it("loads React version from materialized release config for module transforms", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";
+export default defineConfig({ react: { version: "19.2.1" } });`,
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+    const seenReactVersions: Array<string | undefined> = [];
+    const transform: ReleaseAssetBuildInput["transform"] = (
+      _source,
+      _sourceFile,
+      _projectDir,
+      _adapter,
+      options,
+    ) => {
+      seenReactVersions.push(options.reactVersion);
+      return Promise.resolve("export default () => null;");
+    };
+
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      reactVersion: "18.0.0",
+    }, await tmp());
+
+    assert(seenReactVersions.length > 0);
+    assert(seenReactVersions.every((version) => version === "19.2.1"));
+  });
+
+  it("loads React version from materialized release package.json", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "package.json",
+        content: JSON.stringify({ dependencies: { react: "^19.2.3" } }),
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+    const seenReactVersions: Array<string | undefined> = [];
+    const transform: ReleaseAssetBuildInput["transform"] = (
+      _source,
+      _sourceFile,
+      _projectDir,
+      _adapter,
+      options,
+    ) => {
+      seenReactVersions.push(options.reactVersion);
+      return Promise.resolve("export default () => null;");
+    };
+
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      reactVersion: "18.0.0",
+    }, await tmp());
+
+    assert(seenReactVersions.length > 0);
+    assert(seenReactVersions.every((version) => version === "19.2.3"));
+  });
+
+  it("keeps fallback stylesheet and React version when release files have no config", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss"; /* fallback */' },
+      { path: "pages/index.tsx", content: 'export default () => "<div class="p-4"/>";' },
+    ];
+    let seenStylesheet: string | undefined;
+    const seenReactVersions: Array<string | undefined> = [];
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform: ReleaseAssetBuildInput["transform"] = (
+      _source,
+      _sourceFile,
+      _projectDir,
+      _adapter,
+      options,
+    ) => {
+      seenReactVersions.push(options.reactVersion);
+      return Promise.resolve("export default () => null;");
+    };
+
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      reactVersion: "18.3.1",
+    }, await tmp());
+
+    assertEquals(seenStylesheet, '@import "tailwindcss"; /* fallback */');
+    assert(seenReactVersions.length > 0);
+    assert(seenReactVersions.every((version) => version === "18.3.1"));
+  });
+
+  it("merges module-imported CSS into the stylesheet passed to compileProjectCss", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "app/styles.css", content: ".calc { background: #191919; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import "./styles.css";\nexport default ({ children }) => children;',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"calc\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".calc{background:#191919}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assert(
+      seenStylesheet!.includes('@import "tailwindcss";'),
+      "resolved stylesheet must be preserved",
+    );
+    assert(
+      seenStylesheet!.includes(".calc"),
+      "CSS imported from app/layout.tsx must be merged into the stylesheet",
+    );
+  });
+
+  it("does not duplicate the resolved stylesheet when a module imports it directly", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss"; /* custom */' },
+      {
+        path: "app/layout.tsx",
+        content: 'import "../globals.css";\nexport default ({ children }) => children;',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"p-4\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assertEquals(seenStylesheet!.split("/* custom */").length - 1, 1);
+  });
+
+  it("keeps CSS module files out of the merged release stylesheet", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "components/button.module.css", content: ".button { color: red; }" },
+      {
+        path: "components/Button.tsx",
+        content: 'import styles from "./button.module.css";\nexport const Button = () => null;',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: "body{}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenStylesheet);
+    assertEquals(
+      seenStylesheet!.includes(".button"),
+      false,
+      "CSS module content must not be inlined unscoped into the release stylesheet",
+    );
   });
 
   it("passes helper-composed Tailwind candidates to compileProjectCss", async () => {

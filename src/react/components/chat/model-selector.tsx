@@ -86,21 +86,10 @@ export interface ModelSelectorProps {
    */
   variant?: "pill" | "icon";
   /**
-   * Custom trigger renderer. When provided, replaces the default pill/icon
-   * trigger. `model` is the currently-selected option (resolved from `value`);
-   * `open` is the popover open state. Rendered inside the existing
-   * `PopoverTrigger asChild`, so the returned element still toggles the popover.
+   * Render each model yourself instead of using `ModelSelector.Item`.
    */
-  renderTrigger?: (
-    opts: { model?: ModelOption; open: boolean },
-  ) => React.ReactNode;
-  /**
-   * Custom row renderer. When provided, each option renders through it instead
-   * of the default `ModelRow`. Wire `onSelect` to trigger selection (which also
-   * closes the popover).
-   */
-  renderRow?: (
-    opts: { model: ModelOption; selected: boolean; onSelect: () => void },
+  renderItem?: (
+    options: { item: ModelOption; index: number },
   ) => React.ReactNode;
   /**
    * Compose your own menu from `ModelSelector.Trigger` / `Content` / `List` /
@@ -112,15 +101,20 @@ export interface ModelSelectorProps {
 /** Search box appears once the model count crosses this. */
 const SEARCH_THRESHOLD = 6;
 
-function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
-  const groups = new Map<string, ModelOption[]>();
-  for (const model of models) {
-    const key = model.provider ?? "";
+interface IndexedModelOption {
+  item: ModelOption;
+  index: number;
+}
+
+function groupByProvider(models: ModelOption[]): Map<string, IndexedModelOption[]> {
+  const groups = new Map<string, IndexedModelOption[]>();
+  for (const [index, item] of models.entries()) {
+    const key = item.provider ?? "";
     const group = groups.get(key);
     if (group) {
-      group.push(model);
+      group.push({ item, index });
     } else {
-      groups.set(key, [model]);
+      groups.set(key, [{ item, index }]);
     }
   }
   return groups;
@@ -131,11 +125,10 @@ function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
 //
 // `<ModelSelector models={...} value={...} onChange={...} />` renders the
 // default data-driven combobox (pill/icon trigger + provider-grouped list).
-// Pass children to recompose from `ModelSelector.Trigger` / `Content` / `List`
-// / `Item` — each reads `useModelSelector()` for the shared selection + open
+// Pass children to recompose from `ModelSelector.Trigger` / `Content` / `Search`
+// / `List` / `Item`: each reads `useModelSelector()` for the shared selection + open
 // state. Every sub-part takes `className` merged LAST via `cn`. The preset keeps
-// working unchanged when no children are passed. The `renderTrigger`/`renderRow`
-// render-props stay for back-compat.
+// working unchanged when no children are passed.
 //
 // The private `Popover` / `Command` primitives are composed, not modified: the
 // composed tree renders a real `<Popover>` (from Root) whose context flows to
@@ -148,6 +141,8 @@ export interface ModelSelectorContextValue {
   /** Selected model value ("provider/model"). */
   value?: string;
   /** The resolved selected option (from `value`, else the first model). */
+  selectedModel?: ModelOption;
+  /** @deprecated Use `selectedModel`. */
   selected?: ModelOption;
   /** Select a model by value (also closes the menu). */
   onSelect: (value: string) => void;
@@ -190,7 +185,7 @@ export interface ModelSelectorTriggerProps {
 function ModelSelectorTrigger(
   { variant = "pill", children, className }: ModelSelectorTriggerProps,
 ): React.ReactElement {
-  const { selected, disabled } = useModelSelector();
+  const { selectedModel, disabled } = useModelSelector();
 
   const trigger = children
     ? (
@@ -203,7 +198,7 @@ function ModelSelectorTrigger(
       <button
         type="button"
         disabled={disabled}
-        aria-label={selected?.label ?? "Select model"}
+        aria-label={selectedModel?.label ?? "Select model"}
         className={cn(
           "flex size-9 items-center justify-center rounded-full text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
@@ -211,7 +206,7 @@ function ModelSelectorTrigger(
           className,
         )}
       >
-        <ProviderLogo provider={providerOf(selected)} className="size-5" />
+        <ProviderLogo provider={providerOf(selectedModel)} className="size-5" />
       </button>
     )
     : (
@@ -222,9 +217,9 @@ function ModelSelectorTrigger(
           className,
         )}
       >
-        <ProviderLogo provider={providerOf(selected)} className="size-4" />
+        <ProviderLogo provider={providerOf(selectedModel)} className="size-4" />
         <span className="min-w-0 truncate">
-          {selected?.label ?? "Select model"}
+          {selectedModel?.label ?? "Select model"}
         </span>
         <ChevronDownIcon className="ml-auto" />
       </Pill>
@@ -234,24 +229,30 @@ function ModelSelectorTrigger(
 }
 ModelSelectorTrigger.displayName = "ModelSelector.Trigger";
 
+/** Props for `ModelSelector.Search`, the addressable search input leaf. */
+export interface ModelSelectorSearchProps {
+  /** Search input placeholder. */
+  placeholder?: string;
+  className?: string;
+}
+
+/** Search input for a composed model menu. */
+function ModelSelectorSearch(
+  { placeholder = "Search models...", className }: ModelSelectorSearchProps,
+): React.ReactElement {
+  return <CommandInput placeholder={placeholder} className={className} />;
+}
+ModelSelectorSearch.displayName = "ModelSelector.Search";
+
 /** Props for `ModelSelector.Content` — the popover surface + `Command` shell. */
 export interface ModelSelectorContentProps {
-  /** Show the search input above the list. */
-  showSearch?: boolean;
-  /** Search input placeholder. */
-  searchPlaceholder?: string;
   children?: React.ReactNode;
   className?: string;
 }
 
 /** The popover surface wrapping a `Command` (search + list region). */
 function ModelSelectorContent(
-  {
-    showSearch = false,
-    searchPlaceholder = "Search models...",
-    children,
-    className,
-  }: ModelSelectorContentProps,
+  { children, className }: ModelSelectorContentProps,
 ): React.ReactElement {
   return (
     <PopoverContent
@@ -259,7 +260,6 @@ function ModelSelectorContent(
       className={cn("min-w-[260px] p-0! rounded-lg", className)}
     >
       <Command className="bg-transparent">
-        {showSearch && <CommandInput placeholder={searchPlaceholder} />}
         {children}
       </Command>
     </PopoverContent>
@@ -292,7 +292,7 @@ export interface ModelSelectorItemProps {
 function ModelSelectorItem(
   { model, selected, className }: ModelSelectorItemProps,
 ): React.ReactElement {
-  const { value, selected: selectedModel, onSelect } = useModelSelector();
+  const { value, selectedModel, onSelect } = useModelSelector();
   const selectedValue = value ?? selectedModel?.value;
   const isSelected = selected ?? model.value === selectedValue;
   return (
@@ -318,27 +318,21 @@ ModelSelectorItem.displayName = "ModelSelector.Item";
 function ModelSelectorPresetBody({
   models,
   selectedValue,
-  renderRow,
-  onSelect,
+  renderItem,
 }: {
   models: ModelOption[];
   selectedValue?: string;
-  renderRow?: ModelSelectorProps["renderRow"];
-  onSelect: (value: string) => void;
+  renderItem?: ModelSelectorProps["renderItem"];
 }): React.ReactElement {
   const hasGroups = models.some((m) => m.provider);
   const groups = hasGroups ? groupByProvider(models) : null;
 
-  function renderModel(model: ModelOption): React.ReactNode {
+  function renderModel(model: ModelOption, index: number): React.ReactNode {
     const isSelected = model.value === selectedValue;
-    if (renderRow) {
+    if (renderItem) {
       return (
         <React.Fragment key={model.value}>
-          {renderRow({
-            model,
-            selected: isSelected,
-            onSelect: () => onSelect(model.value),
-          })}
+          {renderItem({ item: model, index })}
         </React.Fragment>
       );
     }
@@ -360,12 +354,12 @@ function ModelSelectorPresetBody({
             key={provider || "__ungrouped"}
             heading={provider || undefined}
           >
-            {items.map((model) => renderModel(model))}
+            {items.map(({ item, index }) => renderModel(item, index))}
           </CommandGroup>
         ))
         : (
           <CommandGroup>
-            {models.map((model) => renderModel(model))}
+            {models.map((model, index) => renderModel(model, index))}
           </CommandGroup>
         )}
     </>
@@ -384,8 +378,7 @@ function ModelSelectorRoot({
   className,
   disabled,
   variant = "pill",
-  renderTrigger,
-  renderRow,
+  renderItem,
   children,
 }: ModelSelectorProps): React.ReactElement {
   const [open, setOpen] = React.useState(false);
@@ -403,6 +396,7 @@ function ModelSelectorRoot({
 
   const context: ModelSelectorContextValue = {
     value,
+    selectedModel: selected,
     selected,
     onSelect: handleSelect,
     open,
@@ -410,25 +404,19 @@ function ModelSelectorRoot({
     disabled,
   };
 
-  // Back-compat: `renderTrigger` fully replaces the default trigger element and
-  // is rendered directly inside `PopoverTrigger asChild`.
-  const presetTrigger = renderTrigger
-    ? <PopoverTrigger asChild>{renderTrigger({ model: selected, open })}</PopoverTrigger>
-    : <ModelSelectorTrigger variant={variant} className={className} />;
-
   return (
     <ModelSelectorContext.Provider value={context}>
       <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
         {children ?? (
           <>
-            {presetTrigger}
-            <ModelSelectorContent showSearch={showSearch}>
+            <ModelSelectorTrigger variant={variant} className={className} />
+            <ModelSelectorContent>
+              {showSearch && <ModelSelectorSearch />}
               <ModelSelectorList>
                 <ModelSelectorPresetBody
                   models={models}
                   selectedValue={selectedValue}
-                  renderRow={renderRow}
-                  onSelect={handleSelect}
+                  renderItem={renderItem}
                 />
               </ModelSelectorList>
             </ModelSelectorContent>
@@ -442,14 +430,14 @@ ModelSelectorRoot.displayName = "ModelSelector.Root";
 
 /**
  * ModelSelector — render `<ModelSelector models={...} .../>` for the default
- * data-driven combobox, or compose `ModelSelector.Trigger` / `Content` /
- * `List` / `Item` for a custom menu. Mirrors the `ToolCall` compound: render
- * it, or compose it.
+ * data-driven combobox, or compose `ModelSelector.Trigger`, `Content`, `Search`,
+ * `List`, and `Item` for a custom menu.
  */
 export const ModelSelector = Object.assign(ModelSelectorRoot, {
   Root: ModelSelectorRoot,
   Trigger: ModelSelectorTrigger,
   Content: ModelSelectorContent,
+  Search: ModelSelectorSearch,
   List: ModelSelectorList,
   Item: ModelSelectorItem,
 });

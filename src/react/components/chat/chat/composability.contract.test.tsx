@@ -165,3 +165,41 @@ describe("chat composability contract", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Leaf-override probe for the collection composition contract documented in
+// docs/architecture/22-chat-collection-composition-contract.md. A hand-written
+// leaf swapped for `Sources.Pill` still receives working list state through
+// `useSources()`, so replacing one visual tier does not lose sibling behavior.
+// Focused component tests own component-specific variants; this is the
+// cross-cutting canary for the shared pattern.
+// ---------------------------------------------------------------------------
+describe("chat composability contract — acid test (leaf override)", () => {
+  it("a swapped Sources leaf still reads working context", () => {
+    const sources = [
+      { title: "Alpha", url: "https://a.example" },
+      { title: "Beta", url: "https://b.example" },
+    ];
+
+    // A bespoke leaf — nothing like the built-in Pill — reads the same context.
+    function CustomLeaf({ index }: { index: number }) {
+      const { sources } = useSources();
+      const source = sources[index];
+      return <li data-custom="">{source ? `${index}:${source.title}` : ""}</li>;
+    }
+
+    const html = renderToString(
+      <Sources.Root sources={sources}>
+        <Sources.List>
+          {sources.map((_, i) => <CustomLeaf key={i} index={i} />)}
+        </Sources.List>
+      </Sources.Root>,
+    );
+
+    // The override rendered from context (sibling state intact), and the default
+    // Pill anatomy was replaced — not duplicated.
+    assert(html.includes("0:Alpha"), "custom leaf must read context state");
+    assert(html.includes("1:Beta"), "custom leaf must read context state");
+    assert(html.includes('data-custom=""'), "custom leaf must render in place");
+  });
+});

@@ -117,6 +117,32 @@ describe("VeryfrontFSAdapter", () => {
     }
   });
 
+  describe("request tokens", () => {
+    it("syncs request-scoped tokens into the WebSocket manager", () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "static-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      });
+      let websocketToken: string | undefined;
+
+      (adapter as unknown as { wsManager: { setApiToken: (token: string) => void } }).wsManager = {
+        setApiToken: (token: string) => {
+          websocketToken = token;
+        },
+      };
+
+      adapter.setRequestToken("fresh-request-token");
+      assertEquals(websocketToken, "fresh-request-token");
+
+      adapter.clearRequestToken();
+      assertEquals(websocketToken, "static-token");
+    });
+  });
+
   describe("content context", () => {
     const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
 
@@ -154,6 +180,41 @@ describe("VeryfrontFSAdapter", () => {
       const ctx = adapter.getContentContext();
       assertEquals(ctx?.sourceType, "environment");
       assertEquals(ctx?.environmentName, "production");
+    });
+
+    it("pins environment client fallbacks to the resolved release", async () => {
+      const adapter = createAdapter();
+      const client = adapter.getClient();
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId: "release-before-redeploy",
+      });
+
+      assertEquals(client.getContext(), {
+        type: "release",
+        version: "release-before-redeploy",
+      });
+
+      (client as unknown as {
+        getFileById: (entityId: string) => Promise<{ path: string; content: string }>;
+      }).getFileById = (entityId) => {
+        assertEquals(entityId, "entity-from-old-release");
+        assertEquals(client.getContext(), {
+          type: "release",
+          version: "release-before-redeploy",
+        });
+        return Promise.resolve({
+          path: "pages/old-release.tsx",
+          content: "old release",
+        });
+      };
+
+      assertEquals(await adapter.getFilePathByEntityIdAsync("entity-from-old-release"), {
+        path: "pages/old-release.tsx",
+        body: "old release",
+      });
     });
 
     it("should set release context", () => {
@@ -252,8 +313,9 @@ describe("VeryfrontFSAdapter", () => {
           page_info: { has_more: boolean; next: null };
           release_id: string;
         }>;
-        listAllEnvironmentFiles: (
-          environmentName: string,
+        listPublishedFiles: (
+          projectId?: string,
+          releaseId?: string,
         ) => Promise<Array<{ path: string; content?: string }>>;
         getReleaseAssetManifest: (releaseId: string) => Promise<{
           state: string;
@@ -272,8 +334,9 @@ describe("VeryfrontFSAdapter", () => {
           release_id: releaseId,
         });
       };
-      client.listAllEnvironmentFiles = (environmentName) => {
-        assertEquals(environmentName, "production");
+      client.listPublishedFiles = (projectId, requestedReleaseId) => {
+        assertEquals(projectId, undefined);
+        assertEquals(requestedReleaseId, releaseId);
         return Promise.resolve(files);
       };
       client.getReleaseAssetManifest = async (requestedReleaseId) => {
@@ -1181,8 +1244,9 @@ describe("VeryfrontFSAdapter", () => {
           getProjectId: () => string;
           getCachedProject: () => { provider: string; layout: string };
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
-          listAllEnvironmentFiles: (
-            environmentName: string,
+          listPublishedFiles: (
+            projectId?: string,
+            releaseId?: string,
           ) => Promise<Array<{ path: string; content?: string }>>;
         };
       }).client;
@@ -1192,8 +1256,9 @@ describe("VeryfrontFSAdapter", () => {
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       client.listAllFiles = () => Promise.resolve(files);
-      client.listAllEnvironmentFiles = (environmentName) => {
-        assertEquals(environmentName, "production");
+      client.listPublishedFiles = (projectId, releaseId) => {
+        assertEquals(projectId, undefined);
+        assertEquals(releaseId, "release-123");
         return Promise.resolve(files);
       };
 

@@ -66,16 +66,22 @@ and production responses with `curl`.
 
 ## Deploy to Veryfront Cloud
 
+Push the current checkout to Veryfront, then create and deploy an immutable
+release from that source:
+
 ```bash
-veryfront deploy
+veryfront push --branch main --yes
+veryfront deploy --branch main --env production --yes
 ```
 
-Deploys your project to Veryfront Cloud.
+Run both commands from the same checkout. Deploy verifies the Push receipt,
+Git commit, and source digest before creating the release.
 
-For preview deployments:
+For an existing nonproduction environment named `staging`:
 
 ```bash
-veryfront deploy --branch feature-x
+veryfront push --branch feature-x --yes
+veryfront deploy --branch feature-x --env staging --yes
 ```
 
 Use `veryfront open` after deployment to open the project. Use
@@ -121,7 +127,10 @@ After `veryfront build`:
 
 After `veryfront deploy`:
 
-- The CLI confirms the deployed release and environment.
+- The CLI confirms the committed release and environment.
+- The CLI reports whether every shared proxy acknowledged the active release. An
+  unconfirmed data-plane update is a warning after commit, not a failed deploy;
+  do not retry solely because of that warning.
 - `veryfront open` opens the deployed project.
 - The same page, API route, agent, workflow, task, or run path works in
   production.
@@ -130,10 +139,13 @@ After `veryfront deploy`:
 ## Next
 
 - [Configuration](./configuration.md): Configure build and environment behavior
+- [Deploy from CI](./deploy-from-ci.md): Push and deploy reviewed Git commits from CI
+- [Move Studio changes into Git](./move-studio-changes-to-git.md): Review a Studio release through a Git pull request
 - [Providers](./providers.md): Configure model provider defaults
 
 ## Related
 
 - [veryfront](../api-reference/veryfront/index.md): Framework entrypoint
+- [veryfront/cli](../api-reference/veryfront/cli.md): Pull, Push, and Deploy command catalog
 - [veryfront/server](../api-reference/veryfront/server.md): Server runtime APIs
 - [veryfront/observability](../api-reference/veryfront/observability.md): Runtime observability

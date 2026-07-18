@@ -30,13 +30,17 @@ function createSuspiciousPatterns(): Array<{ pattern: RegExp; name: string }> {
   }));
 }
 
-export function jsonForInlineScript(value: unknown, space?: string | number): string {
-  return JSON.stringify(value, null, space)
+export function escapeInlineJsonText(value: string): string {
+  return value
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
+}
+
+export function jsonForInlineScript(value: unknown, space?: string | number): string {
+  return escapeInlineJsonText(JSON.stringify(value, null, space));
 }
 
 export function buildTrustedHtmlValidatorScript(): string {

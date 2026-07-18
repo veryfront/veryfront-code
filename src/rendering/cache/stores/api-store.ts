@@ -41,6 +41,7 @@ interface SerializedCachePayload {
   };
   storedAt: number;
   expiresAt?: number;
+  staleUntil?: number;
 }
 
 export class APICacheStore implements CacheStore {
@@ -106,6 +107,7 @@ export class APICacheStore implements CacheStore {
       },
       storedAt: payload.storedAt,
       expiresAt: payload.expiresAt,
+      staleUntil: payload.staleUntil,
     };
 
     return JSON.stringify(serialized);
@@ -129,6 +131,7 @@ export class APICacheStore implements CacheStore {
       },
       storedAt: serialized.storedAt,
       expiresAt: serialized.expiresAt,
+      staleUntil: serialized.staleUntil,
     };
   }
 
@@ -161,13 +164,21 @@ export class APICacheStore implements CacheStore {
 
     try {
       const backend = await this.getBackend();
-      await backend.set(key, this.serialize(value), this.ttlSeconds);
+      await backend.set(key, this.serialize(value), this.resolveBackendTtlSeconds(value));
     } catch (error) {
       logger.debug(
         "[APICacheStore] Failed to store in distributed cache (no fallback)",
         { key, error },
       );
     }
+  }
+
+  private resolveBackendTtlSeconds(value: CachePayload): number {
+    if (typeof value.staleUntil !== "number") return this.ttlSeconds;
+
+    const secondsUntilStaleExpiry = Math.ceil((value.staleUntil - Date.now()) / 1_000);
+    if (secondsUntilStaleExpiry <= 0) return this.ttlSeconds;
+    return Math.max(this.ttlSeconds, secondsUntilStaleExpiry);
   }
 
   async delete(key: string): Promise<void> {

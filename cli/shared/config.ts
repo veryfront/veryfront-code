@@ -15,7 +15,7 @@ import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { resolveCliApiUrl } from "./constants.ts";
-import { isRetryableConnectionError } from "../../src/proxy/retry.ts";
+import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
 const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
@@ -24,13 +24,6 @@ const API_MAX_RETRIES = 3;
 /** Returns true for HTTP status codes that indicate a transient gateway failure. */
 function isTransientStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
-}
-
-/** Returns true when the connection error is a refused connection (request never reached server). */
-function isConnectionRefused(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  return msg.includes("connection refused") || msg.includes("os error 111");
 }
 
 /** Sleep for `ms` milliseconds plus a random jitter up to 20% of `ms`. */
@@ -63,10 +56,31 @@ export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
 type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
 
-export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
+interface ConfigFileResolution {
+  config: VeryfrontConfig | null;
+  jsonProjectSlug?: string;
+  moduleProjectSlug?: string;
+  moduleProjectSlugFile?: string;
+}
+
+export type ProjectReferenceSource =
+  | { kind: "argument"; name: "--project-slug" }
+  | { kind: "environment"; name: "environment configuration" }
+  | { kind: "module-config"; name: string }
+  | { kind: "json-config"; name: "veryfront.json" }
+  | { kind: "tenant-environment"; name: string }
+  | { kind: "inferred"; name: "project files" };
+
+export interface ResolvedConfigDetails {
+  config: ResolvedConfig;
+  projectReferenceSource: ProjectReferenceSource;
+}
+
+async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
 
   let moduleProjectSlug: string | undefined;
+  let moduleProjectSlugFile: string | undefined;
   for (const ext of [".ts", ".js"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
 
@@ -78,6 +92,7 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
 
       if (config?.projectSlug) {
         moduleProjectSlug = config.projectSlug;
+        moduleProjectSlugFile = `veryfront.config${ext}`;
         break;
       }
     } catch (error) {
@@ -101,11 +116,20 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
     cliLogger.debug(`Failed to read veryfront.json:`, error);
   }
 
-  if (!moduleProjectSlug && !jsonConfig) return null;
-  return {
+  const config = !moduleProjectSlug && !jsonConfig ? null : {
     ...jsonConfig,
     ...(moduleProjectSlug ? { projectSlug: moduleProjectSlug } : {}),
   };
+  return {
+    config,
+    jsonProjectSlug: jsonConfig?.projectSlug,
+    moduleProjectSlug,
+    moduleProjectSlugFile,
+  };
+}
+
+export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
+  return (await readConfigFileResolution(projectDir)).config;
 }
 
 export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
@@ -146,12 +170,19 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
-function resolveTenantProjectReference(): string | undefined {
-  return getEnv("VERYFRONT_PROJECT_SLUG") ||
-    getEnv("TENANT_PROJECT_SLUG") ||
-    getEnv("VERYFRONT_PROJECT_ID") ||
-    getEnv("TENANT_PROJECT_ID") ||
-    undefined;
+function resolveTenantProjectReference(): { reference: string; name: string } | undefined {
+  for (
+    const name of [
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ] as const
+  ) {
+    const reference = getEnv(name);
+    if (reference) return { reference, name };
+  }
+  return undefined;
 }
 
 async function resolveApiTokenForMode(
@@ -196,9 +227,10 @@ async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
   interactive: boolean,
-): Promise<ResolvedConfig> {
+): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
-  const configFile = await readConfigFile(dir);
+  const configFileResolution = await readConfigFileResolution(dir);
+  const configFile = configFileResolution.config;
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
 
@@ -218,22 +250,45 @@ async function resolveConfigBase(
     );
   }
 
-  const projectSlug = env.projectSlug ??
-    configFile?.projectSlug ??
-    resolveTenantProjectReference() ??
-    (await inferProjectSlug(dir));
+  let projectSlug: string | null | undefined;
+  let projectReferenceSource: ProjectReferenceSource;
+  if (env.projectSlug !== undefined) {
+    projectSlug = env.projectSlug;
+    projectReferenceSource = { kind: "environment", name: "environment configuration" };
+  } else if (configFileResolution.moduleProjectSlug !== undefined) {
+    projectSlug = configFileResolution.moduleProjectSlug;
+    projectReferenceSource = {
+      kind: "module-config",
+      name: configFileResolution.moduleProjectSlugFile ?? "veryfront.config.ts",
+    };
+  } else if (configFileResolution.jsonProjectSlug !== undefined) {
+    projectSlug = configFileResolution.jsonProjectSlug;
+    projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
+  } else {
+    const tenantReference = resolveTenantProjectReference();
+    if (tenantReference) {
+      projectSlug = tenantReference.reference;
+      projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
+    } else {
+      projectSlug = await inferProjectSlug(dir);
+      projectReferenceSource = { kind: "inferred", name: "project files" };
+    }
+  }
   if (!projectSlug) {
     throw new Error(
       "Could not determine project reference. Set VERYFRONT_PROJECT_SLUG, TENANT_PROJECT_SLUG, VERYFRONT_PROJECT_ID, or add projectSlug to veryfront.config.ts",
     );
   }
 
-  return { apiUrl, apiToken, ...(apiTokenSource ? { apiTokenSource } : {}), projectSlug };
+  return {
+    config: { apiUrl, apiToken, ...(apiTokenSource ? { apiTokenSource } : {}), projectSlug },
+    projectReferenceSource,
+  };
 }
 
 function createConfigResolver(interactive: boolean) {
-  return (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
-    resolveConfigByMode(projectDir, env, interactive);
+  return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+    (await resolveConfigByMode(projectDir, env, interactive)).config;
 }
 
 export const resolveConfig = createConfigResolver(false);
@@ -246,11 +301,18 @@ export const resolveConfig = createConfigResolver(false);
  */
 export const resolveConfigWithAuth = createConfigResolver(true);
 
+export function resolveConfigWithAuthDetails(
+  projectDir?: string,
+  env?: EnvironmentConfig,
+): Promise<ResolvedConfigDetails> {
+  return resolveConfigByMode(projectDir, env, true);
+}
+
 function resolveConfigByMode(
   projectDir: string | undefined,
   env: EnvironmentConfig | undefined,
   interactive: boolean,
-): Promise<ResolvedConfig> {
+): Promise<ResolvedConfigDetails> {
   return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
@@ -323,7 +385,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
   /** Returns true for request methods that are safe to retry on any transient failure. */
   function isIdempotent(method: string): boolean {
-    return method === "GET" || method === "HEAD";
+    return method === "GET" || method === "HEAD" || method === "PUT";
   }
 
   async function request<T>(
@@ -351,7 +413,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         const isTransient = status !== undefined
           ? isTransientStatus(status)
           : isRetryableConnectionError(error);
-        const isRefused = isConnectionRefused(error);
+        const isRefused = isConnectionRefusedError(error);
 
         // Idempotent: retry on transient HTTP status or any retryable connection error.
         // Non-idempotent: retry only on connection-refused (request never reached server).

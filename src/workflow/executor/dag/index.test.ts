@@ -19,6 +19,9 @@ import type { Checkpoint, WorkflowContext, WorkflowNode, WorkflowRun } from "../
 import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 class MockStepExecutor extends StepExecutor {
   constructor(
@@ -27,13 +30,18 @@ class MockStepExecutor extends StepExecutor {
     private onExecute?: (
       node: WorkflowNode,
       context: WorkflowContext,
+      abortSignal?: AbortSignal,
     ) => StepResult | Promise<StepResult>,
   ) {
     super();
   }
 
-  override async execute(node: WorkflowNode, context: WorkflowContext): Promise<StepResult> {
-    if (this.onExecute) return await this.onExecute(node, context);
+  override async execute(
+    node: WorkflowNode,
+    context: WorkflowContext,
+    abortSignal?: AbortSignal,
+  ): Promise<StepResult> {
+    if (this.onExecute) return await this.onExecute(node, context, abortSignal);
 
     const result = this.results.get(node.id) ?? { success: true, output: { result: node.id } };
     return {
@@ -91,6 +99,8 @@ function createTestRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     pendingApprovals: [],
     createdAt: new Date(),
     ...overrides,
+    sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+      UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
@@ -914,6 +924,240 @@ describe("DAGExecutor", () => {
 
       const result = await exec.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
+    });
+  });
+
+  describe("composite node execution policy", () => {
+    const retryAfterTimeout = {
+      maxAttempts: 2,
+      backoff: "fixed",
+      initialDelay: 0,
+      maxDelay: 0,
+    } as const;
+
+    it("applies timeout and retry to a branch node", async () => {
+      let attempts = 0;
+      const nodes: WorkflowNode[] = [{
+        id: "branch-policy",
+        config: {
+          type: "branch",
+          timeout: 5,
+          retry: retryAfterTimeout,
+          condition: async () => {
+            attempts++;
+            if (attempts === 1) await new Promise((resolve) => setTimeout(resolve, 15));
+            return false;
+          },
+          then: [],
+        } as any,
+      }];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(attempts, 2);
+      assertEquals(result.nodeStates["branch-policy"]!.attempt, 2);
+    });
+
+    it("reruns a failed branch child before a parent retry can succeed", async () => {
+      let childRuns = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        if (node.id !== "retrying-branch-child") {
+          return { success: true, output: node.id, executionTime: 1 };
+        }
+
+        childRuns++;
+        return childRuns === 1
+          ? { success: false, error: "transient child failure", executionTime: 1 }
+          : { success: true, output: "recovered", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "retrying-branch",
+        config: {
+          type: "branch",
+          condition: () => true,
+          then: [{ id: "retrying-branch-child", config: { type: "step" } as any }],
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(childRuns, 2);
+      assertEquals(result.nodeStates["retrying-branch"]!.attempt, 2);
+      assertEquals(result.nodeStates["retrying-branch-child"]!.status, "completed");
+      assertEquals(result.context["retrying-branch-child"], "recovered");
+    });
+
+    it("applies timeout and retry to a parallel node without overlapping attempts", async () => {
+      let attempts = 0;
+      let active = 0;
+      let maxActive = 0;
+      let completedChildren = 0;
+      const signals: AbortSignal[] = [];
+      const trackingExecutor = new MockStepExecutor(
+        new Map(),
+        async (_node, _context, abortSignal) => {
+          attempts++;
+          active++;
+          maxActive = Math.max(maxActive, active);
+          if (abortSignal) signals.push(abortSignal);
+          if (attempts === 1) await new Promise((resolve) => setTimeout(resolve, 15));
+          active--;
+          return { success: true, output: attempts, executionTime: 1 };
+        },
+      );
+      const exec = new DAGExecutor({
+        stepExecutor: trackingExecutor,
+        onNodeComplete: (nodeId) => {
+          if (nodeId === "parallel-child") completedChildren++;
+        },
+      });
+      const nodes: WorkflowNode[] = [{
+        id: "parallel-policy",
+        config: {
+          type: "parallel",
+          timeout: 5,
+          retry: retryAfterTimeout,
+          nodes: [{ id: "parallel-child", config: { type: "step" } as any }],
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(attempts, 2);
+      assertEquals(maxActive, 1);
+      assertEquals(signals.length, 2);
+      assertEquals(signals[0]!.aborted, true);
+      assertEquals(completedChildren, 1);
+      assertEquals(result.nodeStates["parallel-policy"]!.attempt, 2);
+    });
+
+    it("applies timeout and retry to a map node", async () => {
+      let attempts = 0;
+      const nodes: WorkflowNode[] = [{
+        id: "map-policy",
+        config: {
+          type: "map",
+          timeout: 5,
+          retry: retryAfterTimeout,
+          items: async () => {
+            attempts++;
+            if (attempts === 1) await new Promise((resolve) => setTimeout(resolve, 15));
+            return [];
+          },
+          processor: { id: "map-child", config: { type: "step" } as any },
+        } as any,
+      }];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(attempts, 2);
+      assertEquals(result.nodeStates["map-policy"]!.attempt, 2);
+    });
+
+    it("applies timeout and retry to a loop node", async () => {
+      let attempts = 0;
+      const nodes: WorkflowNode[] = [{
+        id: "loop-policy",
+        config: {
+          type: "loop",
+          timeout: 5,
+          retry: retryAfterTimeout,
+          maxIterations: 1,
+          while: async () => {
+            attempts++;
+            if (attempts === 1) await new Promise((resolve) => setTimeout(resolve, 15));
+            return false;
+          },
+          steps: [],
+        } as any,
+      }];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(attempts, 2);
+      assertEquals(result.nodeStates["loop-policy"]!.attempt, 2);
+    });
+
+    it("applies timeout and retry to a subworkflow node", async () => {
+      let attempts = 0;
+      const nodes: WorkflowNode[] = [{
+        id: "subworkflow-policy",
+        config: {
+          type: "subWorkflow",
+          timeout: 5,
+          retry: retryAfterTimeout,
+          input: async () => {
+            attempts++;
+            if (attempts === 1) await new Promise((resolve) => setTimeout(resolve, 15));
+            return { attempt: attempts };
+          },
+          workflow: { id: "policy-child-workflow", steps: [] },
+        } as any,
+      }];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(attempts, 2);
+      assertEquals(result.nodeStates["subworkflow-policy"]!.attempt, 2);
+    });
+
+    it("does not retry a timed-out composite attempt that never settles", async () => {
+      const operation = Promise.withResolvers<boolean>();
+      let attempts = 0;
+      const exec = new DAGExecutor({
+        stepExecutor,
+        cancellationGracePeriod: 5,
+      });
+      const nodes: WorkflowNode[] = [{
+        id: "non-cooperative-branch",
+        config: {
+          type: "branch",
+          timeout: 5,
+          retry: retryAfterTimeout,
+          condition: () => {
+            attempts++;
+            return operation.promise;
+          },
+          then: [],
+        } as any,
+      }];
+
+      let result;
+      let watchdogId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        result = await Promise.race([
+          exec.execute(nodes, createTestRun()),
+          new Promise<never>((_, reject) =>
+            watchdogId = setTimeout(
+              () => reject(new Error("Composite execution did not stop after timeout")),
+              100,
+            )
+          ),
+        ]);
+      } finally {
+        if (watchdogId !== undefined) clearTimeout(watchdogId);
+        operation.resolve(false);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes("timed out after 5ms"), true);
+      assertEquals(attempts, 1);
+      assertEquals(result.nodeStates["non-cooperative-branch"]!.attempt, 1);
     });
   });
 });

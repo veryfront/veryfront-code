@@ -21,6 +21,7 @@ import {
   success as successColor,
   warning as warningColor,
 } from "../ui/colors.ts";
+import { isJsonMode } from "../shared/json-output.ts";
 
 type LoggerMethod = (...args: unknown[]) => void;
 
@@ -79,6 +80,8 @@ export function isTTY(): boolean {
 }
 
 export function showLogo(): void {
+  if (isJsonMode()) return;
+
   if (!shouldUseColor()) {
     cliLogger.info(`
 ⚡ Veryfront v${VERSION}

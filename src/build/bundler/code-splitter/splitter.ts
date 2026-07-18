@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import type { Metafile } from "veryfront/extensions/bundler";
+import type { BuildContext, BundleResult, Metafile } from "veryfront/extensions/bundler";
 import { ensureDir } from "#std/fs.ts";
 import { relative } from "#veryfront/compat/path/index.ts";
 import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
@@ -8,6 +8,26 @@ import { createBuildContext } from "./build-context.ts";
 import { buildManifest, getChunkInfo, writeManifest } from "./manifest-builder.ts";
 import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+/** @internal */
+export async function rebuildAndDispose(buildContext: BuildContext): Promise<BundleResult> {
+  let result: BundleResult;
+  try {
+    result = await buildContext.rebuild();
+  } catch (rebuildError) {
+    try {
+      await buildContext.dispose();
+    } catch (disposeError) {
+      logger.warn("Failed to dispose code-splitter context after rebuild error", {
+        error: String(disposeError),
+      } as unknown);
+    }
+    throw rebuildError;
+  }
+
+  await buildContext.dispose();
+  return result;
+}
 
 export class CodeSplitter {
   private options: SplitOptions;
@@ -29,9 +49,7 @@ export class CodeSplitter {
 
         const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
         const buildContext = await createBuildContext(this.options, entryPoints);
-
-        const result = await buildContext.rebuild();
-        await buildContext.dispose();
+        const result = await rebuildAndDispose(buildContext);
 
         const metafile = result.metafile;
         if (!metafile?.outputs) {

@@ -1,10 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import "../../../../transforms/plugins/__tests__/code-parser-setup.ts";
+import * as React from "react";
+import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __injectCacheForTests, tryErrorPageFallback } from "./error-page-fallback.ts";
 import { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { withTestContext } from "../../../../../tests/_helpers/context.ts";
+import {
+  __injectReactDOMServerForTests,
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
@@ -67,6 +78,8 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 afterEach(() => {
   __injectCacheForTests(null);
   __resetLogRecordEmitterForTests();
+  resetReactCache();
+  __setServerModuleLoaderForTests(null);
 });
 
 describe("server/handlers/request/ssr/error-page-fallback", () => {
@@ -143,6 +156,79 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
         statusCode: 500,
       });
       assertEquals(result, null);
+    });
+
+    it("renders with the React version configured for the project", async () => {
+      const adapter = await getAdapter();
+      const statPaths: string[] = [];
+      const fsWithProjectRelativeResolution = new Proxy(adapter.fs, {
+        get(target, property, receiver) {
+          if (property === "resolveFile") {
+            return () => Promise.resolve("src/error-pages/404.tsx");
+          }
+          if (property === "stat") {
+            return (path: string) => {
+              statPaths.push(path);
+              return target.stat(path);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const adapterWithoutResolveFile = new Proxy(adapter, {
+        get(target, property, receiver) {
+          if (property === "fs") return fsWithProjectRelativeResolution;
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as RuntimeAdapter;
+      const loadedVersions: string[] = [];
+      const server = (marker: string) => ({
+        renderToString: () => `<p>${marker}</p>`,
+        renderToStaticMarkup: () => `<p>${marker}</p>`,
+      });
+
+      await withTestContext("error-fallback-react-version", async (context) => {
+        __setServerModuleLoaderForTests((_url, label, reactVersion) => {
+          if (label === "React") {
+            loadedVersions.push(reactVersion);
+            return Promise.resolve({ default: React });
+          }
+          throw new Error(`Unexpected module load: ${label}`);
+        });
+        __injectReactDOMServerForTests(server("default-react"));
+        __injectReactDOMServerForTests(server("project-react-18"), "18.3.1");
+
+        const pagesDir = join(context.projectDir, "src", "error-pages");
+        await mkdir(pagesDir, { recursive: true });
+        await writeTextFile(
+          join(pagesDir, "404.tsx"),
+          "export default function ErrorPage() { return null; }",
+        );
+        const ctx = makeCtx({
+          projectDir: context.projectDir,
+          projectId: context.projectDir,
+          adapter: adapterWithoutResolveFile,
+          isLocalProject: true,
+          config: {
+            react: { version: "18.3.1" },
+            directories: { pages: "src/error-pages" },
+          } as HandlerContext["config"],
+        });
+        const result = await tryErrorPageFallback(
+          new Request("http://localhost/missing"),
+          ctx,
+          new ResponseBuilder(),
+          { statusCode: 404, pathname: "/missing" },
+        );
+
+        assertExists(result);
+        assertStringIncludes(await result.text(), "project-react-18");
+        assertEquals(loadedVersions, ["18.3.1"]);
+        assertEquals(statPaths.includes(pagesDir), true);
+        assertEquals(statPaths.includes(join(context.projectDir, "pages")), false);
+      });
     });
   });
 

@@ -25,7 +25,10 @@ async function readText(path: string): Promise<string> {
 
 /** Slugify a story `title` to the id prefix Storybook derives from it. */
 function toStorybookId(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
+    /^-+|-+$/g,
+    "",
+  );
 }
 
 /** Recursively yield every `*.stories.tsx` file under `dir`. */
@@ -46,7 +49,9 @@ describe("Storybook UI workbench", () => {
       (m) => m[1],
     );
     assert(navIds.length > 0, "expected NavGrid ids in the Overview");
-    const dupes = [...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i))];
+    const dupes = [
+      ...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i)),
+    ];
     assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
 
     // Every linkable docs page: an autodocs story titled under one of the two
@@ -66,7 +71,11 @@ describe("Storybook UI workbench", () => {
     const navSet = new Set(navIds);
     const missing = [...expected].filter((id) => !navSet.has(id)).sort();
     const extra = [...navSet].filter((id) => !expected.has(id)).sort();
-    assertEquals(missing, [], `components with no Overview link: ${missing.join(", ")}`);
+    assertEquals(
+      missing,
+      [],
+      `components with no Overview link: ${missing.join(", ")}`,
+    );
     assertEquals(
       extra,
       [],
@@ -175,6 +184,18 @@ describe("Storybook UI workbench", () => {
     );
   });
 
+  it("documents the preferred additive chat APIs", async () => {
+    const agentPicker = await readText(
+      "storybook/stories/chat/AgentPicker.stories.tsx",
+    );
+    const chat = await readText("storybook/stories/chat/Chat.stories.tsx");
+
+    assertStringIncludes(agentPicker, 'name: "avatarUrl"');
+    assertEquals(agentPicker.includes('name: "avatarSrc"'), false);
+    assertStringIncludes(chat, "onSuggestionSelect");
+    assertEquals(chat.includes("onSuggestionClick={setInput}"), false);
+  });
+
   it("covers the shipped UI families with Storybook stories that import real components", async () => {
     const requiredStories = [
       {
@@ -223,20 +244,36 @@ describe("Storybook UI workbench", () => {
     // target name. Sub-agents take one row each and turn it green.
     const target = [
       { file: "Chat", title: "Chat", names: ["Chat"] },
-      { file: "Attachment", title: "Attachment", names: ["Attachment"] },
+      {
+        file: "AttachmentPill",
+        title: "AttachmentPill",
+        names: ["AttachmentPill"],
+      },
       { file: "Markdown", title: "Markdown", names: ["Markdown"] },
       { file: "Sources", title: "Sources", names: ["Sources"] },
       { file: "Reasoning", title: "Reasoning", names: ["Reasoning"] },
       { file: "ToolCall", title: "ToolCall", names: ["ToolCall"] },
       { file: "Message", title: "Message", names: ["Message"] },
       { file: "AgentCard", title: "AgentCard", names: ["AgentCard"] },
-      { file: "AttachmentsPanel", title: "AttachmentsPanel", names: ["AttachmentsPanel"] },
+      {
+        file: "AttachmentsPanel",
+        title: "AttachmentsPanel",
+        names: ["AttachmentsPanel"],
+      },
       { file: "ChatSidebar", title: "ChatSidebar", names: ["ChatSidebar"] },
-      { file: "ModelSelector", title: "ModelSelector", names: ["ModelSelector"] },
+      {
+        file: "ModelSelector",
+        title: "ModelSelector",
+        names: ["ModelSelector"],
+      },
       { file: "AgentPicker", title: "AgentPicker", names: ["AgentPicker"] },
       { file: "ChatActions", title: "ChatActions", names: ["ChatActions"] },
       { file: "ChatInput", title: "ChatInput", names: ["ChatInput"] },
-      { file: "ChatEmptyState", title: "ChatEmptyState", names: ["ChatEmptyState"] },
+      {
+        file: "ChatEmptyState",
+        title: "ChatEmptyState",
+        names: ["ChatEmptyState"],
+      },
     ];
 
     const problems: string[] = [];
@@ -270,14 +307,14 @@ describe("Storybook UI workbench", () => {
   it("exports every target chat component from veryfront/chat (driver)", async () => {
     // The public API target. Fails until every component is exported under its
     // final name (renames landed + new components built). `\b` boundaries mean
-    // "Attachment" does NOT match "Attachment", "CodeBlock" not "RichCodeBlock".
+    // "Attachment" does not match "AttachmentPill", and "CodeBlock" does not
+    // match "RichCodeBlock".
     const publicBarrel = await readText("src/chat/index.ts");
     const targetExports = [
-      "Attachment",
+      "AttachmentPill",
       "Markdown",
       "Sources",
       "Reasoning",
-      "SkillTool",
       "ToolCall",
       "Message",
       "AgentCard",
@@ -394,7 +431,9 @@ describe("Storybook UI workbench", () => {
       }
     }
 
-    const tokenSource = await readText("src/react/components/ui/design-tokens.ts");
+    const tokenSource = await readText(
+      "src/react/components/ui/design-tokens.ts",
+    );
     const previewSource = await readText("storybook/.storybook/preview.css");
     const bridgeSource = await readText("src/studio/bridge/bridge-styles.ts");
     assertStringIncludes(tokenSource, "font-family:Inter");
@@ -415,5 +454,52 @@ describe("Storybook UI workbench", () => {
     );
     assertStringIncludes(aliases, "src/chat/index.ts");
     assertStringIncludes(aliases, "src/react/components/chat/index.ts");
+  });
+
+  // E7: every exported chat component ships the three documentation tiers —
+  // black-box (a render-it Story), props (a DocsPropsTable), compound (a
+  // compositionTree) — plus a one-leaf-override ACID-TEST story ("change the X
+  // on Y without re-implementing Y"), marked with the `acid-test` tag. The
+  // allowlist below MUST stay empty: a component with no honest acid test is a
+  // composition gap, not an exemption.
+  it("every chat component story ships the three tiers + a tagged acid-test story", async () => {
+    // Files temporarily exempt from the acid-test requirement. Keep EMPTY.
+    const ACID_TEST_ALLOWLIST: readonly string[] = [];
+
+    const failures: string[] = [];
+    for await (const path of storyFiles("storybook/stories/chat")) {
+      const name = path.split("/").pop()!;
+      const src = await readText(path);
+      const missing: string[] = [];
+
+      // Compound tier: a composition tree documenting the sub-parts.
+      if (!src.includes("compositionTree") && !src.includes("DocsComposition")) {
+        missing.push("compound tier (compositionTree / DocsComposition)");
+      }
+      // Props tier: the generated props table.
+      if (!src.includes("DocsPropsTable")) missing.push("props tier (DocsPropsTable)");
+      // Black-box tier: at least one render-it story.
+      if (!/export const \w+: Story\b/.test(src)) missing.push("black-box tier (a Story)");
+      // Acid-test: a one-leaf-override story, explicitly tagged.
+      const hasAcid = /tags:\s*\[[^\]]*["']acid-test["']/.test(src);
+      if (!hasAcid && !ACID_TEST_ALLOWLIST.includes(name)) {
+        missing.push('acid-test story (tags: ["acid-test"])');
+      }
+
+      if (missing.length > 0) failures.push(`${name}: missing ${missing.join(", ")}`);
+    }
+
+    assertEquals(
+      failures,
+      [],
+      `Chat stories missing E7 three-tier + acid-test coverage:\n${failures.join("\n")}`,
+    );
+
+    // The allowlist is a ratchet: it may only shrink. Guard it stays empty.
+    assertEquals(
+      ACID_TEST_ALLOWLIST.length,
+      0,
+      "The acid-test allowlist must stay empty — author the missing acid test, don't exempt it.",
+    );
   });
 });

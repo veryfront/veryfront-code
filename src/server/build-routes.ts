@@ -11,14 +11,14 @@ import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 import { SSG_GENERATION_ERROR } from "#veryfront/errors";
 
-const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts"];
+const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
 
 function convertToSlug(relativePath: string): string {
   return (
     relativePath
       .replace(/\\/g, "/")
-      .replace(/\.(mdx|md|tsx|jsx|ts)$/, "")
+      .replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
       .replace(/\/index$/, "") || "index"
   );
 }
@@ -43,25 +43,27 @@ export async function collectPagesRoutes(
   projectDir: string,
   include?: string[],
   exclude?: string[],
+  pagesDirectory = "pages",
 ): Promise<RouteInfo[]> {
   const routes: RouteInfo[] = [];
+  const pagesDir = join(projectDir, pagesDirectory);
 
   try {
-    const pagesDir = join(projectDir, "pages");
     await adapter.fs.stat(pagesDir);
+  } catch (error) {
+    if (isNotFoundError(error)) return routes;
+    throw error;
+  }
 
-    for await (
-      const file of discoverFiles({ baseDir: pagesDir, extensions: PAGE_EXTENSIONS, adapter })
-    ) {
-      const relativePath = relative(pagesDir, file.path);
-      const slug = convertToSlug(relativePath);
-      const pathForRoute = `/${slug === "index" ? "" : slug}`;
+  for await (
+    const file of discoverFiles({ baseDir: pagesDir, extensions: PAGE_EXTENSIONS, adapter })
+  ) {
+    const relativePath = relative(pagesDir, file.path);
+    const slug = convertToSlug(relativePath);
+    const pathForRoute = `/${slug === "index" ? "" : slug}`;
 
-      if (!shouldIncludeRoute(pathForRoute, include, exclude)) continue;
-      routes.push({ path: pathForRoute, file: file.path, slug });
-    }
-  } catch (e) {
-    logger.debug("No pages directory found, continuing with empty routes", e);
+    if (!shouldIncludeRoute(pathForRoute, include, exclude)) continue;
+    routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
   return routes;
@@ -75,28 +77,23 @@ export async function collectAppRoutes(
   projectDir: string,
   include?: string[],
   exclude?: string[],
+  appDirectory = "app",
 ): Promise<AppRouteInfo[]> {
-  const appRoot = join(projectDir, "app");
+  const collected: AppRouteInfo[] = [];
+  const appRoot = join(projectDir, appDirectory);
+
   try {
     await adapter.fs.stat(appRoot);
   } catch (error) {
-    if (isNotFoundError(error)) {
-      logger.debug("No app directory found for SSG");
-      return [];
-    }
-    throwAppRouteCollectionError(error);
+    if (isNotFoundError(error)) return collected;
+    throw error;
   }
 
-  try {
-    const collected: AppRouteInfo[] = [];
-    await walkAppSSG(adapter, appRoot, [], [appRoot], collected);
+  await walkAppSSG(adapter, appRoot, [], [appRoot], collected);
 
-    logger.debug(`Found ${collected.length} App Router static routes`);
+  logger.debug(`Found ${collected.length} App Router static routes`);
 
-    return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
-  } catch (error) {
-    throwAppRouteCollectionError(error);
-  }
+  return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
 }
 
 function isForceDynamic(source: string): boolean {
@@ -118,7 +115,7 @@ async function walkAppSSG(
   if (isDynamicSegment(baseName)) return;
 
   for (const filePath of PAGE_CANDIDATES.map((n) => join(dir, n))) {
-    let isFile: boolean;
+    let isFile = false;
     try {
       isFile = (await adapter.fs.stat(filePath)).isFile;
     } catch (error) {
@@ -127,7 +124,7 @@ async function walkAppSSG(
     }
     if (!isFile) continue;
 
-    const src = (await adapter.fs.readFile(filePath)) ?? "";
+    const src = await adapter.fs.readFile(filePath);
     if (isForceDynamic(src)) break;
 
     const path = `/${segs.join("/")}`;

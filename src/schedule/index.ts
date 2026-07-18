@@ -18,7 +18,15 @@
  */
 
 export { schedule } from "./factory.ts";
-export type { ScheduleConcurrencyPolicy, ScheduleConfig, ScheduleDefinition } from "./types.ts";
+export type {
+  ScheduleConcurrencyPolicy,
+  ScheduleConfig,
+  ScheduleDefinition,
+  ScheduleIntegrationRequirement,
+  ScheduleIntegrationRequirementConfig,
+  ScheduleIntegrationResource,
+  ScheduleIntegrationResourceIdentity,
+} from "./types.ts";
 export { isScheduleDefinition } from "./types.ts";
 export { discoverSchedules } from "./discovery.ts";
 export type { ScheduleDiscoveryOptions, ScheduleDiscoveryResult } from "./discovery.ts";

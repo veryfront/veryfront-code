@@ -16,8 +16,7 @@ const importCode = `import { Markdown } from "veryfront/react/components/chat"`;
 
 const compositionTree =
   `Markdown  <- prose renderer; no exported sub-parts — configure it with props
-  +-- children         <- the markdown string to render (GFM, highlight, mermaid)
-  +-- enableMermaid    <- toggle client-side mermaid diagrams (default true)
+  +-- children         <- the markdown string to render (GFM + highlighting)
   +-- renderCodeBlock  <- swap the fenced-code renderer (defaults to CodeBlock)
   +-- components        <- override element renderers (anchor / table / heading / …)
   +-- remarkPlugins / rehypePlugins  <- extra plugins, appended to the built-ins
@@ -28,7 +27,7 @@ function MarkdownDocsPage() {
     <DocsPage>
       <DocsHero
         title="Markdown"
-        lead="Renders chat markdown — GitHub-flavored syntax, syntax-highlighted code, tables, and mermaid diagrams. Fenced code renders through the shiki-based `CodeBlock` primitive (UI/CodeBlock)."
+        lead="Renders chat markdown with GitHub-flavored syntax, syntax-highlighted code, and tables. Fenced code renders through the shiki-based `CodeBlock` primitive (UI/CodeBlock)."
       />
 
       <DocsSection
@@ -55,12 +54,6 @@ function MarkdownDocsPage() {
               name: "children",
               type: "string",
               description: "Markdown content to render",
-            },
-            {
-              name: "enableMermaid",
-              type: "boolean",
-              default: "true",
-              description: "Render mermaid diagrams (client-side only)",
             },
             {
               name: "renderCodeBlock",
@@ -122,6 +115,48 @@ export const Document: Story = {
     <StoryFrame maxWidth="760px">
       <ReviewSurface label="Markdown">
         <Markdown>{markdownExample}</Markdown>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+// Acid test: swap ONE leaf — the fenced-code renderer — via `renderCodeBlock`,
+// without re-implementing `Markdown`. Prose, lists, and inline formatting keep
+// the default rendering; only code blocks change.
+export const CustomCodeBlock: Story = {
+  name: "Custom code block (renderCodeBlock)",
+  tags: ["!dev", "acid-test"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Markdown } from "veryfront/react/components/chat";
+
+<Markdown
+  renderCodeBlock={({ code, language }) => (
+    <pre className="rounded-md bg-[var(--foreground)] p-3 text-[var(--background)]">
+      <span className="mb-1 block text-xs opacity-60">{language ?? "code"}</span>
+      <code>{code}</code>
+    </pre>
+  )}
+>
+  {markdown}
+</Markdown>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="760px">
+      <ReviewSurface label="Custom code block">
+        <Markdown
+          renderCodeBlock={({ code, language }) => (
+            <pre className="overflow-x-auto rounded-md bg-[var(--foreground)] p-3 text-[var(--background)]">
+              <span className="mb-1 block text-xs opacity-60">{language ?? "code"}</span>
+              <code>{code}</code>
+            </pre>
+          )}
+        >
+          {markdownExample}
+        </Markdown>
       </ReviewSurface>
     </StoryFrame>
   ),

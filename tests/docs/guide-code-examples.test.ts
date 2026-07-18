@@ -52,7 +52,11 @@ import {
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
+import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
+import { parsePullArgs } from "../../cli/commands/pull/command.ts";
+import { parsePushArgs } from "../../cli/commands/push/command.ts";
+import { parseCliArgs } from "../../cli/shared/args.ts";
 import { getTemplate } from "../../cli/templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
@@ -79,6 +83,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
   "create-agent.md",
+  "deploy-from-ci.md",
   "deploying.md",
   "evals.md",
   "extension-authoring.md",
@@ -91,6 +96,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
+  "move-studio-changes-to-git.md",
   "pages-and-routing.md",
   "project-structure.md",
   "project-metrics.md",
@@ -230,10 +236,9 @@ describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof createAgUiHandler, "function");
-    assertExists(Chat);
+    assertEquals(typeof Chat, "function");
     const chatRecord = Chat as unknown as Record<string, unknown>;
     const messageRecord = Message as unknown as Record<string, unknown>;
-    assertEquals(typeof chatRecord.render, "function");
     assertExists(chatRecord.Root);
     assertExists(chatRecord.MessageList);
     assertExists(chatRecord.Input);
@@ -261,6 +266,16 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+});
+
+describe("Guide: memory-and-streaming.md", () => {
+  it("uses the canonical useChat event handlers", async () => {
+    const guide = await readGuide("memory-and-streaming.md");
+
+    assertStringIncludes(guide, "handleInputChange");
+    assertStringIncludes(guide, "handleSubmit");
+    assertEquals(guide.includes("const { messages, input, onChange, onSubmit"), false);
   });
 });
 
@@ -404,13 +419,82 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "veryfront deploy",
+        "veryfront push --branch main --yes",
+        "veryfront deploy --branch main --env production --yes",
         "veryfront open",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: deploy-from-ci.md", () => {
+  it("uses supported Push and Deploy arguments in the required order", async () => {
+    const guide = await readGuide("deploy-from-ci.md");
+    const pushCommand = "veryfront push --branch main --yes";
+    const stagingCommand = "veryfront deploy --branch main --env staging --yes";
+    const productionCommand = "veryfront deploy --branch main --env production --yes";
+
+    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--dry-run"]);
+    const parsedDryRun = parsePushArgs(dryRunArgs);
+    assert(parsedDryRun.success);
+    assertEquals(parsedDryRun.data.branch, "main");
+    assertEquals(parsedDryRun.data.dryRun, true);
+
+    const pushArgs = parseCliArgs(["push", "--branch", "main", "--yes"]);
+    const parsedPush = parsePushArgs(pushArgs);
+    assert(parsedPush.success);
+    assertEquals(parsedPush.data.branch, "main");
+    assertEquals(pushArgs.yes, true);
+
+    const deployArgs = parseCliArgs([
+      "deploy",
+      "--branch",
+      "main",
+      "--env",
+      "staging",
+      "--yes",
+    ]);
+    const parsedDeploy = parseDeployArgs(deployArgs);
+    assert(parsedDeploy.success);
+    assertEquals(parsedDeploy.data.branch, "main");
+    assertEquals(parsedDeploy.data.env, "staging");
+    assertEquals(deployArgs.yes, true);
+
+    assert(guide.indexOf("veryfront push --branch main --dry-run") < guide.indexOf(pushCommand));
+    assert(guide.indexOf(pushCommand) < guide.indexOf(stagingCommand));
+    assert(guide.indexOf(stagingCommand) < guide.indexOf(productionCommand));
+    assertStringIncludes(guide, "cancel-in-progress: false");
+    assertStringIncludes(guide, "RUNNER_TEMP");
+  });
+});
+
+describe("Guide: move-studio-changes-to-git.md", () => {
+  it("uses the immutable release and pruning Pull arguments", async () => {
+    const guide = await readGuide("move-studio-changes-to-git.md");
+    const pullArgs = parseCliArgs([
+      "pull",
+      "--release",
+      "0.0.42",
+      "--prune",
+      "--yes",
+    ]);
+    const parsedPull = parsePullArgs(pullArgs);
+
+    assert(parsedPull.success);
+    assertEquals(parsedPull.data.release, "0.0.42");
+    assertEquals(parsedPull.data.prune, true);
+    assertEquals(pullArgs.yes, true);
+    assertStringIncludes(
+      guide,
+      'veryfront pull --release "$VERYFRONT_RELEASE" --prune --yes',
+    );
+    assertStringIncludes(guide, "BASE_GIT_SHA");
+    assertStringIncludes(guide, "gh pr create");
+    assertStringIncludes(guide, "--base main");
+    assertStringIncludes(guide, "git merge origin/main");
   });
 });
 
@@ -761,7 +845,7 @@ describe("Guide: create-frontend.md", () => {
         '"use client";',
         'import { Chat, useChat } from "veryfront/chat"',
         "useChat()",
-        '<Chat {...chat} placeholder="Ask me anything..." />',
+        '<Chat chat={chat} placeholder="Ask me anything..." />',
       ]
     ) {
       assertStringIncludes(guide, snippet);
@@ -777,7 +861,8 @@ describe("Guide: deploy-project.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
-        "veryfront deploy",
+        "veryfront push --branch main --yes",
+        "veryfront deploy --branch main --env production --yes",
         "veryfront open",
       ]
     ) {

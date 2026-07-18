@@ -17,6 +17,8 @@ const getDevArgsSchema = defineSchema((v) =>
     port: v.number().default(DEFAULT_DEV_SERVER_PORT),
     project: v.string().optional(),
     hmr: v.boolean().default(true),
+    noHmr: v.boolean().default(false),
+    open: v.boolean().default(false),
     debug: v.boolean().default(false),
   })
 );
@@ -27,6 +29,8 @@ export const parseDevArgs = createArgParser(DevArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },
   project: { keys: ["project"], type: "string" },
   hmr: { keys: ["hmr"], type: "boolean" },
+  noHmr: { keys: ["no-hmr"], type: "boolean" },
+  open: { keys: ["open"], type: "boolean" },
   debug: { keys: ["debug", "d"], type: "boolean" },
 });
 
@@ -69,7 +73,8 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const { done } = await devCommand({
     port: opts.port,
     projectDir,
-    hmr: opts.hmr,
+    hmr: opts.hmr && !opts.noHmr,
+    open: opts.open,
   });
 
   // Block until the dev server shuts down.

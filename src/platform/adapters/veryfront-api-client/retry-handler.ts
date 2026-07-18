@@ -19,6 +19,8 @@ export interface RequestOptions {
   method?: string;
   body?: BodyInit | null;
   headers?: HeadersInit;
+  /** Demote an expected 404 miss to debug while preserving thrown error semantics. */
+  expected404?: boolean;
 }
 
 /** Default timeout for API requests (30 seconds) */
@@ -75,9 +77,12 @@ export async function requestWithRetry(
           if (!response.ok) {
             const text = await response.text();
 
+            // Optional probes (for example stylesheet candidates) may expect a 404.
+            // Keep only explicit opt-ins below warn while preserving thrown error semantics.
+            const isExpected404 = options.expected404 === true && response.status === 404;
             // 4xx = client errors (expected, e.g. 404 for missing deno.json) → warn
             // 5xx = server errors (unexpected) → error
-            const logLevel = response.status >= 500 ? "error" : "warn";
+            const logLevel = isExpected404 ? "debug" : response.status >= 500 ? "error" : "warn";
             veryfrontApiClientLog[logLevel]("Request failed", {
               url: url.replace(/token=[^&]+/, "token=***"),
               status: response.status,

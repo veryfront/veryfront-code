@@ -12,7 +12,7 @@ import { scaffoldProjectFile } from "../../scaffold/engine.ts";
 
 const VALID_SKILL_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
-export async function createSkill(args: ParsedArgs): Promise<void> {
+export async function createSkill(args: ParsedArgs, projectDir = Deno.cwd()): Promise<void> {
   const name = args._[2] as string | undefined;
   if (!name) {
     console.error("Usage: veryfront skills create <name>");
@@ -26,7 +26,6 @@ export async function createSkill(args: ParsedArgs): Promise<void> {
     Deno.exit(1);
   }
 
-  const projectDir = Deno.cwd();
   const result = await scaffoldProjectFile({
     projectDir,
     type: "skill",

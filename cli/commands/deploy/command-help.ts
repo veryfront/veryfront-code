@@ -20,11 +20,15 @@ export const deployHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Deploy without confirmation",
+      description: "Skip confirmation for compatibility (prefer global --yes)",
     },
     {
       flag: "--dry-run",
       description: "Preview without executing",
+    },
+    {
+      flag: "-q, --quiet",
+      description: "Suppress progress and summary output",
     },
   ],
   examples: [
@@ -32,11 +36,13 @@ export const deployHelp: CommandHelp = {
     "veryfront deploy --env staging",
     "veryfront deploy --branch feature-x --env preview",
     "veryfront deploy --release-name v1.2.0",
+    "veryfront deploy --branch main --env production --yes",
     "veryfront deploy --dry-run",
   ],
   notes: [
     "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
+    "Requires a successful veryfront push for the same project and branch",
     "Creates a new release from the specified branch",
-    "Deploys the release to the target environment",
+    "Verifies the target environment points to the created deployment before succeeding",
   ],
 };

@@ -7,6 +7,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
 import {
+  resolveCreateProjectPaths,
   vfCreateProject,
   vfListExamples,
   vfListIntegrations,
@@ -127,6 +128,17 @@ describe("mcp/tools/catalog-tools", () => {
   });
 
   describe("vfCreateProject", () => {
+    it("resolves the requested parent directory and slug once", () => {
+      assertEquals(
+        resolveCreateProjectPaths({ name: "Example App", directory: "projects" }),
+        {
+          name: "example-app",
+          parentDir: "projects",
+          projectDir: "projects/example-app",
+        },
+      );
+    });
+
     it("has correct tool name", () => {
       assertEquals(vfCreateProject.name, "vf_create_project");
     });
@@ -137,6 +149,18 @@ describe("mcp/tools/catalog-tools", () => {
 
     it("has execute function", () => {
       assertEquals(typeof vfCreateProject.execute, "function");
+    });
+
+    it("reports project-name validation failures", async () => {
+      const result = await vfCreateProject.execute({
+        name: "invalid/name",
+        template: "minimal",
+        directory: ".",
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("cannot contain"), true);
     });
   });
 });

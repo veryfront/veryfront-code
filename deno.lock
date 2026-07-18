@@ -3,18 +3,13 @@
   "specifiers": {
     "jsr:@std/assert@1.0.19": "1.0.19",
     "jsr:@std/assert@^1.0.17": "1.0.19",
-    "jsr:@std/assert@^1.0.19": "1.0.19",
-    "jsr:@std/async@1.2.0": "1.2.0",
     "jsr:@std/cli@1.0.28": "1.0.28",
-    "jsr:@std/data-structures@^1.0.10": "1.0.11",
     "jsr:@std/dotenv@0.225.6": "0.225.6",
-    "jsr:@std/expect@1.0.18": "1.0.18",
     "jsr:@std/fmt@1.0.9": "1.0.9",
     "jsr:@std/fs@1.0.23": "1.0.23",
     "jsr:@std/internal@^1.0.12": "1.0.14",
-    "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/path@1.1.4": "1.1.4",
-    "jsr:@std/path@^1.1.4": "1.1.6",
+    "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
     "npm:@babel/generator@7.29.1": "7.29.1",
@@ -36,7 +31,6 @@
     "npm:@opentelemetry/exporter-metrics-otlp-http@0.219.0": "0.219.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/exporter-trace-otlp-http@0.219.0": "0.219.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/resources@2.8.0": "2.8.0_@opentelemetry+api@1.9.1",
-    "npm:@opentelemetry/sdk-logs@*": "0.219.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/sdk-logs@0.219.0": "0.219.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/sdk-metrics@2.8.0": "2.8.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/sdk-node@0.219.0": "0.219.0_@opentelemetry+api@1.9.1",
@@ -60,6 +54,7 @@
     "npm:mdast-util-to-string@4.0.0": "4.0.0",
     "npm:pdf-lib@1.17.1": "1.17.1",
     "npm:playwright@*": "1.60.0",
+    "npm:playwright@1.60.0": "1.60.0",
     "npm:redis@5.11.0": "5.11.0",
     "npm:rehype-highlight@7.0.2": "7.0.2",
     "npm:rehype-raw@7.0.0": "7.0.0",
@@ -81,28 +76,14 @@
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
-        "jsr:@std/internal@^1.0.12"
+        "jsr:@std/internal"
       ]
-    },
-    "@std/async@1.2.0": {
-      "integrity": "c059c6f6d95ca7cc012ae8e8d7164d1697113d54b0b679e4372b354b11c2dee5"
     },
     "@std/cli@1.0.28": {
       "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
     },
-    "@std/data-structures@1.0.11": {
-      "integrity": "53b98ed7efa61f107dfc14244bd2ec5557f7f7ee0bbaef6d449d7937facacb89"
-    },
     "@std/dotenv@0.225.6": {
       "integrity": "1d6f9db72f565bd26790fa034c26e45ecb260b5245417be76c2279e5734c421b"
-    },
-    "@std/expect@1.0.18": {
-      "integrity": "8566eab35200466f8609eb7e7aed062ed0db314e9a258d5d201b1b8997ce801a",
-      "dependencies": [
-        "jsr:@std/assert@^1.0.19",
-        "jsr:@std/internal@^1.0.12",
-        "jsr:@std/path@^1.1.4"
-      ]
     },
     "@std/fmt@1.0.9": {
       "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
@@ -110,7 +91,7 @@
     "@std/fs@1.0.23": {
       "integrity": "3ecbae4ce4fee03b180fa710caff36bb5adb66631c46a6460aaad49515565a37",
       "dependencies": [
-        "jsr:@std/internal@^1.0.12",
+        "jsr:@std/internal",
         "jsr:@std/path@^1.1.4"
       ]
     },
@@ -120,21 +101,14 @@
     "@std/path@1.1.4": {
       "integrity": "1d2d43f39efb1b42f0b1882a25486647cb851481862dc7313390b2bb044314b5",
       "dependencies": [
-        "jsr:@std/internal@^1.0.12"
-      ]
-    },
-    "@std/path@1.1.6": {
-      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
-      "dependencies": [
-        "jsr:@std/internal@^1.0.14"
+        "jsr:@std/internal"
       ]
     },
     "@std/testing@1.0.17": {
       "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
       "dependencies": [
         "jsr:@std/assert@^1.0.17",
-        "jsr:@std/data-structures",
-        "jsr:@std/internal@^1.0.12"
+        "jsr:@std/internal"
       ]
     },
     "@std/yaml@1.1.0": {
@@ -1790,12 +1764,6 @@
         "vscode-textmate"
       ]
     },
-    "acorn-import-attributes@1.9.5_acorn@8.17.0": {
-      "integrity": "sha512-n02Vykv5uA3eHGM/Z2dQrcD56kL8TyDb2p1+0P83PClMnC/nc+anbQRhIOWnSq4Ke/KvDPrY3C9hDtC/A3eHnQ==",
-      "dependencies": [
-        "acorn"
-      ]
-    },
     "acorn-jsx@5.3.2_acorn@8.17.0": {
       "integrity": "sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==",
       "dependencies": [
@@ -2109,6 +2077,9 @@
     },
     "es-module-lexer@2.0.0": {
       "integrity": "sha512-5POEcUuZybH7IdmGsD8wlf0AI55wMecM9rVBTI/qEAy2c1kTOm3DjFYjrBdI2K3BaJjJYfYFeRtM0t9ssnRuxw=="
+    },
+    "es-module-lexer@2.3.0": {
+      "integrity": "sha512-KLdwQm2NvGLDkQDCGvmiQrhkd0JbMzXthwQAUgWjQuQdBLFa3eiBP5arXZyA+f8x+x7OXgud6bq2rxjGtHV2tw=="
     },
     "es6-error@4.1.1": {
       "integrity": "sha512-Um/+FxMr9CISWh0bi5Zv0iOD+4cFh5qLeks1qhAopKVAJw3drgKbKySikp7wGhDL0HPeaja0P5ULZrxLkniUVg=="
@@ -2594,12 +2565,11 @@
     "immediate@3.0.6": {
       "integrity": "sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ=="
     },
-    "import-in-the-middle@3.2.0": {
-      "integrity": "sha512-vR2B6HKIhaBjcZr2bLpFiJ1VbzOlRQ7aby4/gw5WPIzToLjqpfWw3VJ4sk1uDchoOODEirvO2jyrSPtUSL5CrQ==",
+    "import-in-the-middle@3.3.0": {
+      "integrity": "sha512-v4+k+PLt4z6g2ydEcXhfinTJxfgKJDWOW0v0GZNA5n2qToHFObpH4nGLhJdwnXnX4T14oREx/M62dS9GkpmSbQ==",
       "dependencies": [
-        "acorn",
-        "acorn-import-attributes",
         "cjs-module-lexer",
+        "es-module-lexer@2.3.0",
         "module-details-from-path"
       ]
     },
@@ -4044,8 +4014,8 @@
     "symbol-tree@3.2.4": {
       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw=="
     },
-    "systeminformation@5.31.11": {
-      "integrity": "sha512-I6O7iaUj23AXRgCPDDnvi3xHvdOLp4+1YMbF+X194lJwY1NeWojgHJPhslVKcmTtrLTguRk3QJK+xEdTiI3P0w==",
+    "systeminformation@5.31.13": {
+      "integrity": "sha512-iUJXJoKzm4vtLSeT3nwe2s9QjoJAxHg7wYJ0KaQ54Xy2u9jsTq0ULWQQ0+T72FXjX2XnGqubazNx9lUfng7ELw==",
       "os": ["darwin", "linux", "win32", "freebsd", "openbsd", "netbsd", "sunos", "android"],
       "bin": true
     },
@@ -5198,6 +5168,12 @@
         ]
       },
       "extensions/ext-eval-report-http": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
+      "extensions/ext-eval-report-mlflow": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17"

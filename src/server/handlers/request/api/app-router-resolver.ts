@@ -150,7 +150,7 @@ export async function resolveAppRouteFile(
   path: string,
   ctx: HandlerContext,
 ): Promise<AppRouteMatch | null> {
-  const appRoot = joinPath(ctx.projectDir, "app");
+  const appRoot = joinPath(ctx.projectDir, ctx.config?.directories?.app ?? "app");
 
   try {
     const st = await ctx.adapter.fs.stat(appRoot);

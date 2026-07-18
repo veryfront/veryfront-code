@@ -72,10 +72,12 @@ details, see [API reference](../api-reference/index.md).
 
 ## Deploy and extend
 
-| Goal                                   | Guide                                                 |
-| -------------------------------------- | ----------------------------------------------------- |
-| Build and deploy a project             | [Build and deploy](./deploying.md)                    |
-| Review shipped UI components           | [Storybook UI workbench](./storybook-ui-workbench.md) |
-| Run agents as separate services        | [Agent service runtime](./agent-service-runtime.md)   |
-| Enable reusable runtime infrastructure | [Extensions](./extensions.md)                         |
-| Write, test, and package an extension  | [Author extensions](./extension-authoring.md)         |
+| Goal                                    | Guide                                                           |
+| --------------------------------------- | --------------------------------------------------------------- |
+| Build and deploy a project              | [Build and deploy](./deploying.md)                              |
+| Deploy a reviewed Git commit from CI    | [Deploy from CI](./deploy-from-ci.md)                           |
+| Move an immutable Studio release to Git | [Move Studio changes into Git](./move-studio-changes-to-git.md) |
+| Review shipped UI components            | [Storybook UI workbench](./storybook-ui-workbench.md)           |
+| Run agents as separate services         | [Agent service runtime](./agent-service-runtime.md)             |
+| Enable reusable runtime infrastructure  | [Extensions](./extensions.md)                                   |
+| Write, test, and package an extension   | [Author extensions](./extension-authoring.md)                   |

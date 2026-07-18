@@ -15,6 +15,7 @@ import type {
   RunExecutionStatus,
   RunExecutor,
 } from "./types.ts";
+import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 const logger = baseLogger.component("process-run-executor");
 const FORCE_KILL_DELAY_MS = 5_000;
@@ -140,6 +141,7 @@ export class ProcessRunExecutor implements RunExecutor {
 
   createRunExecution(executionConfig: RunExecutionConfig): Promise<string> {
     const { executionId, run, managerId, timeout, env, debug } = executionConfig;
+    requireWorkflowSourceIntegrationPolicy(run);
 
     // Build environment variables. Start from the forwarded runtime-infra vars
     // (needed because the child spawns with clearEnv:true) so operator- and

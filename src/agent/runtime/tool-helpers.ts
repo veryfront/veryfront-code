@@ -8,7 +8,7 @@
 
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
-import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { assertLocalToolId, toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
@@ -16,6 +16,10 @@ import {
   executeRemoteIntegrationTool,
   isRemoteIntegrationTool,
 } from "#veryfront/integrations/remote-tools.ts";
+import {
+  isIntegrationToolAllowedBySourcePolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -256,6 +260,8 @@ export function resolveConfiguredTool(
   }
 
   if (configuredEntry && typeof configuredEntry === "object") {
+    assertLocalToolId(toolName);
+    assertLocalToolId(configuredEntry.id);
     return configuredEntry;
   }
 
@@ -269,7 +275,15 @@ export async function executeConfiguredTool(
   context?: ToolExecutionContext,
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
 ): Promise<unknown> {
+  if (
+    sourceIntegrationPolicy &&
+    !isIntegrationToolAllowedBySourcePolicy(toolName, sourceIntegrationPolicy)
+  ) {
+    throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
+  }
+
   const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context);
   if (configuredTool) {
     return await configuredTool.execute(input, context);
@@ -294,7 +308,7 @@ export async function executeConfiguredTool(
     return remoteSourceResult.result;
   }
 
-  // Fall back to remote execution for integration tools (e.g., github:list-repos)
+  // Route canonical integration tools to the project-scoped API executor.
   if (isRemoteIntegrationTool(toolName)) {
     if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
@@ -361,11 +375,13 @@ export async function getAvailableTools(
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     /** Calling agent id for owner-aware tool visibility. */
     callerAgentId?: string;
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
+  const sourceIntegrationPolicy = options?.sourceIntegrationPolicy;
 
   if (toolsConfig === true) {
     const allTools = toolRegistry.getAll();
@@ -396,7 +412,11 @@ export async function getAvailableTools(
     }
     tools.push(...remoteDefs);
 
-    return tools;
+    return sourceIntegrationPolicy
+      ? tools.filter((definition) =>
+        isIntegrationToolAllowedBySourcePolicy(definition.name, sourceIntegrationPolicy)
+      )
+      : tools;
   }
 
   const tools: ToolDefinition[] = [];
@@ -411,6 +431,13 @@ export async function getAvailableTools(
   const unresolvedConfiguredToolNames: string[] = [];
 
   for (const [name, entry] of Object.entries(toolsConfig)) {
+    if (
+      sourceIntegrationPolicy &&
+      !isIntegrationToolAllowedBySourcePolicy(name, sourceIntegrationPolicy)
+    ) {
+      continue;
+    }
+
     if (entry === true) {
       // Own short name first, then exact id; owned tools of other agents are
       // invisible and fall through to the unresolved diagnostic. Definitions
@@ -432,6 +459,8 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
+      assertLocalToolId(name);
+      assertLocalToolId(entry.id);
       addToolDefinition(tools, name, entry);
     }
   }
@@ -464,5 +493,9 @@ export async function getAvailableTools(
     );
   }
 
-  return tools;
+  return sourceIntegrationPolicy
+    ? tools.filter((definition) =>
+      isIntegrationToolAllowedBySourcePolicy(definition.name, sourceIntegrationPolicy)
+    )
+    : tools;
 }

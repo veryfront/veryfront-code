@@ -394,35 +394,47 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
-    it("serves freshly fetched remote modules when lockfile flush fails on a read-only filesystem", async () => {
+    it("serves remote modules without repeated warnings when lockfile flush hits a read-only filesystem", async () => {
       const originalFetch = globalThis.fetch;
       const originalWarn = console.warn;
+      const projectDir = await Deno.makeTempDir();
       const moduleSource = "export const ok = true;";
       const warnings: string[] = [];
-      let lockfileSet = false;
+      const entries = new Map<string, {
+        resolved: string;
+        integrity: string;
+        fetchedAt?: string;
+      }>();
+      let lockfileSets = 0;
+      let lockfileFlushes = 0;
+      let failRemoteFetches = false;
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
 
       const readOnlyLockfile: LockfileManager = {
         read: () => Promise.resolve(null),
         write: () => Promise.reject(new Error("read-only lockfile")),
-        get: () => Promise.resolve(null),
-        set: () => {
-          lockfileSet = true;
+        get: (url) => Promise.resolve(entries.get(url) ?? null),
+        set: (url, entry) => {
+          lockfileSets += 1;
+          entries.set(url, entry);
           return Promise.resolve();
         },
         has: () => Promise.resolve(false),
         clear: () => Promise.resolve(),
-        flush: () =>
-          Promise.reject(
+        flush: () => {
+          lockfileFlushes += 1;
+          return Promise.reject(
             new Error(
               "Read-only file system (os error 30): writefile '/app/project/veryfront.lock'",
             ),
-          ),
+          );
+        },
       };
 
       const plugin = createHTTPPlugin({
         allowedHosts: ["https://esm.sh"],
         lockfile: readOnlyLockfile,
+        projectDir,
       });
       const mockBuild = createMockBuild(
         () => {},
@@ -438,23 +450,50 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
           warnings.push(args.map(String).join(" "));
         }) as typeof console.warn;
         globalThis.fetch = (async () =>
-          new Response(moduleSource, { status: 200 })) as typeof fetch;
+          failRemoteFetches
+            ? new Response("cdn unavailable", { status: 599 })
+            : new Response(moduleSource, { status: 200 })) as typeof fetch;
 
-        const result = await loadHandler({
-          path: "https://esm.sh/yaml@2",
+        const first = await loadHandler({
+          path: "https://esm.sh/yaml@2/stringify",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const second = await loadHandler({
+          path: "https://esm.sh/yaml@2/parse",
           namespace: "http-url",
           pluginData: undefined,
           suffix: "",
         });
 
-        assertEquals((result as { contents: string }).contents, moduleSource);
-        assertEquals(lockfileSet, true);
-        assertEquals(warnings.some((warning) => warning.includes("Error")), true);
+        assertEquals((first as { contents: string }).contents, moduleSource);
+        assertEquals((second as { contents: string }).contents, moduleSource);
+        assertEquals(lockfileSets, 2);
+        assertEquals(lockfileFlushes, 1);
+        assertEquals(warnings, []);
+
+        failRemoteFetches = true;
+        const cached = await loadHandler({
+          path: "https://esm.sh/yaml@2/parse",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((cached as { contents: string }).contents, moduleSource);
+        assertEquals(
+          warnings.some((warning) =>
+            warning.includes("could not persist lockfile entry")
+          ),
+          false,
+        );
         assertEquals(warnings.some((warning) => warning.includes("veryfront.lock")), false);
         assertEquals(warnings.some((warning) => warning.includes("/app/project")), false);
       } finally {
         globalThis.fetch = originalFetch;
         console.warn = originalWarn;
+        await Deno.remove(projectDir, { recursive: true }).catch(() => {});
       }
     });
 

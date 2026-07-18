@@ -4,7 +4,9 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import {
   type CacheKeyContext,
   runWithCacheKeyContext,
+  runWithoutCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   AGENT_NOT_FOUND,
   ensureError,
@@ -44,13 +46,21 @@ export function getWorkflowTenant(): CapturedTenantContext | undefined {
   return workflowTenantStorage.getStore();
 }
 
-function cacheKeyContextFromWorkflowTenant(tenant: CapturedTenantContext): CacheKeyContext {
+function cacheKeyContextFromWorkflowTenant(
+  tenant: CapturedTenantContext,
+): CacheKeyContext | null {
   const mode = tenant.productionMode ? "production" : "preview";
 
+  // Environment sources are mutable and have no immutable version segment.
+  // A synthetic "latest" distributed-cache bucket can mix different source
+  // snapshots, so these tenants use request context for registry isolation and
+  // deliberately skip distributed caching.
+  if (mode === "production" && !tenant.releaseId) return null;
+
   return {
-    projectId: tenant.projectId || tenant.projectSlug || "default",
+    projectId: tenant.projectId || tenant.projectSlug,
     mode,
-    versionId: mode === "production" ? (tenant.releaseId || "latest") : (tenant.branch || "main"),
+    versionId: mode === "production" ? tenant.releaseId! : (tenant.branch || "main"),
   };
 }
 
@@ -65,7 +75,24 @@ export function runWithWorkflowTenant<T>(
   if (!tenant) return fn();
   return workflowTenantStorage.run(
     tenant,
-    () => runWithCacheKeyContext(cacheKeyContextFromWorkflowTenant(tenant), fn),
+    () =>
+      runWithRequestContext(
+        {
+          projectSlug: tenant.projectSlug,
+          token: tenant.token,
+          projectId: tenant.projectId,
+          productionMode: tenant.productionMode,
+          releaseId: tenant.releaseId,
+          branch: tenant.branch,
+          environmentName: tenant.environmentName,
+        },
+        () => {
+          const cacheContext = cacheKeyContextFromWorkflowTenant(tenant);
+          return cacheContext
+            ? runWithCacheKeyContext(cacheContext, fn)
+            : runWithoutCacheKeyContext(fn);
+        },
+      ),
   );
 }
 
@@ -84,6 +111,9 @@ const DEFAULT_RETRY: RetryConfig = {
 
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1_000;
 
+/** Time allowed for an aborted operation to finish its cooperative cleanup. */
+const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
+
 export interface AgentRegistry {
   get(id: string): Agent | undefined;
   list?(): string[];
@@ -98,6 +128,8 @@ export interface StepExecutorConfig {
   agentRegistry?: AgentRegistry;
   toolRegistry?: ToolRegistry;
   defaultTimeout?: number;
+  /** Max milliseconds to wait for an aborted step to settle before detaching it (default: 1000) */
+  cancellationGracePeriod?: number;
   blobStorage?: BlobStorage;
   onStepStart?: (nodeId: string, input: unknown) => void;
   onStepComplete?: (nodeId: string, output: unknown) => void;
@@ -113,6 +145,7 @@ export interface StepResult {
 
 export class StepExecutor {
   private config: StepExecutorConfig;
+  private nonCooperativeErrors = new WeakSet<Error>();
 
   constructor(config: StepExecutorConfig = {}) {
     this.config = { defaultTimeout: DEFAULT_STEP_TIMEOUT_MS, ...config };
@@ -146,6 +179,7 @@ export class StepExecutor {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       abortSignal?.throwIfAborted();
+
       try {
         const output = await runWithWorkflowTenant(tenant, async () => {
           const resolvedInput = await this.resolveInput(config.input, context);
@@ -157,7 +191,7 @@ export class StepExecutor {
             : (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS);
 
           return this.executeWithTimeout(
-            (executionSignal) => this.executeStep(config, resolvedInput, context, executionSignal),
+            (attemptSignal) => this.executeStep(config, resolvedInput, context, attemptSignal),
             timeout,
             node.id,
             abortSignal,
@@ -165,6 +199,7 @@ export class StepExecutor {
         });
         abortSignal?.throwIfAborted();
 
+        abortSignal?.throwIfAborted();
         this.config.onStepComplete?.(node.id, output);
 
         return {
@@ -173,7 +208,7 @@ export class StepExecutor {
           executionTime: Date.now() - startTime,
         };
       } catch (error) {
-        if (abortSignal?.aborted) throw abortSignal.reason;
+        abortSignal?.throwIfAborted();
         lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
@@ -211,6 +246,9 @@ export class StepExecutor {
     /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
 
   private isRetryableError(error: Error, config: RetryConfig): boolean {
+    // Starting another attempt while the timed-out operation is still active
+    // would violate step isolation and allow concurrent external side effects.
+    if (this.nonCooperativeErrors.has(error)) return false;
     if (config.retryIf) return config.retryIf(error);
 
     // Prefer structured signals over substring-matching the message: an error
@@ -272,47 +310,61 @@ export class StepExecutor {
     nodeId: string,
     parentSignal?: AbortSignal,
   ): Promise<T> {
-    const controller = new AbortController();
-    const forwardParentAbort = () => {
-      if (!controller.signal.aborted) controller.abort(parentSignal?.reason);
-    };
+    const attemptController = new AbortController();
+    const forwardAbort = () => attemptController.abort(parentSignal?.reason);
+    if (parentSignal?.aborted) forwardAbort();
+    else parentSignal?.addEventListener("abort", forwardAbort, { once: true });
 
-    if (parentSignal) {
-      parentSignal.addEventListener("abort", forwardParentAbort, { once: true });
-      if (parentSignal.aborted) forwardParentAbort();
-    }
+    const operation = Promise.resolve().then(() => fn(attemptController.signal));
+    const fencedOperation = operation.then((value) => {
+      attemptController.signal.throwIfAborted();
+      return value;
+    });
+    const timeoutError = TIMEOUT_ERROR.create({
+      detail: `Step "${nodeId}" timed out after ${timeout}ms`,
+    });
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let execution: Promise<T> | undefined;
+    let rejectAbort: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      rejectAbort = () => reject(attemptController.signal.reason);
+      if (attemptController.signal.aborted) rejectAbort();
+      else attemptController.signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+    const timeoutId = setTimeout(() => attemptController.abort(timeoutError), timeout);
 
     try {
-      controller.signal.throwIfAborted();
-      execution = fn(controller.signal);
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          const error = TIMEOUT_ERROR.create({
-            detail: `Step "${nodeId}" timed out after ${timeout}ms`,
-          });
-          if (!controller.signal.aborted) controller.abort(error);
-          reject(error);
-        }, timeout);
-      });
-
-      try {
-        const result = await Promise.race([execution, timeoutPromise]);
-        controller.signal.throwIfAborted();
-        return result;
-      } catch (error) {
-        if (controller.signal.aborted) {
-          await execution.catch(() => {});
-          controller.signal.throwIfAborted();
-        }
-        throw error;
+      return await Promise.race([fencedOperation, abortPromise]);
+    } catch (error) {
+      if (attemptController.signal.aborted) {
+        const settled = await this.waitForCancellationGrace(fencedOperation);
+        if (!settled && error instanceof Error) this.nonCooperativeErrors.add(error);
       }
+      throw error;
     } finally {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
-      parentSignal?.removeEventListener("abort", forwardParentAbort);
+      clearTimeout(timeoutId);
+      if (rejectAbort) attemptController.signal.removeEventListener("abort", rejectAbort);
+      parentSignal?.removeEventListener("abort", forwardAbort);
+    }
+  }
+
+  private async waitForCancellationGrace(operation: Promise<unknown>): Promise<boolean> {
+    const gracePeriod = Math.max(
+      0,
+      this.config.cancellationGracePeriod ?? DEFAULT_CANCELLATION_GRACE_PERIOD_MS,
+    );
+    let graceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const settled = operation.then(
+      () => true,
+      () => true,
+    );
+    const graceExpired = new Promise<false>((resolve) => {
+      graceTimeoutId = setTimeout(() => resolve(false), gracePeriod);
+    });
+
+    try {
+      return await Promise.race([settled, graceExpired]);
+    } finally {
+      if (graceTimeoutId !== undefined) clearTimeout(graceTimeoutId);
     }
   }
 
@@ -322,6 +374,7 @@ export class StepExecutor {
     context: WorkflowContext,
     abortSignal?: AbortSignal,
   ): Promise<unknown> {
+    abortSignal?.throwIfAborted();
     if (config.agent) return this.executeAgent(config.agent, input, context, abortSignal);
     if (config.tool) return this.executeTool(config.tool, input, context, abortSignal);
     throw INVALID_ARGUMENT.create({ detail: "Step must have either 'agent' or 'tool' specified" });
@@ -341,6 +394,7 @@ export class StepExecutor {
       context,
       abortSignal,
     });
+    abortSignal?.throwIfAborted();
 
     return {
       text: response.text,

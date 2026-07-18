@@ -15,6 +15,7 @@ import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { getErrorCollector, getLogBuffer } from "#veryfront/observability";
+import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 
 const logger = serverLogger.component("dev");
 
@@ -148,6 +149,7 @@ export class RequestHandler {
 
   invalidateRuntimeHandler(): void {
     this.runtimeHandler = undefined;
+    invalidateRSCHandlersForProject(this.projectDir, this.defaultProjectId);
 
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("resetApiHandler failed", error);

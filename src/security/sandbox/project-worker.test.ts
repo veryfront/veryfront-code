@@ -8,6 +8,7 @@ import type { WorkerPermissions } from "./worker-permissions.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 
 const testSuite = isDeno ? describe : describe.skip;
+const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 
 const TEST_PERMISSIONS: WorkerPermissions = {
   read: true,
@@ -55,6 +56,10 @@ function createTestWorker(projectId = "test-project"): ProjectWorker {
     requestTimeoutMs: 5_000,
     workerScriptUrl: TEST_WORKER_SCRIPT_URL,
   });
+}
+
+async function assertWorkerReady(worker: ProjectWorker): Promise<void> {
+  assertEquals(await worker.isHealthy(30_000), true);
 }
 
 testSuite("ProjectWorker", () => {
@@ -148,6 +153,7 @@ testSuite("ProjectWorker - error handling", () => {
         },
         params: {},
         projectDir: Deno.cwd(),
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       assertEquals(true, false, "Should have thrown");
     } catch (error) {
@@ -193,6 +199,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute(
         {
           type: "unknown-request",
@@ -205,6 +213,78 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       assertEquals(response.id, "unknown");
       assertEquals(response.error.name, "Error");
       assertEquals(response.error.message, "Unknown request type: unknown-request");
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("rejects every project execution without an exact-source policy manifest", async () => {
+    const worker = new ProjectWorker({
+      projectId: "test-missing-source-policy",
+      permissions: REAL_WORKER_PERMISSIONS,
+      requestTimeoutMs: 10_000,
+    });
+    const projectDir = Deno.cwd();
+    const modulePath = `${projectDir}/missing-project-module.ts`;
+    const serializedRequest = {
+      url: "http://localhost/test",
+      method: "GET",
+      headers: [] as [string, string][],
+      body: null,
+    };
+    const requests = [
+      {
+        type: "execute-app-route",
+        id: "app-route",
+        modulePath,
+        method: "GET",
+        request: serializedRequest,
+        params: {},
+        projectDir,
+      },
+      {
+        type: "execute-pages-route",
+        id: "pages-route",
+        modulePath,
+        method: "GET",
+        context: { request: serializedRequest, params: {}, cookies: {} },
+        projectDir,
+      },
+      {
+        type: "fetch-data",
+        id: "server-data",
+        modulePath,
+        context: {
+          params: {},
+          query: "",
+          request: serializedRequest,
+          url: serializedRequest.url,
+        },
+      },
+      {
+        type: "render-ssr",
+        id: "ssr",
+        pageModulePath: modulePath,
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "string",
+      },
+    ];
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      for (const request of requests) {
+        const response = await worker.execute(
+          request as unknown as Parameters<ProjectWorker["execute"]>[0],
+        );
+        assertEquals(response.type, "error");
+        if (response.type !== "error") throw new Error("expected error response");
+        assertEquals(response.id, request.id);
+        assertEquals(response.error.name, "TypeError");
+        assertEquals(response.error.message, "Invalid source integration policy manifest");
+      }
     } finally {
       worker.terminate();
     }
@@ -232,6 +312,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const first = await worker.execute({
         type: "execute-app-route",
         id: "first",
@@ -245,6 +327,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { VERYFRONT_TEST_TENANT_SECRET: "tenant-a" },
       });
 
@@ -268,6 +351,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(second.type, "result");
@@ -282,7 +366,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
-  it("does not leak overlapping projectEnv overlays between concurrent requests", async () => {
+  it("does not leak projectEnv overlays between queued back-to-back requests", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
     const requestAKey = "VERYFRONT_TEST_REQUEST_A_SECRET";
@@ -318,6 +402,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const first = worker.execute({
         type: "execute-app-route",
         id: "request-a",
@@ -331,12 +417,11 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [requestAKey]: "tenant-a" },
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
-      const second = await worker.execute({
+      const second = worker.execute({
         type: "execute-app-route",
         id: "request-b",
         modulePath,
@@ -349,15 +434,16 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [requestBKey]: "tenant-b" },
       });
 
-      const firstResponse = await first;
+      const [firstResponse, secondResponse] = await Promise.all([first, second]);
 
-      assertEquals(second.type, "result");
-      if (second.type !== "result") throw new Error("expected result response");
+      assertEquals(secondResponse.type, "result");
+      if (secondResponse.type !== "result") throw new Error("expected result response");
       assertEquals(
-        JSON.parse(new TextDecoder().decode(second.response.body ?? new Uint8Array())),
+        JSON.parse(new TextDecoder().decode(secondResponse.response.body ?? new Uint8Array())),
         { request: "b", requestA: null, requestB: "tenant-b" },
       );
 
@@ -423,6 +509,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "env-allowlist",
@@ -436,6 +524,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [projectKey]: "project-secret" },
       });
 
@@ -483,6 +572,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "direct-read",
@@ -496,6 +587,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "error");
@@ -538,6 +630,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-fetch",
@@ -551,6 +645,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "error");
@@ -597,6 +692,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-connect",
@@ -610,6 +707,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "error");
@@ -656,6 +754,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     worker.start();
     try {
+      await assertWorkerReady(worker);
+
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-fetch-override",
@@ -669,6 +769,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         },
         params: {},
         projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assertEquals(response.type, "result");
@@ -703,6 +804,7 @@ testSuite("ProjectWorker - executeStream", () => {
         pageProps: {},
         layoutProps: [],
         delivery: "stream",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
     } catch {
       threw = true;
@@ -722,6 +824,7 @@ testSuite("ProjectWorker - executeStream", () => {
         pageProps: {},
         layoutProps: [],
         delivery: "stream",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       assert(stream instanceof ReadableStream, "should return a ReadableStream");
       // Cancel the stream to clean up

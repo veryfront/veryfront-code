@@ -9,6 +9,7 @@ import { parseDuration } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 interface ExecuteLoopNodeStrategyInput {
   node: WorkflowNode;
@@ -28,7 +29,8 @@ interface PersistedLoopState {
 export async function executeLoopNodeStrategy(
   input: ExecuteLoopNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime, abortSignal } = input;
+  const { node, config, context, nodeStates, runtime } = input;
+  runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
   const previousResults: unknown[] = [];
   let iteration = 0;
@@ -54,7 +56,7 @@ export async function executeLoopNodeStrategy(
   }
 
   while (iteration < config.maxIterations) {
-    abortSignal?.throwIfAborted();
+    runtime.abortSignal?.throwIfAborted();
     const loopContext: LoopExecutionContext = {
       iteration,
       totalIterations: iteration,
@@ -64,7 +66,7 @@ export async function executeLoopNodeStrategy(
     };
 
     const shouldContinue = await config.while(context, loopContext);
-    abortSignal?.throwIfAborted();
+    runtime.abortSignal?.throwIfAborted();
     if (!shouldContinue) {
       exitReason = "condition";
       exitedViaCondition = true;
@@ -74,7 +76,7 @@ export async function executeLoopNodeStrategy(
     const steps = typeof config.steps === "function"
       ? config.steps(context, loopContext)
       : config.steps;
-    abortSignal?.throwIfAborted();
+    runtime.abortSignal?.throwIfAborted();
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9).
@@ -95,8 +97,9 @@ export async function executeLoopNodeStrategy(
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     });
-    abortSignal?.throwIfAborted();
+    runtime.abortSignal?.throwIfAborted();
 
     if (result.waiting) {
       Object.assign(nodeStates, result.nodeStates);
@@ -137,7 +140,7 @@ export async function executeLoopNodeStrategy(
 
     if (config.delay && iteration < config.maxIterations - 1) {
       const delayMs = typeof config.delay === "number" ? config.delay : parseDuration(config.delay);
-      await sleep(delayMs, abortSignal);
+      await sleep(delayMs, runtime.abortSignal);
     }
 
     iteration++;
@@ -158,10 +161,10 @@ export async function executeLoopNodeStrategy(
   let completionUpdates: Record<string, unknown> = {};
   if (exitReason === "maxIterations" && config.onMaxIterations) {
     completionUpdates = await config.onMaxIterations(context, finalLoopContext);
-    abortSignal?.throwIfAborted();
+    runtime.abortSignal?.throwIfAborted();
   } else if (exitReason === "condition" && config.onComplete) {
     completionUpdates = await config.onComplete(context, finalLoopContext);
-    abortSignal?.throwIfAborted();
+    runtime.abortSignal?.throwIfAborted();
   }
 
   const output = {

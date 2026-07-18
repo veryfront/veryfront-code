@@ -24,7 +24,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }):
           <AppShell className="flex-1 min-h-0">
             <AppShell.Sidebar side="left" className="border-r border-[var(--outline-border)]">
               <AppShell.SidebarContent className="p-0">
-                <ChatSidebar fill />
+                <ChatSidebar.Root>
+                  <ChatSidebar.NewButton />
+                  <ChatSidebar.List />
+                </ChatSidebar.Root>
               </AppShell.SidebarContent>
             </AppShell.Sidebar>
             <AppShell.Main>

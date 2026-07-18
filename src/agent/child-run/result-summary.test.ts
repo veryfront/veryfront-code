@@ -89,6 +89,63 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("returns structured contract facts from text beyond the summary cutoff", () => {
+      const text = [
+        "The delegated docs page starts here.",
+        'import { agent } from "veryfront/agent";',
+        "x".repeat(64_500),
+        '    "model": "anthropic/claude-sonnet-4-6",',
+        '    "tool_ids": ["gmail__list_messages", "create_agent"],',
+        '    "provider_tool_ids": ["web_fetch"]',
+      ].join("\n");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.truncated, true);
+      assertEquals(result.text.includes("anthropic/claude-sonnet-4-6"), false);
+      assertEquals(result.contractFacts, {
+        modelIds: ["anthropic/claude-sonnet-4-6"],
+        toolIds: ["gmail__list_messages", "create_agent"],
+        providerToolIds: ["web_fetch"],
+        importPaths: ["veryfront/agent"],
+      });
+    });
+
+    it("extracts only tool IDs from object-shaped tools arrays", () => {
+      const text = [
+        "The delegated tool result starts here.",
+        "x".repeat(64_500),
+        '"tools": [{"id":"gmail__list_messages","type":"function"},{"name":"create_agent","type":"function"}]',
+      ].join("\n");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.truncated, true);
+      assertEquals(result.contractFacts, {
+        toolIds: ["gmail__list_messages", "create_agent"],
+      });
+    });
+
+    it("extracts current Veryfront Cloud model prefixes from text beyond the summary cutoff", () => {
+      const text = [
+        "The delegated docs page starts here.",
+        "x".repeat(64_500),
+        "| google-ai-studio/gemini-3.5-flash | Google AI Studio |",
+        "| veryfront-cloud/moonshotai/kimi-k2.6 | Moonshot AI |",
+      ].join("\n");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.truncated, true);
+      assertEquals(result.text.includes("google-ai-studio/gemini-3.5-flash"), false);
+      assertEquals(result.contractFacts, {
+        modelIds: [
+          "google-ai-studio/gemini-3.5-flash",
+          "veryfront-cloud/moonshotai/kimi-k2.6",
+        ],
+      });
+    });
+
     it("preserves raw text when full mode is requested", () => {
       const text =
         '  <function_calls><invoke name="run_bash">curl</invoke></function_calls><function_result>Title: Example</function_result>\n';

@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { createError, FILE_NOT_FOUND, toError } from "#veryfront/errors";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
@@ -9,11 +9,11 @@ export interface MockRuntimeAdapter extends RuntimeAdapter {
 }
 
 function fileNotFoundError(path: string): Error {
-  return toError(createError({ type: "file", message: `File not found: ${path}` }));
+  return FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
 }
 
 function pathNotFoundError(path: string): Error {
-  return toError(createError({ type: "file", message: `Path not found: ${path}` }));
+  return FILE_NOT_FOUND.create({ detail: `Path not found: ${path}`, context: { path } });
 }
 
 export function createMockAdapter(): MockRuntimeAdapter {

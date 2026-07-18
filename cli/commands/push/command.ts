@@ -1,8 +1,8 @@
 /**
- * Push command - Upload local project files to a new Veryfront branch
+ * Push command - Upload local project files to a Veryfront branch
  *
  * Scans local files and uploads them to the API using relative paths.
- * Creates a new branch for the changes which can be merged in Studio.
+ * Creates a branch when the requested branch does not already exist.
  *
  * @module cli/commands/push
  */
@@ -16,18 +16,29 @@ import { createFileSystem } from "veryfront/platform";
 import {
   type ApiClient,
   createApiClient,
-  resolveConfigWithAuth,
+  type ProjectReferenceSource,
+  resolveConfigWithAuthDetails,
   type ResolvedConfig,
   writeProjectSlug,
 } from "#cli/shared/config";
-import { reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { DEFAULT_LIMITS } from "veryfront/security";
+import { isNotFoundError, lstat } from "veryfront/fs";
+import {
+  areSourceFilesTracked,
+  clearPushReceipt,
+  computeSourceDigest,
+  getProjectTarget,
+  type GitSource,
+  normalizeControlPlane,
+  resolveGitSource,
+  writePushReceipt,
+} from "../../shared/deployment-provenance.ts";
 
 /**
  * Schema factory for push command arguments
@@ -69,7 +80,7 @@ export interface PushOptions {
   projectDir?: string;
   /** Branch name to create (auto-generated if not provided) */
   branch?: string;
-  /** Force push without confirmation */
+  /** Skip confirmation without changing push semantics */
   force?: boolean;
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
@@ -84,6 +95,12 @@ export interface UploadOp {
   /** Relative path from project root (sent to API) */
   path: string;
   content: string;
+}
+
+export interface PushSourceSnapshot {
+  files: UploadOp[];
+  gitSource: GitSource;
+  sourceDigest: string;
 }
 
 /**
@@ -126,8 +143,13 @@ export async function scanLocalFiles(
       const relativePath = relative(projectDir, entryPath);
 
       if (ignoreChecker.isIgnored(relativePath)) continue;
+
       if (entry.isSymlink) {
-        cliLogger.warn(`Skipping symbolic link: ${relativePath}`);
+        if (ignoreChecker.isSupportedExtension(entry.name)) {
+          throw new Error(
+            `Veryfront push does not support symbolic links: "${relativePath}". Replace the link with a file and run veryfront push again.`,
+          );
+        }
         continue;
       }
 
@@ -138,23 +160,102 @@ export async function scanLocalFiles(
 
       if (!ignoreChecker.isSupportedExtension(entry.name)) continue;
 
-      const fileInfo = await fs.stat(entryPath);
-      if (fileInfo.size > DEFAULT_LIMITS.maxFileSize) {
-        cliLogger.warn(`Skipping oversized file: ${relativePath}`);
-        continue;
-      }
-
       const content = await fs.readTextFile(entryPath);
-      if (new TextEncoder().encode(content).byteLength > DEFAULT_LIMITS.maxFileSize) {
-        cliLogger.warn(`Skipping oversized file: ${relativePath}`);
-        continue;
-      }
       ops.push({ path: relativePath, content });
     }
   }
 
   await walk(projectDir);
   return ops;
+}
+
+function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
+  return left.commitSha === right.commitSha && left.clean === right.clean;
+}
+
+function sourceSnapshotsMatch(
+  left: PushSourceSnapshot,
+  right: PushSourceSnapshot,
+): boolean {
+  return gitSourcesMatch(left.gitSource, right.gitSource) &&
+    left.sourceDigest === right.sourceDigest;
+}
+
+function sourceChangedError(): Error {
+  return new Error("Local source changed during push. Run veryfront push again.");
+}
+
+function canPersistAlternativeSlug(source: ProjectReferenceSource): boolean {
+  return source.kind === "json-config" || source.kind === "inferred";
+}
+
+function projectSlugConflictError(
+  error: ProjectSlugConflictError,
+  source: ProjectReferenceSource,
+): Error {
+  let action: string;
+  switch (source.kind) {
+    case "argument":
+      action = "Use a different --project-slug value";
+      break;
+    case "environment":
+      action = "Update or remove VERYFRONT_PROJECT_SLUG";
+      break;
+    case "module-config":
+      action = `Update projectSlug in ${source.name}`;
+      break;
+    case "tenant-environment":
+      action = `Update or remove ${source.name}`;
+      break;
+    case "json-config":
+    case "inferred":
+      action = "Choose a different project slug";
+      break;
+  }
+  return new Error(`${error.message} ${action}, then run veryfront push again.`);
+}
+
+async function sourceFilesForGitTracking(
+  projectDir: string,
+  files: readonly UploadOp[],
+): Promise<readonly UploadOp[]> {
+  const ignorePath = join(projectDir, ".vfignore");
+  let ignoreInfo;
+  try {
+    ignoreInfo = await lstat(ignorePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return files;
+    throw error;
+  }
+
+  if (ignoreInfo.isSymlink || !ignoreInfo.isFile) {
+    throw new Error(
+      ".vfignore must be a regular file inside the project and cannot be a symbolic link.",
+    );
+  }
+
+  return [...files, { path: ".vfignore", content: "" }];
+}
+
+export async function capturePushSourceSnapshot(
+  projectDir: string,
+  ignoreChecker: IgnoreChecker,
+): Promise<PushSourceSnapshot> {
+  const gitSourceBefore = await resolveGitSource(projectDir);
+  const files = await scanLocalFiles(projectDir, ignoreChecker);
+  const trackedSourceFiles = await sourceFilesForGitTracking(projectDir, files);
+  const [sourceDigest, filesTracked] = await Promise.all([
+    computeSourceDigest(files),
+    areSourceFilesTracked(projectDir, trackedSourceFiles),
+  ]);
+  const gitSource = await resolveGitSource(projectDir);
+
+  if (!gitSourcesMatch(gitSourceBefore, gitSource)) throw sourceChangedError();
+  return {
+    files,
+    gitSource: { ...gitSource, clean: gitSource.clean && filesTracked },
+    sourceDigest,
+  };
 }
 
 export function generateBranchName(): string {
@@ -333,6 +434,35 @@ function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
   return buildOpParts(ops, toDelete, (count) => `upload ${count}`, (count) => `delete ${count}`);
 }
 
+export async function recordPushReceipt(
+  client: ApiClient,
+  config: ResolvedConfig,
+  projectDir: string,
+  branch: string,
+  snapshot: PushSourceSnapshot,
+  ignoreChecker: IgnoreChecker,
+): Promise<void> {
+  const project = await getProjectTarget(client, config.projectSlug);
+  let currentSnapshot: PushSourceSnapshot;
+  try {
+    currentSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+    if (!sourceSnapshotsMatch(snapshot, currentSnapshot)) throw sourceChangedError();
+  } catch (error) {
+    await clearPushReceipt(projectDir);
+    throw error;
+  }
+
+  await writePushReceipt(projectDir, {
+    controlPlane: normalizeControlPlane(config.apiUrl),
+    projectId: project.id,
+    projectSlug: project.slug,
+    branch,
+    commitSha: snapshot.gitSource.commitSha,
+    sourceDigest: snapshot.sourceDigest,
+    clean: snapshot.gitSource.clean,
+  });
+}
+
 export function pushCommand(options: PushOptions = {}): Promise<void> {
   return withSpan(
     "cli.command.push",
@@ -349,65 +479,124 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
       let config: ResolvedConfig;
+      let projectReferenceSource: ProjectReferenceSource;
       try {
         // Use interactive auth - prompts for login if not authenticated
-        config = await resolveConfigWithAuth(projectDir);
+        const resolved = await resolveConfigWithAuthDetails(projectDir);
+        config = resolved.config;
+        projectReferenceSource = resolved.projectReferenceSource;
       } catch (error) {
         spinner.stop();
         throw error;
       }
 
-      if (slugOverride) config = { ...config, projectSlug: slugOverride };
+      if (slugOverride) {
+        config = { ...config, projectSlug: slugOverride };
+        projectReferenceSource = { kind: "argument", name: "--project-slug" };
+      }
 
       spinner.update("Loading ignore patterns...");
       const ignorePatterns = await loadIgnorePatterns(projectDir);
       const ignoreChecker = createIgnoreChecker(ignorePatterns);
-
-      spinner.update("Scanning local files...");
-      const ops = await scanLocalFiles(projectDir, ignoreChecker);
-      const localPaths = new Set(ops.map((op) => op.path));
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
       const branchName = branch || generateBranchName();
       const isMainBranch = branchName === "main";
 
-      // First-push: If project doesn't exist on server yet, create it
+      // First-push: If project doesn't exist on server yet, create it unless this is a dry run.
       let mainFiles: RemoteFile[] = [];
+      let projectExists = true;
       try {
         mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
       } catch (error) {
         // Project doesn't exist yet - create it on first push
         if (getErrorStatus(error) === 404) {
-          spinner.update("Creating project...");
-          const reserveResult = await reserveProjectSlug(config.projectSlug, config.apiToken);
-          if (reserveResult.slug !== config.projectSlug) {
-            await writeProjectSlug(projectDir, reserveResult.slug);
-            logInfo(`Project slug: ${reserveResult.slug}`);
-          }
-          config = { ...config, projectSlug: reserveResult.slug };
-          // Now try to get files again (should be empty for new project)
-          try {
-            mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
-          } catch {
-            // Project just created, no files yet
-            mainFiles = [];
+          if (dryRun) {
+            projectExists = false;
+            if (!quiet) {
+              logInfo(
+                `Project "${config.projectSlug}" does not exist. Dry run will not create it.`,
+              );
+            }
+          } else {
+            spinner.update("Creating project...");
+            let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
+            try {
+              reserveResult = await reserveProjectSlug(
+                config.projectSlug,
+                config.apiToken,
+                undefined,
+                config.apiUrl,
+                { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
+              );
+            } catch (reserveError) {
+              spinner.stop();
+              if (reserveError instanceof ProjectSlugConflictError) {
+                throw projectSlugConflictError(reserveError, projectReferenceSource);
+              }
+              throw reserveError;
+            }
+            if (reserveResult.slug !== config.projectSlug) {
+              await writeProjectSlug(projectDir, reserveResult.slug);
+              logInfo(`Project slug: ${reserveResult.slug}`);
+            }
+            config = { ...config, projectSlug: reserveResult.slug };
+            // Now try to get files again (should be empty for new project)
+            try {
+              mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+            } catch {
+              // Project just created, no files yet
+              mainFiles = [];
+            }
           }
         } else {
           throw error;
         }
       }
 
-      const target = await resolvePushRemoteFiles(
-        client,
-        config.projectSlug,
-        branchName,
-        mainFiles,
-      );
+      spinner.update("Scanning local files...");
+      let sourceSnapshot: PushSourceSnapshot;
+      try {
+        sourceSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+      } catch (error) {
+        spinner.stop();
+        throw error;
+      }
+      const ops = sourceSnapshot.files;
+      const localPaths = new Set(ops.map((op) => op.path));
+
+      const target = projectExists
+        ? await resolvePushRemoteFiles(
+          client,
+          config.projectSlug,
+          branchName,
+          mainFiles,
+        )
+        : {
+          branchId: null,
+          remoteFiles: mainFiles,
+          source: { type: "main" } satisfies PullSource,
+        };
       const toDelete = target.remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
 
       if (ops.length === 0 && toDelete.length === 0) {
-        spinner.stop();
+        try {
+          if (!dryRun) {
+            await clearPushReceipt(projectDir);
+            spinner.update("Verifying push target...");
+            await recordPushReceipt(
+              client,
+              config,
+              projectDir,
+              branchName,
+              sourceSnapshot,
+              ignoreChecker,
+            );
+          }
+        } finally {
+          spinner.stop();
+        }
         if (!quiet) logInfo("No changes to push.");
         return;
       }
@@ -451,6 +640,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         return;
       }
 
+      await clearPushReceipt(projectDir);
+
       let branchId = target.branchId;
       const uploadMsg = isMainBranch
         ? "Pushing to main..."
@@ -478,12 +669,42 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         uploadResult = await uploadFiles(client, config.projectSlug, branchId, ops, false);
       }
 
+      if (uploadResult.failed > 0) {
+        spinner.stop();
+        throw new Error(
+          `Push failed for ${uploadResult.failed} file${
+            uploadResult.failed === 1 ? "" : "s"
+          }. Remote files were not deleted.`,
+        );
+      }
+
       if (toDelete.length > 0) {
         spinner.update("Deleting removed files...");
         deleteResult = await deleteFiles(client, config.projectSlug, branchId, toDelete, false);
       }
 
-      spinner.stop();
+      if (deleteResult.failed > 0) {
+        spinner.stop();
+        throw new Error(
+          `Push failed for ${deleteResult.failed} file${
+            deleteResult.failed === 1 ? "" : "s"
+          } during deletion`,
+        );
+      }
+
+      spinner.update("Verifying push target...");
+      try {
+        await recordPushReceipt(
+          client,
+          config,
+          projectDir,
+          branchName,
+          sourceSnapshot,
+          ignoreChecker,
+        );
+      } finally {
+        spinner.stop();
+      }
 
       if (quiet) return;
 
@@ -501,9 +722,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           logInfo(`Merge:   https://veryfront.com/projects/${config.projectSlug}/branches`);
         }
       }
-
-      const failedTotal = uploadResult.failed + deleteResult.failed;
-      if (failedTotal > 0) logWarning(`Failed: ${failedTotal} files.`);
     },
     { "cli.dryRun": options.dryRun ?? false },
   );

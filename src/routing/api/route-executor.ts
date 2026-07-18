@@ -28,6 +28,7 @@ import {
   type SerializedResponse,
   type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
+import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 /**
  * Read the current project env snapshot via the globalThis bridge registered by
  * server/project-env/storage.ts.  This avoids a direct import from the server/
@@ -295,6 +296,7 @@ function executeAppRouteIsolated(
             request: serialized,
             params: match.params,
             projectDir,
+            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
             projectEnv: getProjectEnvSnapshot(),
           },
         );
@@ -348,6 +350,7 @@ function executePagesRouteIsolated(
               cookies: parseCookies(request.headers.get("cookie") ?? ""),
             },
             projectDir,
+            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
             projectEnv: getProjectEnvSnapshot(),
           },
         );

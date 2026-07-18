@@ -44,10 +44,15 @@
  */
 
 export { datasets } from "./datasets.ts";
-export { evalAgent, isEvalDefinition } from "./factory.ts";
+export { evalAgent, evalTool, isEvalDefinition } from "./factory.ts";
 export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
-export { createEvalReport, summarizeEvalRecords } from "./report.ts";
+export {
+  createEvalDatasetMetadata,
+  createEvalReport,
+  EVAL_REPORT_SCHEMA_VERSION,
+  summarizeEvalRecords,
+} from "./report.ts";
 export { compareEvalReports } from "./baseline.ts";
 export { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
 export { createEvalRunProvenance, resolveEvalRunProvenance } from "./provenance.ts";
@@ -62,6 +67,7 @@ export {
   getEvalSourcePatchSchema,
   getEvalSourceReferenceSchema,
   getEvalStudioCapabilitySchema,
+  getEvalTargetKindSchema,
 } from "./studio.ts";
 
 export type { DiscoveredEval, EvalDiscoveryOptions, EvalDiscoveryResult } from "./discovery.ts";
@@ -73,7 +79,9 @@ export type {
   EvalAgentAdapterResult,
   EvalAgentInput,
   EvalAnswerGroundednessMetricOptions,
+  EvalBudgetDeltaSummary,
   EvalCheckContext,
+  EvalCitation,
   EvalDataset,
   EvalDatasetLoadContext,
   EvalDefinition,
@@ -85,6 +93,7 @@ export type {
   EvalFailedExampleSummary,
   EvalFlakeSummary,
   EvalGateFailureSummary,
+  EvalKnowledgeCitationMetricOptions,
   EvalKnowledgeExpectedSource,
   EvalKnowledgeMrrMetricOptions,
   EvalKnowledgeRetrievalMetricOptions,
@@ -106,17 +115,24 @@ export type {
   EvalRecord,
   EvalReport,
   EvalReportComparison,
+  EvalReportComparisonPolicy,
+  EvalReportDatasetMetadata,
   EvalReportExportConfig,
   EvalReportMetadata,
   EvalReportSummary,
+  EvalRetrievedContext,
   EvalRunProvenance,
   EvalSeverity,
   EvalSource,
   EvalTargetKind,
+  EvalToolAdapter,
+  EvalToolAdapterContext,
+  EvalToolAdapterResult,
   EvalToolCall,
   EvalToolCallCountOptions,
   EvalToolCallMatchOptions,
   EvalToolCallStatus,
+  EvalToolInput,
   EvalToolInputMatchMode,
   EvalTrace,
   EvalUsage,

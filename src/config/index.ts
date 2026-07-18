@@ -11,7 +11,7 @@ export {
   getConfig,
   type GetConfigOptions,
 } from "./loader.ts";
-export { defineConfig } from "./define-config.ts";
+export { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
 export { getApiTokenEnv, isCiEnv, isDenoTestingEnv, isRscExperimentalEnabled } from "./env.ts";
 
 export {

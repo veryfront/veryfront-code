@@ -87,6 +87,7 @@ docs/api/
 
 # Local working files
 .context/
+docs/plans/
 docs/superpowers/
 .local/
 .refactor/

@@ -1,9 +1,65 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createDefaultIgnoreChecker, createIgnoreChecker } from "./ignore.ts";
+import { createDefaultIgnoreChecker, createIgnoreChecker, loadIgnorePatterns } from "./ignore.ts";
 
 describe("cli/sync/ignore", () => {
+  describe("loadIgnorePatterns", () => {
+    it("uses default patterns when .vfignore is missing", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        const patterns = await loadIgnorePatterns(projectDir);
+        assertEquals(patterns.includes("node_modules"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("loads patterns from a regular .vfignore file", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "generated/**\n");
+        const patterns = await loadIgnorePatterns(projectDir);
+        assertEquals(patterns.includes("generated/**"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects a non-file .vfignore", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.mkdir(`${projectDir}/.vfignore`);
+        await assertRejects(
+          () => loadIgnorePatterns(projectDir),
+          Error,
+          "must be a regular file",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects a symlinked .vfignore", async () => {
+      if (Deno.build.os === "windows") return;
+
+      const projectDir = await Deno.makeTempDir();
+      const externalFile = await Deno.makeTempFile();
+      try {
+        await Deno.writeTextFile(externalFile, "generated/**\n");
+        await Deno.symlink(externalFile, `${projectDir}/.vfignore`);
+        await assertRejects(
+          () => loadIgnorePatterns(projectDir),
+          Error,
+          "cannot be a symbolic link",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(externalFile);
+      }
+    });
+  });
+
   describe("createIgnoreChecker", () => {
     it("should ignore exact directory names", () => {
       const checker = createIgnoreChecker(["node_modules", ".git"]);

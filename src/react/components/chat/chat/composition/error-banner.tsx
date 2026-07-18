@@ -19,29 +19,29 @@ export interface ErrorBannerProps {
   icon?: React.ReactNode;
   /** Label for the retry button. Defaults to "Retry". */
   retryLabel?: string;
+
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Render error banner. */
-export const ErrorBanner = React.forwardRef<HTMLDivElement, ErrorBannerProps>(
-  function ErrorBanner(
-    { error, onRetry, className, icon, retryLabel = "Retry" },
-    ref,
-  ) {
-    return (
-      <div ref={ref} className={cn("max-w-2xl mx-auto px-4 pb-3", className)}>
-        <Alert variant="error">
-          <AlertContent>{error.message}</AlertContent>
-          {onRetry && (
-            <AlertAction>
-              <Button variant="link" size="sm" onClick={onRetry}>
-                {icon ?? <RefreshCwIcon className="size-3.5" />}
-                {retryLabel}
-              </Button>
-            </AlertAction>
-          )}
-        </Alert>
-      </div>
-    );
-  },
-);
+export function ErrorBanner(
+  { error, onRetry, className, icon, retryLabel = "Retry", ref }: ErrorBannerProps,
+): React.ReactElement {
+  return (
+    <div ref={ref} className={cn("max-w-2xl mx-auto px-4 pb-3", className)}>
+      <Alert variant="error">
+        <AlertContent>{error.message}</AlertContent>
+        {onRetry && (
+          <AlertAction>
+            <Button variant="link" size="sm" onClick={onRetry}>
+              {icon ?? <RefreshCwIcon className="size-3.5" />}
+              {retryLabel}
+            </Button>
+          </AlertAction>
+        )}
+      </Alert>
+    </div>
+  );
+}
 ErrorBanner.displayName = "ErrorBanner";

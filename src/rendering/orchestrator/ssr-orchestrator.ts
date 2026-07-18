@@ -11,6 +11,7 @@ import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { getWorkerPool, isSSRIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
+import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
   endRenderSession,
   hasRenderSession,
@@ -202,6 +203,7 @@ export class SSROrchestrator {
             pageProps: isolation.pageProps,
             layoutProps: isolation.layoutProps,
             delivery: "stream",
+            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
           });
 
           const ssrHash = `stream-isolated-${Date.now()}`;
@@ -226,6 +228,7 @@ export class SSROrchestrator {
           pageProps: isolation.pageProps,
           layoutProps: isolation.layoutProps,
           delivery: "string",
+          sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
         });
 
         if (workerResponse.type === "error") {

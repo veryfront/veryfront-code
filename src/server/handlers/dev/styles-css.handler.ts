@@ -32,6 +32,8 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
+import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
+import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
 import { profilePhase } from "#veryfront/observability";
 
 const logger = serverLogger.component("styles-css-handler");
@@ -64,6 +66,36 @@ export class StylesCSSHandler extends BaseHandler {
             error: error instanceof Error ? error.message : String(error),
           });
           rawCss = DEFAULT_STYLESHEET;
+        }
+        // Production SSR merges CSS imported by modules (`import "./styles.css"`
+        // in a layout) into the page stylesheet during module loading. This
+        // route has no module-loading pass, so discover those imports from the
+        // project sources and merge them here. Runs before the prepared-CSS
+        // context is created so cache keys reflect the merged stylesheet.
+        try {
+          const cssImports = await profilePhase(
+            "css.scan_css_imports",
+            () => extractProjectCssImports(ctx),
+          );
+          if (cssImports.length > 0) {
+            const merged = await profilePhase(
+              "css.merge_imported_css",
+              () =>
+                mergeImportedCSS({
+                  fs: ctx.adapter.fs,
+                  logger,
+                  projectDir: ctx.projectDir,
+                  globalCSS: rawCss,
+                  cssImports,
+                  stylesheetPath: ctx.config?.tailwind?.stylesheet ?? "globals.css",
+                }),
+            );
+            if (merged) rawCss = merged;
+          }
+        } catch (error) {
+          logger.error("Failed to merge module CSS imports", {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
         const preparedContext = this.createPreparedCSSContext(
           projectScope,
@@ -357,7 +389,7 @@ body::before {
   ): Promise<{ css: string; hash: string } | undefined> {
     if (!projectScope) return undefined;
 
-    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
     if (!selector) return undefined;
 
     const client = this.getVeryfrontApiClient(ctx);
@@ -415,7 +447,7 @@ body::before {
     contentContext: ResolvedContentContext | null,
     cssHash: string,
   ): Promise<void> {
-    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
     if (!selector) return;
 
     const client = this.getVeryfrontApiClient(ctx);
@@ -434,6 +466,19 @@ body::before {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private resolveRemoteStyleArtifactSelector(
+    contentContext: ResolvedContentContext | null,
+    ctx: HandlerContext,
+  ): StyleArtifactSelectorContext | null {
+    // Branch content changes in-place, but the remote style-artifact selector
+    // has no content-version dimension. Treat any branch context as a terminal
+    // remote-artifact opt-out so a stale branch artifact cannot be reused after
+    // a push or registered for later consumers.
+    if (contentContext?.sourceType === "branch" || ctx.parsedDomain?.branch) return null;
+
+    return this.resolveStyleArtifactSelector(contentContext, ctx);
   }
 
   private shouldEnsureRemoteStyleArtifactBuild(selector: StyleArtifactSelectorContext): boolean {

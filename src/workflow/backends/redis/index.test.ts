@@ -14,6 +14,15 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { WorkflowRunManager } from "../../worker/run-manager.ts";
+import type {
+  RunExecutionConfig,
+  RunExecutionInfo,
+  RunExecutor,
+} from "../../worker/executors/types.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 class MockRedisAdapter implements RedisAdapter {
   store = new Map<string, string>();
@@ -351,7 +360,13 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve([{ key: streamKey, messages: [{ id: msg.id, data: msg.data }] }]);
   }
 
-  xgroupCreate(_key: string, _group: string, _id: string, _mkstream?: boolean): Promise<string> {
+  xgroupCreate(key: string, group: string, _id: string, _mkstream?: boolean): Promise<string> {
+    let groups = this.groups.get(key);
+    if (!groups) {
+      groups = new Set();
+      this.groups.set(key, groups);
+    }
+    groups.add(group);
     return Promise.resolve("OK");
   }
 
@@ -375,6 +390,27 @@ class MockRedisAdapter implements RedisAdapter {
   }
 }
 
+class RecordingRunExecutor implements RunExecutor {
+  readonly createdRunIds: string[] = [];
+
+  createRunExecution(config: RunExecutionConfig): Promise<string> {
+    this.createdRunIds.push(config.run.id);
+    return Promise.resolve(config.executionId);
+  }
+
+  getRunExecutionStatus(_executionId: string): Promise<RunExecutionInfo | null> {
+    return Promise.resolve(null);
+  }
+
+  listRunExecutions(_managerId: string): Promise<RunExecutionInfo[]> {
+    return Promise.resolve([]);
+  }
+
+  deleteRunExecution(_executionId: string): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   return {
     id,
@@ -388,6 +424,8 @@ function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): Workfl
     pendingApprovals: [],
     createdAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
+    sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+      UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
@@ -416,6 +454,10 @@ describe("RedisBackend", () => {
   describe("initialize", () => {
     it("should create consumer group", async () => {
       await backend.initialize();
+      assertEquals(
+        mockRedis.groups.get("test:stream:schema-v1"),
+        new Set(["test:group:schema-v1"]),
+      );
     });
 
     it("should be idempotent", async () => {
@@ -425,6 +467,16 @@ describe("RedisBackend", () => {
   });
 
   describe("createRun / getRun", () => {
+    it("stores new runs in a schema-versioned custom-prefix namespace", async () => {
+      await backend.createRun(createTestRun("run-versioned-namespace"));
+
+      assertEquals(
+        mockRedis.hashes.has("test:schema-v1:run:run-versioned-namespace"),
+        true,
+      );
+      assertEquals(mockRedis.hashes.has("test:run:run-versioned-namespace"), false);
+    });
+
     it("should create and retrieve a run", async () => {
       await backend.createRun(createTestRun("run-1"));
 
@@ -433,6 +485,36 @@ describe("RedisBackend", () => {
       assertEquals(retrieved.id, "run-1");
       assertEquals(retrieved.workflowId, "wf-1");
       assertEquals(retrieved.status, "pending");
+    });
+
+    it("should persist the source integration policy snapshot", async () => {
+      const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+        allow: { confluence: { allowedTools: ["get_page"] } },
+      });
+      await backend.createRun(createTestRun("run-source-policy", { sourceIntegrationPolicy }));
+
+      const retrieved = await backend.getRun("run-source-policy");
+      assertExists(retrieved);
+      assertEquals(retrieved.sourceIntegrationPolicy, sourceIntegrationPolicy);
+    });
+
+    it("rejects a malformed source policy before persisting a run", async () => {
+      const run = createTestRun("run-malformed-source-policy", {
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: {
+            confluence: { allowedToolIds: ["get_page", "get_page"] },
+          },
+        },
+      });
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "invalid source integration policy snapshot",
+      );
+      assertEquals(await backend.getRun(run.id), null);
     });
 
     it("should return null for non-existent run", async () => {
@@ -564,6 +646,29 @@ describe("RedisBackend", () => {
       );
       assertEquals((await backend.getRun("run-owner-cas"))?.status, "failed");
     });
+
+    it("rejects attempts to mutate immutable run identity and policy fields", async () => {
+      const run = createTestRun("run-immutable-fields");
+      await backend.createRun(run);
+      const unsafeUpdateRun = backend.updateRun.bind(backend) as (
+        runId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<void>;
+
+      await assertRejects(
+        () =>
+          unsafeUpdateRun(run.id, {
+            workflowId: "other-workflow",
+            sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({ allow: {} }),
+          }),
+        Error,
+        "immutable",
+      );
+
+      const stored = await backend.getRun(run.id);
+      assertEquals(stored?.workflowId, run.workflowId);
+      assertEquals(stored?.sourceIntegrationPolicy, run.sourceIntegrationPolicy);
+    });
   });
 
   describe("deleteRun", () => {
@@ -579,6 +684,63 @@ describe("RedisBackend", () => {
   });
 
   describe("listRuns", () => {
+    it("never reads legacy rows or indexes when querying the current schema", async () => {
+      mockRedis.hashes.set(
+        "test:run:legacy-run",
+        new Map([
+          ["id", "legacy-run"],
+          ["workflowId", "wf-1"],
+          ["status", "pending"],
+        ]),
+      );
+      mockRedis.sets.set("test:index:runs", new Set(["legacy-run"]));
+      mockRedis.sets.set("test:index:status:pending", new Set(["legacy-run"]));
+      mockRedis.sets.set("test:index:workflow:wf-1", new Set(["legacy-run"]));
+      await backend.createRun(createTestRun("current-run"));
+
+      assertEquals(await backend.getRun("legacy-run"), null);
+      assertEquals((await backend.listRuns({})).map((run) => run.id), ["current-run"]);
+      assertEquals(
+        (await backend.listRuns({ status: "pending" })).map((run) => run.id),
+        ["current-run"],
+      );
+      assertEquals(
+        (await backend.listRuns({ workflowId: "wf-1" })).map((run) => run.id),
+        ["current-run"],
+      );
+      assertEquals(await backend.countRuns({}), 1);
+      assertEquals(await backend.countRuns({ status: "pending" }), 1);
+      assertEquals(await backend.countRuns({ workflowId: "wf-1" }), 1);
+    });
+
+    it("does not let a legacy pending row poison run-manager polling", async () => {
+      mockRedis.hashes.set(
+        "test:run:legacy-pending",
+        new Map([
+          ["id", "legacy-pending"],
+          ["workflowId", "wf-1"],
+          ["status", "pending"],
+        ]),
+      );
+      mockRedis.sets.set("test:index:status:pending", new Set(["legacy-pending"]));
+      await backend.createRun(createTestRun("current-pending"));
+      const executor = new RecordingRunExecutor();
+      const manager = new WorkflowRunManager({
+        backend,
+        executor,
+        pollInterval: 1_000_000,
+      });
+
+      await manager.start();
+      try {
+        await (manager as unknown as { poll(): Promise<void> }).poll();
+      } finally {
+        await manager.stop();
+      }
+
+      assertEquals(executor.createdRunIds, ["current-pending"]);
+    });
+
     it("should list all runs", async () => {
       await backend.createRun(createTestRun("run-a"));
       await backend.createRun(createTestRun("run-b"));
@@ -810,7 +972,7 @@ describe("RedisBackend", () => {
 
       // The approval left the pending set and recorded the decider verbatim.
       assertEquals(await backend.getPendingApprovals("run-ap-true"), []);
-      const stored = JSON.parse(mockRedis.lists.get("test:approvals:run-ap-true")![0]!);
+      const stored = JSON.parse(mockRedis.lists.get("test:schema-v1:approvals:run-ap-true")![0]!);
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
@@ -840,13 +1002,29 @@ describe("RedisBackend", () => {
         false,
       );
 
-      const stored = JSON.parse(mockRedis.lists.get("test:approvals:run-ap-decided")![0]!);
+      const stored = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-decided")![0]!,
+      );
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "first");
     });
   });
 
   describe("enqueue / dequeue", () => {
+    it("never consumes entries from the legacy unversioned stream", async () => {
+      mockRedis.streams.set("test:stream", [{
+        id: "legacy-1",
+        data: {
+          runId: "legacy-run",
+          workflowId: "wf-legacy",
+          createdAt: new Date().toISOString(),
+        },
+      }]);
+
+      assertEquals(await backend.dequeue(), null);
+      assertEquals(mockRedis.streams.get("test:stream")?.length, 1);
+    });
+
     it("should enqueue and dequeue a job", async () => {
       await backend.enqueue({
         runId: "run-q1",
@@ -859,6 +1037,8 @@ describe("RedisBackend", () => {
       assertExists(job);
       assertEquals(job.runId, "run-q1");
       assertEquals(job.workflowId, "wf-1");
+      assertEquals(mockRedis.streams.has("test:stream"), false);
+      assertEquals(mockRedis.streams.has("test:stream:schema-v1"), true);
     });
 
     it("should return null when queue is empty", async () => {
@@ -892,7 +1072,7 @@ describe("RedisBackend", () => {
     it("releaseLock should not delete a lock owned by another worker", async () => {
       // Worker A acquires the lock.
       assertExists(await backend.acquireLock("run-own", 5000));
-      const lockKey = "test:lock:run-own";
+      const lockKey = "test:schema-v1:lock:run-own";
 
       // Simulate lock expiry + worker B acquiring it: overwrite the stored
       // value with worker B's token.
@@ -905,7 +1085,7 @@ describe("RedisBackend", () => {
     });
 
     it("stale token should not release or extend a lease reacquired by this backend", async () => {
-      const lockKey = "test:lock:run-reacquired";
+      const lockKey = "test:schema-v1:lock:run-reacquired";
       const staleToken = await backend.acquireLock("run-reacquired", 5000);
       assertExists(staleToken);
 
@@ -926,7 +1106,7 @@ describe("RedisBackend", () => {
     it("extendLock should not extend a lock owned by another worker", async () => {
       // Worker A acquires the lock.
       assertExists(await backend.acquireLock("run-own2", 5000));
-      const lockKey = "test:lock:run-own2";
+      const lockKey = "test:schema-v1:lock:run-own2";
 
       // Simulate worker B taking over the lock.
       mockRedis.store.set(lockKey, "worker-B-token");
@@ -969,7 +1149,7 @@ describe("RedisBackend", () => {
     });
 
     it("compare-and-delete deletes only on a matching token", async () => {
-      const key = "test:lock:cad";
+      const key = "test:schema-v1:lock:cad";
 
       // Mismatched token -> script must be a no-op and return 0.
       mockRedis.store.set(key, "owner-token");
@@ -1044,22 +1224,67 @@ describe("RedisBackend", () => {
 
   describe("deserialization errors", () => {
     it("should throw on missing id field", async () => {
-      mockRedis.hashes.set("test:run:bad1", new Map([["workflowId", "wf"]]));
+      mockRedis.hashes.set("test:schema-v1:run:bad1", new Map([["workflowId", "wf"]]));
       await assertRejects(() => backend.getRun("bad1"), Error, "missing 'id'");
     });
 
     it("should throw on missing workflowId field", async () => {
-      mockRedis.hashes.set("test:run:bad2", new Map([["id", "bad2"]]));
+      mockRedis.hashes.set("test:schema-v1:run:bad2", new Map([["id", "bad2"]]));
       await assertRejects(() => backend.getRun("bad2"), Error, "missing 'workflowId'");
+    });
+
+    it("should throw on a missing source integration policy snapshot", async () => {
+      mockRedis.hashes.set(
+        "test:schema-v1:run:missing-source-policy",
+        new Map([
+          ["id", "missing-source-policy"],
+          ["workflowId", "wf"],
+        ]),
+      );
+      await assertRejects(
+        () => backend.getRun("missing-source-policy"),
+        Error,
+        "missing 'sourceIntegrationPolicy'",
+      );
+    });
+
+    it("should throw on a corrupt source integration policy snapshot", async () => {
+      mockRedis.hashes.set(
+        "test:schema-v1:run:corrupt-source-policy",
+        new Map([
+          ["id", "corrupt-source-policy"],
+          ["workflowId", "wf"],
+          [
+            "sourceIntegrationPolicy",
+            JSON.stringify({
+              schemaVersion: 1,
+              mode: "allowlist",
+              integrations: {
+                confluence: { allowedToolIds: ["get_page", "get_page"] },
+              },
+            }),
+          ],
+        ]),
+      );
+
+      await assertRejects(
+        () => backend.getRun("corrupt-source-policy"),
+        Error,
+        "invalid source integration policy snapshot",
+      );
     });
 
     it("should throw on invalid status", async () => {
       mockRedis.hashes.set(
-        "test:run:bad3",
+        "test:schema-v1:run:bad3",
         new Map([
           ["id", "bad3"],
           ["workflowId", "wf"],
           ["status", "invalidStatus"],
+          [
+            "sourceIntegrationPolicy",
+            JSON.stringify(UNRESTRICTED_SOURCE_INTEGRATION_POLICY),
+          ],
         ]),
       );
       await assertRejects(() => backend.getRun("bad3"), Error, "unknown status");
@@ -1067,11 +1292,15 @@ describe("RedisBackend", () => {
 
     it("should throw on invalid JSON in fields", async () => {
       mockRedis.hashes.set(
-        "test:run:bad4",
+        "test:schema-v1:run:bad4",
         new Map([
           ["id", "bad4"],
           ["workflowId", "wf"],
           ["status", "pending"],
+          [
+            "sourceIntegrationPolicy",
+            JSON.stringify(UNRESTRICTED_SOURCE_INTEGRATION_POLICY),
+          ],
           ["input", "{invalid-json"],
         ]),
       );
@@ -1121,8 +1350,8 @@ describe("RedisBackend", () => {
       await backend.acknowledge("run-ackx");
 
       assertEquals(ackCalls.length, 1);
-      assertEquals(ackCalls[0]!.key, "test:stream");
-      assertEquals(ackCalls[0]!.group, "test:group");
+      assertEquals(ackCalls[0]!.key, "test:stream:schema-v1");
+      assertEquals(ackCalls[0]!.group, "test:group:schema-v1");
       assertEquals(ackCalls[0]!.ids.length, 1);
 
       // Second acknowledge is a no-op (already acked, nothing tracked).
@@ -1166,7 +1395,7 @@ describe("RedisBackend", () => {
       });
       await ttlBackend.createRun(createTestRun("run-ttl"));
 
-      assertEquals(mockRedis.expiries.has("ttl:run:run-ttl"), true);
+      assertEquals(mockRedis.expiries.has("ttl:schema-v1:run:run-ttl"), true);
     });
   });
 
@@ -1189,14 +1418,14 @@ describe("RedisBackend", () => {
   });
 
   describe("run indexes", () => {
-    it("backfills the all-runs index for runs created before the index existed", async () => {
-      await backend.createRun(createTestRun("legacy-run"));
-      mockRedis.sets.delete("test:index:runs");
+    it("does not discover or backfill rows missing from the versioned index", async () => {
+      await backend.createRun(createTestRun("orphaned-run"));
+      mockRedis.sets.delete("test:schema-v1:index:runs");
 
       const runs = await backend.listRuns({});
 
-      assertEquals(runs.map((run) => run.id), ["legacy-run"]);
-      assertEquals([...mockRedis.sets.get("test:index:runs")!], ["legacy-run"]);
+      assertEquals(runs, []);
+      assertEquals(mockRedis.sets.has("test:schema-v1:index:runs"), false);
     });
 
     it("counts the intersection of workflow and status indexes", async () => {

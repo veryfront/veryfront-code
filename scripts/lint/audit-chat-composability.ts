@@ -28,13 +28,15 @@ export interface CompositionLie {
 
 /**
  * Collect `CompoundName -> {sub-part names}` from every
- * `const Name = Object.assign(base, { Part: ..., ... })` in the given sources.
+ * `const Name[: Type] = Object.assign(base, { Part: ..., ... })` in the given
+ * sources.
  */
 export function collectCompoundParts(
   files: Array<{ path: string; content: string }>,
 ): Map<string, Set<string>> {
   const compounds = new Map<string, Set<string>>();
-  const declRe = /(?:export\s+)?const\s+(\w+)\s*=\s*Object\.assign\(/g;
+  const declRe =
+    /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*Object\.assign\(/g;
 
   for (const f of files) {
     let m: RegExpExecArray | null;

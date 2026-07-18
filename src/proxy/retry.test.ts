@@ -1,7 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { isRetryableConnectionError } from "./retry.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import {
+  getReplayableRequestBodies,
+  getUpstreamRetryCount,
+  isConnectionRefusedError,
+  isRetryableConnectionError,
+  shouldRetryUpstreamRequest,
+} from "./retry.ts";
+
+const RUN_STREAM_PATH = "/api/control-plane/runs/run_1/stream";
+const RUN_STREAM_URL = `http://proxy.test${RUN_STREAM_PATH}`;
 
 describe("isRetryableConnectionError", () => {
   it("returns false for non-Error values", () => {
@@ -43,7 +53,7 @@ describe("isRetryableConnectionError", () => {
     assertEquals(isRetryableConnectionError(new Error("os error 111")), true);
   });
 
-  it("returns false for timeout errors", () => {
+  it("does not infer retryability from generic timeout messages", () => {
     assertEquals(isRetryableConnectionError(new Error("Request timeout")), false);
     assertEquals(isRetryableConnectionError(new Error("Gateway timeout")), false);
   });
@@ -82,5 +92,185 @@ describe("isRetryableConnectionError", () => {
       ),
       true,
     );
+  });
+
+  it("recognizes retryable codes in nested fetch causes", () => {
+    const cause = Object.assign(new Error("read failed"), { code: "ECONNRESET" });
+    const error = new TypeError("fetch failed", { cause });
+    const timeout = Object.assign(new Error("request failed"), { code: "ETIMEDOUT" });
+    const refused = Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
+
+    assertEquals(isRetryableConnectionError(error), true);
+    assertEquals(isRetryableConnectionError(timeout), true);
+    assertEquals(isConnectionRefusedError(new TypeError("fetch failed", { cause: refused })), true);
+  });
+
+  it("handles cyclic cause chains", () => {
+    const error = new Error("fetch failed");
+    Object.defineProperty(error, "cause", { value: error });
+
+    assertEquals(isRetryableConnectionError(error), false);
+    assertEquals(isConnectionRefusedError(error), false);
+  });
+});
+
+describe("getUpstreamRetryCount", () => {
+  it("retries idempotent requests", () => {
+    assertEquals(getUpstreamRetryCount(new Request("http://proxy.test/"), "/", 1), 1);
+    assertEquals(
+      getUpstreamRetryCount(
+        new Request("http://proxy.test/", { method: "HEAD" }),
+        "/",
+        2,
+      ),
+      2,
+    );
+  });
+
+  it("does not retry ordinary POST requests", () => {
+    const request = new Request("http://proxy.test/api/submit", {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
+    assertEquals(getUpstreamRetryCount(request, "/api/submit", 1), 0);
+  });
+
+  it("retries bounded signed control-plane run stream requests", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
+    assertEquals(
+      getUpstreamRetryCount(request, RUN_STREAM_PATH, 1),
+      1,
+    );
+    assertEquals(
+      getUpstreamRetryCount(request, RUN_STREAM_PATH, 3),
+      1,
+    );
+  });
+
+  it("keeps chunked, invalid, and oversized stream requests single-shot", () => {
+    const requests = [
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "transfer-encoding": "chunked" },
+        body: "{}",
+      }),
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "content-length": "invalid" },
+        body: "{}",
+      }),
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "content-length": String(DEFAULT_MAX_BODY_SIZE_BYTES + 1) },
+        body: "{}",
+      }),
+    ];
+
+    for (const request of requests) {
+      assertEquals(getUpstreamRetryCount(request, RUN_STREAM_PATH, 1), 0);
+    }
+  });
+});
+
+describe("shouldRetryUpstreamRequest", () => {
+  it("retries a bounded stream invocation only when connection is refused", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection refused")),
+      true,
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("os error 111")),
+      true,
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection reset")),
+      false,
+    );
+    assertEquals(
+      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection closed")),
+      false,
+    );
+  });
+
+  it("retains broad connection retries for bodyless idempotent requests", () => {
+    const request = new Request("http://proxy.test/");
+    assertEquals(
+      shouldRetryUpstreamRequest(request, "/", new Error("connection reset")),
+      true,
+    );
+  });
+
+  it("never retries an ordinary POST", () => {
+    const request = new Request("http://proxy.test/api/submit", {
+      method: "POST",
+      headers: { "content-length": "2" },
+      body: "{}",
+    });
+
+    assertEquals(
+      shouldRetryUpstreamRequest(request, "/api/submit", new Error("connection refused")),
+      false,
+    );
+  });
+});
+
+describe("getReplayableRequestBodies", () => {
+  it("creates an independent signed payload stream for every attempt", async () => {
+    const payload = JSON.stringify({ run: { runId: "run_1" } });
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": String(payload.length) },
+      body: payload,
+    });
+
+    const bodies = getReplayableRequestBodies(request, 2);
+
+    assertEquals(bodies.length, 3);
+    assertEquals(await new Response(bodies[0]).text(), payload);
+    assertEquals(await new Response(bodies[1]).text(), payload);
+    assertEquals(await new Response(bodies[2]).text(), payload);
+  });
+
+  it("keeps every bodyless attempt bodyless", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "0" },
+    });
+
+    assertEquals(getReplayableRequestBodies(request, 1), [null, null]);
+  });
+
+  it("does not tee chunked or oversized request bodies", () => {
+    const requests = [
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "transfer-encoding": "chunked" },
+        body: "{}",
+      }),
+      new Request(RUN_STREAM_URL, {
+        method: "POST",
+        headers: { "content-length": String(DEFAULT_MAX_BODY_SIZE_BYTES + 1) },
+        body: "{}",
+      }),
+    ];
+
+    for (const request of requests) {
+      const bodies = getReplayableRequestBodies(request, 1);
+      assertEquals(bodies.length, 1);
+      assertEquals(bodies[0], request.body);
+    }
   });
 });

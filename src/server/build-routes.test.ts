@@ -16,6 +16,10 @@ interface FsNode {
   content?: string;
 }
 
+function notFound(path: string): Error {
+  return Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
+}
+
 function createMockAdapter(files: Record<string, string>): RuntimeAdapter {
   // Build a node map: directories are inferred from file paths
   const nodes = new Map<string, FsNode>();
@@ -36,9 +40,7 @@ function createMockAdapter(files: Record<string, string>): RuntimeAdapter {
   const fs = {
     stat(path: string) {
       const node = nodes.get(path);
-      if (!node) {
-        return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
-      }
+      if (!node) return Promise.reject(notFound(path));
       return Promise.resolve({
         size: node.content?.length ?? 0,
         isFile: node.type === "file",
@@ -50,9 +52,7 @@ function createMockAdapter(files: Record<string, string>): RuntimeAdapter {
 
     readFile(path: string) {
       const node = nodes.get(path);
-      if (!node || node.type !== "file") {
-        return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
-      }
+      if (!node || node.type !== "file") return Promise.reject(notFound(path));
       return Promise.resolve(node.content ?? "");
     },
 
@@ -125,14 +125,25 @@ describe("server/build-routes", () => {
       assertEquals(routes, []);
     });
 
+    it("propagates pages directory access failures", async () => {
+      const adapter = createMockAdapter({});
+      adapter.fs.stat = () => Promise.reject(new Error("pages permission denied"));
+
+      await assertRejects(
+        () => collectPagesRoutes(adapter, "/project"),
+        Error,
+        "pages permission denied",
+      );
+    });
+
     it("discovers .mdx files", async () => {
       const adapter = createMockAdapter({
         "/project/pages/hello.mdx": "# Hello",
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "hello");
-      assertEquals(routes[0].path, "/hello");
+      assertEquals(routes[0]!.slug, "hello");
+      assertEquals(routes[0]!.path, "/hello");
     });
 
     it("discovers .md files", async () => {
@@ -141,7 +152,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "readme");
+      assertEquals(routes[0]!.slug, "readme");
     });
 
     it("discovers .tsx files", async () => {
@@ -150,7 +161,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "about");
+      assertEquals(routes[0]!.slug, "about");
     });
 
     it("discovers .jsx files", async () => {
@@ -159,7 +170,17 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "contact");
+      assertEquals(routes[0]!.slug, "contact");
+    });
+
+    it("discovers .js files", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/legal.js": "export default () => null",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.length, 1);
+      assertEquals(routes[0]!.slug, "legal");
+      assertEquals(routes[0]!.path, "/legal");
     });
 
     it("discovers .ts files", async () => {
@@ -168,7 +189,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "api");
+      assertEquals(routes[0]!.slug, "api");
     });
 
     it("converts file paths to slugs by stripping extensions", async () => {
@@ -177,8 +198,8 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "docs/guide");
-      assertEquals(routes[0].path, "/docs/guide");
+      assertEquals(routes[0]!.slug, "docs/guide");
+      assertEquals(routes[0]!.path, "/docs/guide");
     });
 
     it("converts /index to root slug 'index' and path '/'", async () => {
@@ -187,8 +208,8 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "index");
-      assertEquals(routes[0].path, "/");
+      assertEquals(routes[0]!.slug, "index");
+      assertEquals(routes[0]!.path, "/");
     });
 
     it("converts nested/index to nested slug without /index", async () => {
@@ -197,8 +218,8 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].slug, "blog");
-      assertEquals(routes[0].path, "/blog");
+      assertEquals(routes[0]!.slug, "blog");
+      assertEquals(routes[0]!.path, "/blog");
     });
 
     it("discovers multiple files across directories", async () => {
@@ -221,7 +242,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectPagesRoutes(adapter, "/project", ["/blog"]);
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/blog/post");
+      assertEquals(routes[0]!.path, "/blog/post");
     });
 
     it("applies exclude filter", async () => {
@@ -251,87 +272,49 @@ describe("server/build-routes", () => {
       assertEquals(routes, []);
     });
 
-    it("surfaces a missing directory discovered after the app root stat", async () => {
+    it("propagates app route source read failures", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      adapter.fs.readFile = () => Promise.reject(new Error("route read denied"));
+
+      await assertRejects(
+        () => collectAppRoutes(adapter, "/project"),
+        Error,
+        "route read denied",
+      );
+    });
+
+    it("does not treat a disappearing route source as a missing app directory", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      adapter.fs.readFile = (path) => Promise.reject(notFound(path));
+
+      await assertRejects(
+        () => collectAppRoutes(adapter, "/project"),
+        Error,
+        "ENOENT: /project/app/page.tsx",
+      );
+    });
+
+    it("propagates app directory traversal failures", async () => {
       const adapter = createMockAdapter({
         "/project/app/page.tsx": "export default function Home() {}",
       });
       adapter.fs.readDir = () => ({
         [Symbol.asyncIterator]() {
           return {
-            next: () =>
-              Promise.reject(
-                Object.assign(new Error("nested directory disappeared"), { code: "ENOENT" }),
-              ),
+            next: () => Promise.reject(new Error("app traversal denied")),
           };
         },
       });
 
-      const error = await assertRejects(() => collectAppRoutes(adapter, "/project"), Error);
-
-      assertEquals(
-        error.message,
-        "Failed to collect App Router routes for static site generation",
+      await assertRejects(
+        () => collectAppRoutes(adapter, "/project"),
+        Error,
+        "app traversal denied",
       );
-    });
-
-    it("sanitizes route file read failures and surfaces the stable SSG error", async () => {
-      const adapter = createMockAdapter({
-        "/project/app/page.tsx": "export default function Home() {}",
-      });
-      adapter.fs.readFile = () =>
-        Promise.reject(
-          Object.assign(new Error("permission denied for <TOKEN> at <LOCAL_PATH>"), {
-            code: "EACCES",
-          }),
-        );
-      const entries: LogEntry[] = [];
-      __registerLogRecordEmitter((entry) => entries.push(entry));
-
-      try {
-        const error = await assertRejects(() => collectAppRoutes(adapter, "/project"), Error);
-        assertEquals(
-          error.message,
-          "Failed to collect App Router routes for static site generation",
-        );
-      } finally {
-        __resetLogRecordEmitterForTests();
-      }
-
-      const serializedEntries = JSON.stringify(entries);
-      assertEquals(serializedEntries.includes("<TOKEN>"), false);
-      assertEquals(serializedEntries.includes("<LOCAL_PATH>"), false);
-      assertEquals(serializedEntries.includes("/project/app/page.tsx"), false);
-    });
-
-    it("sanitizes unexpected collection failures", async () => {
-      const adapter = createMockAdapter({
-        "/project/app/page.tsx": "export default function Home() {}",
-      });
-      adapter.fs.stat = () =>
-        Promise.reject(
-          Object.assign(new Error("permission denied for <TOKEN> at <LOCAL_PATH>"), {
-            code: "EACCES",
-          }),
-        );
-      const entries: LogEntry[] = [];
-      __registerLogRecordEmitter((entry) => entries.push(entry));
-
-      try {
-        const error = await assertRejects(() => collectAppRoutes(adapter, "/project"));
-        assertEquals(
-          error.message,
-          "Failed to collect App Router routes for static site generation",
-        );
-      } finally {
-        __resetLogRecordEmitterForTests();
-      }
-
-      const failure = entries.find((entry) =>
-        entry.message === "Failed to collect App Router routes for SSG"
-      );
-      assertEquals(failure?.context, { errorName: "Error" });
-      assertEquals(JSON.stringify(entries).includes("<TOKEN>"), false);
-      assertEquals(JSON.stringify(entries).includes("<LOCAL_PATH>"), false);
     });
 
     it("discovers page.tsx at app root", async () => {
@@ -340,9 +323,9 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/");
-      assertEquals(routes[0].pageFile, "/project/app/page.tsx");
-      assertEquals(routes[0].segments, []);
+      assertEquals(routes[0]!.path, "/");
+      assertEquals(routes[0]!.pageFile, "/project/app/page.tsx");
+      assertEquals(routes[0]!.segments, []);
     });
 
     it("discovers page.mdx", async () => {
@@ -351,7 +334,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/");
+      assertEquals(routes[0]!.path, "/");
     });
 
     it("discovers page.md", async () => {
@@ -404,7 +387,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].segments, ["blog", "posts"]);
+      assertEquals(routes[0]!.segments, ["blog", "posts"]);
     });
 
     it("skips dynamic segments like [id]", async () => {
@@ -414,7 +397,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/");
+      assertEquals(routes[0]!.path, "/");
     });
 
     it("skips catch-all segments like [...slug]", async () => {
@@ -424,7 +407,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/");
+      assertEquals(routes[0]!.path, "/");
     });
 
     it("skips files with export const dynamic = 'force-dynamic'", async () => {
@@ -435,7 +418,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/");
+      assertEquals(routes[0]!.path, "/");
     });
 
     it("does not skip files without force-dynamic", async () => {
@@ -454,7 +437,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project", ["/about"]);
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/about");
+      assertEquals(routes[0]!.path, "/about");
     });
 
     it("applies exclude filter", async () => {
@@ -464,7 +447,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project", undefined, ["/about"]);
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].path, "/");
+      assertEquals(routes[0]!.path, "/");
     });
 
     it("prefers first matching page candidate (page.mdx over page.tsx)", async () => {
@@ -474,7 +457,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].pageFile, "/project/app/page.mdx");
+      assertEquals(routes[0]!.pageFile, "/project/app/page.mdx");
     });
 
     it("records segmentDirs correctly", async () => {
@@ -483,7 +466,7 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
-      assertEquals(routes[0].segmentDirs, ["/project/app", "/project/app/blog"]);
+      assertEquals(routes[0]!.segmentDirs, ["/project/app", "/project/app/blog"]);
     });
   });
 });

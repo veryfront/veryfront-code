@@ -29,11 +29,13 @@ export function serializeLayouts(
 
 export function serializeLayoutProps(
   layoutProps: Map<string, Record<string, unknown>>,
+  projectDir: string,
 ): Record<string, Record<string, unknown>> {
   const serialized: Record<string, Record<string, unknown>> = {};
 
   for (const [layoutId, props] of layoutProps.entries()) {
-    serialized[layoutId] = props;
+    const key = extractRelativePathShared(layoutId, projectDir);
+    serialized[key] = props;
   }
 
   return serialized;
