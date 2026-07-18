@@ -1,5 +1,5 @@
 import { logger } from "#veryfront/utils";
-import type { RateLimitConfig, RateLimitStore } from "./types.ts";
+import type { RateLimitConfig, RateLimitPresetOptions, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 import { fixedWindowStrategy, slidingWindowStrategy, tokenBucketStrategy } from "./strategies.ts";
 import { resolveRateLimitClientKey } from "./client-key.ts";
@@ -21,6 +21,19 @@ const DEFAULT_RETRY_AFTER_SECONDS = "60";
 
 function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
   return resolveRateLimitClientKey(request, trustProxy, "unknown");
+}
+
+function isRateLimitStore(
+  value: RateLimitStore | RateLimitPresetOptions,
+): value is RateLimitStore {
+  return "increment" in value && typeof value.increment === "function";
+}
+
+function resolvePresetOptions(
+  storeOrOptions?: RateLimitStore | RateLimitPresetOptions,
+): RateLimitPresetOptions {
+  if (!storeOrOptions) return {};
+  return isRateLimitStore(storeOrOptions) ? { store: storeOrOptions } : storeOrOptions;
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {
@@ -139,36 +152,44 @@ export function createRateLimiter(
 }
 
 export const RateLimitPresets = {
-  strict: (store?: RateLimitStore) =>
-    createRateLimiter({
+  strict: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: STRICT_MAX_REQUESTS,
       windowMs: STRICT_WINDOW_MS,
       strategy: "sliding-window",
-      store,
-    }),
+      ...options,
+    });
+  },
 
-  moderate: (store?: RateLimitStore) =>
-    createRateLimiter({
+  moderate: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: MODERATE_MAX_REQUESTS,
       windowMs: MODERATE_WINDOW_MS,
       strategy: "fixed-window",
-      store,
-    }),
+      ...options,
+    });
+  },
 
-  lenient: (store?: RateLimitStore) =>
-    createRateLimiter({
+  lenient: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: LENIENT_MAX_REQUESTS,
       windowMs: LENIENT_WINDOW_MS,
       strategy: "fixed-window",
-      store,
-    }),
+      ...options,
+    });
+  },
 
-  auth: (store?: RateLimitStore) =>
-    createRateLimiter({
+  auth: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: AUTH_MAX_REQUESTS,
       windowMs: AUTH_WINDOW_MS,
       strategy: "sliding-window",
       message: "Too many authentication attempts. Please try again later.",
-      store,
-    }),
+      ...options,
+    });
+  },
 };

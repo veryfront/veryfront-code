@@ -222,6 +222,56 @@ describe("Rate Limiting Middleware", () => {
     });
   });
 
+  it("should separate trusted proxy clients when using a preset", async () => {
+    await withStore(async (store) => {
+      const limiter = RateLimitPresets.auth({ store, trustProxy: true });
+      const next = createNext();
+      const firstClient = createRequest({ "x-forwarded-for": "198.51.100.1" });
+
+      for (let i = 0; i < 5; i++) {
+        assertEquals((await limiter(firstClient, next)).status, 200);
+      }
+      assertEquals((await limiter(firstClient, next)).status, 429);
+
+      const secondClient = createRequest({ "x-forwarded-for": "203.0.113.8" });
+      assertEquals((await limiter(secondClient, next)).status, 200);
+    });
+  });
+
+  it("should keep preset proxy headers untrusted by default", async () => {
+    await withStore(async (store) => {
+      const limiter = RateLimitPresets.auth(store);
+      const next = createNext();
+
+      for (let i = 0; i < 5; i++) {
+        const request = createRequest({ "x-forwarded-for": `198.51.100.${i + 1}` });
+        assertEquals((await limiter(request, next)).status, 200);
+      }
+
+      const rotatedHeader = createRequest({ "x-forwarded-for": "203.0.113.8" });
+      assertEquals((await limiter(rotatedHeader, next)).status, 429);
+    });
+  });
+
+  it("should let presets use a custom client key generator", async () => {
+    await withStore(async (store) => {
+      const limiter = RateLimitPresets.auth({
+        store,
+        keyGenerator: (request) => request.headers.get("x-api-key") ?? "anonymous",
+      });
+      const next = createNext();
+      const firstClient = createRequest({ "x-api-key": "client-a" });
+
+      for (let i = 0; i < 5; i++) {
+        assertEquals((await limiter(firstClient, next)).status, 200);
+      }
+      assertEquals((await limiter(firstClient, next)).status, 429);
+
+      const secondClient = createRequest({ "x-api-key": "client-b" });
+      assertEquals((await limiter(secondClient, next)).status, 200);
+    });
+  });
+
   it("should fail closed with 503 when store throws (SEC-001)", async () => {
     // Simulate a store outage (e.g. Redis down). The middleware must NOT
     // call next() in the catch branch — that would silently bypass rate

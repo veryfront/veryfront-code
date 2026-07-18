@@ -83,6 +83,25 @@ export interface RateLimitOptions {
   trustProxy?: boolean;
 }
 
+/** Options accepted by the authentication rate-limit preset. */
+export interface AuthRateLimitOptions {
+  /** Storage backend. Existing callers can also pass the store directly. */
+  store?: RateLimitStore;
+  /** Function to derive a stable client key from the request. */
+  keyGenerator?: (req: Request) => string;
+  /**
+   * Trust X-Forwarded-For and X-Real-IP for client identification.
+   * Enable this only behind a trusted reverse proxy.
+   */
+  trustProxy?: boolean;
+}
+
+function isRateLimitStore(
+  value: RateLimitStore | AuthRateLimitOptions,
+): value is RateLimitStore {
+  return "increment" in value && typeof value.increment === "function";
+}
+
 /** Create rate-limit middleware. */
 export function rateLimit(
   optionsOrMaxRequests?: number | RateLimitOptions,
@@ -118,10 +137,18 @@ export function rateLimit(
 }
 
 /** Pre-configured rate limiter for authentication endpoints (5 req/15min). */
-export function authRateLimit(store?: RateLimitStore): Middleware {
+export function authRateLimit(
+  storeOrOptions?: RateLimitStore | AuthRateLimitOptions,
+): Middleware {
+  const options = !storeOrOptions
+    ? {}
+    : isRateLimitStore(storeOrOptions)
+    ? { store: storeOrOptions }
+    : storeOrOptions;
+
   return rateLimit({
     maxRequests: 5,
     windowMs: 15 * MS_PER_MINUTE,
-    store,
+    ...options,
   });
 }

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { MiddlewareContext } from "../../core/context.ts";
-import { MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
+import { authRateLimit, MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
 
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
@@ -191,5 +191,92 @@ describe("rateLimit middleware", () => {
     );
 
     assertEquals(response?.status, 429);
+  });
+
+  it("should keep store-only auth preset callers working", async () => {
+    const store = new MemoryRateLimitStore(60000);
+    const middleware = authRateLimit(store);
+
+    try {
+      const response = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    } finally {
+      store.destroy();
+    }
+  });
+
+  it("should separate trusted proxy clients in the auth preset", async () => {
+    const middleware = authRateLimit({ trustProxy: true });
+
+    for (let i = 0; i < 5; i++) {
+      const response = await middleware(
+        createContext("198.51.100.1"),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const blocked = await middleware(
+      createContext("198.51.100.1"),
+      () => Promise.resolve(new Response("OK")),
+    );
+    assertEquals(blocked?.status, 429);
+
+    const secondClient = await middleware(
+      createContext("203.0.113.8"),
+      () => Promise.resolve(new Response("OK")),
+    );
+    assertEquals(secondClient?.status, 200);
+  });
+
+  it("should keep auth preset proxy headers untrusted by default", async () => {
+    const middleware = authRateLimit();
+
+    for (let i = 0; i < 5; i++) {
+      const response = await middleware(
+        createContext(`198.51.100.${i + 1}`),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const rotatedHeader = await middleware(
+      createContext("203.0.113.8"),
+      () => Promise.resolve(new Response("OK")),
+    );
+    assertEquals(rotatedHeader?.status, 429);
+  });
+
+  it("should let the auth preset use a custom client key generator", async () => {
+    const middleware = authRateLimit({
+      keyGenerator: (request) => request.headers.get("x-api-key") ?? "anonymous",
+    });
+    const createApiKeyContext = (apiKey: string) =>
+      new MiddlewareContext(
+        new Request("https://example.com/", { headers: { "x-api-key": apiKey } }),
+      );
+
+    for (let i = 0; i < 5; i++) {
+      const response = await middleware(
+        createApiKeyContext("client-a"),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const blocked = await middleware(
+      createApiKeyContext("client-a"),
+      () => Promise.resolve(new Response("OK")),
+    );
+    assertEquals(blocked?.status, 429);
+
+    const secondClient = await middleware(
+      createApiKeyContext("client-b"),
+      () => Promise.resolve(new Response("OK")),
+    );
+    assertEquals(secondClient?.status, 200);
   });
 });
