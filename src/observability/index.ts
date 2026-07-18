@@ -15,6 +15,7 @@
 
 export {
   addSpanEvent,
+  type Context,
   createChildSpan,
   endSpan,
   extractContext,
@@ -24,6 +25,7 @@ export {
   isTracingEnabled,
   setSpanAttributes,
   shutdownTracing,
+  type Span,
   SpanNames,
   type SpanOptions,
   startSpan,
@@ -78,6 +80,8 @@ export {
   type OTLPConfig,
   shutdownOTLP,
 } from "./tracing/otlp-setup.ts";
+
+export { getHostTelemetryEnv } from "./tracing/telemetry-env.ts";
 
 export {
   createOpenTelemetryServiceTracer,

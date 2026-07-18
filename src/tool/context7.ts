@@ -1,4 +1,5 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { CONFIG_VALIDATION_ERROR } from "#veryfront/errors";
 import { createRemoteMCPToolSource } from "./remote-mcp.ts";
 import type { RemoteToolSource } from "./types.ts";
 
@@ -15,9 +16,9 @@ const DEFAULT_ENDPOINT = "https://mcp.context7.com/mcp";
 function resolveApiKey(config: Context7ToolSourceConfig): string {
   const key = config.apiKey ?? getEnv("CONTEXT7_API_KEY");
   if (!key) {
-    throw new Error(
-      "Context7 API key is required. Pass apiKey or set the CONTEXT7_API_KEY environment variable.",
-    );
+    throw CONFIG_VALIDATION_ERROR.create({
+      detail: "Context7 API key is required. Pass apiKey or set the CONTEXT7_API_KEY environment variable.",
+    });
   }
   return key;
 }

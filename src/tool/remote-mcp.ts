@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
@@ -302,7 +303,7 @@ function parseJsonRpcSsePayload(text: string): unknown {
     return parsedPayloads[0];
   }
 
-  throw new Error("Remote MCP SSE response did not include a JSON-RPC payload");
+  throw NETWORK_ERROR.create({ detail: "Remote MCP SSE response did not include a JSON-RPC payload" });
 }
 
 async function parseJsonRpcResponse(response: Response): Promise<unknown> {
@@ -385,9 +386,9 @@ async function postJsonRpc(
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new Error(
-        `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
-      );
+      throw TIMEOUT_ERROR.create({
+        detail: `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
+      });
     }
     throw error;
   }
@@ -406,15 +407,15 @@ async function postJsonRpc(
 
 function getJsonRpcResult(payload: unknown): unknown {
   if (!isRecord(payload)) {
-    throw new Error("Remote MCP response was not a JSON object");
+    throw NETWORK_ERROR.create({ detail: "Remote MCP response was not a JSON object" });
   }
 
   if ("error" in payload) {
-    throw new Error(extractJsonRpcErrorMessage(payload));
+    throw NETWORK_ERROR.create({ detail: extractJsonRpcErrorMessage(payload) });
   }
 
   if (!("result" in payload)) {
-    throw new Error("Remote MCP response did not include a result");
+    throw NETWORK_ERROR.create({ detail: "Remote MCP response did not include a result" });
   }
 
   return payload.result;
