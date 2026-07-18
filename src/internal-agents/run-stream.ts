@@ -397,6 +397,13 @@ function getAllowedRemoteToolNames(
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
 }
 
+function getForwardedMaxOutputTokens(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): number | undefined {
+  const value = forwardedProps?.maxOutputTokens;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 /**
  * Reads the restrictive `runtimeOverrides.toolAllowlist` override.
  *
@@ -680,6 +687,7 @@ export async function createRuntimeAgentStreamResponse(
     normalizeAgUiRuntimeMessages(input.messages),
     mergedTools,
   );
+  const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
   let runtimeStream: ReadableStream<Uint8Array>;
   let clientAttached = true;
   try {
@@ -702,7 +710,7 @@ export async function createRuntimeAgentStreamResponse(
         },
       },
       undefined,
-      undefined,
+      maxOutputTokens,
       abortSignal,
     );
     logger.info("Internal agent runtime stream attached", {
