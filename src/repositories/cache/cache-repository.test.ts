@@ -105,11 +105,14 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(await repo.get("short"), null);
     });
 
-    it("skips L1 backfill when the L3 backend cannot report its TTL", async () => {
-      let value: string | null = "authoritative";
+    it("backfills L1 when the L3 backend cannot report its TTL", async () => {
+      let backendGets = 0;
       const backend = {
-        type: "memory" as const,
-        get: () => Promise.resolve(value),
+        type: "api" as const,
+        get: () => {
+          backendGets++;
+          return Promise.resolve("authoritative");
+        },
         set: () => Promise.resolve(),
         del: () => Promise.resolve(),
       };
@@ -117,9 +120,9 @@ describe("repositories/cache/cache-repository", () => {
 
       assertEquals(await repo.get("key"), "authoritative");
       await flush();
-      value = null;
 
-      assertEquals(await repo.get("key"), null);
+      assertEquals(await repo.get("key"), "authoritative");
+      assertEquals(backendGets, 1);
     });
 
     it("has reflects presence", async () => {

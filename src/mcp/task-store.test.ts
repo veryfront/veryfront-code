@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TaskStore } from "./task-store.ts";
@@ -89,42 +90,56 @@ describe("mcp/task-store", () => {
     assertEquals(store.getResult(task.taskId), undefined);
   });
 
-  it("evicts expired terminal tasks from their creation time", () => {
+  it("evicts terminal tasks after their post-terminal TTL", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
     const task = store.create(1);
     store.complete(task.taskId, { ok: true });
-    // Small delay to ensure expiry
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
+
+    time.tick(2);
+
     assertEquals(store.get(task.taskId), undefined);
   });
 
   it("keeps an active task visible past its TTL", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
     const task = store.create(1);
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
+
+    time.tick(2);
+
     assertExists(store.get(task.taskId));
   });
 
-  it("expires an overdue task as soon as it becomes terminal", () => {
+  it("retains an overdue task result for one TTL after completion", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
-    const task = store.create(1);
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
+    const task = store.create(60_000);
+
+    time.tick(90_000);
+    assertExists(store.get(task.taskId));
 
     store.complete(task.taskId, { ok: true });
+    assertEquals(store.getResult(task.taskId), { ok: true });
 
+    time.tick(60_000);
+    assertExists(store.get(task.taskId));
+    assertEquals(store.getResult(task.taskId), { ok: true });
+
+    time.tick(1);
     assertEquals(store.get(task.taskId), undefined);
+    assertEquals(store.getResult(task.taskId), undefined);
   });
 
   it("returns undefined for expired terminal task via get", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
     const expired = store.create(1);
     store.complete(expired.taskId, { ok: true });
     const alive = store.create(60000);
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
+
+    time.tick(2);
+
     assertEquals(store.get(expired.taskId), undefined);
     assertExists(store.get(alive.taskId));
   });

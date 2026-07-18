@@ -100,10 +100,11 @@ export class TaskStore {
   }
 
   private isExpired(task: Task): boolean {
-    // TTL is anchored to task creation, but an active task must remain visible
-    // so the server can still cancel and account for its pending execution.
+    // MCP allows cleanup after the creation-based TTL elapses. Veryfront keeps
+    // terminal state and results for one full TTL after the terminal transition
+    // so long-running tasks still have a result retrieval window.
     if (!TERMINAL_STATUSES.has(task.status)) return false;
-    return Date.now() - new Date(task.createdAt).getTime() > task.ttl;
+    return Date.now() - new Date(task.lastUpdatedAt).getTime() > task.ttl;
   }
 
   private lazySweep(): void {

@@ -150,19 +150,19 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
 }
 
 class BackendTierAdapter implements CacheTier<string> {
+  readonly getRemainingTtlSeconds?: (key: string) => Promise<number | null>;
+
   constructor(
     readonly name: string,
     private readonly backend: CacheBackend,
-  ) {}
+  ) {
+    if (backend.getRemainingTtlSeconds) {
+      this.getRemainingTtlSeconds = backend.getRemainingTtlSeconds.bind(backend);
+    }
+  }
 
   async get(key: string): Promise<string | null> {
     return this.backend.get(key);
-  }
-
-  async getRemainingTtlSeconds(key: string): Promise<number | null> {
-    // Treat an unknowable authoritative TTL as unsafe to backfill. Otherwise a
-    // short-lived L3 entry would be revived with the repository default.
-    return await this.backend.getRemainingTtlSeconds?.(key) ?? null;
   }
 
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
