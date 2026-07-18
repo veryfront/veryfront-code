@@ -3,9 +3,9 @@
 > **Category:** Eval export | **Requires:** `EvalReportExporterRegistry` | **Optional**
 
 Registers the `mlflow` eval report exporter. The exporter id is fixed to
-`mlflow`; it is not configurable by extension config or environment variable.
-Use this extension when completed Veryfront `EvalReport` payloads should be
-written to MLflow Tracking as one run per eval execution.
+`mlflow` so CLI selection via `VERYFRONT_EVAL_EXPORTERS` / `--export` stays
+predictable. Use this extension when completed Veryfront `EvalReport` payloads
+should be written to MLflow Tracking as one run per eval execution.
 
 > **npm packaging note:** CLI usage is bundled into the root `veryfront`
 > package, so `veryfront eval --export mlflow` works without installing a
@@ -48,18 +48,19 @@ legacy singular fallback when `VERYFRONT_EVAL_EXPORTERS` is unset.
 
 ## Environment variables
 
-| Variable                                        | Required | Description                                                                                                                  |
-| ----------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `MLFLOW_TRACKING_URI`                           | Yes      | MLflow Tracking server URI. The exporter is not registered unless this is set.                                               |
-| `MLFLOW_EXPERIMENT_NAME`                        | No       | Experiment name. Defaults from project/eval context, then `veryfront-evals`.                                                 |
-| `MLFLOW_RUN_NAME`                               | No       | Run name. Defaults to `<eval-id>-<run-id>`.                                                                                  |
-| `MLFLOW_ARTIFACTS_URI`                          | No       | HTTP(S) MLflow artifact proxy endpoint used when the run artifact root is not directly writable as HTTP(S).                  |
-| `MLFLOW_TRACKING_TOKEN`                         | No       | Bearer token sent to MLflow Tracking REST endpoints. Prefer this over embedding credentials in `MLFLOW_TRACKING_URI`.        |
-| `MLFLOW_TRACKING_USERNAME`                      | No       | Username for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_PASSWORD`.                              |
-| `MLFLOW_TRACKING_PASSWORD`                      | No       | Password for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_USERNAME`.                              |
-| `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids selected by the CLI when `--export` is omitted. Use `mlflow` for this extension. |
-| `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter env var used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                         |
-| `VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE` | No       | CLI redaction opt-in for metric evidence. Leave unset or false unless evidence contains only safe labels or aggregates.      |
+| Variable                                        | Required | Description                                                                                                                   |
+| ----------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MLFLOW_TRACKING_URI`                           | Yes      | MLflow Tracking server URI. The exporter is not registered unless this is set.                                                |
+| `MLFLOW_EXPERIMENT_NAME`                        | No       | Experiment name. Defaults from project/eval context, then `veryfront-evals`.                                                  |
+| `MLFLOW_RUN_NAME`                               | No       | Run name. Defaults to `<eval-id>-<run-id>`.                                                                                   |
+| `MLFLOW_ARTIFACTS_URI`                          | No       | HTTP(S) MLflow artifact proxy endpoint used when the run artifact root is not directly writable as HTTP(S).                   |
+| `MLFLOW_ARTIFACTS_PORT`                         | No       | Local convenience port used to derive the artifact proxy URI from `MLFLOW_TRACKING_URI` when `MLFLOW_ARTIFACTS_URI` is unset. |
+| `MLFLOW_TRACKING_TOKEN`                         | No       | Bearer token sent to MLflow Tracking REST endpoints. Prefer this over embedding credentials in `MLFLOW_TRACKING_URI`.         |
+| `MLFLOW_TRACKING_USERNAME`                      | No       | Username for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_PASSWORD`.                               |
+| `MLFLOW_TRACKING_PASSWORD`                      | No       | Password for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_USERNAME`.                               |
+| `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids selected by the CLI when `--export` is omitted. Use `mlflow` for this extension.  |
+| `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter env var used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                          |
+| `VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE` | No       | CLI redaction opt-in for metric evidence. Leave unset or false unless evidence contains only safe labels or aggregates.       |
 
 `MLFLOW_TRACKING_URI` must be an HTTP(S) URI without embedded username/password
 credentials. Use `MLFLOW_TRACKING_TOKEN` or
@@ -79,6 +80,7 @@ import { defineConfig } from "veryfront";
 export default defineConfig({
   extensions: [
     extEvalReportMlflow({
+      id: "mlflow",
       experimentName: "support-agent-classification",
     }),
   ],
@@ -160,6 +162,21 @@ v1 artifact transport supports:
 - Uploads through an explicit HTTP(S) MLflow artifact proxy configured with
   `MLFLOW_ARTIFACTS_URI` when the tracking server returns a proxied root such as
   `mlflow-artifacts:/...` or an object-store-backed root.
+- Local artifact proxy derivation from `MLFLOW_ARTIFACTS_PORT`. For example,
+  `MLFLOW_TRACKING_URI=http://localhost:5001` and
+  `MLFLOW_ARTIFACTS_PORT=5600` derive
+  `http://localhost:5600/api/2.0/mlflow-artifacts/artifacts`.
+
+After upload, the exporter calls MLflow `artifacts/list` for the
+`veryfront-eval` path and includes a sanitized verification receipt
+(`verified` plus any `missing` paths) recording which uploaded paths the
+tracking API reported. The uploads themselves are the source of truth for
+success: because `artifacts/list` responses vary across MLflow deployments
+(path prefixing, pagination, artifact-store backends), a mismatch — or a
+listing endpoint that errors — is logged as a warning and reflected in the
+receipt and the run's `artifacts.verified` tag, but never fails an export that
+otherwise succeeded. Artifact contents are never exported in receipts, logs, or
+issue evidence.
 
 It does not upload directly to local filesystem artifact roots or vendor storage
 schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar backend-specific

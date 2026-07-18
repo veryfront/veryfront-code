@@ -22,6 +22,7 @@ const DEFAULT_EXPORTER_ID = "mlflow";
 const ENV_TRACKING_URI = "MLFLOW_TRACKING_URI";
 const ENV_EXPERIMENT_NAME = "MLFLOW_EXPERIMENT_NAME";
 const ENV_RUN_NAME = "MLFLOW_RUN_NAME";
+const ENV_ARTIFACTS_PORT = "MLFLOW_ARTIFACTS_PORT";
 const ENV_ARTIFACTS_URI = "MLFLOW_ARTIFACTS_URI";
 const ENV_TRACKING_TOKEN = "MLFLOW_TRACKING_TOKEN";
 const ENV_TRACKING_USERNAME = "MLFLOW_TRACKING_USERNAME";
@@ -36,6 +37,7 @@ const EXTENSION_METADATA = {
     {
       type: "env:read",
       keys: [
+        "MLFLOW_ARTIFACTS_PORT",
         "MLFLOW_ARTIFACTS_URI",
         "MLFLOW_EXPERIMENT_NAME",
         "MLFLOW_RUN_NAME",
@@ -99,6 +101,7 @@ interface ClassificationMetricSet {
 
 export interface EvalReportMlflowExtensionConfig {
   trackingUri?: string;
+  artifactsPort?: string | number;
   artifactsUri?: string;
   experimentName?: string;
   runName?: string;
@@ -111,6 +114,16 @@ export interface EvalReportMlflowExtensionConfig {
 export interface MlflowArtifactUploadResult {
   artifactPath: string;
   uploadUrl: string;
+}
+
+interface MlflowArtifactVerification {
+  method: "artifacts/list";
+  /** Whether every uploaded artifact was confirmed present by `artifacts/list`. */
+  verified: boolean;
+  /** The artifact paths the upload calls reported writing. */
+  artifacts: string[];
+  /** Uploaded paths that `artifacts/list` did not report (empty when fully verified). */
+  missing: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,6 +143,9 @@ function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {
   if (!isRecord(config)) return {};
   return {
     ...(typeof config.trackingUri === "string" ? { trackingUri: config.trackingUri } : {}),
+    ...(typeof config.artifactsPort === "string" || typeof config.artifactsPort === "number"
+      ? { artifactsPort: config.artifactsPort }
+      : {}),
     ...(typeof config.artifactsUri === "string" ? { artifactsUri: config.artifactsUri } : {}),
     ...(typeof config.experimentName === "string" ? { experimentName: config.experimentName } : {}),
     ...(typeof config.runName === "string" ? { runName: config.runName } : {}),
@@ -161,6 +177,40 @@ function normalizeHttpUri(uri: string, label: string): string {
     // Use the consistent message below.
   }
   throw new Error(`MLflow ${label} must be an HTTP(S) URI: ${uri}`);
+}
+
+function normalizeArtifactsPort(value: string | number | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`MLflow artifactsPort must be a TCP port: ${value}`);
+  }
+  const port = Number(normalized);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`MLflow artifactsPort must be a TCP port: ${value}`);
+  }
+  return String(port);
+}
+
+function deriveArtifactsUriFromPort(
+  trackingUri: string,
+  artifactsPort: string | number | undefined,
+): string | undefined {
+  const port = normalizeArtifactsPort(artifactsPort);
+  if (!port) return undefined;
+  const url = new URL(trackingUri);
+  url.port = port;
+  url.pathname = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+function resolveArtifactsUri(
+  config: Pick<EvalReportMlflowExtensionConfig, "artifactsPort" | "artifactsUri">,
+  trackingUri: string,
+): string | undefined {
+  return config.artifactsUri ?? deriveArtifactsUriFromPort(trackingUri, config.artifactsPort);
 }
 
 function stableHash(value: string): string {
@@ -212,6 +262,7 @@ function resolveExporterConfig(
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
+    artifactsPort: config.artifactsPort ?? readEnv(ENV_ARTIFACTS_PORT),
     artifactsUri: config.artifactsUri ?? readEnv(ENV_ARTIFACTS_URI),
     experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
     runName: config.runName ?? readEnv(ENV_RUN_NAME),
@@ -794,7 +845,7 @@ function buildMlflowArtifactUploadUrl(input: {
   const artifactRootPath = extractArtifactRootPath(input.runArtifactUri);
   if (!input.artifactsUri) {
     throw new Error(
-      `MLflow artifactsUri is required for non-HTTP artifact URI ${input.runArtifactUri}. Configure MLFLOW_ARTIFACTS_URI or config.artifactsUri.`,
+      `MLflow artifactsUri is required for non-HTTP artifact URI ${input.runArtifactUri}. Configure MLFLOW_ARTIFACTS_URI, MLFLOW_ARTIFACTS_PORT, or config.artifactsUri.`,
     );
   }
 
@@ -1064,6 +1115,68 @@ async function getOrCreateMlflowExperiment(input: {
   return String(created.experiment_id);
 }
 
+function artifactPathsFromListResponse(payload: unknown): string[] {
+  if (!isRecord(payload) || !Array.isArray(payload.files)) return [];
+  return payload.files
+    .map((file) => isRecord(file) && typeof file.path === "string" ? file.path : undefined)
+    .filter((path): path is string => path !== undefined);
+}
+
+/**
+ * Best-effort confirmation that the uploaded artifacts show up under the run's
+ * `artifacts/list`. This is intentionally NON-FATAL: the upload PUT/POST calls
+ * are the source of truth for success, and `artifacts/list` responses vary
+ * across MLflow deployments (path prefixing, pagination, artifact-store
+ * backends), so a listing that does not echo every path must not fail an export
+ * that otherwise succeeded. A mismatch — or a listing endpoint that errors — is
+ * surfaced as a warning and reflected in the returned `verified`/`missing`
+ * fields (and the run's `artifacts.verified` tag) for observability.
+ */
+async function verifyUploadedArtifacts(input: {
+  fetchImpl: EvalReportMlflowFetch;
+  trackingUri: string;
+  authHeaders: Record<string, string>;
+  runId: string;
+  artifacts: string[];
+}): Promise<MlflowArtifactVerification> {
+  try {
+    const response = await mlflowGet(
+      input.fetchImpl,
+      input.trackingUri,
+      input.authHeaders,
+      "artifacts/list",
+      { run_id: input.runId, path: "veryfront-eval" },
+    );
+    const listedArtifacts = new Set(artifactPathsFromListResponse(response));
+    const missing = input.artifacts.filter((artifact) => !listedArtifacts.has(artifact));
+    if (missing.length > 0) {
+      console.warn(
+        `[ext-eval-report-mlflow] artifact verification: run ${input.runId} uploaded ` +
+          `${input.artifacts.length} artifact(s) but artifacts/list did not report ` +
+          `${missing.join(", ")}; treating as non-fatal (uploads returned success).`,
+      );
+    }
+    return {
+      method: "artifacts/list",
+      verified: missing.length === 0,
+      artifacts: input.artifacts,
+      missing,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[ext-eval-report-mlflow] artifact verification skipped for run ${input.runId}: ` +
+        `artifacts/list failed (${reason}); treating as non-fatal (uploads returned success).`,
+    );
+    return {
+      method: "artifacts/list",
+      verified: false,
+      artifacts: input.artifacts,
+      missing: [],
+    };
+  }
+}
+
 async function uploadReportArtifacts(input: {
   fetchImpl: EvalReportMlflowFetch;
   artifactsUri?: string;
@@ -1112,12 +1225,12 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
     fetchImpl: EvalReportMlflowFetch = fetch,
   ) {
     this.id = config.id;
+    const trackingUri = normalizeHttpUri(config.trackingUri, "trackingUri");
+    const artifactsUri = resolveArtifactsUri(config, trackingUri);
     this.config = {
       ...config,
-      trackingUri: normalizeHttpUri(config.trackingUri, "trackingUri"),
-      ...(config.artifactsUri
-        ? { artifactsUri: normalizeHttpUri(config.artifactsUri, "artifactsUri") }
-        : {}),
+      trackingUri,
+      ...(artifactsUri ? { artifactsUri: normalizeHttpUri(artifactsUri, "artifactsUri") } : {}),
     };
     this.fetchImpl = fetchImpl;
   }
@@ -1174,6 +1287,13 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
         runArtifactUri,
         report,
       });
+      const artifactVerification = await verifyUploadedArtifacts({
+        fetchImpl: this.fetchImpl,
+        trackingUri,
+        authHeaders,
+        runId,
+        artifacts,
+      });
 
       await logMlflowBatch(this.fetchImpl, trackingUri, {
         runId,
@@ -1181,6 +1301,13 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
         tags: [
           { key: "artifacts.logged", value: "true" },
           { key: "artifacts.count", value: String(artifacts.length) },
+          { key: "artifacts.verified", value: String(artifactVerification.verified) },
+          {
+            key: "artifacts.verified_count",
+            value: String(
+              artifactVerification.artifacts.length - artifactVerification.missing.length,
+            ),
+          },
         ],
       });
 
@@ -1197,6 +1324,7 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
           experimentId,
           experimentName: selectedExperimentName,
           artifacts,
+          artifactVerification,
         },
       };
     } catch (error) {
@@ -1212,7 +1340,6 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
 
 export function createEvalReportMlflowExporter(
   config: EvalReportMlflowExtensionConfig & {
-    id?: string;
     trackingUri: string;
   },
   fetchImpl?: EvalReportMlflowFetch,
