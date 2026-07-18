@@ -101,13 +101,14 @@ describe("buildMergedAgUiTools owner scope", () => {
       registerTool("global-echo", makeRegistryTool("global-echo"));
       registerTool("researcher--fetch", makeRegistryTool("researcher--fetch", "researcher"));
 
+      const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
       const writer = { id: "writer", config: { tools: true } } as unknown as Agent;
-      const writerTools = buildMergedAgUiTools(writer, "run_w", []);
+      const writerTools = buildMergedAgUiTools(writer, "run_w", [], sessionManager);
       assertEquals(Object.keys(writerTools ?? {}).includes("global-echo"), true);
       assertEquals(Object.keys(writerTools ?? {}).includes("researcher--fetch"), false);
 
       const researcher = { id: "researcher", config: { tools: true } } as unknown as Agent;
-      const researcherTools = buildMergedAgUiTools(researcher, "run_r", []);
+      const researcherTools = buildMergedAgUiTools(researcher, "run_r", [], sessionManager);
       assertEquals(Object.keys(researcherTools ?? {}).includes("researcher--fetch"), true);
     } finally {
       clearMCPRegistry();
