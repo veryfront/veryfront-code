@@ -184,20 +184,23 @@ const GLOBAL_BOOLEAN_FLAGS = new Set([
   "no-animation",
 ]);
 
-function isDocumentedBooleanFlag(
+function getDocumentedFlagKind(
   key: string,
   positionalArgs: string[],
-): boolean {
-  if (GLOBAL_BOOLEAN_FLAGS.has(key)) return true;
+): "boolean" | "value" | undefined {
+  if (GLOBAL_BOOLEAN_FLAGS.has(key)) return "boolean";
 
   const command = positionalArgs[0];
-  if (!command) return false;
+  if (!command) return undefined;
 
-  return (COMMANDS[command]?.options ?? []).some((option) => {
-    if (option.flag.includes("<")) return false;
+  for (const option of COMMANDS[command]?.options ?? []) {
     const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
-    return names.some((name) => name.replace(/^-+/, "") === key);
-  });
+    if (names.some((name) => name.replace(/^-+/, "") === key)) {
+      return option.flag.includes("<") ? "value" : "boolean";
+    }
+  }
+
+  return undefined;
 }
 
 const BOOLEAN_FLAGS = new Set([
@@ -221,7 +224,6 @@ const BOOLEAN_FLAGS = new Set([
   "headless",
   "help",
   "hmr",
-  "integrations",
   "json",
   "list",
   "microsoft",
@@ -250,6 +252,12 @@ const BOOLEAN_FLAGS = new Set([
   "version",
   "yes",
 ]);
+
+function isBooleanFlag(key: string, positionalArgs: string[]): boolean {
+  const documentedKind = getDocumentedFlagKind(key, positionalArgs);
+  if (documentedKind !== undefined) return documentedKind === "boolean";
+  return BOOLEAN_FLAGS.has(key);
+}
 
 function parseBooleanValue(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
@@ -291,7 +299,9 @@ function parse(
 
   function setValue(key: string, value: unknown): void {
     explicit[key] = true;
-    const converted = BOOLEAN_FLAGS.has(key) ? parseBooleanValue(value) ?? value : value;
+    const converted = isBooleanFlag(key, result._ as string[])
+      ? parseBooleanValue(value) ?? value
+      : value;
 
     if (!ARRAY_FLAGS.has(key)) {
       result[key] = converted;
@@ -322,7 +332,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (!isDocumentedBooleanFlag(key, result._ as string[]) && isValue(next)) {
+      if (!isBooleanFlag(key, result._ as string[]) && isValue(next)) {
         setValue(key, next);
         i++;
         continue;
@@ -337,8 +347,8 @@ function parse(
       const key = aliasMap.get(short) ?? short;
       const next = args[i + 1];
 
-      const isBoolean = isDocumentedBooleanFlag(key, result._ as string[]) ||
-        isDocumentedBooleanFlag(short, result._ as string[]);
+      const isBoolean = isBooleanFlag(key, result._ as string[]) ||
+        isBooleanFlag(short, result._ as string[]);
       if (!isBoolean && isValue(next)) {
         setValue(key, next);
         if (key !== short) setValue(short, next);

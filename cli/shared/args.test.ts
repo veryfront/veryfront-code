@@ -214,6 +214,21 @@ describe("cli/shared/args", () => {
       assertEquals(args._, ["serve", "project"]);
     });
 
+    it("should keep positionals after undocumented command boolean flags", () => {
+      const args = parseCliArgs(["serve", "--split", "project"]);
+
+      assertEquals(args.split, true);
+      assertEquals(args._, ["serve", "project"]);
+    });
+
+    it("should preserve values for documented value-taking options", () => {
+      const args = parseCliArgs(["init", "--integrations", "github", "project"]);
+
+      assertEquals(args.integrations, "github");
+      assertEquals(args._, ["init", "project"]);
+      assertEquals(parseCliArgs(["init", "--integrations=true"]).integrations, "true");
+    });
+
     it("should parse positional arguments", () => {
       assertEquals(parseCliArgs(["dev"])._[0], "dev");
     });
