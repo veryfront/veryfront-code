@@ -13,7 +13,6 @@
   "cli/mcp/tools/run-lint-tool.test.ts",
   "cli/mcp/tools/run-tests-tool.test.ts",
   "cli/shared/parsed-args.test.ts",
-  "src/agent/ag-ui/tool-shared.test.ts",
   "src/agent/conversation/bootstrap.test.ts",
   "src/agent/conversation/hosted-lifecycle.test.ts",
   "src/agent/conversation/root-run-context.test.ts",
