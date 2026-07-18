@@ -3,7 +3,6 @@
   "cli/commands/knowledge/command.test.ts",
   "cli/commands/lint/handler.test.ts",
   "cli/commands/merge/command.test.ts",
-  "cli/commands/serve/handler.test.ts",
   "cli/commands/test/handler.test.ts",
   "cli/commands/worker/handler.test.ts",
   "cli/help/formatters.test.ts",
