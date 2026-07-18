@@ -19,7 +19,6 @@ export {
   type DurableRunCanaryPreparedCase,
   type DurableRunCanaryResult,
   type DurableRunCanaryRunnerConfig,
-  durableRunCanaryRunnerInternals,
   type DurableRunCanaryRunSummary,
   type DurableRunCanarySendUserMessageInput,
   type DurableRunCanaryStartRunInput,

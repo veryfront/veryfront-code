@@ -494,7 +494,7 @@ them, and puts the parsed text at `record.output.text`.
 Projects with existing live AG-UI suites can also import reusable CLI, API, and
 durable canary helpers from `veryfront/eval/agent-service`. Use those helpers
 for product-specific canaries that are not yet expressed as `evalAgent`
-definitions. Do not import `veryfront/agent/testing`; that legacy testing path
+definitions. Do not import from `veryfront/agent/testing`; that legacy testing path
 is intentionally absent.
 
 ## Export reports
