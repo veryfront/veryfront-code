@@ -380,7 +380,12 @@ export function createVeryfrontHandler(
     // Build logger context
     const hostHeader = req.headers.get("host") ?? url.host;
     const domain = hostHeader.replace(/:\d+$/, "");
-    const headers = extractRequestHeaders(req, url);
+    const proxyTrustPublicKeyPem = adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
+      getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+    const proxyTrusted = isProxyMode
+      ? await isProxyTrusted(req, { publicKeyPem: proxyTrustPublicKeyPem })
+      : undefined;
+    const headers = extractRequestHeaders(req, url, proxyTrusted);
 
     const loggerContext: RequestContext = {
       logger: logger.child({
@@ -454,11 +459,9 @@ export function createVeryfrontHandler(
             }
             : null;
 
-          const publicKeyPem = adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-            getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
           const hasTrustSensitiveProxyHeaders = !!req.headers.get("x-project-path");
           const untrustedProxyContext = !missingHeader && hasTrustSensitiveProxyHeaders &&
-            !(await isProxyTrusted(req, { publicKeyPem }));
+            !proxyTrusted;
           const proxyContextError = untrustedProxyContext
             ? {
               error: "Untrusted proxy context",
@@ -519,7 +522,7 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const reqCtx = createRequestContext(request);
+          const reqCtx = createRequestContext(request, { proxyTrusted });
 
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
 
@@ -534,6 +537,7 @@ export function createVeryfrontHandler(
                 defaultProjectId: opts.defaultProjectId,
                 defaultReleaseId: opts.defaultReleaseId,
                 wsSlugOverride,
+                proxyTrusted,
               }),
           );
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
@@ -579,6 +583,7 @@ export function createVeryfrontHandler(
               parsedDomain: projectRes.parsedDomain,
               pathname: url.pathname,
               isProxyMode,
+              proxyTrusted,
             }));
 
           // Resolve environment and validate

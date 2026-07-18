@@ -77,13 +77,12 @@ function trustForwardedHeaders(): boolean {
   return getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
 }
 
-function getEffectiveHost(req: Request, url: URL): string {
+function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
-  // upstream proxy. Honour it only when the operator has opted in, matching
-  // createRequestContext; otherwise fall back to Host (which the edge proxy also
-  // sets). The async dispatch-JWS trust path is intentionally not consulted here
-  // since slug resolution is synchronous.
-  return getEffectiveRequestHost(req, url, trustForwardedHeaders());
+  // upstream proxy. Honour it only after the operator opt-in or a verified
+  // dispatch JWS, matching createRequestContext; otherwise fall back to Host.
+  // The runtime handler performs async verification and passes the result here.
+  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
 /**
@@ -94,8 +93,12 @@ function getEffectiveHost(req: Request, url: URL): string {
  * domain parsing. This allows proxy-forwarded requests to resolve
  * project context from the hostname alone.
  */
-export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
-  const host = getEffectiveHost(req, url);
+export function extractRequestHeaders(
+  req: Request,
+  url: URL,
+  proxyTrusted?: boolean,
+): RequestHeaders {
+  const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
   // The WebSocket endpoint uses this query parameter for its existing HMR
@@ -104,7 +107,7 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
   const websocketEnvironment = url.pathname === "/_ws"
     ? url.searchParams.get("x-environment") ?? undefined
     : undefined;
-  const environment = trustForwardedHeaders()
+  const environment = (proxyTrusted ?? trustForwardedHeaders())
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
     : websocketEnvironment;
 
@@ -155,6 +158,8 @@ interface ProjectResolutionOptions {
   defaultReleaseId?: string | undefined;
   /** WS slug override from query param */
   wsSlugOverride: string | undefined;
+  /** Whether the request has already passed the proxy trust check. */
+  proxyTrusted?: boolean;
 }
 
 /**
@@ -173,7 +178,7 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const host = getEffectiveHost(req, url);
+  const host = getEffectiveHost(req, url, opts.proxyTrusted);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);

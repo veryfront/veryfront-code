@@ -188,6 +188,16 @@ describe("createRequestContext", () => {
       }
     });
 
+    it("honours x-forwarded-host after request-scoped proxy verification", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        "x-forwarded-host": "my-app.preview.lvh.me",
+        host: "other.lvh.me",
+      });
+      const ctx = createRequestContext(req, { proxyTrusted: true });
+      assertEquals(ctx.slug, "my-app");
+      assertEquals(ctx.mode, "preview");
+    });
+
     it("host header takes priority over URL hostname", () => {
       const req = makeRequest("https://127.0.0.1/page", {
         host: "my-app.lvh.me",

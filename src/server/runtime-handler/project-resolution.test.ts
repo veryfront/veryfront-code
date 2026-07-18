@@ -85,6 +85,18 @@ describe("server/runtime-handler/project-resolution", () => {
       }
     });
 
+    it("extracts forwarded metadata after request-scoped proxy verification", () => {
+      const req = new Request("http://127.0.0.1:3001/", {
+        headers: {
+          "x-environment": "preview",
+          "x-forwarded-host": "my-project.preview.lvh.me",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
+      assertEquals(headers.environment, "preview");
+      assertEquals(headers.projectSlug, "my-project");
+    });
+
     it("ignores environment overrides when proxy headers are untrusted", async () => {
       const req = new Request("http://production.example/?x-environment=preview", {
         headers: { "x-environment": "preview" },
@@ -487,6 +499,34 @@ describe("server/runtime-handler/project-resolution", () => {
       } finally {
         Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
       }
+    });
+
+    it("uses x-forwarded-host for domain resolution after request-scoped verification", async () => {
+      let capturedHost = "";
+      __injectDepsForTests({
+        parseProjectDomain: (host: string) => {
+          capturedHost = host;
+          return defaultParsedDomain;
+        },
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/", {
+        headers: { "x-forwarded-host": "forwarded.example.com" },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url, true);
+      await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: "s", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrusted: true,
+      });
+
+      assertEquals(capturedHost, "forwarded.example.com");
     });
 
     it("ignores x-forwarded-host for domain resolution when proxy is untrusted (default)", async () => {

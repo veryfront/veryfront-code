@@ -9,15 +9,24 @@ export interface RequestContext {
   mode: "preview" | "production";
 }
 
-export function createRequestContext(req: Request): RequestContext {
+export interface CreateRequestContextOptions {
+  /** Whether the request has already passed the proxy trust check. */
+  proxyTrusted?: boolean;
+}
+
+export function createRequestContext(
+  req: Request,
+  options: CreateRequestContextOptions = {},
+): RequestContext {
   // x-forwarded-host is only trustworthy when the operator has explicitly opted
   // into trusting forwarded headers. A direct-access attacker cannot set this
   // env var, so gating on it prevents Host / preview-mode spoofing via a
   // client-supplied x-forwarded-host (VULN-SRV-1 / VULN-SRV-2). Dispatch-JWS
-  // trust requires async verification and is intentionally not consulted on this
-  // synchronous path. Such requests fall back to the Host header, which the
-  // edge proxy also sets.
-  const trustProxy = getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+  // trust requires async verification, so the runtime handler passes that
+  // request-scoped result through options. Direct callers fail closed unless
+  // the operator explicitly trusts forwarded headers.
+  const trustProxy = options.proxyTrusted ??
+    getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
   const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;

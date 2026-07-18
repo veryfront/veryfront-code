@@ -72,6 +72,8 @@ interface AdapterResolutionOptions {
   pathname?: string;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
+  /** Result of an earlier proxy trust check, when already available. */
+  proxyTrusted?: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
   cache?: ProjectDiscoveryCache;
 }
@@ -113,7 +115,7 @@ export async function resolveAdapter(
   const publicKeyPem = opts.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
     getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
   const proxyTrusted = opts.isProxyMode &&
-    (await isProxyTrusted(opts.req, { publicKeyPem }));
+    (opts.proxyTrusted ?? await isProxyTrusted(opts.req, { publicKeyPem }));
   const trustedHeaderProjectPath = proxyTrusted
     ? opts.req.headers.get("x-project-path")?.trim() || undefined
     : undefined;
