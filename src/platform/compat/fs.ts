@@ -22,6 +22,7 @@ export interface FileSystem {
   writeFile(path: string, data: Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
+  lstat?(path: string): Promise<FileInfo>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   readDir(
     path: string,
@@ -43,6 +44,13 @@ interface NodeFsPromises {
   ): Promise<void>;
   access(path: string, mode?: number): Promise<void>;
   stat(path: string): Promise<{
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+    size: number;
+    mtime: Date;
+  }>;
+  lstat(path: string): Promise<{
     isFile(): boolean;
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
@@ -151,6 +159,18 @@ class NodeFileSystem implements FileSystem {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    await this.ensureInitialized();
+    const stat = await this.getFs().lstat(path);
+    return {
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+      isSymlink: stat.isSymbolicLink(),
+      size: stat.size,
+      mtime: stat.mtime,
+    };
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().mkdir(path, { recursive: options?.recursive ?? false });
@@ -233,6 +253,17 @@ class DenoFileSystem implements FileSystem {
 
   async stat(path: string): Promise<FileInfo> {
     const stat = await denoGlobal().stat(path);
+    return {
+      isFile: stat.isFile,
+      isDirectory: stat.isDirectory,
+      isSymlink: stat.isSymlink,
+      size: stat.size,
+      mtime: stat.mtime,
+    };
+  }
+
+  async lstat(path: string): Promise<FileInfo> {
+    const stat = await denoGlobal().lstat(path);
     return {
       isFile: stat.isFile,
       isDirectory: stat.isDirectory,

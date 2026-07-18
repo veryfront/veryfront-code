@@ -2,7 +2,7 @@ import { join } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { rendererLogger } from "#veryfront/utils";
-import { CONFIG_INVALID } from "#veryfront/errors/error-registry.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 const logger = rendererLogger.component("app-resolver");
 

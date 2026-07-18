@@ -104,6 +104,16 @@ describe("server/utils/error-html", () => {
   });
 
   describe("postMessage errors", () => {
+    it("targets only an exact trusted Studio origin", () => {
+      const html = ErrorPages.serverError();
+
+      assertIncludes(html, "vfStudioTargetOrigin()");
+      assertIncludes(html, '"https://studio.veryfront.com"');
+      assertNotIncludes(html, "endsWith");
+      assertNotIncludes(html, ".veryfront.dev");
+      assertNotIncludes(html, "}, '*'");
+    });
+
     it("should emit postMessage with type 'warning' for 404 pages", () => {
       const html = ErrorPages.notFound("/missing");
 

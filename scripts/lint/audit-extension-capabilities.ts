@@ -91,6 +91,7 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
         {
           type: "env:read",
           keys: [
+            "MLFLOW_ARTIFACTS_PORT",
             "MLFLOW_ARTIFACTS_URI",
             "MLFLOW_EXPERIMENT_NAME",
             "MLFLOW_RUN_NAME",

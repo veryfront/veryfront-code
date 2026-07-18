@@ -5,7 +5,7 @@ import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig, ToolListEntry } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { logger as baseLogger } from "#veryfront/utils";
@@ -157,17 +157,17 @@ export class MCPServer {
     const auth = (config as { auth?: unknown }).auth;
 
     if (auth === undefined || auth === null) {
-      throw new Error(
-        "MCP auth must be configured. For local dev, pass " +
+      throw CONFIG_INVALID.create({
+        detail: "MCP auth must be configured. For local dev, pass " +
           "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
-      );
+      });
     }
 
     if (typeof auth !== "object") {
-      throw new Error(
-        "MCP auth must be an object. For local dev, pass " +
+      throw CONFIG_INVALID.create({
+        detail: "MCP auth must be an object. For local dev, pass " +
           "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
-      );
+      });
     }
 
     const type = (auth as { type?: unknown }).type;
@@ -175,10 +175,10 @@ export class MCPServer {
     if (type === "none") {
       const allow = (auth as { allowUnauthenticated?: unknown }).allowUnauthenticated;
       if (allow !== true) {
-        throw new Error(
-          "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
+        throw CONFIG_INVALID.create({
+          detail: "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
             "the server will accept all requests.",
-        );
+        });
       }
       return;
     }
@@ -187,11 +187,11 @@ export class MCPServer {
       return;
     }
 
-    throw new Error(
-      `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
+    throw CONFIG_INVALID.create({
+      detail: `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
         "or { type: 'none', allowUnauthenticated: true } for explicit opt-in to " +
         "unauthenticated traffic.",
-    );
+    });
   }
 
   notifyToolsChanged(): void {
@@ -737,12 +737,12 @@ export class MCPServer {
     if (!taskId) {
       throw new JsonRpcError(-32602, "taskId is required");
     }
-    const cancelled = this.taskStore.cancel(String(taskId));
-    if (!cancelled) {
+    const id = String(taskId);
+    const task = this.taskStore.get(id);
+    if (!task || !this.taskStore.cancel(id)) {
       throw new JsonRpcError(-32002, `Cannot cancel task: ${taskId}`);
     }
-    this.pendingTasks.get(String(taskId))?.abortController.abort();
-    const task = this.taskStore.get(String(taskId));
+    this.pendingTasks.get(id)?.abortController.abort();
     return Promise.resolve({ ...task });
   }
 

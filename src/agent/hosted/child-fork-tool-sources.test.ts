@@ -369,3 +369,43 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
   });
   assertEquals(sandboxClosed, true);
 });
+
+Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup failures", async () => {
+  let closeCalls = 0;
+  const logged: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+  const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+  const result = await prepareDefaultHostedChildForkSandboxToolSources({
+    authToken: "<TOKEN>",
+    apiUrl: "https://api.example",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-studio" }],
+    getProjectId: () => "project-1",
+    createBashTool,
+    createLiveStudioTools: () => {
+      throw new Error("studio unavailable");
+    },
+    createAgentServiceSandboxTools: () =>
+      Promise.resolve(
+        createSandboxToolsResult({
+          closeSandbox: () => {
+            closeCalls++;
+            return Promise.reject(new Error("cleanup exposed <TOKEN> at <LOCAL_PATH>"));
+          },
+        }),
+      ),
+    logger: {
+      error: (message, metadata) => logged.push({ message, metadata }),
+    },
+  });
+
+  assertEquals(result, {
+    ok: false,
+    errorMessage: "MCP tool setup failed: studio unavailable",
+  });
+  assertEquals(closeCalls, 1);
+  assertEquals(
+    logged.find((entry) => entry.message.includes("close sandbox"))?.metadata,
+    { errorName: "Error" },
+  );
+});

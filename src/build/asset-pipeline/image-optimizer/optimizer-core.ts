@@ -8,7 +8,7 @@ import { findImages } from "./image-finder.ts";
 import { generateImageVariants } from "./variant-generator.ts";
 import { writeManifest } from "./manifest-manager.ts";
 import { calculateAspectRatio, generateSrcSet } from "../../utils/asset-utils.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import type {
   ImageFormat,
   ImageOptimizationOptions,

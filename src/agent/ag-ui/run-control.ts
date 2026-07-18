@@ -1,6 +1,10 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { extractRequest } from "./request-shared.ts";
+import {
+  createAgUiBodyLimitErrorResponse,
+  extractRequest,
+  parseAgUiJsonBody,
+} from "./request-shared.ts";
 import {
   RunNotActiveError,
   RunResumeSessionManager,
@@ -79,7 +83,7 @@ export function createAgUiResumeHandler(
     }
 
     try {
-      const parsed = getAgUiResumeSignalSchema().parse(await request.json());
+      const parsed = getAgUiResumeSignalSchema().parse(await parseAgUiJsonBody(request));
       const outcome = options.sessionManager.submitSignal(runId, {
         waitKey: parsed.toolCallId,
         value: {
@@ -90,6 +94,12 @@ export function createAgUiResumeHandler(
 
       return Response.json(outcome, { status: 200 });
     } catch (error) {
+      const bodyLimitError = createAgUiBodyLimitErrorResponse(
+        error,
+        "Invalid AG-UI resume request",
+      );
+      if (bodyLimitError) return bodyLimitError;
+
       if (
         error instanceof Error &&
         "issues" in error &&

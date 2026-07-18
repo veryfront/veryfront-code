@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { ensureError, getErrorMessage, RENDER_ERROR } from "#veryfront/errors";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
@@ -8,7 +8,6 @@ import { clearMdxEsmCacheNamespace } from "#veryfront/transforms/mdx/esm-module-
 import { getProjectReact } from "#veryfront/react";
 import { flattenRouteParams } from "#veryfront/routing";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
-import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 interface MDXPageResult {

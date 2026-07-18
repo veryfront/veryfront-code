@@ -228,8 +228,8 @@ export class StaticFileService {
       if (!isExpectedCandidateMiss(error)) {
         unexpectedErrors.push(error);
         logger.debug("Static file candidate did not resolve", {
-          path: candidate.path,
-          error: error instanceof Error ? error.message : String(error),
+          source: candidate.source,
+          errorName: error instanceof Error ? error.name : typeof error,
         });
       }
       return null;

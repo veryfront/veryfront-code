@@ -19,7 +19,7 @@ import {
   getGlobalMetricsAPI,
   type Histogram,
   type ObservableGauge,
-} from "#veryfront/observability/tracing/api-shim.ts";
+} from "#veryfront/observability";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";

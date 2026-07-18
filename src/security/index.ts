@@ -14,6 +14,7 @@ export {
   createValidationError,
   DEFAULT_LIMITS,
   INPUT_VALIDATION_FAILED,
+  isRequestBodyTooLargeError,
   parseFormData,
   parseJsonBody,
   parseQueryParams,

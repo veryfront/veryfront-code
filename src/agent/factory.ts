@@ -23,11 +23,18 @@ import {
   createLoadSkillTool,
 } from "#veryfront/skill/tools.ts";
 import { agentRegistry } from "./composition/index.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { getMessageSchema } from "./schemas/agent.schema.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -35,6 +42,36 @@ const STREAMING_HEADERS: Record<string, string> = {
   Connection: "keep-alive",
   "x-vercel-ai-ui-message-stream": "v1",
 };
+
+const getAgentRespondRequestSchema = defineSchema((v) =>
+  v.object({
+    messages: v.array(getMessageSchema()).optional().default([]),
+    context: v.record(v.string(), v.unknown()).optional(),
+    model: v.string().optional(),
+    maxOutputTokens: v.number().int().positive().optional(),
+  })
+);
+
+async function parseAgentRespondRequest(request: Request) {
+  let data: unknown;
+  try {
+    data = JSON.parse(await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES));
+  } catch (error) {
+    const tooLarge = isRequestBodyTooLargeError(error);
+    return Response.json(
+      { error: tooLarge ? "Request body too large" : "Malformed JSON request body" },
+      { status: tooLarge ? 413 : 400 },
+    );
+  }
+
+  const parsed = getAgentRespondRequestSchema().safeParse(data);
+  if (parsed.success) return parsed.data;
+
+  return Response.json(
+    { error: "Invalid agent request" },
+    { status: 400 },
+  );
+}
 
 const SKILL_TOOL_REGISTRATIONS = [
   { id: "load_skill", create: createLoadSkillTool },
@@ -173,7 +210,14 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () => runtime.generate(input.input, input.context, input.model, input.maxOutputTokens),
+        () =>
+          runtime.generate(
+            input.input,
+            input.context,
+            input.model,
+            input.maxOutputTokens,
+            input.abortSignal,
+          ),
         { "agent.id": id },
       );
     },
@@ -215,12 +259,8 @@ export function agent(config: AgentConfig): Agent {
       return withSpan(
         "agent.factory.respond",
         async () => {
-          const body: {
-            messages?: Message[];
-            context?: Record<string, unknown>;
-            model?: string;
-            maxOutputTokens?: number;
-          } = await request.json();
+          const body = await parseAgentRespondRequest(request);
+          if (body instanceof Response) return body;
 
           // Validate model override against allowlist when configured
           const modelOverride = body.model;
@@ -237,7 +277,7 @@ export function agent(config: AgentConfig): Agent {
             }
           }
 
-          const messages = body.messages ?? [];
+          const messages = body.messages;
           const stream = await runtime.stream(
             messages,
             body.context,

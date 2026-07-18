@@ -45,8 +45,8 @@ export function parseImportMapImports(json: string): ImportMapImports {
     // This module is browser-bundled, so the server logger (which pulls in
     // node:async_hooks) is unavailable; console.warn keeps the failure diagnosable.
     console.warn("Failed to parse import map JSON; treating as empty", {
-      error: error instanceof Error ? error.message : String(error),
-      preview: json.slice(0, 200),
+      errorName: error instanceof Error ? error.name : typeof error,
+      inputLength: json.length,
     });
     return {};
   }

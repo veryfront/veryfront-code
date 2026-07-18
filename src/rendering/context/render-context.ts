@@ -2,7 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HandlerContext } from "#veryfront/types";
 import type { EnrichedContext } from "#veryfront/server/context/enriched-context.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   buildRenderCacheKey,
   buildRenderCachePrefix,

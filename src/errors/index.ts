@@ -32,6 +32,7 @@ export {
   CACHE_ERROR,
   CACHE_INVARIANT_VIOLATION,
   CACHE_PATH_MISMATCH,
+  CIRCUIT_BREAKER_OPEN,
   CIRCULAR_DEPENDENCY,
   // BOUNDARY
   CLIENT_BOUNDARY_VIOLATION,
@@ -100,7 +101,9 @@ export {
   ROUTE_HANDLER_INVALID,
   ROUTE_PARAMS_ERROR,
   RSC_PAYLOAD_ERROR,
+  SCHEDULE_CONFIG_INVALID,
   SECURITY_VIOLATION,
+  SEMAPHORE_TIMEOUT,
   SERVER_ONLY_IN_CLIENT,
   SERVER_START_ERROR,
   SERVICE_OVERLOADED,
@@ -109,10 +112,16 @@ export {
   SSG_GENERATION_ERROR,
   TIMEOUT_ERROR,
   TOKEN_STORAGE_ERROR,
+  TOOL_ID_CONFLICT,
+  TRIGGER_CONFIG_INVALID,
+  TRIGGER_EXECUTION_FAILED,
+  TRIGGER_NOT_SUPPORTED,
+  TRIGGER_TARGET_NOT_FOUND,
   TYPESCRIPT_ERROR,
   // GENERAL
   UNKNOWN_ERROR,
   VERSION_MISMATCH,
+  WEBHOOK_CONFIG_INVALID,
 } from "./error-registry.ts";
 
 // RFC 9457 HTTP error utilities
@@ -193,5 +202,11 @@ export {
 
 export type { ErrorSolution as UserFriendlyErrorSolution } from "./user-friendly/index.ts";
 
-export { createError, ensureError, getErrorMessage, toError } from "./veryfront-error.ts";
-export type { VeryfrontErrorData } from "./veryfront-error.ts";
+export {
+  createError,
+  ensureError,
+  fromError,
+  getErrorMessage,
+  toError,
+} from "./veryfront-error.ts";
+export type { ConfigContext, VeryfrontErrorData } from "./veryfront-error.ts";

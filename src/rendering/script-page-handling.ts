@@ -9,9 +9,8 @@ import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createError, RENDER_ERROR, toError } from "#veryfront/errors";
 import { flattenRouteParams } from "#veryfront/routing";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type {
   ComponentProps,

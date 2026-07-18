@@ -1,4 +1,4 @@
-import { isReservedSharedRuntimeTelemetryEnvKey } from "#veryfront/observability/tracing/telemetry-env.ts";
+import { isReservedSharedRuntimeTelemetryEnvKey } from "#veryfront/observability";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export function filterSharedRuntimeProjectEnv(

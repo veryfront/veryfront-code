@@ -14,14 +14,14 @@ import {
   startTimer,
   timeAsync,
 } from "#veryfront/utils";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { metrics } from "#veryfront/observability";
+import type { RequestProfileRecord } from "#veryfront/observability";
 import {
   endRequestMetrics,
   startRequestMetrics,
 } from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
-import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
 import {
   completeOnResponseBodySettlement,
   isEventStreamResponse,
@@ -126,7 +126,16 @@ export function completeRequestTrackingOnResponseEnd(
   response: Response,
   isTimeout: boolean,
   profile?: RequestProfileRecord | null,
+  handlerSettled?: Promise<void>,
 ): Response {
+  if (isTimeout && handlerSettled) {
+    void handlerSettled.then(
+      () => completeRequestTracking(requestId, response.status, true, profile),
+      () => completeRequestTracking(requestId, response.status, true, profile),
+    );
+    return response;
+  }
+
   if (!isEventStreamResponse(response)) {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
     return response;

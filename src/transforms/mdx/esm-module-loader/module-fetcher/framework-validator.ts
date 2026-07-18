@@ -7,7 +7,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/framework-validator
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import {
   extractAllFilePaths,
   extractAllFilePathsRecursive,

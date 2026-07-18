@@ -40,11 +40,14 @@ function resetAll(): void {
   (fakeParentWindow as any).calls.length = 0;
 }
 
-function makeEvent(origin: string): MessageEvent {
+function makeEvent(
+  origin: string,
+  source: MessageEventSource = fakeParentWindow as unknown as Window,
+): MessageEvent {
   return {
     data: {},
     origin,
-    source: {} as Window, // any non-window source is accepted
+    source,
     ports: [],
   } as unknown as MessageEvent;
 }
@@ -102,28 +105,28 @@ Deno.test("isFromStudio: accepts localhost", () => {
   assertEquals((fakeParentWindow as any).calls[0].targetOrigin, "http://localhost:3000");
 });
 
-Deno.test("isFromStudio: accepts veryfront.org and subdomains", () => {
+Deno.test("isFromStudio: accepts exact hosted Studio origins", () => {
   resetAll();
   assertEquals(isFromStudio(makeEvent("https://veryfront.org")), true);
 
   resetAll();
-  assertEquals(isFromStudio(makeEvent("https://preview.veryfront.org")), true);
+  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.org")), true);
 });
 
-Deno.test("isFromStudio: accepts veryfront.dev subdomains", () => {
+Deno.test("isFromStudio: rejects tenant and hosted development subdomains", () => {
   resetAll();
-  assertEquals(isFromStudio(makeEvent("https://x.veryfront.dev")), true);
+  assertEquals(isFromStudio(makeEvent("https://project.preview.veryfront.org")), false);
+  assertEquals(isFromStudio(makeEvent("https://project.production.veryfront.com")), false);
+  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.dev")), false);
 });
 
-Deno.test("isFromStudio: ignores messages whose source is the current window", () => {
+Deno.test("isFromStudio: rejects messages not sent by the parent window", () => {
   resetAll();
-  const event = {
-    data: {},
-    origin: "https://veryfront.com",
-    source: (globalThis as any).window,
-    ports: [],
-  } as unknown as MessageEvent;
-  assertEquals(isFromStudio(event), false);
+  assertEquals(isFromStudio(makeEvent("https://veryfront.com", {} as Window)), false);
+  assertEquals(
+    isFromStudio(makeEvent("https://veryfront.com", (globalThis as any).window)),
+    false,
+  );
 });
 
 Deno.test("postToStudio: pending buffer caps at MAX_PENDING_MESSAGES (100); oldest dropped", () => {
@@ -141,11 +144,10 @@ Deno.test("postToStudio: pending buffer caps at MAX_PENDING_MESSAGES (100); olde
   assertEquals(((fakeParentWindow as any).calls[99].message as any).i, 149);
 });
 
-Deno.test("postToStudio: subsequent isFromStudio calls do not re-capture origin", () => {
+Deno.test("isFromStudio: rejects a different trusted origin after the handshake", () => {
   resetAll();
-  isFromStudio(makeEvent("https://studio.veryfront.com"));
-  // A different valid origin appearing later must not switch the captured origin.
-  isFromStudio(makeEvent("https://other.veryfront.com"));
+  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.com")), true);
+  assertEquals(isFromStudio(makeEvent("https://veryfront.org")), false);
   postToStudio({ action: "ping" });
   assertEquals(
     (fakeParentWindow as any).calls[0].targetOrigin,

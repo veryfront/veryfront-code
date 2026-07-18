@@ -4,6 +4,23 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageRouteMatcher } from "./matchers/index.ts";
 
 describe("PageRouteMatcher", () => {
+  it("does not create a periodic cleanup timer", () => {
+    const originalSetInterval = globalThis.setInterval;
+    let intervalCalls = 0;
+    globalThis.setInterval = (() => {
+      intervalCalls++;
+      return 0 as unknown as ReturnType<typeof setInterval>;
+    }) as typeof setInterval;
+
+    try {
+      new PageRouteMatcher();
+    } finally {
+      globalThis.setInterval = originalSetInterval;
+    }
+
+    assertEquals(intervalCalls, 0);
+  });
+
   describe("Static routes", () => {
     it("matches exact static routes", () => {
       const router = new PageRouteMatcher();

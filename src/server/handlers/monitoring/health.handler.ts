@@ -2,7 +2,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
-import { isTracingDegraded, isTracingEnabled } from "#veryfront/observability/tracing/index.ts";
+import { isTracingDegraded, isTracingEnabled } from "#veryfront/observability";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 let serverInitialized = false;

@@ -1,5 +1,5 @@
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
-import type { ForkRuntimeStep } from "./fork-runtime-stream.ts";
+import type { ForkRuntimeStep } from "./fork-runtime-types.ts";
 
 export interface ForkRuntimeProgress {
   steps: ForkRuntimeStep[];

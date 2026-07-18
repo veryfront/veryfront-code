@@ -1,4 +1,4 @@
-import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger } from "#veryfront/utils";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";

@@ -75,6 +75,14 @@ export class OAuthProvider {
 
     const state = options.state ?? generateRandomString(32);
     const scopes = options.scopes ?? options.defaultScopes ?? [];
+    if (scopes.length === 0) {
+      logger.warn(
+        "createAuthorizationUrl: no scopes configured; OAuth request will have empty scope set",
+        {
+          clientIdEnvVar: this.config.clientIdEnvVar,
+        },
+      );
+    }
     const redirectUri = options.redirectUri ?? "";
     const usePkce = options.usePkce !== false;
 
@@ -418,7 +426,7 @@ export class OAuthService extends OAuthProvider {
     if (!tokens.refreshToken) return null;
 
     if (!this.tokenStore) {
-      throw new Error("TokenStore not configured");
+      throw TOKEN_STORAGE_ERROR.create({ detail: "TokenStore not configured" });
     }
 
     const key = JSON.stringify([this.serviceId, userId]);
@@ -444,7 +452,7 @@ export class OAuthService extends OAuthProvider {
     if (!result.success || !result.tokens) return null;
 
     if (!this.tokenStore) {
-      throw new Error("TokenStore not configured");
+      throw TOKEN_STORAGE_ERROR.create({ detail: "TokenStore not configured" });
     }
     await this.tokenStore.setTokens(this.serviceId, userId, result.tokens);
     return result.tokens.accessToken;

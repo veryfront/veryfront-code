@@ -24,7 +24,7 @@
  */
 
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const DEFAULT_SCOPE_ID = "__default__";

@@ -8,6 +8,7 @@ import {
   parseUploadsPullArgs,
   parseUploadsPutArgs,
 } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function assertSuccess<T extends { success: boolean; data?: unknown }>(
@@ -43,6 +44,15 @@ describe("Uploads Handler", () => {
       assertEquals(result.data.limit, 50);
       assertEquals(result.data.recursive, false);
       assertEquals(result.data.json, true);
+    });
+
+    it("coerces a limit preserved as text by the raw CLI parser", () => {
+      const result = parseUploadsListArgs(
+        parseCliArgs(["uploads", "list", "--limit", "50"]),
+      );
+
+      assertSuccess(result);
+      assertEquals(result.data.limit, 50);
     });
   });
 

@@ -1,7 +1,8 @@
 import { logger } from "#veryfront/utils";
-import type { RateLimitConfig, RateLimitStore } from "./types.ts";
+import type { RateLimitConfig, RateLimitPresetOptions, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 import { fixedWindowStrategy, slidingWindowStrategy, tokenBucketStrategy } from "./strategies.ts";
+import { resolveRateLimitClientKey } from "./client-key.ts";
 
 /** Rate limit preset: window durations */
 const STRICT_WINDOW_MS = 60_000; // 1 minute
@@ -19,25 +20,20 @@ const AUTH_MAX_REQUESTS = 5;
 const DEFAULT_RETRY_AFTER_SECONDS = "60";
 
 function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    const parts = forwardedFor.split(",").map((s) => s.trim()).filter(Boolean);
-    if (parts.length > 0) {
-      // When trustProxy is true, use the leftmost IP (the original client).
-      // When false, use the rightmost IP (added by the nearest proxy, not spoofable).
-      return trustProxy ? parts[0]! : parts[parts.length - 1]!;
-    }
-  }
+  return resolveRateLimitClientKey(request, trustProxy, "unknown");
+}
 
-  // `x-real-ip` is a proxy-set header. Honor it only when we trust the proxy;
-  // otherwise a client can spoof it to mint a fresh rate-limit key per request
-  // and evade limits entirely. Untrusted requests share the "unknown" bucket.
-  if (trustProxy) {
-    const realIp = request.headers.get("x-real-ip");
-    if (realIp) return realIp;
-  }
+function isRateLimitStore(
+  value: RateLimitStore | RateLimitPresetOptions,
+): value is RateLimitStore {
+  return "increment" in value && typeof value.increment === "function";
+}
 
-  return "unknown";
+function resolvePresetOptions(
+  storeOrOptions?: RateLimitStore | RateLimitPresetOptions,
+): RateLimitPresetOptions {
+  if (!storeOrOptions) return {};
+  return isRateLimitStore(storeOrOptions) ? { store: storeOrOptions } : storeOrOptions;
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {
@@ -156,36 +152,44 @@ export function createRateLimiter(
 }
 
 export const RateLimitPresets = {
-  strict: (store?: RateLimitStore) =>
-    createRateLimiter({
+  strict: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: STRICT_MAX_REQUESTS,
       windowMs: STRICT_WINDOW_MS,
       strategy: "sliding-window",
-      store,
-    }),
+      ...options,
+    });
+  },
 
-  moderate: (store?: RateLimitStore) =>
-    createRateLimiter({
+  moderate: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: MODERATE_MAX_REQUESTS,
       windowMs: MODERATE_WINDOW_MS,
       strategy: "fixed-window",
-      store,
-    }),
+      ...options,
+    });
+  },
 
-  lenient: (store?: RateLimitStore) =>
-    createRateLimiter({
+  lenient: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: LENIENT_MAX_REQUESTS,
       windowMs: LENIENT_WINDOW_MS,
       strategy: "fixed-window",
-      store,
-    }),
+      ...options,
+    });
+  },
 
-  auth: (store?: RateLimitStore) =>
-    createRateLimiter({
+  auth: (storeOrOptions?: RateLimitStore | RateLimitPresetOptions) => {
+    const options = resolvePresetOptions(storeOrOptions);
+    return createRateLimiter({
       maxRequests: AUTH_MAX_REQUESTS,
       windowMs: AUTH_WINDOW_MS,
       strategy: "sliding-window",
       message: "Too many authentication attempts. Please try again later.",
-      store,
-    }),
+      ...options,
+    });
+  },
 };

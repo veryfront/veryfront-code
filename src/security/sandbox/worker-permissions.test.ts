@@ -54,7 +54,7 @@ describe("worker-permissions", () => {
     assertEquals(perms.env, [...FRAMEWORK_WORKER_ENV_ALLOWLIST]);
   });
 
-  it("always allows net for data fetchers", () => {
+  it("defers data fetcher network scoping to ProjectWorker", () => {
     const perms = buildWorkerPermissions([]);
     assertEquals(perms.net, true);
   });

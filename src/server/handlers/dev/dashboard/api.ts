@@ -1,5 +1,5 @@
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
-import { REQUEST_ERROR } from "#veryfront/errors";
+import { ERROR_CATALOG, getErrorMessage, REQUEST_ERROR } from "#veryfront/errors";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
@@ -10,19 +10,15 @@ import {
 } from "#veryfront/provider/model-registry.ts";
 import { WorkflowClient } from "#veryfront/workflow";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { getErrorCollector, getLogBuffer, metrics } from "#veryfront/observability";
 import {
   checkMemoryPressure,
   getCacheStats,
   getHeapStats,
 } from "#veryfront/utils/memory/profiler.ts";
-import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { validatePathSync } from "#veryfront/security";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -584,9 +580,7 @@ function handleLiveErrors(req: Request): Response {
   const type = url.searchParams.get("type") ?? undefined;
   const collector = getErrorCollector();
 
-  const filter = type
-    ? { type: type as import("#veryfront/observability/error-collector.ts").ErrorType }
-    : undefined;
+  const filter = type ? { type: type as import("#veryfront/observability").ErrorType } : undefined;
 
   const errors = collector.getAll(filter);
   return jsonResponse({
@@ -607,7 +601,7 @@ function handleLiveLogs(req: Request): Response {
 
   const buffer = getLogBuffer();
   const entries = buffer.query({
-    level: level as import("#veryfront/observability/log-buffer.ts").LogLevel | undefined,
+    level: level as import("#veryfront/observability").LogLevel | undefined,
     source,
     pattern,
     limit: limit ? parseInt(limit, 10) : undefined,

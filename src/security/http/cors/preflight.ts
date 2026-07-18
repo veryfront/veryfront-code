@@ -7,7 +7,7 @@ import {
   HTTP_FORBIDDEN,
   HTTP_NO_CONTENT,
 } from "./constants.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const logger = serverLogger.component("cors");

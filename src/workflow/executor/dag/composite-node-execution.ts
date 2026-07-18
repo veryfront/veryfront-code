@@ -5,6 +5,7 @@ import type { RetryConfig, WorkflowNode } from "../../types.ts";
 import { parseDuration, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "./utils.ts";
+import { createSetContextPatch } from "./context-patch.ts";
 
 const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
@@ -73,7 +74,7 @@ export async function executeCompositeNodeWithPolicy(
           startedAt,
           completedAt: new Date(),
         },
-        contextUpdates: {},
+        contextPatch: createSetContextPatch(),
         waiting: false,
       };
     }

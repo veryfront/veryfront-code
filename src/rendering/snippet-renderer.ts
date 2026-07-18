@@ -1,5 +1,5 @@
 import { computeHash, rendererLogger } from "#veryfront/utils";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";

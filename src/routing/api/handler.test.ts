@@ -3,7 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { HTTP_OK } from "#veryfront/utils";
-import { APIRouteHandler } from "./handler.ts";
+import { __injectDepsForTests, APIRouteHandler } from "./handler.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -27,6 +27,7 @@ async function createInitializedHandler(
 
 afterEach((): void => {
   while (handlers.length) handlers.pop()?.destroy();
+  __injectDepsForTests(null);
 });
 
 describe("APIRouteHandler", () => {
@@ -252,6 +253,33 @@ describe("APIRouteHandler", () => {
       await handler.initialize();
 
       assertExists(handler);
+    });
+
+    it("should defer destruction until active requests settle", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/status.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: () => new Response("ok"),
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const responsePromise = handler.handle(new Request("http://localhost/api/status"));
+      handler.destroy();
+
+      const response = await responsePromise;
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
+
+      const responseAfterDestroy = await handler.handle(
+        new Request("http://localhost/api/status"),
+      );
+      assertEquals(responseAfterDestroy?.status, 404);
     });
   });
 

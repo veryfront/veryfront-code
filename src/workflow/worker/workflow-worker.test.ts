@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -31,6 +31,23 @@ function resumeInBackground(worker: WorkflowWorker, run: WorkflowRun): void {
 }
 
 describe("workflow/worker/workflow-worker", () => {
+  it("rejects backends that cannot fence owner-bound persistence", () => {
+    const backend = new MemoryBackend();
+    Object.defineProperty(backend, "saveCheckpointIfStatusAndWorker", {
+      value: undefined,
+    });
+
+    assertThrows(
+      () =>
+        new WorkflowWorker({
+          backend,
+          resumeFn: () => Promise.resolve(),
+        }),
+      Error,
+      "saveCheckpointIfStatusAndWorker",
+    );
+  });
+
   it("restores a stalled run source policy around the resume callback", async () => {
     const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
       allow: { confluence: { allowedTools: ["search_content"] } },
@@ -50,6 +67,28 @@ describe("workflow/worker/workflow-worker", () => {
     await resumed.promise;
 
     assertEquals(observedPolicy, sourceIntegrationPolicy);
+  });
+
+  it("passes the claiming worker ID to the resume callback", async () => {
+    const resumed = Promise.withResolvers<void>();
+    let observed: { runId: string; workerId?: string } | undefined;
+    const worker = new WorkflowWorker({
+      backend: new MemoryBackend(),
+      workerId: "worker-current-owner",
+      resumeFn: (runId, workerId) => {
+        observed = { runId, workerId };
+        resumed.resolve();
+        return Promise.resolve();
+      },
+    });
+
+    resumeInBackground(worker, createRun());
+    await resumed.promise;
+
+    assertEquals(observed, {
+      runId: "run-worker-policy",
+      workerId: "worker-current-owner",
+    });
   });
 
   it("does not invoke the resume callback when a stalled run has no snapshot", async () => {

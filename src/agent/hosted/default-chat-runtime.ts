@@ -364,6 +364,7 @@ export async function createDefaultHostedChatRuntime(
             sourceIntegrationPolicy: input.sourceIntegrationPolicy,
             runId: taskContext.runId,
             agentId: taskContext.agentId,
+            conversationId: taskContext.conversationId,
             authToken: taskContext.authToken,
             runStream: (operation) =>
               runWithDefaultHostedRequestContext({

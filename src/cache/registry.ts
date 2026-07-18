@@ -1,8 +1,7 @@
 import { rendererLogger } from "#veryfront/utils";
 import { getRedisClient, isRedisConfigured } from "#veryfront/utils/redis-client.ts";
+import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 
 const logger = rendererLogger.component("cache-registry");
 

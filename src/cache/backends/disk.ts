@@ -107,6 +107,23 @@ export class DiskCacheBackend implements CacheBackend {
     }
   }
 
+  async getRemainingTtlSeconds(key: string): Promise<number | null> {
+    try {
+      const { readFile } = await fsPromises;
+      const envelope = parseDiskCacheEnvelope(
+        JSON.parse(await readFile(this.filePath(key), "utf-8")),
+      );
+      if (!envelope || envelope.key !== key) return null;
+      if (envelope.expiresAt == null) return Infinity;
+
+      const remainingMs = envelope.expiresAt - Date.now();
+      if (remainingMs <= 0) return null;
+      return remainingMs / 1000;
+    } catch {
+      return null;
+    }
+  }
+
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
     await this.ensureDir();
     const envelope: DiskCacheEnvelope = {

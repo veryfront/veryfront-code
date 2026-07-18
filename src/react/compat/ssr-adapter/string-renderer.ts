@@ -1,7 +1,7 @@
 import * as React from "react";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import type { SSROptions } from "./types.ts";
 

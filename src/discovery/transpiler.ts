@@ -13,27 +13,10 @@ import * as pathHelper from "#veryfront/compat/path";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import {
-  DISCOVERY_GLOBAL_VERYFRONT_MODULES,
-  rewriteDiscoveryImports,
-  rewriteForDeno,
-} from "./import-rewriter.ts";
-import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-// Static imports ensure deno compile includes public discovery modules in the binary.
-import * as agentMod from "#veryfront/agent";
-import * as toolMod from "#veryfront/tool";
-import * as platformMod from "#veryfront/platform";
-import * as promptMod from "#veryfront/prompt";
-import * as resourceMod from "#veryfront/resource";
-import * as embeddingMod from "#veryfront/embedding/index.ts";
-import * as knowledgeMod from "#veryfront/knowledge";
-import * as workflowMod from "#veryfront/workflow";
-import * as evalMod from "#veryfront/eval";
-import * as metricsMod from "#veryfront/metrics";
-import * as schemasMod from "#veryfront/schemas";
-import * as integrationsMod from "#veryfront/integrations/index.ts";
-import * as chatUploadsMod from "#veryfront/chat/uploads";
+import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
 
 type TranspileCacheEntry = {
   /** Content hashes of every file esbuild bundled into the module besides the entry. */
@@ -105,23 +88,7 @@ let veryfrontGlobalsInitialized = false;
 async function ensureVeryfrontGlobals(): Promise<void> {
   if (veryfrontGlobalsInitialized || !isDenoCompiled) return;
 
-  const modules = {
-    "veryfront/agent": agentMod,
-    "veryfront/tool": toolMod,
-    "veryfront/platform": platformMod,
-    "veryfront/prompt": promptMod,
-    "veryfront/resource": resourceMod,
-    "veryfront/embedding": embeddingMod,
-    "veryfront/knowledge": knowledgeMod,
-    "veryfront/workflow": workflowMod,
-    "veryfront/eval": evalMod,
-    "veryfront/metrics": metricsMod,
-    "veryfront/schemas": schemasMod,
-    "veryfront/integrations": integrationsMod,
-    "veryfront/chat/uploads": chatUploadsMod,
-  } satisfies Record<(typeof DISCOVERY_GLOBAL_VERYFRONT_MODULES)[number], unknown>;
-
-  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = modules;
+  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = getDiscoveryRuntimeModules();
 
   veryfrontGlobalsInitialized = true;
 }

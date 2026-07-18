@@ -19,7 +19,7 @@ import {
   importMapOwnsSpecifier,
   mergeBrowserImportMapImports,
 } from "#veryfront/utils/import-map.ts";
-import { serverLogger } from "#veryfront/utils/logger/index.ts";
+import { serverLogger } from "#veryfront/utils";
 import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,

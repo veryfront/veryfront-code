@@ -7,7 +7,7 @@
  * @module server/runtime-handler/environment-resolution
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import { ErrorPages } from "../utils/error-html.ts";
 import type { ProxyEnvironment } from "./proxy-environment.ts";
 
