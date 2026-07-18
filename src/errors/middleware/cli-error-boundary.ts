@@ -7,10 +7,11 @@
  * @module errors/middleware/cli-error-boundary
  */
 
-import { recordErrorCount, trace } from "#veryfront/observability";
+import { trace } from "#veryfront/observability/tracing/api-shim.ts";
 import { VeryfrontError } from "../types.ts";
 import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";
+import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 

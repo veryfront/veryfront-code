@@ -4,7 +4,7 @@
  * @module extensions/errors
  */
 
-import { defineError } from "#veryfront/errors";
+import { defineError } from "#veryfront/errors/types.ts";
 
 /** Shared missing extension error value. */
 export const MISSING_EXTENSION_ERROR = defineError({

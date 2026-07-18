@@ -13,7 +13,7 @@
  **************************/
 
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   type AttributeValue,
   type Context,

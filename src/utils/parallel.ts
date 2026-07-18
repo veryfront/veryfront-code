@@ -9,7 +9,7 @@
 
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;

@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { type ConfigContext, createError, toError } from "#veryfront/errors";
+import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
 import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
 
