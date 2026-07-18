@@ -163,7 +163,7 @@ non-chat streaming surface.
 ### Persisting finished conversations
 
 Pass `onComplete` to persist the finalized conversation server-side after a
-successful run — the counterpart to the client-side `useConversationChat` path.
+successful run. It is the counterpart to the client-side `useConversationChat` path.
 It fires once, only on success, after the stream is fully flushed and closed, so
 a slow or throwing persistence never delays or corrupts the response:
 
@@ -175,7 +175,7 @@ export const POST = createAgUiHandler({
   agent: "assistant",
   onComplete: async ({ threadId, messages, inputMessages, response }) => {
     // `messages` is the finalized assistant turn; `inputMessages` is what was
-    // sent. Persist however you like — no need to rebuild it from the stream.
+    // sent. Persist however you like, with no need to rebuild it from the stream.
     await db.saveTurn({ threadId, input: inputMessages, output: messages });
   },
 });
