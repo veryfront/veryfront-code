@@ -7,17 +7,11 @@
  * @module server/runtime-handler
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
-import {
-  type RequestContext,
-  runWithRequestContextAsync,
-} from "#veryfront/utils/logger/request-context.ts";
+import { getBaseLogger, runWithRequestContextAsync, type RequestContext } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { UNKNOWN_ERROR } from "#veryfront/errors/error-registry.ts";
-import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
+import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
@@ -35,11 +29,11 @@ import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.handler.ts";
 import {
   finalizeRequestProfiling,
-  profilePhase,
   runWithRequestProfiling,
   updateRequestProfileContext,
   withServerTimingHeader,
 } from "#veryfront/observability/request-profiler.ts";
+import { profilePhase } from "#veryfront/observability";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.handler.ts";
 import { MemoryDebugHandler } from "../handlers/monitoring/memory.handler.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.handler.ts";

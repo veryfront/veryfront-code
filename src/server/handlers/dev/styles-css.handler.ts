@@ -32,7 +32,7 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import { profilePhase } from "#veryfront/observability";
 
 const logger = serverLogger.component("styles-css-handler");
 

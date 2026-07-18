@@ -8,8 +8,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { CIRCUIT_BREAKER_OPEN } from "#veryfront/errors/error-registry.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { CIRCUIT_BREAKER_OPEN, VeryfrontError } from "#veryfront/errors";
 
 const logger = baseLogger.component("circuit-breaker");
 

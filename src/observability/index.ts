@@ -92,10 +92,12 @@ export {
   trace,
 } from "./tracing/api-shim.ts";
 export type {
+  AttributeValue,
   Context,
   Counter,
   Histogram,
   Meter,
+  ObservableGauge,
   Span,
 } from "./tracing/api-shim.ts";
 
@@ -119,6 +121,8 @@ export {
   metrics,
   recordApiRequest,
   recordApiRetry,
+  recordContentCacheHit,
+  recordContentNetworkFetch,
   resetMetrics,
   state,
 } from "./simple-metrics/index.ts";

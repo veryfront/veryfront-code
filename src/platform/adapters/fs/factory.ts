@@ -1,5 +1,5 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createDefaultInvalidationCallbacks } from "./veryfront/default-invalidation-callbacks.ts";
 

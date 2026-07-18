@@ -6,7 +6,7 @@ import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
 import { createEntryPoints } from "./entry-points.ts";
 import { createBuildContext } from "./build-context.ts";
 import { buildManifest, getChunkInfo, writeManifest } from "./manifest-builder.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export class CodeSplitter {

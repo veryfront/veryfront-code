@@ -27,10 +27,7 @@ import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import {
-  markRequestProfilePhase,
-  profilePhase,
-} from "#veryfront/observability/request-profiler.ts";
+import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
 import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 

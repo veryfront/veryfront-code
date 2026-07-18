@@ -17,11 +17,9 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
+import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
-import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError, FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {

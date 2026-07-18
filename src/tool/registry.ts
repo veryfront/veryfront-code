@@ -1,9 +1,9 @@
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { TOOL_ID_CONFLICT } from "#veryfront/errors/error-registry/agent.ts";
+import { TOOL_ID_CONFLICT } from "#veryfront/errors";
 
 const toolManager = new ProjectScopedRegistryManager<Tool>("tool");
 

@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import * as esbuild from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { REQUEST_ERROR } from "#veryfront/errors";
 
 /** Options accepted by use workflow start. */
 export interface UseWorkflowStartOptions {

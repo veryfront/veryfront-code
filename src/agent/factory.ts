@@ -23,8 +23,8 @@ import {
   createLoadSkillTool,
 } from "#veryfront/skill/tools.ts";
 import { agentRegistry } from "./composition/index.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";

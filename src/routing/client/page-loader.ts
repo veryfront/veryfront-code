@@ -1,5 +1,5 @@
 import { rendererLogger } from "#veryfront/utils";
-import { NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 import { parsePageDataFromHTML } from "./dom-utils.ts";
 
 export type {

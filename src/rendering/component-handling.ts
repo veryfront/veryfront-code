@@ -3,11 +3,10 @@
  */
 
 import { computeHash, rendererLogger as logger } from "#veryfront/utils";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR, createError, getErrorMessage, toError } from "#veryfront/errors";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "#veryfront/types";
-import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getProjectReact } from "#veryfront/react";
 import { buildComponentCacheKey } from "#veryfront/cache/keys.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";

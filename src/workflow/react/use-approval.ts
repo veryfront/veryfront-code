@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { REQUEST_ERROR } from "#veryfront/errors";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
 
 /** Options accepted by use approval. */

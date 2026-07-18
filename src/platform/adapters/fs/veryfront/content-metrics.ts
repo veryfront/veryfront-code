@@ -1,9 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logger as baseLogger } from "#veryfront/utils";
-import {
-  recordContentCacheHit,
-  recordContentNetworkFetch,
-} from "#veryfront/observability/simple-metrics/index.ts";
+import { recordContentCacheHit, recordContentNetworkFetch } from "#veryfront/observability";
 
 const logger = baseLogger.component("content-metrics");
 

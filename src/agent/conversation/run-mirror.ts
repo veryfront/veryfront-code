@@ -1,5 +1,5 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /** Public API contract for conversation run mirror snapshot. */
 export interface ConversationRunMirrorSnapshot {

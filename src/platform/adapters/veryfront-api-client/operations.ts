@@ -25,8 +25,8 @@ import {
   type ReleaseAssetManifestStateResponse,
   type ReleaseAssetUploadResponse,
 } from "./schemas/index.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 const logger = baseLogger.component("api");
 

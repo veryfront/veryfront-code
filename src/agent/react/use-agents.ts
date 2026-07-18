@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureError } from "#veryfront/errors";
 import { type AgentMetadata, normalizeAgentMetadata } from "./use-agent-metadata.ts";
 
 /** Options accepted by {@link useAgents}. */

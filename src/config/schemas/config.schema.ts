@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { type ConfigContext, createError, toError } from "#veryfront/errors";
 
 // Sub-schemas
 const getCorsSchema = defineSchema((v) =>

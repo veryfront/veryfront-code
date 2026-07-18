@@ -7,8 +7,8 @@
  * @module server/runtime-handler/adapter-factory
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getBaseLogger } from "#veryfront/utils";
+import { getErrorMessage } from "#veryfront/errors";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";

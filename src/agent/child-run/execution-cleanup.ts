@@ -1,4 +1,4 @@
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /** Input payload for child run execution buffer cleanup. */
 export interface ChildRunExecutionBufferCleanupInput {

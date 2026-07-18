@@ -5,7 +5,7 @@
 
 import type { Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadConfig } from "./config.ts";
 import { initializeInstruments } from "../instruments/index.ts";

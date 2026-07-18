@@ -14,7 +14,7 @@ import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
-import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
 

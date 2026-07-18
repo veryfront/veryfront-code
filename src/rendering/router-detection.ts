@@ -13,8 +13,8 @@ import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 const logger = rendererLogger.component("router-detection");
 

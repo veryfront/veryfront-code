@@ -1,7 +1,6 @@
 import { logger } from "#veryfront/utils";
+import { SpanNames, recordApiRequest, recordApiRetry } from "#veryfront/observability";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { recordApiRequest, recordApiRetry } from "#veryfront/observability/simple-metrics/index.ts";
 import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
 
 const apiLog = logger.component("api");

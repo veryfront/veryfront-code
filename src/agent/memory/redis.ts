@@ -13,7 +13,7 @@ import {
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /**
  * Redis client interface (compatible with ioredis and node-redis)

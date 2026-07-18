@@ -4,7 +4,7 @@
  */
 
 import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";

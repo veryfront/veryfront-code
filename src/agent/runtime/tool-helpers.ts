@@ -11,7 +11,7 @@ import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import {
   executeRemoteIntegrationTool,
   isRemoteIntegrationTool,

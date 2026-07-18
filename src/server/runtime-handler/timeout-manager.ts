@@ -6,7 +6,7 @@
  * @module server/runtime-handler/timeout-manager
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
 

@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { detectRuntime } from "./runtime-detection.ts";
 import type { RuntimeAdapter } from "./base.ts";
 

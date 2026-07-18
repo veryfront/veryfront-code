@@ -5,7 +5,7 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
-import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors";
 
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;

@@ -8,7 +8,7 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 const logger = baseLogger.component("token-adapter-factory");

@@ -1,5 +1,5 @@
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { ServerDataFetcher, type ServerDataFetchOptions } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";

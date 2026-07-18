@@ -6,8 +6,7 @@
  */
 
 import { isProduction } from "#veryfront/platform/environment.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+import { serverLogger, redactSensitive } from "#veryfront/utils";
 import { VeryfrontError } from "./types.ts";
 
 export interface ErrorLogEntry {

@@ -12,7 +12,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { metrics } from "#veryfront/observability";
 
 const logger = serverLogger.component("route-module-manifest");
 

@@ -7,7 +7,7 @@ import {
 } from "#veryfront/security/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getErrorMessage } from "#veryfront/errors";
 
 const logger = serverLogger.component("client-log-handler");
 

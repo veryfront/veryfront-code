@@ -7,7 +7,7 @@
 
 import type { Counter, Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
-import type { VeryfrontError } from "#veryfront/errors/types.ts";
+import type { VeryfrontError } from "#veryfront/errors";
 
 export interface ErrorInstruments {
   errorCounter: Counter | null;

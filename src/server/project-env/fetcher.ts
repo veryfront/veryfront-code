@@ -4,7 +4,7 @@
  * @module server/project-env/fetcher
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");

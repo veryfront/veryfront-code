@@ -6,11 +6,8 @@ import { requestTracker } from "./runtime-handler/request-tracker.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import {
-  initializeOTLPWithApis,
-  shutdownOTLP,
-  withSpan,
-} from "#veryfront/observability/tracing/otlp-setup.ts";
+import { shutdownOTLP } from "#veryfront/observability";
+import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,

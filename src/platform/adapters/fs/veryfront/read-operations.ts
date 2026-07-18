@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";

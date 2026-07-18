@@ -24,7 +24,7 @@
  */
 
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 const DEFAULT_SCOPE_ID = "__default__";
 

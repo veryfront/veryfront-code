@@ -32,10 +32,10 @@ import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
-  setActiveSpanAttributes as setOtelActiveSpanAttributes,
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";

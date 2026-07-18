@@ -1,4 +1,4 @@
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import {
   DEFAULT_RETRY_INITIAL_DELAY_MS,
   DEFAULT_RETRY_MAX_ATTEMPTS,

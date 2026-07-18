@@ -7,7 +7,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/distributed-cache
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";

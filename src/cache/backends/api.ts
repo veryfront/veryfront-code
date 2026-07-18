@@ -1,13 +1,12 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
-import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = baseLogger.component("api-cache-backend");

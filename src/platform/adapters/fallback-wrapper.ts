@@ -1,9 +1,9 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { FALLBACK_EXHAUSTED } from "#veryfront/errors/error-registry.ts";
+import { FALLBACK_EXHAUSTED } from "#veryfront/errors";
 
 const logger = baseLogger.component("fallback-wrapper");
 
-export { FALLBACK_EXHAUSTED } from "#veryfront/errors/error-registry.ts";
+export { FALLBACK_EXHAUSTED } from "#veryfront/errors";
 
 export interface FallbackOptions {
   operationName: string;

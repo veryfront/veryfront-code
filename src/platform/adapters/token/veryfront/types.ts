@@ -132,4 +132,4 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
   };
 }
 
-export { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
+export { TOKEN_STORAGE_ERROR } from "#veryfront/errors";

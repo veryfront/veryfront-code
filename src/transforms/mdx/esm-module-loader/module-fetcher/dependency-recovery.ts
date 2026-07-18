@@ -10,7 +10,7 @@
 import { basename, dirname } from "#veryfront/compat/path/index.ts";
 import { detokenizeAllCachePaths } from "#veryfront/cache/paths.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";

@@ -1,8 +1,7 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { type VeryfrontTokenConfig } from "./types.ts";
-import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { TOKEN_STORAGE_ERROR, VeryfrontError } from "#veryfront/errors";
 
 const logger = baseLogger.component("token-storage-api-client");
 

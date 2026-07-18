@@ -1,5 +1,6 @@
 import type { AgentMiddleware, AgentResponse } from "../../types.ts";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanAttributes } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const DEFAULT_LRU_MAX_SIZE = 100;
 const DEFAULT_TTL_MS = 300_000; // 5 minutes

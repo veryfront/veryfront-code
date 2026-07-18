@@ -10,7 +10,7 @@
  * @module server/runtime-handler/project-resolution
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { type ParsedDomain, parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";

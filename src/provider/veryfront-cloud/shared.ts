@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
   getCurrentVeryfrontCloudContext,

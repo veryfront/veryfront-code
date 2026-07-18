@@ -1,7 +1,7 @@
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
+import { getHostTelemetryEnv } from "#veryfront/observability";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
-import { logger } from "#veryfront/utils/logger/logger.ts";
+import { logger } from "#veryfront/utils";
 import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
 export interface EnvironmentConfig {

@@ -16,7 +16,7 @@ import type {
   HostedChildLifecycleTerminalState,
 } from "../hosted/child-lifecycle.ts";
 import type { HostedLifecycleAdapter, HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /** Input payload for conversation hosted lifecycle finalize. */
 export interface ConversationHostedLifecycleFinalizeInput {

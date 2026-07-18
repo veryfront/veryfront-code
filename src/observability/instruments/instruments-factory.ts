@@ -1,5 +1,5 @@
 import type { Meter } from "#veryfront/observability/tracing/api-shim.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import type { MetricsConfig, MetricsInstruments, RuntimeState } from "../metrics/types.ts";
 import { createBuildInstruments } from "./build-instruments.ts";
 import { createCacheInstruments } from "./cache-instruments.ts";

@@ -14,7 +14,7 @@ import {
 import { serverLogger as logger } from "#veryfront/utils";
 import type { OnResolveArgs, Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 // Try to import pre-bundled client scripts (available in npm builds)

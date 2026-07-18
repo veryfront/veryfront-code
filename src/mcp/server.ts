@@ -5,7 +5,7 @@ import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig, ToolListEntry } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { IntegrationRuntimeConfig } from "#veryfront/integrations/types.ts";

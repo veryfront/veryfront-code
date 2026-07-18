@@ -1,5 +1,5 @@
 import { getReactVersionInfo } from "../version-detector/index.ts";
-import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";

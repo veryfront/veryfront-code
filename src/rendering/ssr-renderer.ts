@@ -1,4 +1,4 @@
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
@@ -6,8 +6,8 @@ import {
   renderToStringAdapter,
 } from "#veryfront/react";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";

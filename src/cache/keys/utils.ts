@@ -7,9 +7,8 @@
  ********************************************************************************/
 
 import { VERSION } from "#veryfront/utils/version.ts";
+import { SpanNames, type Span } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 
 import { cacheRegistry } from "../registry.ts";
 

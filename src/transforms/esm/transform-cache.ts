@@ -1,5 +1,5 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { logger as baseLogger } from "#veryfront/utils";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
 import {
   type CacheBackend,

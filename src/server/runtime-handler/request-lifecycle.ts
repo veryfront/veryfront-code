@@ -14,14 +14,14 @@ import {
   startTimer,
   timeAsync,
 } from "#veryfront/utils";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { metrics } from "#veryfront/observability";
+import type { RequestProfileRecord } from "#veryfront/observability";
 import {
   endRequestMetrics,
   startRequestMetrics,
 } from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
-import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
 
 interface RequestLifecycleContext {
   /** Request ID for tracking */

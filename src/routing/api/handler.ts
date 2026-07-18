@@ -3,7 +3,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";

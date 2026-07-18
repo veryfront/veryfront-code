@@ -1,4 +1,4 @@
-import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+import { redactSensitive } from "#veryfront/utils";
 
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";

@@ -1,7 +1,7 @@
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import type { Agent, AgentResponse } from "../types.ts";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors";
 import {
   AgentRuntime,
   RunAlreadyExistsError,

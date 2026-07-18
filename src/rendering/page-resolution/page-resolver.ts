@@ -1,7 +1,6 @@
 import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
-import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError, FILE_NOT_FOUND } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";

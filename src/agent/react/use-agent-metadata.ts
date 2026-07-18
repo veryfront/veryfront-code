@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureError } from "#veryfront/errors";
 
 /** Source-defined prompt suggestion shown by chat surfaces. */
 export type AgentMetadataPromptSuggestion =

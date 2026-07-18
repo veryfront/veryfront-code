@@ -1,5 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
+import { handleErrorWithFallback } from "#veryfront/errors";
 import { join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";

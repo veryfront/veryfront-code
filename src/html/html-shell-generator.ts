@@ -1,9 +1,8 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
+import { SpanNames, profilePhase } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
