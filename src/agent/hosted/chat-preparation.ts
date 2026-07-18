@@ -341,6 +341,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.requestedMaxSteps !== undefined
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),
+      ...(runtimeConfig.requestedMaxOutputTokens !== undefined
+        ? { maxOutputTokens: runtimeConfig.requestedMaxOutputTokens }
+        : {}),
       ...(runtimeConfig.requestedAllowedTools !== undefined
         ? { allowedTools: runtimeConfig.requestedAllowedTools }
         : {}),

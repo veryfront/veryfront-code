@@ -39,6 +39,9 @@ Deno.test("getForwardedHostedRuntimeOverrides parses non-empty forwarded runtime
   assertEquals(getForwardedHostedRuntimeOverrides({ runtimeOverrides: { thinking: 1000 } }), {
     thinking: 1000,
   });
+  assertEquals(getForwardedHostedRuntimeOverrides({ maxOutputTokens: 1200 }), {
+    maxOutputTokens: 1200,
+  });
 });
 
 Deno.test("resolveHostedRuntimeThinkingOverride applies optional thinking override", () => {
@@ -131,14 +134,20 @@ Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when reque
           allowedTools: ["read_file"],
           maxSteps: 8,
         },
+        maxOutputTokens: 1200,
       },
     },
     agentConfig: createAgentConfig({ maxSteps: 12 }),
     resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
   });
 
-  assertEquals(result.effectiveRuntimeOverrides, { allowedTools: ["read_file"], maxSteps: 8 });
+  assertEquals(result.effectiveRuntimeOverrides, {
+    allowedTools: ["read_file"],
+    maxSteps: 8,
+    maxOutputTokens: 1200,
+  });
   assertEquals(result.requestedMaxSteps, 8);
+  assertEquals(result.requestedMaxOutputTokens, 1200);
 });
 
 Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools", () => {

@@ -125,6 +125,7 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   model?: string;
   temperature?: number;
   maxSteps?: number;
+  maxOutputTokens?: number;
   allowedTools?: string[];
   /** Provider-native selection kept separate from local and MCP tool bindings. */
   allowedProviderTools?: string[];

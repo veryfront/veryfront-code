@@ -39,6 +39,7 @@ export type ResolvedHostedRuntimeRequestConfig = {
   requestedThinking: RuntimeAgentThinkingConfig | undefined;
   requestedTemperature: number | undefined;
   requestedMaxSteps: number | undefined;
+  requestedMaxOutputTokens: number | undefined;
   requestedAllowedTools: string[] | undefined;
   requestedAllowedProviderTools: string[];
   includeRuntimeEssentialToolsWhenEmpty: boolean;
@@ -63,20 +64,27 @@ export function getForwardedHostedRuntimeOverrides(
   forwardedProps: Record<string, unknown> | undefined,
 ): ChatRuntimeOverrides | undefined {
   const runtimeOverrides = forwardedProps?.runtimeOverrides;
-  if (!isRecord(runtimeOverrides)) {
-    return undefined;
-  }
-
-  const parsedRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse(
-    runtimeOverrides,
-  );
-  if (!parsedRuntimeOverrides.success) {
-    return undefined;
-  }
-
-  return Object.keys(parsedRuntimeOverrides.data).length > 0
-    ? parsedRuntimeOverrides.data
+  const parsedRuntimeOverrides = isRecord(runtimeOverrides)
+    ? hostedChatRuntimeOverridesSchema.safeParse(runtimeOverrides)
     : undefined;
+  if (parsedRuntimeOverrides && !parsedRuntimeOverrides.success) {
+    return undefined;
+  }
+
+  const maxOutputTokens = forwardedProps?.maxOutputTokens;
+  const forwardedMaxOutputTokens = typeof maxOutputTokens === "number" &&
+      Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0
+    ? maxOutputTokens
+    : undefined;
+  const overrides = {
+    ...(parsedRuntimeOverrides?.success ? parsedRuntimeOverrides.data : {}),
+    ...(forwardedMaxOutputTokens !== undefined &&
+        parsedRuntimeOverrides?.data.maxOutputTokens === undefined
+      ? { maxOutputTokens: forwardedMaxOutputTokens }
+      : {}),
+  };
+
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
 /** Resolves hosted runtime thinking override. */
@@ -147,6 +155,7 @@ export function resolveHostedRuntimeRequestConfig(
     requestedTemperature: input.agentConfig.temperature,
     requestedMaxSteps: effectiveRuntimeOverrides?.maxSteps ??
       input.agentConfig.maxSteps,
+    requestedMaxOutputTokens: effectiveRuntimeOverrides?.maxOutputTokens,
     requestedAllowedTools: resolveHostedRuntimeAllowedTools({
       configuredTools: input.agentConfig.tools,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,

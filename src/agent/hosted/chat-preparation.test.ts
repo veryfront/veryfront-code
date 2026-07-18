@@ -181,6 +181,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         allowedTools: ["load_skill"],
         thinking: false,
         maxSteps: 7,
+        maxOutputTokens: 1200,
       },
     }),
     agentConfig: {
@@ -255,6 +256,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     model: "resolved:requested-model",
     thinking: { enabled: false },
     maxSteps: 7,
+    maxOutputTokens: 1200,
     allowedTools: ["load_skill"],
     allowedProviderTools: ["load_skill"],
     includeRuntimeEssentialToolsWhenEmpty: false,

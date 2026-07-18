@@ -302,6 +302,7 @@ export interface ChatRuntimeOverrides {
   allowedTools?: string[];
   thinking?: false | number;
   maxSteps?: number;
+  maxOutputTokens?: number;
 }
 
 /** Public API contract for project file. */
