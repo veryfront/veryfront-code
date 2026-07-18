@@ -73,14 +73,17 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
+function trustForwardedHeaders(): boolean {
+  return getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+}
+
 function getEffectiveHost(req: Request, url: URL): string {
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
   // upstream proxy. Honour it only when the operator has opted in, matching
   // createRequestContext; otherwise fall back to Host (which the edge proxy also
   // sets). The async dispatch-JWS trust path is intentionally not consulted here
   // since slug resolution is synchronous.
-  const trustProxy = getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-  return getEffectiveRequestHost(req, url, trustProxy);
+  return getEffectiveRequestHost(req, url, trustForwardedHeaders());
 }
 
 /**
@@ -95,6 +98,15 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
   const host = getEffectiveHost(req, url);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+  // The WebSocket endpoint uses this query parameter for its existing HMR
+  // handshake. Other routes must not let client-controlled query/header values
+  // override the host-derived environment unless a trusted proxy supplied them.
+  const websocketEnvironment = url.pathname === "/_ws"
+    ? url.searchParams.get("x-environment") ?? undefined
+    : undefined;
+  const environment = trustForwardedHeaders()
+    ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
+    : websocketEnvironment;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
@@ -102,8 +114,7 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: req.headers.get("x-branch-id") ?? undefined,
     branchName: req.headers.get("x-branch-name") ?? undefined,
-    environment: req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ??
-      undefined,
+    environment,
     environmentId: req.headers.get("x-environment-id") ?? undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,

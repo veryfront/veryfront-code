@@ -126,7 +126,16 @@ export function completeRequestTrackingOnResponseEnd(
   response: Response,
   isTimeout: boolean,
   profile?: RequestProfileRecord | null,
+  handlerSettled?: Promise<void>,
 ): Response {
+  if (isTimeout && handlerSettled) {
+    void handlerSettled.then(
+      () => completeRequestTracking(requestId, response.status, true, profile),
+      () => completeRequestTracking(requestId, response.status, true, profile),
+    );
+    return response;
+  }
+
   if (!isEventStreamResponse(response)) {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
     return response;

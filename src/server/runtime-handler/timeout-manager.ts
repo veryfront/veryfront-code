@@ -14,6 +14,13 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
 
+interface RequestTimeoutOptions {
+  /** Preserve cancellation from the inbound request while adding the timeout. */
+  signal?: AbortSignal;
+  /** Override the configured timeout. Intended for focused tests. */
+  timeoutMs?: number;
+}
+
 /**
  * Execute a handler with a timeout, returning a timeout response if exceeded.
  *
@@ -36,17 +43,26 @@ export async function withRequestTimeout(
   executeHandler: (signal: AbortSignal) => Promise<Response>,
   pathname: string,
   method: string,
+  options: RequestTimeoutOptions = {},
 ): Promise<{ response: Response; error?: Error; settled: Promise<void> }> {
   const controller = new AbortController();
+  const abortFromParent = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) {
+    abortFromParent();
+  } else {
+    options.signal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
   const handlerPromise = Promise.resolve().then(() => executeHandler(controller.signal));
+  const timeoutMs = options.timeoutMs ?? getRequestTimeout();
 
   // settled resolves when the handler finishes regardless of outcome, giving
   // callers a hook to defer in-flight decrements until work truly completes.
-  let settledResolve!: () => void;
-  const settled = new Promise<void>((resolve) => {
-    settledResolve = resolve;
-  });
-  handlerPromise.then(settledResolve, settledResolve);
+  const settled = handlerPromise.then(
+    () => undefined,
+    () => undefined,
+  );
+  void settled.then(() => options.signal?.removeEventListener("abort", abortFromParent));
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -54,7 +70,7 @@ export async function withRequestTimeout(
     const response = await Promise.race([
       handlerPromise,
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), getRequestTimeout());
+        timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), timeoutMs);
       }),
     ]);
 
@@ -65,13 +81,13 @@ export async function withRequestTimeout(
       logger.warn("Request timed out", {
         path: pathname,
         method,
-        timeoutMs: getRequestTimeout(),
+        timeoutMs,
       });
 
       const response = new Response(
         JSON.stringify({
           error: "Request timeout",
-          timeoutMs: getRequestTimeout(),
+          timeoutMs,
           path: pathname,
         }),
         {

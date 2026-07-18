@@ -61,18 +61,47 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.branchName, "feature-x");
     });
 
-    it("extracts environment from header", () => {
-      const req = new Request("http://localhost/", {
-        headers: { "x-environment": "production" },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.environment, "production");
+    it("extracts environment from header when proxy headers are trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://localhost/", {
+          headers: { "x-environment": "production" },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.environment, "production");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
     });
 
-    it("extracts environment from query parameter when header not present", () => {
-      const req = new Request("http://localhost/?x-environment=staging");
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.environment, "staging");
+    it("extracts environment from query parameter when proxy headers are trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://localhost/?x-environment=staging");
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.environment, "staging");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("ignores environment overrides when proxy headers are untrusted", async () => {
+      const req = new Request("http://production.example/?x-environment=preview", {
+        headers: { "x-environment": "preview" },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+
+      assertEquals(headers.environment, undefined);
+
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: "project", mode: "production", branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+      assertEquals(result.proxyEnv, undefined);
     });
 
     it("extracts environment-id from header", () => {
