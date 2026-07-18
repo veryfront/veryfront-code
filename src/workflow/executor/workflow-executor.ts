@@ -303,7 +303,14 @@ export class WorkflowExecutor {
     }
 
     const nodes = this.resolveNodes(workflow, run.context);
-    const resumeInfo = await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
+    // A waiting run already contains the authoritative event/approval handoff
+    // in its persisted context and node states. Restoring an older checkpoint
+    // here can erase that decision immediately before execution resumes.
+    // Explicit checkpoint recovery still restores the requested snapshot, and
+    // pending/running recovery retains the existing latest-checkpoint behavior.
+    const resumeInfo = run.status === "waiting" && fromCheckpoint === undefined
+      ? null
+      : await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
 
     if (fromCheckpoint && !resumeInfo) {
       throw RESOURCE_NOT_FOUND.create({

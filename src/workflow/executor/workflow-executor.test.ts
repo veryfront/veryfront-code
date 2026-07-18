@@ -528,6 +528,76 @@ describe("workflow/executor/workflow-executor", () => {
     }
   });
 
+  it("keeps an approval decision when a waiting run has an older checkpoint", async () => {
+    const backend = new MemoryBackend();
+    let finishRuns = 0;
+    const approvalId = "approval-after-checkpoint";
+    const executor = new WorkflowExecutor({
+      backend,
+      onWaiting: async (pausedRun, nodeId) => {
+        await backend.savePendingApproval(pausedRun.id, {
+          id: approvalId,
+          nodeId,
+          message: "approve me",
+          payload: {},
+          requestedAt: new Date(),
+          status: "pending",
+        });
+      },
+    });
+    executor.register(
+      workflow({
+        id: "approval-after-checkpoint",
+        steps: [
+          step("prepare", {
+            checkpoint: true,
+            tool: createTool("prepare", () => ({ ready: true })),
+          }),
+          dependsOn(waitForApproval("review"), "prepare"),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishRuns++;
+                return { done: true };
+              }),
+            }),
+            "review",
+          ),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("approval-after-checkpoint"),
+      status: "running" as const,
+      workerId: "run-execution:checkpoint-owner",
+    };
+    await backend.createRun(run);
+    await executor.resume(run.id, undefined, run.workerId);
+
+    assertExists(await backend.getLatestCheckpoint(run.id));
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+
+    const approvals = new ApprovalManager({
+      backend,
+      executor,
+      expirationCheckInterval: 0,
+    });
+    try {
+      await approvals.approve(run.id, approvalId, "reviewer");
+
+      const completedRun = await backend.getRun(run.id);
+      assertEquals(completedRun?.status, "completed");
+      assertEquals(finishRuns, 1);
+      assertEquals(
+        (completedRun?.context.review as { approved?: boolean })?.approved,
+        true,
+      );
+      assertEquals(completedRun?.context.finish, { done: true });
+    } finally {
+      approvals.stop();
+    }
+  });
+
   it("fences a started execution after stalled ownership is replaced", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, heartbeatInterval: 60_000 });
