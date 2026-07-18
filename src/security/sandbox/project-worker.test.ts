@@ -302,6 +302,66 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
+  it("rejects synthetic parent-channel messages from project code", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const requestId = "synthetic-parent-message";
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export function GET() {
+          const data = { type: "ping", id: ${JSON.stringify(requestId)} };
+          self.dispatchEvent(new MessageEvent("message", { data, origin: "" }));
+          if (typeof self.onmessage === "function") {
+            self.onmessage({
+              data,
+              origin: "",
+              source: null,
+              currentTarget: self,
+              isTrusted: true,
+            });
+          }
+          return Response.json({ handled: true });
+        }
+      `,
+    );
+    const worker = new ProjectWorker({
+      projectId: "test-synthetic-parent-message",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: requestId,
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/synthetic-message",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+
+      assertEquals(response.type, "result");
+      if (response.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array())),
+        { handled: true },
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("rejects every project execution without an exact-source policy manifest", async () => {
     const worker = new ProjectWorker({
       projectId: "test-missing-source-policy",

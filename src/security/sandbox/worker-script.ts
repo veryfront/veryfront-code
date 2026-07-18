@@ -650,14 +650,23 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
 
 let requestQueue: Promise<void> = Promise.resolve();
 
-self.onmessage = (
+function handleWorkerMessage(
   event: MessageEvent<
     | WorkerRequest
     | InitializeEgressMessage
     | { type: "ping"; id: string }
     | { type: "clear-cache" }
   >,
-) => {
+): void {
+  // Dedicated workers receive host messages on a private channel. Deno marks
+  // those events as trusted, with an empty origin and no source object. Keep
+  // the listener private and reject synthetic events from project code before
+  // reading privileged messages such as the egress broker configuration.
+  if (
+    !event.isTrusted || event.origin !== "" || event.source !== null ||
+    event.currentTarget !== self
+  ) return;
+
   const msg = event.data;
 
   if (msg.type === "initialize-egress") {
@@ -689,4 +698,6 @@ self.onmessage = (
     () => processWorkerRequest(request),
     () => processWorkerRequest(request),
   );
-};
+}
+
+self.addEventListener("message", handleWorkerMessage);
