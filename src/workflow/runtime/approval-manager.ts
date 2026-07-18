@@ -20,6 +20,7 @@ const logger = baseLogger.component("approval-manager");
 
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
+const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 
 export type ApprovalNotifier = (
   approval: PendingApproval,
@@ -120,7 +121,7 @@ export class ApprovalManager {
         ? await saveOwned.call(
           this.config.backend,
           run.id,
-          [run.status],
+          ["waiting"],
           run.workerId!,
           approval,
         )
@@ -229,11 +230,6 @@ export class ApprovalManager {
       throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
     }
 
-    const run = await this.config.backend.getRun(runId);
-    if (!run) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
-    }
-
     const decidedAt = new Date();
     const decisionContext = {
       approved: decision.approved,
@@ -241,59 +237,79 @@ export class ApprovalManager {
       comment: decision.comment,
       decidedAt: decidedAt.toISOString(),
     };
+    const activeStatuses: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
-    const runPatch: Partial<WorkflowRun> = {
-      context: {
-        ...run.context,
-        [approval.nodeId]: decisionContext,
-      },
-      nodeStates: {
-        ...run.nodeStates,
-        [approval.nodeId]: {
-          nodeId: approval.nodeId,
-          status: "completed",
-          output: {
-            approved: decision.approved,
-            approver: decision.approver,
-            comment: decision.comment,
-          },
-          attempt: 1,
-          completedAt: decidedAt,
+    // The approval decision is already durable. Reconcile it onto whichever
+    // worker owns the run now, retrying if ownership changes between the read,
+    // conditional patch, and resume. Without this loop, a successful approval
+    // update could be consumed while leaving the workflow permanently waiting.
+    for (let attempt = 0; attempt < MAX_DECISION_RECONCILIATION_ATTEMPTS; attempt++) {
+      const run = await this.config.backend.getRun(runId);
+      if (!run) {
+        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+      }
+      if (!activeStatuses.includes(run.status)) return;
+
+      const expectedWorkerId = run.workerId;
+      const runPatch: Partial<WorkflowRun> = {
+        context: {
+          ...run.context,
+          [approval.nodeId]: decisionContext,
         },
-      },
-    };
+        nodeStates: {
+          ...run.nodeStates,
+          [approval.nodeId]: {
+            nodeId: approval.nodeId,
+            status: "completed",
+            output: {
+              approved: decision.approved,
+              approver: decision.approver,
+              comment: decision.comment,
+            },
+            attempt: 1,
+            completedAt: decidedAt,
+          },
+        },
+      };
 
-    if (decision.approved) {
       const updated = await updateRunIfStatus(
         this.config.backend,
         runId,
-        ["pending", "running", "waiting"],
-        runPatch,
+        activeStatuses,
+        decision.approved ? runPatch : {
+          ...runPatch,
+          status: "failed",
+          error: {
+            message: `Approval "${approvalId}" was rejected${
+              decision.comment ? `: ${decision.comment}` : ""
+            }`,
+          },
+          completedAt: new Date(),
+        },
+        expectedWorkerId,
       );
-      if (!updated) return;
+      if (!updated) continue;
 
-      if (!this.config.executor) {
-        return;
-      }
+      if (!decision.approved || !this.config.executor) return;
 
       try {
-        await this.config.executor.resume(runId);
+        await this.config.executor.resume(runId, undefined, expectedWorkerId);
+        return;
       } catch (error) {
+        const latestRun = await this.config.backend.getRun(runId);
+        if (
+          latestRun && activeStatuses.includes(latestRun.status) &&
+          latestRun.workerId !== expectedWorkerId
+        ) {
+          continue;
+        }
         logger.error("Failed to resume workflow", error);
         throw error;
       }
-      return;
     }
 
-    await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
-      ...runPatch,
-      status: "failed",
-      error: {
-        message: `Approval "${approvalId}" was rejected${
-          decision.comment ? `: ${decision.comment}` : ""
-        }`,
-      },
-      completedAt: new Date(),
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow execution ownership kept changing while applying approval "${approvalId}"`,
     });
   }
 

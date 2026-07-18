@@ -4,7 +4,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import { branch, step, workflow } from "../dsl/index.ts";
+import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
+import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
@@ -109,6 +110,32 @@ class TokenCheckingLockBackend extends MemoryBackend {
     this.extensionCalls++;
     this.extendedToken = lockId;
     return super.extendLock(runId, duration, lockId);
+  }
+}
+
+class FailingOwnerHeartbeatBackend extends MemoryBackend {
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === undefined && patch.heartbeatAt !== undefined) {
+      return Promise.reject(new Error("owner heartbeat unavailable"));
+    }
+    return super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class CancelOnLockHandoffBackend extends MemoryBackend {
+  override async releaseLock(runId: string, lockId?: string): Promise<void> {
+    await super.releaseLock(runId, lockId);
+    await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
   }
 }
 
@@ -307,6 +334,246 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(persisted.status, "running");
     assertEquals(persisted.workerId, "run-execution:new-owner");
     assertEquals(await backend.getLatestCheckpoint(run.id), null);
+  });
+
+  it("releases a waiting run lock before its async callback settles", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const callbackStarted = Promise.withResolvers<void>();
+    const releaseCallback = Promise.withResolvers<void>();
+    const executor = new WorkflowExecutor({
+      backend,
+      heartbeatInterval: 5,
+      onWaiting: async () => {
+        callbackStarted.resolve();
+        await releaseCallback.promise;
+      },
+    });
+    executor.register(
+      workflow({
+        id: "await-waiting-callback",
+        steps: [waitForApproval("review")],
+      }).definition,
+    );
+    const run = {
+      ...createRun("await-waiting-callback"),
+      status: "running" as const,
+      workerId: "run-execution:current-owner",
+    };
+    await backend.createRun(run);
+
+    let settled = false;
+    const execution = executor.resume(run.id, undefined, run.workerId).then(() => {
+      settled = true;
+    });
+    await callbackStarted.promise;
+    await Promise.resolve();
+
+    assertEquals(settled, false);
+    const pausedRun = await backend.getRun(run.id);
+    assertEquals(pausedRun?.status, "waiting");
+    assertEquals(await backend.isLocked(run.id), false);
+
+    await time.tickAsync(5);
+    const heartbeatRun = await backend.getRun(run.id);
+    assertEquals(
+      heartbeatRun?.heartbeatAt?.getTime(),
+      pausedRun?.heartbeatAt?.getTime(),
+    );
+    assertEquals(heartbeatRun?.workerId, run.workerId);
+    assertEquals(settled, false);
+
+    releaseCallback.resolve();
+    await time.tickAsync(0);
+    await execution;
+    assertEquals(settled, true);
+  });
+
+  it("fails a waiting run when its async callback rejects", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      onWaiting: () => Promise.reject(new Error("approval persistence failed")),
+    });
+    executor.register(
+      workflow({
+        id: "reject-waiting-callback",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          waitForApproval("review"),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("reject-waiting-callback"),
+      status: "running" as const,
+      workerId: "run-execution:current-owner",
+    };
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.resume(run.id, undefined, run.workerId),
+      Error,
+      "approval persistence failed",
+    );
+
+    const failedRun = await backend.getRun(run.id);
+    assertEquals(failedRun?.status, "failed");
+    assertEquals(failedRun?.error?.message, "approval persistence failed");
+    assertEquals(failedRun?.workerId, run.workerId);
+    assertEquals(failedRun?.context.prepare, { ready: true });
+    assertEquals(failedRun?.nodeStates.prepare?.status, "completed");
+    assertEquals(failedRun?.nodeStates.review?.status, "running");
+    assertEquals(await backend.isLocked(run.id), false);
+  });
+
+  it("does not invoke a waiting callback after cancellation during lock handoff", async () => {
+    const backend = new CancelOnLockHandoffBackend();
+    let callbackCalls = 0;
+    const executor = new WorkflowExecutor({
+      backend,
+      onWaiting: () => {
+        callbackCalls++;
+      },
+    });
+    executor.register(
+      workflow({
+        id: "cancel-during-waiting-handoff",
+        steps: [waitForApproval("review")],
+      }).definition,
+    );
+    const run = {
+      ...createRun("cancel-during-waiting-handoff"),
+      status: "running" as const,
+      workerId: "run-execution:current-owner",
+    };
+    await backend.createRun(run);
+
+    await executor.resume(run.id, undefined, run.workerId);
+
+    assertEquals((await backend.getRun(run.id))?.status, "cancelled");
+    assertEquals(callbackCalls, 0);
+  });
+
+  it("does not let an old waiting callback fail a replacement executor", async () => {
+    const backend = new MemoryBackend();
+    const callbackStarted = Promise.withResolvers<void>();
+    const rejectCallback = Promise.withResolvers<void>();
+    const replacementStarted = Promise.withResolvers<void>();
+    const releaseReplacement = Promise.withResolvers<void>();
+    const blockingTool = createTool("finish", async () => {
+      replacementStarted.resolve();
+      await releaseReplacement.promise;
+      return { ok: true };
+    });
+    const definition = workflow({
+      id: "replacement-during-waiting-callback",
+      steps: [
+        waitForApproval("review"),
+        dependsOn(step("finish", { tool: blockingTool }), "review"),
+      ],
+    }).definition;
+    const originalExecutor = new WorkflowExecutor({
+      backend,
+      onWaiting: async (pausedRun, nodeId) => {
+        await backend.savePendingApproval(pausedRun.id, {
+          id: "approval-replacement-race",
+          nodeId,
+          message: "approve me",
+          payload: {},
+          requestedAt: new Date(),
+          status: "pending",
+        });
+        callbackStarted.resolve();
+        await rejectCallback.promise;
+        throw new Error("late waiting callback failure");
+      },
+    });
+    const replacementExecutor = new WorkflowExecutor({ backend });
+    originalExecutor.register(definition);
+    replacementExecutor.register(definition);
+    const approvalManager = new ApprovalManager({
+      backend,
+      executor: replacementExecutor,
+      expirationCheckInterval: 0,
+    });
+    const run = {
+      ...createRun("replacement-during-waiting-callback"),
+      status: "running" as const,
+      workerId: "run-execution:shared-owner",
+    };
+    await backend.createRun(run);
+    const originalExecution = originalExecutor.resume(run.id, undefined, run.workerId);
+
+    try {
+      await callbackStarted.promise;
+      const replacementExecution = approvalManager.approve(
+        run.id,
+        "approval-replacement-race",
+        "reviewer",
+      );
+      await replacementStarted.promise;
+
+      rejectCallback.resolve();
+      await originalExecution;
+      assertEquals((await backend.getRun(run.id))?.status, "running");
+
+      releaseReplacement.resolve();
+      await replacementExecution;
+      assertEquals((await backend.getRun(run.id))?.status, "completed");
+    } finally {
+      rejectCallback.resolve();
+      releaseReplacement.resolve();
+      approvalManager.stop();
+    }
+  });
+
+  it("fences a started execution after stalled ownership is replaced", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, heartbeatInterval: 60_000 });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "owned-start-reclaimed",
+        steps: [
+          step("stall", {
+            tool: createTool("stall", async () => {
+              started.resolve();
+              await release.promise;
+              return { old: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("owned-start-reclaimed", {});
+    await started.promise;
+    const startedRun = await backend.getRun(handle.runId);
+    assertEquals(startedRun?.workerId?.startsWith("run-execution:"), true);
+
+    await backend.releaseLock(handle.runId);
+    await backend.updateRun(handle.runId, {
+      heartbeatAt: new Date(Date.now() - 1_000),
+    });
+    assertEquals(
+      await backend.claimStalledRun(handle.runId, "replacement-owner", 1),
+      true,
+    );
+    const replacementLock = await backend.acquireLock(handle.runId, 30_000);
+    assertEquals(typeof replacementLock, "string");
+
+    release.resolve();
+    await handle.settled();
+
+    const reclaimedRun = await backend.getRun(handle.runId);
+    assertEquals(reclaimedRun?.status, "running");
+    assertEquals(reclaimedRun?.workerId, "replacement-owner");
+    assertEquals(reclaimedRun?.output, undefined);
+    assertEquals(await backend.isLocked(handle.runId), true);
+
+    await backend.releaseLock(handle.runId, replacementLock ?? undefined);
   });
 
   it("acquires and releases the backend lock around successful execution", async () => {
@@ -519,6 +786,55 @@ describe("workflow/executor/workflow-executor", () => {
     release.resolve();
     await time.tickAsync(0);
     await execution;
+  });
+
+  it("aborts when an owner heartbeat cannot verify persisted ownership", async () => {
+    using time = new FakeTime();
+    const backend = new FailingOwnerHeartbeatBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      heartbeatInterval: 5,
+    });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "owner-heartbeat-failure",
+        steps: [
+          step("blocking", {
+            tool: createTool("blocking", async () => {
+              started.resolve();
+              await release.promise;
+              return { ok: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("owner-heartbeat-failure"),
+      status: "running" as const,
+      workerId: "run-execution:current-owner",
+    };
+    await backend.createRun(run);
+
+    const execution = executor.resume(run.id, undefined, run.workerId);
+    const rejected = assertRejects(
+      () => execution,
+      Error,
+      "Could not verify execution ownership",
+    );
+    await started.promise;
+    await time.tickAsync(5);
+    release.resolve();
+    await time.tickAsync(0);
+
+    await rejected;
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, run.workerId);
+    assertEquals(persisted?.output, undefined);
   });
 
   it("keeps cancellation terminal and does not schedule dependent steps", async () => {

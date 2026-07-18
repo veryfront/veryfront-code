@@ -54,6 +54,33 @@ const EXTEND_LOCK_SCRIPT =
   "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
 
 /**
+ * Atomically claim a still-stalled running run. The caller supplies the exact
+ * activity timestamp it validated as stale; any heartbeat or terminal update
+ * between that read and this script makes the comparison fail.
+ *
+ * KEYS[1] = run hash key
+ * KEYS[2] = stalled-claim lease key
+ * ARGV[1] = observed activity timestamp
+ * ARGV[2] = replacement worker id
+ * ARGV[3] = claim lease duration in milliseconds
+ * ARGV[4] = current timestamp
+ */
+const CLAIM_STALLED_RUN_SCRIPT = `-- conditional-stalled-run-claim
+if redis.call('hget', KEYS[1], 'status') ~= 'running' then return 0 end
+local heartbeat = redis.call('hget', KEYS[1], 'heartbeatAt')
+local started = redis.call('hget', KEYS[1], 'startedAt')
+local created = redis.call('hget', KEYS[1], 'createdAt')
+local activity = heartbeat
+if not activity or activity == '' then activity = started end
+if not activity or activity == '' then activity = created end
+if activity ~= ARGV[1] then return 0 end
+local claimed = redis.call('set', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3])
+if not claimed then return 0 end
+redis.call('hset', KEYS[1], 'workerId', ARGV[2], 'heartbeatAt', ARGV[4])
+if not started or started == '' then redis.call('hset', KEYS[1], 'startedAt', ARGV[4]) end
+return 1`;
+
+/**
  * Atomically move a run between status index sets and write its new status,
  * reading the previous status from the run hash inside the script. This closes
  * the read-then-write race where two concurrent updateRun() calls both read the
@@ -1025,25 +1052,13 @@ export class RedisBackend implements WorkflowBackend {
       return false;
     }
 
-    const claimed = await client.set(this.claimKey(runId), workerId, {
-      nx: true,
-      px: stalledThreshold,
-    });
-    if (claimed !== "OK") {
-      return false;
-    }
-
-    try {
-      await this.updateRun(runId, {
-        workerId,
-        startedAt: run.startedAt ?? new Date(now),
-        heartbeatAt: new Date(now),
-      });
-      return true;
-    } catch (error) {
-      await client.del(this.claimKey(runId));
-      throw error;
-    }
+    const observedActivity = (run.heartbeatAt ?? run.startedAt ?? run.createdAt).toISOString();
+    const claimed = await client.eval(
+      CLAIM_STALLED_RUN_SCRIPT,
+      [this.runKey(runId), this.claimKey(runId)],
+      [observedActivity, workerId, String(stalledThreshold), new Date(now).toISOString()],
+    );
+    return Number(claimed) === 1;
   }
 
   async healthCheck(): Promise<boolean> {

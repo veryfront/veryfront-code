@@ -137,6 +137,25 @@ class MockRedisAdapter implements RedisAdapter {
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
 
+    if (script.includes("conditional-stalled-run-claim")) {
+      const claimKey = keys[1]!;
+      const observedActivity = args[0]!;
+      const workerId = args[1]!;
+      const claimDuration = Number(args[2]);
+      const now = args[3]!;
+      const hash = this.hashes.get(key);
+      if (!hash || hash.get("status") !== "running") return Promise.resolve(0);
+      const activity = hash.get("heartbeatAt") || hash.get("startedAt") || hash.get("createdAt");
+      if (activity !== observedActivity || this.store.has(claimKey)) return Promise.resolve(0);
+
+      this.store.set(claimKey, workerId);
+      this.expiries.set(claimKey, claimDuration);
+      hash.set("workerId", workerId);
+      hash.set("heartbeatAt", now);
+      if (!hash.get("startedAt")) hash.set("startedAt", now);
+      return Promise.resolve(1);
+    }
+
     if (script.includes("conditional-owned-append")) {
       const expectedCount = Number(args[0]);
       const expectedStatuses = args.slice(1, expectedCount + 1);
@@ -1290,6 +1309,30 @@ describe("RedisBackend", () => {
       const run = await backend.getRun("run-claim");
       assertEquals(run?.workerId, "worker-a");
       assertExists(run?.heartbeatAt);
+    });
+
+    it("does not claim after a concurrent heartbeat refresh", async () => {
+      await backend.createRun(
+        createTestRun("run-claim-refreshed", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+      const originalEval = mockRedis.eval.bind(mockRedis);
+      mockRedis.eval = (script, keys, args) => {
+        if (script.includes("conditional-stalled-run-claim")) {
+          mockRedis.hashes.get(keys[0]!)?.set("heartbeatAt", new Date().toISOString());
+        }
+        return originalEval(script, keys, args);
+      };
+
+      assertEquals(
+        await backend.claimStalledRun("run-claim-refreshed", "worker-a", 60_000),
+        false,
+      );
+      const run = await backend.getRun("run-claim-refreshed");
+      assertEquals(run?.workerId, undefined);
+      assertEquals(mockRedis.store.has("test:schema-v1:claim:run-claim-refreshed"), false);
     });
   });
 

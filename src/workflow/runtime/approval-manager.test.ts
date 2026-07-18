@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ApprovalManager } from "./approval-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
@@ -17,6 +18,28 @@ class CancelOnApprovalDecisionBackend extends MemoryBackend {
     const applied = await super.updateApproval(runId, approvalId, decision);
     await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
     return applied;
+  }
+}
+
+class ReclaimDuringDecisionBackend extends MemoryBackend {
+  reclaimed = false;
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (!this.reclaimed) {
+      this.reclaimed = true;
+      await super.updateRun(runId, { workerId: "worker-replacement-owner" });
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
   }
 }
 
@@ -222,6 +245,38 @@ describe("ApprovalManager", () => {
       assertEquals(await backend.getPendingApprovals(runId), []);
     });
 
+    it("rejects an owner-bound approval unless the run is still waiting", async () => {
+      let notifications = 0;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+      const run = createTestRun("run-not-waiting-approval", {
+        status: "running",
+        workerId: "run-execution:current-owner",
+      });
+      await backend.createRun(run);
+
+      await assertRejects(
+        () =>
+          manager.createApproval(
+            run,
+            "review-node",
+            { type: "wait", waitType: "approval", message: "Please approve" },
+            run.context,
+          ),
+        Error,
+        "ownership changed before approval persistence",
+      );
+
+      assertEquals(notifications, 0);
+      assertEquals(await backend.getPendingApprovals(run.id), []);
+    });
+
     it("persists approval with computed expiresAt and resolved payload", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
@@ -306,6 +361,103 @@ describe("ApprovalManager", () => {
   });
 
   describe("processDecision", () => {
+    it("resumes an owner-bound run with the same worker ID", async () => {
+      const resumeCalls: unknown[][] = [];
+      const executor = {
+        resume: (...args: unknown[]) => {
+          resumeCalls.push(args);
+          return Promise.resolve();
+        },
+      } as unknown as WorkflowExecutor;
+      manager = new ApprovalManager({ backend, executor, expirationCheckInterval: 0 });
+      const runId = "run-owner-bound-decision";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-current-owner",
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-owner-bound-decision",
+        nodeId: "review",
+        message: "approve me",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await manager.approve(runId, "apr-owner-bound-decision", "reviewer");
+
+      assertEquals(resumeCalls, [[runId, undefined, "worker-current-owner"]]);
+    });
+
+    it("reconciles a decision when ownership changes during the run patch", async () => {
+      backend = new ReclaimDuringDecisionBackend();
+      const resumeCalls: unknown[][] = [];
+      const executor = {
+        resume: (...args: unknown[]) => {
+          resumeCalls.push(args);
+          return Promise.resolve();
+        },
+      } as unknown as WorkflowExecutor;
+      manager = new ApprovalManager({ backend, executor, expirationCheckInterval: 0 });
+      const runId = "run-reclaimed-during-decision";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-original-owner",
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-reclaimed-during-decision",
+        nodeId: "review",
+        message: "approve me",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await manager.approve(runId, "apr-reclaimed-during-decision", "reviewer");
+
+      const reconciledRun = await backend.getRun(runId);
+      assertEquals(reconciledRun?.workerId, "worker-replacement-owner");
+      assertEquals(
+        (reconciledRun?.context.review as { approved?: boolean })?.approved,
+        true,
+      );
+      assertEquals(resumeCalls, [[runId, undefined, "worker-replacement-owner"]]);
+    });
+
+    it("retries resume when ownership changes after the run patch", async () => {
+      const resumeCalls: unknown[][] = [];
+      const executor = {
+        resume: async (...args: unknown[]) => {
+          resumeCalls.push(args);
+          if (resumeCalls.length === 1) {
+            await backend.updateRun(String(args[0]), { workerId: "worker-replacement-owner" });
+            throw new Error("execution ownership has changed");
+          }
+        },
+      } as unknown as WorkflowExecutor;
+      manager = new ApprovalManager({ backend, executor, expirationCheckInterval: 0 });
+      const runId = "run-reclaimed-before-resume";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-original-owner",
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-reclaimed-before-resume",
+        nodeId: "review",
+        message: "approve me",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await manager.approve(runId, "apr-reclaimed-before-resume", "reviewer");
+
+      assertEquals(resumeCalls, [
+        [runId, undefined, "worker-original-owner"],
+        [runId, undefined, "worker-replacement-owner"],
+      ]);
+    });
+
     it("updates approval and run state without an executor", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
