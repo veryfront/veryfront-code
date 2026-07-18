@@ -235,6 +235,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         permissions: buildWorkerPermissions([projectDir]),
         requestTimeoutMs: 10_000,
       });
+      let timeout: number | undefined;
 
       try {
         worker.start();
@@ -258,12 +259,15 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             () => false,
             () => true,
           ),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+          new Promise<boolean>((resolve) => {
+            timeout = setTimeout(() => resolve(false), 2_000);
+          }),
         ]);
         assertEquals(rejected, true, label);
         assertEquals(worker.status, "terminated", label);
         assertEquals(worker.hasPendingRequests, false, label);
       } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
         worker.terminate();
         await Deno.remove(projectDir, { recursive: true });
       }
