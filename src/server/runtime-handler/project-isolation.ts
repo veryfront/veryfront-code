@@ -137,7 +137,21 @@ export class ProjectIsolationManager {
     if (!state) return;
 
     state.inFlight = Math.max(0, state.inFlight - 1);
-    if (!timedOut) return;
+    if (timedOut) this.recordTimeout(projectSlug);
+  }
+
+  /**
+   * Record a request timeout without releasing its concurrency slot.
+   *
+   * Runtime handlers use this when a timeout response is returned before the
+   * underlying work settles. This lets the circuit breaker react immediately
+   * while the still-running work remains counted against the project limit.
+   */
+  recordTimeout(projectSlug: string | undefined): void {
+    if (!projectSlug) return;
+
+    const state = this.projects.get(projectSlug);
+    if (!state) return;
 
     state.totalTimeouts++;
     const now = Date.now();

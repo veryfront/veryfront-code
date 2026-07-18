@@ -24,6 +24,10 @@ type CacheRequestContext = {
   projectSlug?: string;
 };
 
+type CacheRequestOptions = {
+  failOnError?: boolean;
+};
+
 let warnedMissingAdapterContract = false;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,6 +98,7 @@ export class ApiCacheBackend implements CacheBackend {
     method: string,
     path: string,
     body?: Record<string, unknown>,
+    options: CacheRequestOptions = {},
   ): Promise<T | null> {
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
@@ -181,6 +186,7 @@ export class ApiCacheBackend implements CacheBackend {
           path: sanitizeUrlForSpan(path),
           nextAttemptMs: error.nextAttemptMs,
         });
+        if (options.failOnError) throw error;
         return null;
       }
 
@@ -193,6 +199,7 @@ export class ApiCacheBackend implements CacheBackend {
         tokenSource,
         projectRef,
       });
+      if (options.failOnError) throw error;
       return null;
     }
   }
@@ -254,13 +261,13 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async del(key: string): Promise<void> {
-    await this.request("POST", "/del", { key: this.prefixKey(key) });
+    await this.request("POST", "/del", { key: this.prefixKey(key) }, { failOnError: true });
   }
 
   async delByPattern(pattern: string): Promise<number> {
     const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
       pattern: this.prefixKey(pattern),
-    });
+    }, { failOnError: true });
     return result?.deleted ?? 0;
   }
 }

@@ -132,6 +132,7 @@ export class RedisCacheBackend implements CacheBackend {
       await this.client.del(this.prefixKey(key));
     } catch (error) {
       logger.debug("Del failed", { key, error });
+      throw error;
     }
   }
 
@@ -170,7 +171,7 @@ export class RedisCacheBackend implements CacheBackend {
       return deletedCount;
     } catch (error) {
       logger.debug("DelByPattern failed", { pattern, error });
-      return 0;
+      throw error;
     }
   }
 }

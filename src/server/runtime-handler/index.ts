@@ -93,6 +93,7 @@ import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import {
   checkRequestIsolation,
   completeIsolatedRequest,
+  completeIsolatedRequestOnSettlement,
   createIsolationErrorResponse,
   startIsolatedRequest,
 } from "./isolation.ts";
@@ -753,11 +754,12 @@ export function createVeryfrontHandler(
 
         const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
 
-        // Keep project concurrency capacity occupied until the handler actually
-        // settles, even when the timeout response has already been sent.
-        settled.then(() => {
-          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
-        });
+        completeIsolatedRequestOnSettlement(
+          headers.projectSlug,
+          lifecycle.shouldCheckIsolation,
+          isTimeout,
+          settled,
+        );
 
         return completeRequestTrackingOnResponseEnd(
           lifecycle.requestId,

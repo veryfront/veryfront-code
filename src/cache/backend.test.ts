@@ -9,7 +9,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cache/backend.test
  */
 
-import { assertEquals, assertExists } from "#std/assert";
+import { assertEquals, assertExists, assertRejects } from "#std/assert";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -478,6 +478,45 @@ Deno.test("ApiCacheBackend delByPattern returns 0 without auth context", async (
   assertEquals(await cache.delByPattern("prefix:*"), 0);
 });
 
+Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
+  };
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response("cache unavailable", { status: 503 }),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      circuitBreakerName: "api-cache-delete-failure-test",
+    });
+
+    await assertRejects(() => cache.del("key"));
+    await assertRejects(() => cache.delByPattern("prefix:*"));
+  } finally {
+    if (originalAdapter === undefined) {
+      delete globals.__vf_multi_project_adapter;
+    } else {
+      globals.__vf_multi_project_adapter = originalAdapter;
+    }
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
 Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
 
@@ -743,6 +782,34 @@ Deno.test("RedisCacheBackend delByPattern returns 0 without client", async () =>
 
   const cache = new RedisCacheBackend();
   assertEquals(await cache.delByPattern("*"), 0);
+});
+
+Deno.test("RedisCacheBackend propagates delete failures", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  (cache as unknown as { client: RedisClient }).client = {
+    del: () => Promise.reject(new Error("redis delete failed")),
+  } as unknown as RedisClient;
+
+  await assertRejects(
+    () => cache.del("key"),
+    Error,
+    "redis delete failed",
+  );
+});
+
+Deno.test("RedisCacheBackend propagates pattern delete failures", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  (cache as unknown as { client: RedisClient }).client = {
+    scan: () => Promise.reject(new Error("redis scan failed")),
+  } as unknown as RedisClient;
+
+  await assertRejects(
+    () => cache.delByPattern("*"),
+    Error,
+    "redis scan failed",
+  );
 });
 
 Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded batches", async () => {

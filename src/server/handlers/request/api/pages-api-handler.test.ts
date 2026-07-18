@@ -11,6 +11,7 @@ import {
   LRUHandlerCache,
   resetApiHandler,
   resetApiHandlerForProject,
+  withApiHandler,
 } from "./pages-api-handler.ts";
 
 type MockHandler = { destroyed: boolean; destroy(): void };
@@ -189,6 +190,52 @@ describe("server/handlers/request/api/pages-api-handler", () => {
   });
 
   describe("getApiHandler", () => {
+    it("keeps a cached handler alive between lookup and request handling", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-dir/pages/api/status.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectCacheForTests(cache as any);
+      __injectApiRouteDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: () => new Response("ok"),
+          }),
+      });
+      const ctx = createHandlerContext({
+        adapter,
+        projectSlug: "my-project",
+        mode: "production",
+        releaseId: "release-1",
+      });
+      const acquired = Promise.withResolvers<void>();
+      const continueToHandle = Promise.withResolvers<void>();
+      let retainedHandler: Awaited<ReturnType<typeof getApiHandler>> | undefined;
+
+      const responsePromise = withApiHandler(ctx, async (handler) => {
+        retainedHandler = handler;
+        acquired.resolve();
+        await continueToHandle.promise;
+        return handler.handle(new Request("http://localhost/api/status"), ctx);
+      });
+
+      await acquired.promise;
+      await resetApiHandler();
+      continueToHandle.resolve();
+
+      const response = await responsePromise;
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
+
+      const responseAfterRelease = await retainedHandler!.handle(
+        new Request("http://localhost/api/status"),
+        ctx,
+      );
+      assertEquals(responseAfterRelease?.status, 404);
+    });
+
     it("should not reuse stale preview route maps after source changes", async () => {
       const adapter = createMockAdapter();
       let refreshCalls = 0;
