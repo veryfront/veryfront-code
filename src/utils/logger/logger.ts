@@ -1,4 +1,4 @@
-import { getEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
@@ -134,8 +134,8 @@ function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
  * @internal
  */
 export function getDefaultLevel(
-  envLevel: string | undefined = getEnv("LOG_LEVEL"),
-  debugFlag: string | undefined = getEnv("VERYFRONT_DEBUG"),
+  envLevel: string | undefined = getHostEnv("LOG_LEVEL"),
+  debugFlag: string | undefined = getHostEnv("VERYFRONT_DEBUG"),
 ): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
@@ -148,23 +148,21 @@ export function getDefaultLevel(
  * Defaults to JSON in production for Grafana compatibility.
  */
 function getDefaultFormat(
-  envFormat: string | undefined = getEnv("LOG_FORMAT"),
-  envMode: string | undefined = getEnv("NODE_ENV"),
+  envFormat: string | undefined = getHostEnv("LOG_FORMAT"),
+  envMode: string | undefined = getHostEnv("NODE_ENV"),
 ): LogFormat {
   if (envFormat === "json" || envFormat === "text") return envFormat;
   return envMode === "production" ? "json" : "text";
 }
 
-// ---- Eager config resolution ----
+// ---- Lazy config resolution ----
 
 /**
  * Resolved lazily on first use (not at module load) to avoid a module
  * initialization-order hazard: reading env during load can re-enter the
  * platform env module while it is still initializing (TDZ crash in worker
- * contexts). First resolution still happens at startup — before any
- * per-request project env overlay is active — so the config is captured from
- * host process env vars, which is the intended behavior (the project overlay
- * blocks host env access, which would otherwise force a "text" fallback).
+ * contexts). Resolution reads host process env vars directly so an active
+ * per-request project env overlay cannot change process-level logger config.
  */
 let loggerConfig: LoggerConfig | null = null;
 
