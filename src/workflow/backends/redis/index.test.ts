@@ -617,6 +617,33 @@ describe("RedisBackend", () => {
       assertEquals(updated?.workerId, "worker-cas");
     });
 
+    it("moves conditional status updates between current-schema index sets", async () => {
+      const runId = "run-cas-index";
+      await backend.createRun(createTestRun(runId));
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["pending"], { status: "running" }),
+        true,
+      );
+
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:pending")?.has(runId),
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:running")?.has(runId),
+        true,
+      );
+      assertEquals(mockRedis.sets.has("test:index:status:running"), false);
+      assertEquals(await backend.listRuns({ status: "pending" }), []);
+      assertEquals(
+        (await backend.listRuns({ status: "running" })).map((run) => run.id),
+        [runId],
+      );
+      assertEquals(await backend.countRuns({ status: "pending" }), 0);
+      assertEquals(await backend.countRuns({ status: "running" }), 1);
+    });
+
     it("should atomically reject a patch from a stale worker owner", async () => {
       await backend.createRun(createTestRun("run-owner-cas"));
       await backend.updateRun("run-owner-cas", {
@@ -668,6 +695,56 @@ describe("RedisBackend", () => {
       const stored = await backend.getRun(run.id);
       assertEquals(stored?.workflowId, run.workflowId);
       assertEquals(stored?.sourceIntegrationPolicy, run.sourceIntegrationPolicy);
+    });
+
+    it("rejects immutable tenant changes through conditional update methods", async () => {
+      const tenant = {
+        projectSlug: "original-project",
+        token: "original-token",
+        productionMode: false,
+        releaseId: null,
+      };
+      const run = createTestRun("run-immutable-tenant", {
+        status: "running",
+        workerId: "worker-1",
+        _tenant: tenant,
+      });
+      await backend.createRun(run);
+      const replacementTenant = {
+        ...tenant,
+        projectSlug: "other-project",
+        token: "other-token",
+      };
+      const unsafeConditionalUpdate = backend.updateRunIfStatus.bind(backend) as (
+        runId: string,
+        statuses: WorkflowRun["status"][],
+        patch: Record<string, unknown>,
+      ) => Promise<boolean>;
+      const unsafeOwnedConditionalUpdate = backend.updateRunIfStatusAndWorker.bind(backend) as (
+        runId: string,
+        statuses: WorkflowRun["status"][],
+        workerId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<boolean>;
+
+      await assertRejects(
+        () => unsafeConditionalUpdate(run.id, ["running"], { _tenant: replacementTenant }),
+        Error,
+        "immutable",
+      );
+      await assertRejects(
+        () =>
+          unsafeOwnedConditionalUpdate(
+            run.id,
+            ["running"],
+            "worker-1",
+            { _tenant: replacementTenant },
+          ),
+        Error,
+        "immutable",
+      );
+
+      assertEquals((await backend.getRun(run.id))?._tenant, tenant);
     });
   });
 

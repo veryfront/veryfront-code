@@ -293,12 +293,9 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  private serializeRunPatch(patch: Partial<WorkflowRun>): Record<string, string> {
+  private serializeRunPatch(patch: WorkflowRunUpdate): Record<string, string> {
     const fields: Record<string, string> = {};
     if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
-    if (patch._tenant !== undefined) {
-      fields.tenant = patch._tenant ? JSON.stringify(patch._tenant) : "";
-    }
     if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
@@ -548,7 +545,7 @@ export class RedisBackend implements WorkflowBackend {
   async updateRunIfStatus(
     runId: string,
     expectedStatuses: WorkflowStatus[],
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
   ): Promise<boolean> {
     return await this.updateRunConditionally(runId, expectedStatuses, patch);
   }
@@ -557,7 +554,7 @@ export class RedisBackend implements WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
   ): Promise<boolean> {
     return await this.updateRunConditionally(
       runId,
@@ -570,9 +567,10 @@ export class RedisBackend implements WorkflowBackend {
   private async updateRunConditionally(
     runId: string,
     expectedStatuses: WorkflowStatus[],
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
   ): Promise<boolean> {
+    assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
     const fields = this.serializeRunPatch(patch);
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
@@ -583,7 +581,7 @@ export class RedisBackend implements WorkflowBackend {
         String(expectedStatuses.length),
         ...expectedStatuses,
         patch.status ?? "",
-        `${this.config.prefix}index:status:`,
+        `${this.storagePrefix()}index:status:`,
         runId,
         expectedWorkerId ?? "",
         ...fieldArgs,

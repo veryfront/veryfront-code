@@ -179,7 +179,7 @@ export async function updateRunIfStatus(
   backend: WorkflowBackend,
   runId: string,
   expectedStatuses: WorkflowStatus[],
-  patch: Partial<WorkflowRun>,
+  patch: WorkflowRunUpdate,
   expectedWorkerId?: string,
 ): Promise<boolean> {
   if (expectedWorkerId !== undefined) {
