@@ -144,7 +144,7 @@ describe("server/dev-server/error-overlay/html-template", () => {
 
     it("notifies Studio when projectSlug is omitted", () => {
       const html = generateErrorHTML({ type: "build", error: new Error("fail") });
-      const script = html.match(/<script[^>]*>([\s\S]*)<\/script>/i)?.[1];
+      const script = html.split("<script>")[1]?.split("</script>")[0];
       if (!script) throw new Error("Expected generated error-page script");
 
       const calls: Array<{ message: unknown; targetOrigin: string }> = [];
