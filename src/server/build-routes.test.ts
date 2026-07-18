@@ -6,7 +6,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
-  type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 
 // ---------- In-memory filesystem mock ----------

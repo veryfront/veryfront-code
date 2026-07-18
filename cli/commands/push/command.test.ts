@@ -20,7 +20,6 @@ import {
   pushCommand,
   recordPushReceipt,
   resolvePushRemoteFiles,
-  scanLocalFiles,
   uploadFiles,
   type UploadOp,
 } from "./command.ts";

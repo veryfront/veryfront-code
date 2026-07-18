@@ -25,7 +25,6 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import { join } from "veryfront/platform/path";
-import { DEFAULT_LIMITS } from "veryfront/security";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;

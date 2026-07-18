@@ -6,7 +6,6 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
-import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 describe("agent factory", () => {
   beforeEach(() => {

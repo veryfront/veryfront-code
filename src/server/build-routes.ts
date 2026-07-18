@@ -9,7 +9,6 @@ import { join, relative } from "#veryfront/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
-import { SSG_GENERATION_ERROR } from "#veryfront/errors";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
@@ -27,15 +26,6 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   if (include?.length && !include.some((p) => path.startsWith(p))) return false;
   if (exclude?.length && exclude.some((p) => path.startsWith(p))) return false;
   return true;
-}
-
-function throwAppRouteCollectionError(error: unknown): never {
-  logger.error("Failed to collect App Router routes for SSG", {
-    errorName: error instanceof Error ? error.name : typeof error,
-  });
-  throw SSG_GENERATION_ERROR.create({
-    detail: "Failed to collect App Router routes for static site generation",
-  });
 }
 
 export async function collectPagesRoutes(

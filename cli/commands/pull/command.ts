@@ -13,7 +13,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "veryfront/platform
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
 import { resolveCliApiUrl } from "#cli/shared/constants";
-import { createFileSystem, cwd, env, type FileSystem, runCommand } from "veryfront/platform";
+import { createFileSystem, cwd, env, runCommand } from "veryfront/platform";
 import {
   createApiClient,
   readConfigFile,
@@ -233,36 +233,6 @@ async function validateFilePath(
   }
 
   return { path: fullPath, relativePath: canonicalPath };
-}
-
-function isMissingPathError(error: unknown): boolean {
-  const candidate = error as { name?: unknown; code?: unknown };
-  return candidate?.name === "NotFound" || candidate?.code === "ENOENT";
-}
-
-async function assertNoSymlinkComponents(
-  fs: FileSystem,
-  projectDir: string,
-  targetPath: string,
-): Promise<void> {
-  if (!fs.lstat) {
-    throw new Error("Filesystem does not support secure symbolic-link checks");
-  }
-
-  const relativePath = relative(resolve(projectDir), resolve(targetPath));
-  let currentPath = resolve(projectDir);
-
-  for (const segment of relativePath.split(/[\\/]/).filter(Boolean)) {
-    currentPath = join(currentPath, segment);
-    try {
-      if ((await fs.lstat(currentPath)).isSymlink) {
-        throw new Error(`Refusing to write through symbolic link: ${currentPath}`);
-      }
-    } catch (error) {
-      if (isMissingPathError(error)) continue;
-      throw error;
-    }
-  }
 }
 
 /**
