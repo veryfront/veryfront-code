@@ -1260,6 +1260,61 @@ describe("DAGExecutor", () => {
       assertEquals(result.context["retrying-branch-child"], "recovered");
     });
 
+    it("keeps the selected branch stable across a parent retry", async () => {
+      let conditionCalls = 0;
+      let stableChildRuns = 0;
+      let retryingChildRuns = 0;
+      let elseChildRuns = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        if (node.id === "branch-stable-child") {
+          stableChildRuns++;
+          return { success: true, output: "stable", executionTime: 1 };
+        }
+        if (node.id === "branch-retrying-child") {
+          retryingChildRuns++;
+          return retryingChildRuns === 1
+            ? { success: false, error: "transient child failure", executionTime: 1 }
+            : { success: true, output: "recovered", executionTime: 1 };
+        }
+
+        elseChildRuns++;
+        return { success: true, output: "wrong branch", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "stable-retrying-branch",
+        config: {
+          type: "branch",
+          condition: (context: WorkflowContext) => {
+            conditionCalls++;
+            return context["branch-stable-child"] === undefined;
+          },
+          then: [
+            { id: "branch-stable-child", config: { type: "step" } as any },
+            { id: "branch-retrying-child", config: { type: "step" } as any },
+          ],
+          else: [{ id: "branch-else-child", config: { type: "step" } as any }],
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(conditionCalls, 1);
+      assertEquals(stableChildRuns, 1);
+      assertEquals(retryingChildRuns, 2);
+      assertEquals(elseChildRuns, 0);
+      assertEquals(result.context["branch-stable-child"], "stable");
+      assertEquals(result.context["branch-retrying-child"], "recovered");
+    });
+
     it("preserves successful parallel child context across a parent retry", async () => {
       let stableChildRuns = 0;
       let retryingChildRuns = 0;

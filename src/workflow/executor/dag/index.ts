@@ -322,14 +322,34 @@ export class DAGExecutor {
               },
             }),
         });
-      case "branch":
+      case "branch": {
+        // A composite retry is another attempt at the same selected branch.
+        // Cache the first successful condition result so context produced by a
+        // partially successful child cannot switch the retry to the other arm.
+        let hasSelectedBranch = false;
+        let selectedBranch = false;
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeBranchNode(node, config, context, nodeStates, attemptSignal, ownership),
+          execute: async (attemptSignal) => {
+            if (!hasSelectedBranch) {
+              selectedBranch = await config.condition(context);
+              attemptSignal.throwIfAborted();
+              hasSelectedBranch = true;
+            }
+            return await this.executeBranchNode(
+              node,
+              config,
+              selectedBranch,
+              context,
+              nodeStates,
+              attemptSignal,
+              ownership,
+            );
+          },
         });
+      }
       case "wait":
         return this.executeWaitNode(node, config, context, abortSignal);
       case "subWorkflow":
@@ -459,6 +479,7 @@ export class DAGExecutor {
   private async executeBranchNode(
     node: WorkflowNode,
     config: BranchNodeConfig,
+    conditionResult: boolean,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
@@ -467,8 +488,6 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
 
-    const conditionResult = await config.condition(context);
-    abortSignal?.throwIfAborted();
     const branchNodes = conditionResult ? config.then : (config.else ?? []);
 
     if (branchNodes.length === 0) {
