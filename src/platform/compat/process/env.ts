@@ -1,4 +1,3 @@
-import { NOT_SUPPORTED } from "#veryfront/errors";
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { runtimeProcess } from "./runtime-process.ts";
 
@@ -207,7 +206,7 @@ export function setEnv(key: string, value: string): void {
     runtimeProcess.env[key] = value;
     return;
   }
-  throw NOT_SUPPORTED.create({ detail: "setEnv() is not supported in this runtime" });
+  throw new Error("setEnv() is not supported in this runtime");
 }
 
 /** Delete a process environment variable. */
@@ -227,7 +226,7 @@ export function deleteEnv(key: string): void {
     delete runtimeProcess.env[key];
     return;
   }
-  throw NOT_SUPPORTED.create({ detail: "deleteEnv() is not supported in this runtime" });
+  throw new Error("deleteEnv() is not supported in this runtime");
 }
 
 /**

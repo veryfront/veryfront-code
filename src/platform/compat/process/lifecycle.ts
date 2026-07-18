@@ -1,4 +1,3 @@
-import { NOT_SUPPORTED } from "#veryfront/errors";
 import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
 import { runtimeProcess } from "./runtime-process.ts";
 
@@ -15,7 +14,7 @@ export function exit(code?: number): never {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) deno.exit(code);
   if (runtimeProcess) runtimeProcess.exit(code);
-  throw NOT_SUPPORTED.create({ detail: "exit() is not supported in this runtime" });
+  throw new Error("exit() is not supported in this runtime");
 }
 
 /** Return the current working directory. */
@@ -23,7 +22,7 @@ export function cwd(): string {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) return deno.cwd();
   if (runtimeProcess) return runtimeProcess.cwd();
-  throw NOT_SUPPORTED.create({ detail: "cwd() is not supported in this runtime" });
+  throw new Error("cwd() is not supported in this runtime");
 }
 
 export function chdir(directory: string): void {
@@ -36,7 +35,7 @@ export function chdir(directory: string): void {
     runtimeProcess.chdir(directory);
     return;
   }
-  throw NOT_SUPPORTED.create({ detail: "chdir() is not supported in this runtime" });
+  throw new Error("chdir() is not supported in this runtime");
 }
 
 export function pid(): number {
@@ -59,7 +58,7 @@ export function memoryUsage(): {
   }
 
   if (!runtimeProcess) {
-    throw NOT_SUPPORTED.create({ detail: "memoryUsage() is not supported in this runtime" });
+    throw new Error("memoryUsage() is not supported in this runtime");
   }
 
   const { rss, heapTotal, heapUsed, external } = runtimeProcess.memoryUsage();

@@ -15,7 +15,6 @@
  * @module platform/compat
  */
 
-import { NOT_SUPPORTED } from "#veryfront/errors";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
@@ -67,8 +66,8 @@ export async function importKreuzberg(): Promise<KreuzbergExtractor> {
   if (extractor?.importKreuzberg) {
     return extractor.importKreuzberg();
   }
-  throw NOT_SUPPORTED.create({
-    detail: "Document extraction requires a DocumentExtractor extension. " +
+  throw new Error(
+    "Document extraction requires a DocumentExtractor extension. " +
       "Install @veryfront/ext-document-kreuzberg and add it to your extensions configuration.",
-  });
+  );
 }
