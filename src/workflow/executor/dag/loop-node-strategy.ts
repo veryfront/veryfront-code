@@ -10,6 +10,13 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import {
+  applyContextPatch,
+  applyRecordPatch,
+  createRecordPatch,
+  createSetContextPatch,
+  mergeContextPatches,
+} from "./context-patch.ts";
 
 interface ExecuteLoopNodeStrategyInput {
   node: WorkflowNode;
@@ -102,7 +109,7 @@ export async function executeLoopNodeStrategy(
     runtime.abortSignal?.throwIfAborted();
 
     if (result.waiting) {
-      Object.assign(nodeStates, result.nodeStates);
+      applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
       const state: NodeState = {
         nodeId: node.id,
@@ -114,16 +121,18 @@ export async function executeLoopNodeStrategy(
 
       return {
         state,
-        contextUpdates: {
-          ...result.context,
-          [`${node.id}_loop_state`]: {
-            iteration,
-            previousResults,
-            // Persist the in-flight iteration's child states so completed
-            // steps are not re-executed when this iteration resumes (H9).
-            iterationNodeStates: result.nodeStates,
-          },
-        },
+        contextPatch: mergeContextPatches(
+          result.contextPatch,
+          createSetContextPatch({
+            [`${node.id}_loop_state`]: {
+              iteration,
+              previousResults,
+              // Persist the in-flight iteration's child states so completed
+              // steps are not re-executed when this iteration resumes (H9).
+              iterationNodeStates: result.nodeStates,
+            },
+          }),
+        ),
         waiting: true,
       };
     }
@@ -135,8 +144,8 @@ export async function executeLoopNodeStrategy(
     }
 
     previousResults.push(result.context);
-    Object.assign(context, result.context);
-    Object.assign(nodeStates, result.nodeStates);
+    applyContextPatch(context, result.contextPatch);
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
     if (config.delay && iteration < config.maxIterations - 1) {
       const delayMs = typeof config.delay === "number" ? config.delay : parseDuration(config.delay);
@@ -188,10 +197,10 @@ export async function executeLoopNodeStrategy(
 
   return {
     state,
-    contextUpdates: {
+    contextPatch: createSetContextPatch({
       [node.id]: output,
       ...completionUpdates,
-    },
+    }),
     waiting: false,
   };
 }

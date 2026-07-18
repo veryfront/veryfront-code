@@ -128,6 +128,7 @@ describe("DAGExecutor", () => {
       assertEquals(result.waiting, false);
       assertExists(result.nodeStates["step1"]);
       assertEquals(result.nodeStates["step1"]!.status, "completed");
+      assertEquals("contextPatch" in result, false);
     });
 
     it("should execute sequential nodes in order", async () => {
@@ -267,6 +268,176 @@ describe("DAGExecutor", () => {
       assertEquals(result.context.writer, "written");
       assertEquals(result.context.observer, { sawWriter: false });
     });
+
+    it("isolates nested context mutations between sibling nodes", async () => {
+      let releaseObserver!: () => void;
+      const mutated = new Promise<void>((resolve) => releaseObserver = resolve);
+      const nestedExecutor = new MockStepExecutor(new Map(), async (node, context) => {
+        if (node.id === "mutator") {
+          (context.shared as { count: number }).count = 1;
+          releaseObserver();
+          return { success: true, output: "mutated", executionTime: 1 };
+        }
+
+        await mutated;
+        return {
+          success: true,
+          output: (context.shared as { count: number }).count,
+          executionTime: 1,
+        };
+      });
+      const exec = new DAGExecutor({ stepExecutor: nestedExecutor });
+
+      const run = createTestRun({ context: { input: {}, shared: { count: 0 } } });
+      const result = await exec.execute(
+        [
+          { id: "mutator", dependsOn: [], config: { type: "step" } as any },
+          { id: "observer", dependsOn: [], config: { type: "step" } as any },
+        ],
+        run,
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.observer?.output, 0);
+      assertEquals(result.context.shared, { count: 1 });
+      assertEquals(run.context.shared, { count: 0 });
+    });
+
+    it("does not leak a rejected node's nested context mutation", async () => {
+      let releaseObserver!: () => void;
+      const mutated = new Promise<void>((resolve) => releaseObserver = resolve);
+      const rejectingExecutor = new MockStepExecutor(new Map(), async (node, context) => {
+        if (node.id === "rejecting-mutator") {
+          (context.shared as { count: number }).count = 99;
+          releaseObserver();
+          throw new Error("reject after mutation");
+        }
+
+        await mutated;
+        return {
+          success: true,
+          output: (context.shared as { count: number }).count,
+          executionTime: 1,
+        };
+      });
+      const exec = new DAGExecutor({ stepExecutor: rejectingExecutor });
+
+      const result = await exec.execute(
+        [
+          {
+            id: "rejecting-mutator",
+            dependsOn: [],
+            config: { type: "step" } as any,
+          },
+          { id: "observer", dependsOn: [], config: { type: "step" } as any },
+        ],
+        createTestRun({ context: { input: {}, shared: { count: 0 } } }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates.observer?.output, 0);
+      assertEquals(result.context.shared, { count: 0 });
+    });
+
+    it("merges same-key writes in node declaration order", async () => {
+      let releaseFirst!: () => void;
+      const secondFinished = new Promise<void>((resolve) => releaseFirst = resolve);
+      const orderedExecutor = new MockStepExecutor(new Map(), async (node, context) => {
+        if (node.id === "first") {
+          await secondFinished;
+          context.shared = "first";
+        } else {
+          context.shared = "second";
+          releaseFirst();
+        }
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: orderedExecutor });
+
+      const result = await exec.execute(
+        [
+          { id: "first", dependsOn: [], config: { type: "step" } as any },
+          { id: "second", dependsOn: [], config: { type: "step" } as any },
+        ],
+        createTestRun({ context: { input: {}, shared: "initial" } }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.context.shared, "second");
+    });
+
+    it("does not let parallel or branch nodes restore stale sibling context", async () => {
+      const staleExecutor = new MockStepExecutor(new Map(), (node, context) => {
+        if (node.id === "writer") context.shared = "fresh";
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: staleExecutor });
+
+      for (
+        const config of [
+          {
+            type: "parallel",
+            nodes: [{ id: "child", config: { type: "step" } as any }],
+          },
+          {
+            type: "branch",
+            condition: () => true,
+            then: [{ id: "child", config: { type: "step" } as any }],
+          },
+        ]
+      ) {
+        const result = await exec.execute(
+          [
+            { id: "writer", dependsOn: [], config: { type: "step" } as any },
+            { id: "compound", dependsOn: [], config: config as any },
+          ],
+          createTestRun({ context: { input: {}, shared: "stale" } }),
+        );
+
+        assertEquals(result.completed, true);
+        assertEquals(result.context.shared, "fresh");
+        assertEquals(result.context.child, "child");
+      }
+    });
+
+    it("propagates top-level context deletions", async () => {
+      const deletingExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+        delete context.removed;
+        return { success: true, output: "deleted", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: deletingExecutor });
+
+      const result = await exec.execute(
+        [{ id: "delete", config: { type: "step" } as any }],
+        createTestRun({ context: { input: {}, removed: "value" } }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(Object.hasOwn(result.context, "removed"), false);
+    });
+
+    it("propagates context deletions out of a branch", async () => {
+      const deletingExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+        delete context.removed;
+        return { success: true, output: "deleted", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: deletingExecutor });
+
+      const result = await exec.execute(
+        [{
+          id: "branch",
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [{ id: "delete-child", config: { type: "step" } as any }],
+          } as any,
+        }],
+        createTestRun({ context: { input: {}, removed: "value" } }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(Object.hasOwn(result.context, "removed"), false);
+    });
   });
 
   describe("error handling", () => {
@@ -304,6 +475,85 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, false);
       assertExists(result.error);
       assertEquals(result.error!.includes("Unexpected crash"), true);
+    });
+
+    it("discards context mutations from a failed node result", async () => {
+      const failedExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+        (context.shared as { count: number }).count = 99;
+        delete context.removed;
+        return { success: false, error: "failed after mutation", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: failedExecutor });
+
+      const result = await exec.execute(
+        [{ id: "failed-mutator", config: { type: "step" } as any }],
+        createTestRun({ context: { input: {}, shared: { count: 0 }, removed: true } }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.context.shared, { count: 0 });
+      assertEquals(result.context.removed, true);
+    });
+
+    it("discards the complete context patch from a failed compound node", async () => {
+      const failedCompoundExecutor = new MockStepExecutor(new Map(), (node, context) => {
+        if (node.id === "successful-child") {
+          (context.shared as { count: number }).count = 1;
+          return { success: true, output: "partial output", executionTime: 1 };
+        }
+        return { success: false, error: "child failed", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: failedCompoundExecutor });
+
+      const result = await exec.execute(
+        [{
+          id: "failed-parallel",
+          config: {
+            type: "parallel",
+            nodes: [
+              { id: "successful-child", dependsOn: [], config: { type: "step" } as any },
+              { id: "failed-child", dependsOn: [], config: { type: "step" } as any },
+            ],
+          } as any,
+        }],
+        createTestRun({ context: { input: {}, shared: { count: 0 } } }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.context.shared, { count: 0 });
+      assertEquals(Object.hasOwn(result.context, "successful-child"), false);
+      assertEquals(result.nodeStates["successful-child"]?.status, "completed");
+    });
+
+    it("rejects workflow context that cannot be cloned", async () => {
+      const run = createTestRun({
+        context: { input: {}, callback: () => undefined },
+      });
+
+      const error = await assertRejects(
+        () => executor.execute([{ id: "step", config: { type: "step" } as any }], run),
+        Error,
+        "Workflow context must contain only structured-cloneable values",
+      );
+
+      assertEquals((error as { slug?: string }).slug, "invalid-argument");
+    });
+
+    it("rejects a node output that cannot be cloned", async () => {
+      const invalidOutputExecutor = new MockStepExecutor(new Map(), () => ({
+        success: true,
+        output: () => undefined,
+        executionTime: 1,
+      }));
+      const exec = new DAGExecutor({ stepExecutor: invalidOutputExecutor });
+
+      const error = await assertRejects(
+        () => exec.execute([{ id: "step", config: { type: "step" } as any }], createTestRun()),
+        Error,
+        "Workflow context changes must contain only structured-cloneable values",
+      );
+
+      assertEquals((error as { slug?: string }).slug, "invalid-argument");
     });
   });
 
@@ -486,8 +736,11 @@ describe("DAGExecutor", () => {
   describe("composite resume (H8)", () => {
     it("should not re-run completed children of a parallel node on resume", async () => {
       let stepARuns = 0;
-      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
-        if (node.id === "p-step") stepARuns++;
+      const trackingExecutor = new MockStepExecutor(new Map(), (node, context) => {
+        if (node.id === "p-step") {
+          stepARuns++;
+          delete context.removed;
+        }
         return { success: true, output: node.id, executionTime: 1 };
       });
       const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
@@ -511,13 +764,16 @@ describe("DAGExecutor", () => {
       ];
 
       // First run: should suspend on the wait node, p-step runs once.
-      const run = createTestRun();
+      const run = createTestRun({
+        context: { input: { topic: "test" }, removed: "delete before waiting" },
+      });
       const first = await exec.execute(nodes, run);
       assertEquals(first.waiting, true);
       // The composite node is the waiting node reported to the executor.
       assertEquals(first.waitingNode, "par1");
       assertEquals(stepARuns, 1);
       assertEquals(first.nodeStates["p-step"]!.status, "completed");
+      assertEquals(Object.hasOwn(first.context, "removed"), false);
 
       // Resume: mark the wait node completed (approval granted) and re-run with
       // the accumulated nodeStates from the first run. The real executor resumes
@@ -539,6 +795,7 @@ describe("DAGExecutor", () => {
       assertEquals(second.completed, true);
       // p-step must NOT have run a second time.
       assertEquals(stepARuns, 1);
+      assertEquals(Object.hasOwn(second.context, "removed"), false);
     });
   });
 
@@ -674,7 +931,7 @@ describe("DAGExecutor", () => {
       assertEquals(output.iterations, 2);
     });
 
-    it("should record failed loop output when an iteration step fails", async () => {
+    it("records failed loop output in node state without committing context", async () => {
       const failingExecutor = new MockStepExecutor(
         new Map([["bad-step", { success: false, error: "bad step" }]]),
       );
@@ -701,7 +958,7 @@ describe("DAGExecutor", () => {
       assertEquals(state.error, 'Node "bad-step" failed: bad step');
       assertEquals(output.exitReason, "error");
       assertEquals(output.iterations, 0);
-      assertEquals(result.context["loop-error"], output);
+      assertEquals(result.context["loop-error"], undefined);
     });
   });
 
@@ -1001,6 +1258,48 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["retrying-branch"]!.attempt, 2);
       assertEquals(result.nodeStates["retrying-branch-child"]!.status, "completed");
       assertEquals(result.context["retrying-branch-child"], "recovered");
+    });
+
+    it("preserves successful parallel child context across a parent retry", async () => {
+      let stableChildRuns = 0;
+      let retryingChildRuns = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        if (node.id === "stable-child") {
+          stableChildRuns++;
+          return { success: true, output: "stable", executionTime: 1 };
+        }
+
+        retryingChildRuns++;
+        return retryingChildRuns === 1
+          ? { success: false, error: "transient child failure", executionTime: 1 }
+          : { success: true, output: "recovered", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "retrying-parallel",
+        config: {
+          type: "parallel",
+          nodes: [
+            { id: "stable-child", dependsOn: [], config: { type: "step" } as any },
+            { id: "retrying-child", dependsOn: [], config: { type: "step" } as any },
+          ],
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(stableChildRuns, 1);
+      assertEquals(retryingChildRuns, 2);
+      assertEquals(result.context["stable-child"], "stable");
+      assertEquals(result.context["retrying-child"], "recovered");
     });
 
     it("applies timeout and retry to a parallel node without overlapping attempts", async () => {
