@@ -18,7 +18,9 @@ describe("proxy upstream error responses", () => {
   });
 
   it("returns a generic body that does not leak the upstream error message", async () => {
-    const response = createUpstreamFailureResponse(new Error("connection refused to internal-host:5432"));
+    const response = createUpstreamFailureResponse(
+      new Error("connection refused to internal-host:5432"),
+    );
 
     assertEquals(response.status, 502);
     assertEquals(response.headers.get("Content-Type"), "application/json");

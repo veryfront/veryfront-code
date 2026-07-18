@@ -67,6 +67,14 @@ describe("cli/shared/args", () => {
       assertEquals(extractArg(args, spec), false);
     });
 
+    it("should parse explicit boolean string values", () => {
+      const spec: ArgSpec = { keys: ["force"], type: "boolean" };
+      assertEquals(extractArg(makeParsedArgs({ force: "true" }), spec), true);
+      assertEquals(extractArg(makeParsedArgs({ force: "false" }), spec), false);
+      assertEquals(extractArg(makeParsedArgs({ force: "1" }), spec), true);
+      assertEquals(extractArg(makeParsedArgs({ force: "0" }), spec), false);
+    });
+
     it("should coerce number arg from numeric value", () => {
       const args = makeParsedArgs({ port: 8080 });
       const spec: ArgSpec = { keys: ["port"], type: "number" };
@@ -77,6 +85,12 @@ describe("cli/shared/args", () => {
       const args = makeParsedArgs({ port: "3000" });
       const spec: ArgSpec = { keys: ["port"], type: "number" };
       assertEquals(extractArg(args, spec), 3000);
+    });
+
+    it("should not accept a numeric prefix followed by invalid characters", () => {
+      const args = makeParsedArgs({ port: "3000ms" });
+      const spec: ArgSpec = { keys: ["port"], type: "number" };
+      assertEquals(Number.isNaN(extractArg(args, spec)), true);
     });
 
     it("should return undefined for positional out of range", () => {
@@ -193,16 +207,23 @@ describe("cli/shared/args", () => {
   });
 
   describe("parseCliArgs", () => {
+    it("should keep the positional argument after --binary", () => {
+      const args = parseCliArgs(["serve", "--binary", "project"]);
+
+      assertEquals(args.binary, true);
+      assertEquals(args._, ["serve", "project"]);
+    });
+
     it("should parse positional arguments", () => {
       assertEquals(parseCliArgs(["dev"])._[0], "dev");
     });
 
     it("should parse long flags with values", () => {
-      assertEquals(parseCliArgs(["--port", "8080"]).port, 8080);
+      assertEquals(parseCliArgs(["--port", "8080"]).port, "8080");
     });
 
     it("should parse long flags with equals", () => {
-      assertEquals(parseCliArgs(["--port=3000"]).port, 3000);
+      assertEquals(parseCliArgs(["--port=3000"]).port, "3000");
     });
 
     it("should parse boolean flags", () => {
@@ -210,7 +231,7 @@ describe("cli/shared/args", () => {
     });
 
     it("should resolve short aliases", () => {
-      assertEquals(parseCliArgs(["-p", "9000"]).port, 9000);
+      assertEquals(parseCliArgs(["-p", "9000"]).port, "9000");
     });
 
     it("should preserve the raw short key for command-specific parsers", () => {
@@ -244,8 +265,26 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs([]).port, undefined);
     });
 
-    it("should convert numeric string values", () => {
-      assertEquals(parseCliArgs(["--port", "4000"]).port, 4000);
+    it("should preserve numeric-looking values until typed extraction", () => {
+      assertEquals(parseCliArgs(["--port", "4000"]).port, "4000");
+      assertEquals(parseCliArgs(["pull", "--project", "00123"]).project, "00123");
+    });
+
+    it("should not consume a command or positional after a boolean flag", () => {
+      assertEquals(parseCliArgs(["--json", "schema"])._, ["schema"]);
+      assertEquals(parseCliArgs(["clean", "--force", "target"])._, ["clean", "target"]);
+    });
+
+    it("should parse explicit false values for boolean flags", () => {
+      const args = parseCliArgs(["pull", "--force=false"]);
+      assertEquals(args.force, false);
+      assertEquals(extractArg(args, CommonArgs.force), false);
+    });
+
+    it("should stop parsing flags after the option terminator", () => {
+      const args = parseCliArgs(["test", "--", "--filter", "literal"]);
+      assertEquals(args._, ["test", "--filter", "literal"]);
+      assertEquals(args.filter, undefined);
     });
   });
 });

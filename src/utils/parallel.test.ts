@@ -2,10 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import {
-  parallelAll,
-  parallelMap,
-} from "./parallel.ts";
+import { parallelAll, parallelMap } from "./parallel.ts";
 
 describe("parallel", () => {
   describe("parallelMap", () => {

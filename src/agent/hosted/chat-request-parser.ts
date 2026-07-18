@@ -11,6 +11,11 @@ import {
 } from "./chat-request.ts";
 import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -62,8 +67,21 @@ export type ParseHostedChatRequestOptions = {
   }) => Promise<HostedChatProjectAccessResult>;
 };
 
-async function parseRequestJson(request: Request): Promise<unknown> {
-  return await request.json().catch((): null => null);
+async function parseRequestJson(request: Request): Promise<unknown | Response> {
+  try {
+    return JSON.parse(await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES));
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) {
+      return Response.json(
+        {
+          errorCode: "REQUEST_TOO_LARGE",
+          message: `Request body exceeds ${DEFAULT_MAX_BODY_SIZE_BYTES} bytes`,
+        },
+        { status: 413 },
+      );
+    }
+    return null;
+  }
 }
 
 function createValidationErrorResponse(input: {
@@ -177,7 +195,10 @@ export async function parseHostedChatRequestFromRequest(
     return authenticatedRequest;
   }
 
-  const parsed = hostedChatRequestSchema.safeParse(await parseRequestJson(request));
+  const requestBody = await parseRequestJson(request);
+  if (requestBody instanceof Response) return requestBody;
+
+  const parsed = hostedChatRequestSchema.safeParse(requestBody);
   if (!parsed.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid request",
@@ -203,7 +224,10 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
-  const invocation = RuntimeAgentRunInvocationSchema.safeParse(await parseRequestJson(request));
+  const requestBody = await parseRequestJson(request);
+  if (requestBody instanceof Response) return requestBody;
+
+  const invocation = RuntimeAgentRunInvocationSchema.safeParse(requestBody);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",

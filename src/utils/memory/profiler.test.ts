@@ -265,5 +265,4 @@ describe("memory/profiler", () => {
       stopMemoryMonitoring();
     });
   });
-
 });

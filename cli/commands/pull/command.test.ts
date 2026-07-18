@@ -19,6 +19,7 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import { join } from "veryfront/platform/path";
+import { DEFAULT_LIMITS } from "veryfront/security";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
@@ -349,6 +350,18 @@ describe("getFileContent", () => {
     assertEquals(content, "export default function Home() {}\n");
     assertEquals(content.endsWith("\n\n"), false);
   });
+
+  it("rejects content larger than the shared file-size limit", async () => {
+    const mockClient = createMockClient({
+      get: () => mockFileContentResponse("x".repeat(DEFAULT_LIMITS.maxFileSize + 1)),
+    });
+
+    await assertRejects(
+      () => getFileContent(mockClient, "my-project", "oversized.ts", { type: "main" }),
+      Error,
+      "size limit",
+    );
+  });
 });
 
 describe("pullCommand", () => {
@@ -403,6 +416,93 @@ describe("pullCommand", () => {
       assertStringIncludes(message, "requires confirmation");
       assertStringIncludes(message, "--force");
       assertEquals(await exists(join(tempDir, "app", "page.tsx")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not write through a symbolic link inside the target directory", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+    try {
+      await Deno.symlink(outsideDir, join(tempDir, "linked"));
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("/files?")) {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "linked/escape.ts",
+                size: 10,
+                type: "file",
+                created_at: "",
+                updated_at: "",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({ content: "malicious" }));
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(await exists(join(outsideDir, "escape.ts")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("rejects traversal in multi-project directory names before fetching", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+    let fetchCalls = 0;
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      _resetEnvironmentConfig();
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(Response.json({ data: [], page_info: {} }));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projects: ["../escape"],
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "Invalid project slug",
+      );
+      assertEquals(fetchCalls, 0);
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);

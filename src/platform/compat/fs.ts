@@ -22,8 +22,16 @@ export interface FileSystem {
   writeFile(path: string, data: Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
+  lstat?(path: string): Promise<FileInfo>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-  readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
+  readDir(
+    path: string,
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(options?: { prefix?: string }): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
@@ -41,6 +49,13 @@ interface NodeFsPromises {
   ): Promise<void>;
   access(path: string, mode?: number): Promise<void>;
   stat(path: string): Promise<{
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+    size: number;
+    mtime: Date;
+  }>;
+  lstat(path: string): Promise<{
     isFile(): boolean;
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
@@ -149,6 +164,18 @@ class NodeFileSystem implements FileSystem {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    await this.ensureInitialized();
+    const stat = await this.getFs().lstat(path);
+    return {
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+      isSymlink: stat.isSymbolicLink(),
+      size: stat.size,
+      mtime: stat.mtime,
+    };
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().mkdir(path, { recursive: options?.recursive ?? false });
@@ -156,11 +183,21 @@ class NodeFileSystem implements FileSystem {
 
   async *readDir(
     path: string,
-  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink: boolean;
+  }> {
     await this.ensureInitialized();
     const entries = await this.getFs().readdir(path, { withFileTypes: true });
     for (const entry of entries) {
-      yield { name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() };
+      yield {
+        name: entry.name,
+        isFile: entry.isFile(),
+        isDirectory: entry.isDirectory(),
+        isSymlink: entry.isSymbolicLink(),
+      };
     }
   }
 
@@ -230,15 +267,36 @@ class DenoFileSystem implements FileSystem {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    const stat = await denoGlobal().lstat(path);
+    return {
+      isFile: stat.isFile,
+      isDirectory: stat.isDirectory,
+      isSymlink: stat.isSymlink,
+      size: stat.size,
+      mtime: stat.mtime,
+    };
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     await denoGlobal().mkdir(path, { recursive: options?.recursive ?? false });
   }
 
   async *readDir(
     path: string,
-  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink: boolean;
+  }> {
     for await (const entry of denoGlobal().readDir(path)) {
-      yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+      yield {
+        name: entry.name,
+        isFile: entry.isFile,
+        isDirectory: entry.isDirectory,
+        isSymlink: entry.isSymlink,
+      };
     }
   }
 

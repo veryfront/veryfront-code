@@ -11,9 +11,9 @@ import type { Skill } from "#veryfront/skill/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { Workflow } from "#veryfront/workflow/types.ts";
 import type { TaskDefinition } from "#veryfront/task/types.ts";
-import type { EvalDefinition } from "#veryfront/eval";
-import type { ScheduleDefinition } from "#veryfront/schedule";
-import type { WebhookDefinition } from "#veryfront/webhook";
+import type { EvalDefinition } from "#veryfront/eval/types.ts";
+import type { ScheduleDefinition } from "#veryfront/schedule/types.ts";
+import type { WebhookDefinition } from "#veryfront/webhook/types.ts";
 import type { Platform } from "#veryfront/platform/core-platform.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 

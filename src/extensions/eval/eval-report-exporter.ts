@@ -8,107 +8,35 @@
  * @module extensions/eval/eval-report-exporter
  */
 
-import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval";
+import type {
+  EvalMetricResult,
+  EvalRecord,
+  EvalReport,
+  EvalReportExportContext,
+  EvalReportExporter,
+  EvalReportExporterRegistry,
+  EvalReportExportRedaction,
+  EvalReportExportResult,
+  EvalReportExportSuccess,
+} from "#veryfront/eval/types.ts";
 
-type EvalReportExportMaybePromise<T> = T | Promise<T>;
+export type {
+  EvalReportExportContext,
+  EvalReportExporter,
+  EvalReportExporterRegistry,
+  EvalReportExportFailure,
+  EvalReportExportReceipt,
+  EvalReportExportRedaction,
+  EvalReportExportResult,
+  EvalReportExportSuccess,
+  EvalReportExportTraceContext,
+} from "#veryfront/eval/types.ts";
 
 /** Contract name used for `resolve()` / `provide()`. */
 export const EvalReportExporterRegistryName = "EvalReportExporterRegistry" as const;
 
 /** Sentinel used when record payload fields are removed for external export. */
 export const EvalReportRedactedValue = "[redacted]" as const;
-
-/** Redaction policy applied before reports leave the process. */
-export interface EvalReportExportRedaction {
-  /** Include dataset input payloads. Defaults to false. */
-  includeInputs?: boolean;
-  /** Include target output payloads. Defaults to false. */
-  includeOutputs?: boolean;
-  /** Include reference answer payloads. Defaults to false. */
-  includeReferences?: boolean;
-  /** Include trace events and tool-call metadata. Defaults to false. */
-  includeTraces?: boolean;
-  /** Include metric/check explanations. Defaults to false. */
-  includeMetricExplanations?: boolean;
-  /** Include metric/check evidence payloads. Defaults to false. */
-  includeMetricEvidence?: boolean;
-  /** Record metadata keys that can be exported. Defaults to none. */
-  metadataAllowlist?: string[];
-}
-
-/** Trace correlation fields that connect eval exports to runtime spans. */
-export interface EvalReportExportTraceContext {
-  traceId?: string;
-  spanId?: string;
-  parentSpanId?: string;
-}
-
-/** Context passed to eval report exporters. */
-export interface EvalReportExportContext {
-  projectId?: string;
-  projectReference?: string;
-  evalId?: string;
-  sourcePath?: string;
-  reportPath?: string;
-  environment?: string;
-  branch?: string;
-  commitSha?: string;
-  runUrl?: string;
-  tags?: string[];
-  metadata?: Record<string, unknown>;
-  trace?: EvalReportExportTraceContext;
-  redaction?: EvalReportExportRedaction;
-}
-
-/** Optional receipt returned by a vendor exporter. */
-export interface EvalReportExportReceipt {
-  externalRunId?: string;
-  url?: string;
-  metadata?: Record<string, unknown>;
-}
-
-/** Vendor or backend implementation that receives sanitized eval reports. */
-export interface EvalReportExporter {
-  /** Stable exporter id, for example `braintrust`, `langfuse`, or `langsmith`. */
-  readonly id: string;
-  export(
-    report: EvalReport,
-    context: EvalReportExportContext,
-  ): EvalReportExportMaybePromise<EvalReportExportReceipt | void>;
-}
-
-/** Successful exporter result. */
-export interface EvalReportExportSuccess {
-  exporterId: string;
-  ok: true;
-  receipt?: EvalReportExportReceipt;
-}
-
-/** Failed exporter result. Failures are captured so later exporters still run. */
-export interface EvalReportExportFailure {
-  exporterId: string;
-  ok: false;
-  error: string;
-}
-
-/** Result for one exporter invocation. */
-export type EvalReportExportResult =
-  | EvalReportExportSuccess
-  | EvalReportExportFailure;
-
-/** Registry contract. Single impl created at bootstrap. */
-export interface EvalReportExporterRegistry {
-  register(exporter: EvalReportExporter): void;
-  unregister(id: string): void;
-  get(id: string): EvalReportExporter | undefined;
-  require(id: string): EvalReportExporter;
-  list(): EvalReportExporter[];
-  has(id: string): boolean;
-  export(
-    report: EvalReport,
-    context?: EvalReportExportContext,
-  ): Promise<EvalReportExportResult[]>;
-}
 
 function filterMetadata(
   metadata: Record<string, unknown>,

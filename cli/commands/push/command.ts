@@ -27,6 +27,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { DEFAULT_LIMITS } from "veryfront/security";
 
 /**
  * Schema factory for push command arguments
@@ -110,7 +111,7 @@ interface RemoteFile {
   path: string;
 }
 
-async function scanLocalFiles(
+export async function scanLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<UploadOp[]> {
@@ -125,6 +126,10 @@ async function scanLocalFiles(
       const relativePath = relative(projectDir, entryPath);
 
       if (ignoreChecker.isIgnored(relativePath)) continue;
+      if (entry.isSymlink) {
+        cliLogger.warn(`Skipping symbolic link: ${relativePath}`);
+        continue;
+      }
 
       if (entry.isDirectory) {
         await walk(entryPath);
@@ -133,7 +138,17 @@ async function scanLocalFiles(
 
       if (!ignoreChecker.isSupportedExtension(entry.name)) continue;
 
+      const fileInfo = await fs.stat(entryPath);
+      if (fileInfo.size > DEFAULT_LIMITS.maxFileSize) {
+        cliLogger.warn(`Skipping oversized file: ${relativePath}`);
+        continue;
+      }
+
       const content = await fs.readTextFile(entryPath);
+      if (new TextEncoder().encode(content).byteLength > DEFAULT_LIMITS.maxFileSize) {
+        cliLogger.warn(`Skipping oversized file: ${relativePath}`);
+        continue;
+      }
       ops.push({ path: relativePath, content });
     }
   }
@@ -152,7 +167,9 @@ export function createBranch(
   projectSlug: string,
   branchName: string,
 ): Promise<BranchResponse> {
-  return client.post<BranchResponse>(`/projects/${projectSlug}/branches`, { name: branchName });
+  return client.post<BranchResponse>(`/projects/${encodeURIComponent(projectSlug)}/branches`, {
+    name: branchName,
+  });
 }
 
 function getErrorStatus(error: unknown): number | undefined {
@@ -176,7 +193,7 @@ async function getBranchByName(
     };
 
     const response = await client.get<ListBranchesResponse>(
-      `/projects/${projectSlug}/branches`,
+      `/projects/${encodeURIComponent(projectSlug)}/branches`,
       params,
     );
 
@@ -225,7 +242,7 @@ export async function resolvePushRemoteFiles(
 
 function buildFileUrl(projectSlug: string, path: string, branchId: string | null): string {
   const encodedPath = encodeURIComponent(path);
-  const base = `/projects/${projectSlug}/files/${encodedPath}`;
+  const base = `/projects/${encodeURIComponent(projectSlug)}/files/${encodedPath}`;
   return branchId ? `${base}?branch_id=${branchId}` : base;
 }
 

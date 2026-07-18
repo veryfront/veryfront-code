@@ -54,7 +54,7 @@ export interface ApprovalRequest {
   expiresAt?: Date;
   /**
    * Set when notifying approvers failed. The approval was still created and the
-   * workflow is paused, but approvers were NOT informed — the caller should
+   * workflow is paused, but approvers were NOT informed. The caller should
    * re-notify or alert an operator rather than assume delivery.
    */
   notificationError?: string;
@@ -199,7 +199,7 @@ export class ApprovalManager {
 
     // Fast-path read: fetch the approval to validate expiry and approver
     // authorization before mutating anything. The pending-status check here is
-    // only an early-out for the common already-decided case — it is NOT the
+    // only an early-out for the common already-decided case. It is NOT the
     // authoritative gate, because a concurrent decision could slip in between
     // this read and the write below.
     const approval = await this.getApproval(runId, approvalId);

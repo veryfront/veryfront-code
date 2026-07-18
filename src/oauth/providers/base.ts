@@ -76,9 +76,12 @@ export class OAuthProvider {
     const state = options.state ?? generateRandomString(32);
     const scopes = options.scopes ?? options.defaultScopes ?? [];
     if (scopes.length === 0) {
-      logger.warn("createAuthorizationUrl: no scopes configured; OAuth request will have empty scope set", {
-        clientIdEnvVar: this.config.clientIdEnvVar,
-      });
+      logger.warn(
+        "createAuthorizationUrl: no scopes configured; OAuth request will have empty scope set",
+        {
+          clientIdEnvVar: this.config.clientIdEnvVar,
+        },
+      );
     }
     const redirectUri = options.redirectUri ?? "";
     const usePkce = options.usePkce !== false;

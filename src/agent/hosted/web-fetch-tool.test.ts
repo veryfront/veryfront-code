@@ -2,14 +2,23 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { createHostedWebFetchTool } from "./web-fetch-tool.ts";
 
+function createTestWebFetchTool(
+  options: Parameters<typeof createHostedWebFetchTool>[0] = {},
+) {
+  return createHostedWebFetchTool({
+    resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    ...options,
+  });
+}
+
 Deno.test("createHostedWebFetchTool fetches an explicit HTTPS URL without prior search", async () => {
   const requestedUrls: string[] = [];
   const acceptHeaders: string[] = [];
-  const tool = createHostedWebFetchTool({
+  const tool = createTestWebFetchTool({
     fetch: (input, init) => {
       const requestInit = init as globalThis.RequestInit | undefined;
       requestedUrls.push(String(input));
-      assertEquals(requestInit?.redirect, "follow");
+      assertEquals(requestInit?.redirect, "manual");
       acceptHeaders.push(new Headers(requestInit?.headers).get("accept") ?? "");
       return Promise.resolve(
         new Response("Create agent docs", {
@@ -48,7 +57,7 @@ Deno.test("createHostedWebFetchTool fetches an explicit HTTPS URL without prior 
 });
 
 Deno.test("createHostedWebFetchTool rejects non-http URLs", async () => {
-  const tool = createHostedWebFetchTool({
+  const tool = createTestWebFetchTool({
     fetch: () => {
       throw new Error("fetch should not be called");
     },
@@ -63,7 +72,7 @@ Deno.test("createHostedWebFetchTool rejects non-http URLs", async () => {
 
 Deno.test("createHostedWebFetchTool returns resumable slices for large pages", async () => {
   const body = "0123456789abcdef";
-  const tool = createHostedWebFetchTool({
+  const tool = createTestWebFetchTool({
     maxContentChars: 8,
     fetch: () =>
       Promise.resolve(
@@ -112,7 +121,7 @@ Deno.test("createHostedWebFetchTool returns resumable slices for large pages", a
 
 Deno.test("createHostedWebFetchTool honors host content limits above the default", async () => {
   const body = "x".repeat(500_001);
-  const tool = createHostedWebFetchTool({
+  const tool = createTestWebFetchTool({
     maxContentChars: 600_000,
     fetch: () =>
       Promise.resolve(
@@ -142,7 +151,7 @@ Deno.test("createHostedWebFetchTool honors host content limits above the default
 });
 
 Deno.test("createHostedWebFetchTool honors smaller per-call content limits", async () => {
-  const tool = createHostedWebFetchTool({
+  const tool = createTestWebFetchTool({
     fetch: () =>
       Promise.resolve(
         new Response("anthropic/claude-sonnet-4-6 appears after the old cutoff", {
@@ -166,7 +175,7 @@ Deno.test("createHostedWebFetchTool honors smaller per-call content limits", asy
 });
 
 Deno.test("createHostedWebFetchTool rejects invalid pagination inputs", async () => {
-  const tool = createHostedWebFetchTool({
+  const tool = createTestWebFetchTool({
     fetch: () =>
       Promise.resolve(
         new Response("docs", {
@@ -204,5 +213,75 @@ Deno.test("createHostedWebFetchTool rejects invalid pagination inputs", async ()
       }) as Promise<unknown>,
     Error,
     "web_fetch cursor exceeds fetched content length",
+  );
+});
+
+Deno.test("createHostedWebFetchTool blocks internal network targets", async () => {
+  let fetchCalls = 0;
+  const tool = createTestWebFetchTool({
+    fetch: () => {
+      fetchCalls++;
+      return Promise.resolve(new Response("internal"));
+    },
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "http://127.0.0.1/private" }) as Promise<unknown>,
+    Error,
+    "network egress blocked",
+  );
+  assertEquals(fetchCalls, 0);
+});
+
+Deno.test("createHostedWebFetchTool blocks hostnames that resolve internally", async () => {
+  let fetchCalls = 0;
+  const tool = createHostedWebFetchTool({
+    resolveHost: () => Promise.resolve(["10.0.0.5"]),
+    fetch: () => {
+      fetchCalls++;
+      return Promise.resolve(new Response("internal"));
+    },
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "https://service.example/private" }) as Promise<unknown>,
+    Error,
+    "resolved to internal address",
+  );
+  assertEquals(fetchCalls, 0);
+});
+
+Deno.test("createHostedWebFetchTool validates every redirect target", async () => {
+  let fetchCalls = 0;
+  const tool = createTestWebFetchTool({
+    fetch: () => {
+      fetchCalls++;
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/metadata" },
+        }),
+      );
+    },
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "https://public.example/start" }) as Promise<unknown>,
+    Error,
+    "network egress blocked",
+  );
+  assertEquals(fetchCalls, 1);
+});
+
+Deno.test("createHostedWebFetchTool rejects responses above the byte cap", async () => {
+  const tool = createTestWebFetchTool({
+    maxResponseBytes: 4,
+    fetch: () => Promise.resolve(new Response("12345", { status: 200 })),
+  });
+
+  await assertRejects(
+    () => tool.execute?.({ url: "https://public.example/large" }) as Promise<unknown>,
+    Error,
+    "response exceeds maximum size",
   );
 });

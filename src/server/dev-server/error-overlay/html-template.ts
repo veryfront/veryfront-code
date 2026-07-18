@@ -177,7 +177,7 @@ export function generateRuntimeScript(): string {
               line: errorInfo.line ? Number(errorInfo.line) : undefined,
               column: errorInfo.column ? Number(errorInfo.column) : undefined
             }]
-          }, '*');
+          }, vfStudioTargetOrigin());
         } catch (e) { /* postMessage may fail */ }
       }
 
@@ -442,7 +442,7 @@ export function generateErrorHTML(
             line: ${errorInfo.line ? String(errorInfo.line) : "undefined"},
             column: ${errorInfo.column ? String(errorInfo.column) : "undefined"}
           }]
-        }, '*');
+        }, vfStudioTargetOrigin());
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }
     }
 

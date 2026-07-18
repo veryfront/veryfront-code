@@ -2,17 +2,19 @@
  * MCP Dev Server
  *
  * Exposes dev server functionality via MCP (Model Context Protocol).
- * Supports both stdio transport (for local editors like Claude Code)
- * and HTTP transport (for remote access).
+ * Supports stdio transport for local editors and loopback HTTP transport for
+ * browser integrations during `veryfront dev`.
  */
 
 import { cwd, readTextFile } from "veryfront/platform";
 import { createHttpServer, type HttpServer } from "veryfront/platform/http";
 import type { StdinReader } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIssuesManager } from "veryfront/issues";
 import type { ToolListEntry } from "veryfront/mcp";
 import { getErrorCollector, getLogBuffer } from "veryfront/observability";
+import { isRequestBodyTooLargeError, readBodyWithLimit } from "veryfront/security";
 import { zodToJsonSchema } from "veryfront/tool/schema";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
@@ -30,10 +32,38 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
+const MAX_HTTP_REQUEST_BODY_SIZE = 1_048_576;
+
+function isAllowedHTTPOrigin(origin: string): boolean {
+  if (!origin) return true;
+
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "http:") return false;
+
+    return url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "veryfront.me";
+  } catch {
+    return false;
+  }
+}
+
+function requestBodyTooLargeResponse(headers: Record<string, string>): Response {
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Request body too large" },
+    }),
+    { status: 413, headers },
+  );
+}
+
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
   stdio?: boolean;
-  /** HTTP port for remote MCP access */
+  /** Loopback HTTP port used by local development integrations. */
   httpPort?: number;
   /** Server name for MCP protocol */
   serverName?: string;
@@ -46,6 +76,7 @@ export class MCPDevServer {
   private running = false;
   private stdinReader: StdinReader | null = null;
   private httpServer: HttpServer | null = null;
+  private httpServePromise: Promise<void> | null = null;
 
   constructor(config: MCPServerConfig = {}) {
     this.config = {
@@ -79,23 +110,26 @@ export class MCPDevServer {
     this.stdinReader?.releaseLock();
     this.stdinReader = null;
 
-    if (!this.httpServer) return;
-    await this.httpServer.close();
+    const httpServer = this.httpServer;
+    const httpServePromise = this.httpServePromise;
     this.httpServer = null;
+    this.httpServePromise = null;
+
+    if (!httpServer) return;
+    await httpServer.close();
+    await httpServePromise?.catch(() => undefined);
   }
 
   private startHTTP(port: number): void {
-    this.httpServer = createHttpServer();
+    const httpServer = createHttpServer();
+    this.httpServer = httpServer;
 
     const handler = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
 
       // CORS headers - allow localhost and veryfront dev domains
       const origin = req.headers.get("Origin") ?? "";
-      const isAllowedOrigin = origin === "" ||
-        origin.startsWith("http://localhost") ||
-        origin.startsWith("http://127.0.0.1") ||
-        origin.startsWith("http://veryfront.me");
+      const isAllowedOrigin = isAllowedHTTPOrigin(origin);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -133,16 +167,36 @@ export class MCPDevServer {
         });
       }
 
+      const contentLength = req.headers.get("content-length");
+      if (contentLength && Number(contentLength) > MAX_HTTP_REQUEST_BODY_SIZE) {
+        return requestBodyTooLargeResponse(headers);
+      }
+
       try {
-        const body = JSONRPCRequestSchema.parse(await req.json());
+        const bodyText = await readBodyWithLimit(req, MAX_HTTP_REQUEST_BODY_SIZE);
+        const body = JSONRPCRequestSchema.parse(JSON.parse(bodyText));
         const response = await this.handleRequest(body);
         return new Response(JSON.stringify(response), { headers });
       } catch (e) {
+        if (isRequestBodyTooLargeError(e)) {
+          return requestBodyTooLargeResponse(headers);
+        }
         return new Response(JSON.stringify(parseError(e)), { status: 400, headers });
       }
     };
 
-    this.httpServer.serve(handler, { port, onListen: () => {} });
+    const servePromise = httpServer.serve(handler, { port, onListen: () => {} });
+    this.httpServePromise = servePromise;
+    void servePromise.catch(() => {
+      if (!this.running) return;
+      cliLogger.warn(
+        `Veryfront could not start the local MCP server on port ${port}. Local MCP tools are disabled for this dev session.`,
+      );
+      if (this.httpServer === httpServer) {
+        this.httpServer = null;
+        this.httpServePromise = null;
+      }
+    });
   }
 
   private handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {

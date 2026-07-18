@@ -7,12 +7,14 @@ import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { serverLogger } from "#veryfront/utils";
 import { parseActionBody } from "./action-parser.ts";
 import type { ActionRequestParams } from "./types.ts";
-import { readBodyWithLimit } from "#veryfront/security";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
 import {
   DEFAULT_MAX_BODY_SIZE_BYTES,
   HTTP_PAYLOAD_TOO_LARGE,
 } from "#veryfront/utils/constants/index.ts";
-import { VeryfrontError } from "#veryfront/errors";
 
 const logger = serverLogger.component("rsc");
 
@@ -28,11 +30,7 @@ export async function handleActionRequest(
   try {
     body = JSON.parse(await readBodyWithLimit(req, DEFAULT_MAX_BODY_SIZE_BYTES));
   } catch (error) {
-    if (
-      error instanceof VeryfrontError &&
-      error.slug === "input-validation-failed" &&
-      error.detail === "Request body exceeds size limit"
-    ) {
+    if (isRequestBodyTooLargeError(error)) {
       return jsonErrorResponse(HTTP_PAYLOAD_TOO_LARGE, "Request body too large");
     }
     logger.warn("Failed to parse action request body", { error });

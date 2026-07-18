@@ -210,6 +210,19 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 // Veryfront HMR Client (${logPrefix})
 (function() {${debugPreamble}
 
+  function vfStudioTargetOrigin() {
+    try {
+      const referrer = new URL(document.referrer || '');
+      const host = referrer.hostname;
+      const isStudio = host === 'localhost' ||
+        host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
+        host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
+        host.endsWith('.veryfront.dev') || host === 'veryfront.dev';
+      if (isStudio) return referrer.origin;
+    } catch (_) { /* referrer absent or invalid */ }
+    return window.location.origin;
+  }
+
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
     try {
@@ -217,7 +230,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         action: 'appUpdated',
         isInitialLoad: true,
         url: window.location.href
-      }, '*');
+      }, vfStudioTargetOrigin());
     } catch (_) { /* cross-origin iframe - expected */ }
   }
 
@@ -248,7 +261,10 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   function notifyStudio() {
     if (window.parent === window) return;
     try {
-      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+      window.parent.postMessage(
+        { action: 'appUpdated', url: window.location.href },
+        vfStudioTargetOrigin(),
+      );
     } catch (_) { /* expected: cross-origin iframe */ }
   }
 

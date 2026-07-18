@@ -80,7 +80,8 @@ export const TRIGGER_NOT_SUPPORTED = defineError({
   category: "RUNTIME",
   status: 501,
   title: "Trigger target type not supported in local runtime",
-  suggestion: "Use a workflow or task target for local trigger runs; agent targets require the Cloud runtime",
+  suggestion:
+    "Use a workflow or task target for local trigger runs; agent targets require the Cloud runtime",
 });
 
 /** Registry fragment for RUNTIME errors (slug → definition). */

@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 function createMockAdapter(
   overrides: {
@@ -63,7 +64,7 @@ describe("server/services/rsc/endpoints/action-handler", () => {
       assertStringIncludes(JSON.stringify(body), "missing id");
     });
 
-    it("returns 400 when body is invalid JSON (falls back to empty object)", async () => {
+    it("returns 400 when body is invalid JSON", async () => {
       const req = new Request("http://localhost/_veryfront/rsc/action", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -76,8 +77,23 @@ describe("server/services/rsc/endpoints/action-handler", () => {
         adapter: createMockAdapter(),
       });
 
-      // Invalid JSON -> req.json() fails -> body = {} -> missing id
       assertEquals(response.status, 400);
+    });
+
+    it("returns 413 when the request body exceeds the limit", async () => {
+      const req = new Request("http://localhost/_veryfront/rsc/action", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ padding: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES) }),
+      });
+
+      const response = await handleActionRequest({
+        req,
+        projectDir: "/tmp/test",
+        adapter: createMockAdapter(),
+      });
+
+      assertEquals(response.status, 413);
     });
 
     it("returns 400 when id contains path traversal", async () => {

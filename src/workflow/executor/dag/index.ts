@@ -112,7 +112,7 @@ export class DAGExecutor {
       // Record the state of EVERY node in the batch before deciding the batch's
       // outcome. The whole batch already ran (Promise.allSettled), so returning
       // on the first failure would drop the persisted state of later nodes that
-      // actually succeeded — and those would re-execute on resume. We capture
+      // actually succeeded, and those would re-execute on resume. We capture
       // the earliest waiting/failed node (preserving index-order precedence) and
       // return only after all states are recorded.
       let outcome: { kind: "waiting" | "failed"; nodeId: string; error?: string } | undefined;
@@ -143,8 +143,8 @@ export class DAGExecutor {
         // Merge back only the keys this node's snapshot actually changed
         // (compound nodes accumulate child states / context in place). Reference
         // inequality against the batch-start baseline isolates this node's own
-        // namespaced changes and leaves sibling entries — including ones merged
-        // earlier in this loop — untouched.
+        // namespaced changes and leaves sibling entries, including ones merged
+        // earlier in this loop, untouched.
         const nodeStateSnapshot = nodeStateSnapshots[i]!;
         for (const key of Object.keys(nodeStateSnapshot)) {
           if (nodeStateSnapshot[key] !== baseNodeStates[key]) {
@@ -212,7 +212,7 @@ export class DAGExecutor {
       // Merge freshly-unblocked nodes with any overflow nodes still queued in
       // `ready` (the slice beyond maxConcurrency that has not run yet). Those
       // overflow nodes have inDegree 0 and no recorded state, so
-      // getReadyNodes() would return them again — de-duplicate to avoid
+      // getReadyNodes() would return them again. De-duplicate to avoid
       // scheduling (and double-decrementing dependents for) a node that is
       // already queued.
       const queued = new Set(ready);

@@ -2,6 +2,7 @@ import { logger } from "#veryfront/utils";
 import type { RateLimitConfig, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 import { fixedWindowStrategy, slidingWindowStrategy, tokenBucketStrategy } from "./strategies.ts";
+import { resolveRateLimitClientKey } from "./client-key.ts";
 
 /** Rate limit preset: window durations */
 const STRICT_WINDOW_MS = 60_000; // 1 minute
@@ -19,25 +20,7 @@ const AUTH_MAX_REQUESTS = 5;
 const DEFAULT_RETRY_AFTER_SECONDS = "60";
 
 function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    const parts = forwardedFor.split(",").map((s) => s.trim()).filter(Boolean);
-    if (parts.length > 0) {
-      // When trustProxy is true, use the leftmost IP (the original client).
-      // When false, use the rightmost IP (added by the nearest proxy, not spoofable).
-      return trustProxy ? parts[0]! : parts[parts.length - 1]!;
-    }
-  }
-
-  // `x-real-ip` is a proxy-set header. Honor it only when we trust the proxy;
-  // otherwise a client can spoof it to mint a fresh rate-limit key per request
-  // and evade limits entirely. Untrusted requests share the "unknown" bucket.
-  if (trustProxy) {
-    const realIp = request.headers.get("x-real-ip");
-    if (realIp) return realIp;
-  }
-
-  return "unknown";
+  return resolveRateLimitClientKey(request, trustProxy, "unknown");
 }
 
 function defaultRateLimitExceeded(_request: Request, _key: string, message: string): Response {

@@ -4,15 +4,9 @@ import {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
-import { isSupportedMistralModelId } from "./model-catalog.ts";
+import { isSupportedMistralModelId, type VeryfrontCloudProviderId } from "./model-catalog.ts";
 
-/** Public API contract for Veryfront Cloud provider ID. */
-export type VeryfrontCloudProviderId =
-  | "anthropic"
-  | "openai"
-  | "google"
-  | "mistral"
-  | "moonshotai";
+export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
 interface ParsedVeryfrontCloudModelId {
   provider: VeryfrontCloudProviderId;

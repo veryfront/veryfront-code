@@ -11,10 +11,14 @@ import {
   ensureBranch,
   generateBranchName,
   resolvePushRemoteFiles,
+  scanLocalFiles,
   uploadFiles,
   type UploadOp,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import { createIgnoreChecker } from "../../sync/ignore.ts";
+import { join } from "veryfront/platform/path";
+import { DEFAULT_LIMITS } from "veryfront/security";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -57,6 +61,42 @@ describe("generateBranchName", () => {
     const name2 = generateBranchName();
     assertMatch(name1, /^push-\d{8}T\d{6}$/);
     assertMatch(name2, /^push-\d{8}T\d{6}$/);
+  });
+});
+
+describe("scanLocalFiles", () => {
+  it("skips symbolic links so push cannot read files outside the project", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(join(projectDir, "page.ts"), "export default null;");
+      const outsideFile = join(outsideDir, "secret.ts");
+      await Deno.writeTextFile(outsideFile, "secret");
+      await Deno.symlink(outsideFile, join(projectDir, "linked-secret.ts"));
+
+      const files = await scanLocalFiles(projectDir, createIgnoreChecker([]));
+
+      assertEquals(files.map((file) => file.path), ["page.ts"]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("skips files larger than the shared file-size limit", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(projectDir, "oversized.ts"),
+        "x".repeat(DEFAULT_LIMITS.maxFileSize + 1),
+      );
+
+      const files = await scanLocalFiles(projectDir, createIgnoreChecker([]));
+
+      assertEquals(files, []);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 

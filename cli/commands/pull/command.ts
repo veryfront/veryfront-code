@@ -9,11 +9,18 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { dirname, join, normalize, resolve } from "veryfront/platform/path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+  sep,
+} from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
 import { resolveCliApiUrl } from "#cli/shared/constants";
-import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, cwd, type FileSystem } from "veryfront/platform";
 import {
   createApiClient,
   readConfigFile,
@@ -31,9 +38,11 @@ import {
   INVALID_ARGUMENT,
   RESOURCE_NOT_FOUND,
   VeryfrontError,
-} from "#veryfront/errors";
+} from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import { getSlugSchema } from "veryfront/schemas";
+import { DEFAULT_LIMITS } from "veryfront/security";
 
 /**
  * Schema factory for pull command arguments
@@ -162,7 +171,12 @@ interface FailedProject {
 function validateFilePath(filePath: string, projectDir: string): string {
   const normalizedPath = normalize(filePath);
 
-  if (normalizedPath.startsWith("/") || normalizedPath.startsWith("..")) {
+  if (
+    filePath.includes("\0") ||
+    normalizedPath === "." ||
+    isAbsolute(normalizedPath) ||
+    normalizedPath.split(/[\\/]/).includes("..")
+  ) {
     throw new Error(
       `Invalid file path: "${filePath}" - paths must be relative and cannot escape project directory`,
     );
@@ -171,26 +185,65 @@ function validateFilePath(filePath: string, projectDir: string): string {
   const fullPath = resolve(projectDir, normalizedPath);
   const resolvedProjectDir = resolve(projectDir);
 
-  if (!fullPath.startsWith(resolvedProjectDir + "/") && fullPath !== resolvedProjectDir) {
+  const relativePath = relative(resolvedProjectDir, fullPath);
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
     throw new Error(`Invalid file path: "${filePath}" - resolved path escapes project directory`);
   }
 
   return fullPath;
 }
 
+function isMissingPathError(error: unknown): boolean {
+  const candidate = error as { name?: unknown; code?: unknown };
+  return candidate?.name === "NotFound" || candidate?.code === "ENOENT";
+}
+
+async function assertNoSymlinkComponents(
+  fs: FileSystem,
+  projectDir: string,
+  targetPath: string,
+): Promise<void> {
+  if (!fs.lstat) {
+    throw new Error("Filesystem does not support secure symbolic-link checks");
+  }
+
+  const relativePath = relative(resolve(projectDir), resolve(targetPath));
+  let currentPath = resolve(projectDir);
+
+  for (const segment of relativePath.split(/[\\/]/).filter(Boolean)) {
+    currentPath = join(currentPath, segment);
+    try {
+      if ((await fs.lstat(currentPath)).isSymlink) {
+        throw new Error(`Refusing to write through symbolic link: ${currentPath}`);
+      }
+    } catch (error) {
+      if (isMissingPathError(error)) continue;
+      throw error;
+    }
+  }
+}
+
 /**
  * Build the files list URL based on pull source
  */
 export function buildFilesListUrl(projectSlug: string, source: PullSource): string {
+  const encodedProjectSlug = encodeURIComponent(projectSlug);
   switch (source.type) {
     case "environment":
-      return `/projects/${projectSlug}/environments/${encodeURIComponent(source.name)}/files`;
+      return `/projects/${encodedProjectSlug}/environments/${
+        encodeURIComponent(source.name)
+      }/files`;
     case "release":
-      return `/projects/${projectSlug}/releases/${encodeURIComponent(source.version)}/files`;
+      return `/projects/${encodedProjectSlug}/releases/${encodeURIComponent(source.version)}/files`;
     case "branch":
-      return `/projects/${projectSlug}/files?branch=${encodeURIComponent(source.name)}`;
+      return `/projects/${encodedProjectSlug}/files?branch=${encodeURIComponent(source.name)}`;
     case "main":
-      return `/projects/${projectSlug}/files`;
+      return `/projects/${encodedProjectSlug}/files`;
   }
 }
 
@@ -228,23 +281,24 @@ export async function listAllFiles(
  * Build the file content URL based on pull source
  */
 export function buildFileContentUrl(projectSlug: string, path: string, source: PullSource): string {
+  const encodedProjectSlug = encodeURIComponent(projectSlug);
   const encodedPath = encodeURIComponent(path);
 
   switch (source.type) {
     case "environment":
-      return `/projects/${projectSlug}/environments/${
+      return `/projects/${encodedProjectSlug}/environments/${
         encodeURIComponent(source.name)
       }/files/${encodedPath}`;
     case "release":
-      return `/projects/${projectSlug}/releases/${
+      return `/projects/${encodedProjectSlug}/releases/${
         encodeURIComponent(source.version)
       }/files/${encodedPath}`;
     case "branch":
-      return `/projects/${projectSlug}/files/${encodedPath}?branch=${
+      return `/projects/${encodedProjectSlug}/files/${encodedPath}?branch=${
         encodeURIComponent(source.name)
       }`;
     case "main":
-      return `/projects/${projectSlug}/files/${encodedPath}`;
+      return `/projects/${encodedProjectSlug}/files/${encodedPath}`;
   }
 }
 
@@ -263,6 +317,9 @@ export async function getFileContent(
 
   // Ensure text files end with a trailing newline (POSIX standard)
   const content = response.content;
+  if (new TextEncoder().encode(content).byteLength > DEFAULT_LIMITS.maxFileSize) {
+    throw new Error(`Remote file exceeds the ${DEFAULT_LIMITS.maxFileSize}-byte size limit`);
+  }
   if (content && !content.endsWith("\n")) return content + "\n";
   return content;
 }
@@ -276,10 +333,13 @@ async function processFile(
   projectSlug: string,
   source: PullSource,
   fs: ReturnType<typeof createFileSystem>,
+  projectDir: string,
 ): Promise<{ success: boolean; path: string; error?: Error }> {
   try {
+    await assertNoSymlinkComponents(fs, projectDir, op.path);
     const content = await getFileContent(client, projectSlug, op.relativePath, source);
     await fs.mkdir(dirname(op.path), { recursive: true });
+    await assertNoSymlinkComponents(fs, projectDir, op.path);
     await fs.writeTextFile(op.path, content);
     return { success: true, path: op.relativePath };
   } catch (error) {
@@ -293,6 +353,7 @@ async function writeFiles(
   projectSlug: string,
   source: PullSource,
   dryRun: boolean,
+  projectDir: string,
 ): Promise<{ written: number; skipped: number }> {
   if (dryRun) {
     for (const op of ops) cliLogger.info(`  Would write: ${op.relativePath}`);
@@ -306,7 +367,7 @@ async function writeFiles(
   for (let i = 0; i < ops.length; i += CONCURRENCY) {
     const batch = ops.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
-      batch.map((op) => processFile(op, client, projectSlug, source, fs)),
+      batch.map((op) => processFile(op, client, projectSlug, source, fs, projectDir)),
     );
 
     for (const result of results) {
@@ -414,10 +475,18 @@ async function pullSingleProject(
   }
 
   const writeOps: WriteOp[] = [];
+  let preflightSkipped = 0;
   for (const file of files) {
+    if (Number.isFinite(file.size) && file.size > DEFAULT_LIMITS.maxFileSize) {
+      preflightSkipped++;
+      if (!quiet) cliLogger.warn(`Skipping oversized file: ${file.path}`);
+      continue;
+    }
+
     try {
       writeOps.push({ path: validateFilePath(file.path, projectDir), relativePath: file.path });
     } catch (error) {
+      preflightSkipped++;
       if (!quiet) cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
     }
   }
@@ -426,6 +495,13 @@ async function pullSingleProject(
     cliLogger.info(
       `\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`,
     );
+  }
+
+  if (writeOps.length === 0) {
+    if (!quiet && preflightSkipped > 0) {
+      logWarning(`Skipped ${preflightSkipped} files due to validation errors.`);
+    }
+    return { written: 0, skipped: preflightSkipped, cancelled: false };
   }
 
   if (!force && !dryRun) {
@@ -438,7 +514,8 @@ async function pullSingleProject(
 
   spinner = quiet ? createNoopSpinner() : createSpinner(`Writing files to ${projectDir}...`);
 
-  const result = await writeFiles(writeOps, client, projectSlug, source, dryRun);
+  const result = await writeFiles(writeOps, client, projectSlug, source, dryRun, projectDir);
+  result.skipped += preflightSkipped;
 
   spinner.stop();
 
@@ -447,8 +524,8 @@ async function pullSingleProject(
       logInfo(`Dry run complete for ${projectSlug}. Would write ${result.written} files.`);
     } else {
       logSuccess(`Pulled ${result.written} files from ${projectSlug} (${sourceLabel}).`);
-      if (result.skipped > 0) logWarning(`Skipped ${result.skipped} files due to errors.`);
     }
+    if (result.skipped > 0) logWarning(`Skipped ${result.skipped} files due to errors.`);
   }
 
   return { ...result, cancelled: false };
@@ -550,7 +627,16 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       const cancelledProjects: string[] = [];
 
       for (const project of projects) {
-        const targetDir = join(projectDir, project);
+        let targetDir: string;
+        try {
+          getSlugSchema().parse(project);
+          targetDir = validateFilePath(project, projectDir);
+        } catch (error) {
+          const message = `Invalid project slug "${project}": ${describeError(error)}`;
+          cliLogger.error(message);
+          failedProjects.push({ project, message, error });
+          continue;
+        }
 
         if (!quiet) cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
 

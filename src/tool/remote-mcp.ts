@@ -303,7 +303,9 @@ function parseJsonRpcSsePayload(text: string): unknown {
     return parsedPayloads[0];
   }
 
-  throw NETWORK_ERROR.create({ detail: "Remote MCP SSE response did not include a JSON-RPC payload" });
+  throw NETWORK_ERROR.create({
+    detail: "Remote MCP SSE response did not include a JSON-RPC payload",
+  });
 }
 
 async function parseJsonRpcResponse(response: Response): Promise<unknown> {

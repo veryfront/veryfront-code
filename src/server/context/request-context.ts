@@ -15,7 +15,7 @@ export function createRequestContext(req: Request): RequestContext {
   // env var, so gating on it prevents Host / preview-mode spoofing via a
   // client-supplied x-forwarded-host (VULN-SRV-1 / VULN-SRV-2). Dispatch-JWS
   // trust requires async verification and is intentionally not consulted on this
-  // synchronous path — such requests fall back to the Host header, which the
+  // synchronous path. Such requests fall back to the Host header, which the
   // edge proxy also sets.
   const trustProxy = getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
   const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
@@ -25,7 +25,7 @@ export function createRequestContext(req: Request): RequestContext {
   // Mode derives from server-trusted signals only. The `x-environment` header
   // is client-controlled and must NOT be able to flip a production request
   // into preview mode (VULN-SRV-1 / VULN-SRV-2). Preview is determined by the
-  // HTTP Host / X-Forwarded-Host — those are terminated at the edge proxy and
+  // HTTP Host / X-Forwarded-Host. Those are terminated at the edge proxy and
   // are the same signal used for routing, so they're the correct source of
   // truth.
   const mode: "preview" | "production" =

@@ -31,8 +31,8 @@ export interface DomainLookupResult {
  */
 export class DomainLookupApiError extends Error {
   constructor(
-    public readonly status: number,
-    public readonly statusText: string,
+    readonly status: number,
+    readonly statusText: string,
     domain: string,
   ) {
     super(`Domain lookup API error for "${domain}": ${status} ${statusText}`);
@@ -188,7 +188,7 @@ function fetchDomainLookup(
         }
 
         if (!response.ok) {
-          logger.error("API error — throwing DomainLookupApiError so callers can return 502", {
+          logger.error("API error, throwing DomainLookupApiError so callers can return 502", {
             domain,
             status: response.status,
             statusText: response.statusText,

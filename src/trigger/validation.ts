@@ -5,7 +5,8 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9._/-]*$/;
 export function validateTriggerId(id: string, label: string): void {
   if (!ID_PATTERN.test(id)) {
     throw TRIGGER_CONFIG_INVALID.create({
-      detail: `${label} id must start with a lowercase letter or number and use lowercase letters, numbers, dots, underscores, slashes, or hyphens.`,
+      detail:
+        `${label} id must start with a lowercase letter or number and use lowercase letters, numbers, dots, underscores, slashes, or hyphens.`,
     });
   }
 }

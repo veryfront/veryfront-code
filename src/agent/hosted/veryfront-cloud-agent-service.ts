@@ -31,7 +31,7 @@ import {
 } from "#veryfront/tool";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
-import { DEFAULT_PROJECT_DISCOVERY_DIRS } from "../../discovery/index.ts";
+import { DEFAULT_PROJECT_DISCOVERY_DIRS } from "../../discovery/project-discovery-config.ts";
 import type { DiscoveryResult } from "../../discovery/types.ts";
 import { nodeAdapter } from "../../platform/adapters/node.ts";
 import {
@@ -40,7 +40,7 @@ import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
-} from "../../provider/index.ts";
+} from "../../provider/veryfront-cloud/model-catalog.ts";
 import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
 import {
   buildAgentRunTraceAttributes,

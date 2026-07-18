@@ -18,6 +18,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
+import { CACHE_ERROR } from "#veryfront/errors";
 
 /**
  * Generic cache tier interface.
@@ -231,9 +232,10 @@ export class MultiTierCache<T = string> {
     );
 
     if (failedTiers.length > 0) {
-      throw new Error(
-        `[${this.config.name}] Delete failed in tier(s) [${failedTiers.join(", ")}]; key may still be present`,
-      );
+      throw CACHE_ERROR.create({
+        detail: `Delete failed in cache tier(s): ${failedTiers.join(", ")}`,
+        context: { cacheName: this.config.name, failedTiers },
+      });
     }
   }
 

@@ -81,7 +81,8 @@ export const SCHEDULE_CONFIG_INVALID = defineError({
   category: "CONFIG",
   status: 400,
   title: "Invalid schedule configuration",
-  suggestion: "Check schedule definition fields, cron expression, target settings, and positive-integer limits",
+  suggestion:
+    "Check schedule definition fields, cron expression, target settings, and positive-integer limits",
 });
 
 /** Trigger ID format and input serialization validation failures */
@@ -90,7 +91,8 @@ export const TRIGGER_CONFIG_INVALID = defineError({
   category: "CONFIG",
   status: 400,
   title: "Invalid trigger configuration",
-  suggestion: "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
+  suggestion:
+    "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
 });
 
 /** Registry fragment for CONFIG errors (slug → definition). */

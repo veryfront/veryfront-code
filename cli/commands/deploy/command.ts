@@ -14,6 +14,7 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
+import { isAutoConfirmEnabled } from "../../shared/interactive.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 /**
@@ -49,6 +50,10 @@ export const parseDeployArgs = createArgParser(DeployArgsSchema, {
   force: CommonArgs.force,
   quiet: CommonArgs.quiet,
 });
+
+export function requiresExplicitDeployConfirmation(force: boolean): boolean {
+  return !force && !isAutoConfirmEnabled();
+}
 
 /**
  * Environment from the API
@@ -214,8 +219,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
 
   try {
     // JSON mode requires --force or --yes to prevent accidental deploys
-    const { isInteractive } = await import("../../shared/interactive.ts");
-    if (!force && isInteractive()) {
+    if (requiresExplicitDeployConfirmation(force)) {
       streamJsonLine({
         type: "result",
         success: false,

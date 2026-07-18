@@ -84,4 +84,3 @@ export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
     options,
   ) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;
 }
-

@@ -4,12 +4,6 @@
  * @module eval
  */
 
-import type {
-  EvalReportExportContext,
-  EvalReportExporterRegistry,
-  EvalReportExportResult,
-} from "#veryfront/extensions/eval";
-
 /** Primitive kind an eval can execute. V1 supports agent targets. */
 export type EvalTargetKind = "agent";
 
@@ -27,6 +21,88 @@ export type EvalMetricThreshold = {
 
 /** Value that can be returned synchronously or as a promise. */
 export type EvalMaybePromise<T> = T | Promise<T>;
+
+/** Redaction policy applied before reports leave the process. */
+export interface EvalReportExportRedaction {
+  includeInputs?: boolean;
+  includeOutputs?: boolean;
+  includeReferences?: boolean;
+  includeTraces?: boolean;
+  includeMetricExplanations?: boolean;
+  includeMetricEvidence?: boolean;
+  metadataAllowlist?: string[];
+}
+
+/** Trace correlation fields that connect eval exports to runtime spans. */
+export interface EvalReportExportTraceContext {
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+}
+
+/** Context passed to eval report exporters. */
+export interface EvalReportExportContext {
+  projectId?: string;
+  projectReference?: string;
+  evalId?: string;
+  sourcePath?: string;
+  reportPath?: string;
+  environment?: string;
+  branch?: string;
+  commitSha?: string;
+  runUrl?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  trace?: EvalReportExportTraceContext;
+  redaction?: EvalReportExportRedaction;
+}
+
+/** Optional receipt returned by a vendor exporter. */
+export interface EvalReportExportReceipt {
+  externalRunId?: string;
+  url?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Vendor or backend implementation that receives sanitized eval reports. */
+export interface EvalReportExporter {
+  readonly id: string;
+  export(
+    report: EvalReport,
+    context: EvalReportExportContext,
+  ): EvalMaybePromise<EvalReportExportReceipt | void>;
+}
+
+/** Successful exporter result. */
+export interface EvalReportExportSuccess {
+  exporterId: string;
+  ok: true;
+  receipt?: EvalReportExportReceipt;
+}
+
+/** Failed exporter result. */
+export interface EvalReportExportFailure {
+  exporterId: string;
+  ok: false;
+  error: string;
+}
+
+/** Result for one exporter invocation. */
+export type EvalReportExportResult = EvalReportExportSuccess | EvalReportExportFailure;
+
+/** Registry contract for eval report exporters. */
+export interface EvalReportExporterRegistry {
+  register(exporter: EvalReportExporter): void;
+  unregister(id: string): void;
+  get(id: string): EvalReportExporter | undefined;
+  require(id: string): EvalReportExporter;
+  list(): EvalReportExporter[];
+  has(id: string): boolean;
+  export(
+    report: EvalReport,
+    context?: EvalReportExportContext,
+  ): Promise<EvalReportExportResult[]>;
+}
 
 /** Normalized dataset example used by eval runners and reports. */
 export interface EvalExample {

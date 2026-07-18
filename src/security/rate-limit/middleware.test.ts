@@ -126,7 +126,7 @@ describe("Rate Limiting Middleware", () => {
     });
   });
 
-  it("should use rightmost X-Forwarded-For IP when trustProxy is false (default)", async () => {
+  it("should ignore X-Forwarded-For when trustProxy is false", async () => {
     await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 1,
@@ -136,21 +136,18 @@ describe("Rate Limiting Middleware", () => {
 
       const next = createNext();
 
-      // Without trustProxy, use the rightmost (proxy-added) IP — not client-spoofable
-      // Same rightmost IP = same bucket
-      const req1 = createRequest({ "x-forwarded-for": "spoofed1, 10.0.0.1" });
-      const req2 = createRequest({ "x-forwarded-for": "spoofed2, 10.0.0.1" });
+      const req1 = createRequest({ "x-forwarded-for": "198.51.100.1" });
+      const req2 = createRequest({ "x-forwarded-for": "203.0.113.8" });
 
       const res1 = await limiter(req1, next);
       assertEquals(res1.status, 200);
 
-      // Same rightmost IP should be rate limited regardless of spoofed leftmost
       const res2 = await limiter(req2, next);
       assertEquals(res2.status, 429);
     });
   });
 
-  it("should allow different rightmost IPs when trustProxy is false", async () => {
+  it("should ignore X-Real-IP when trustProxy is false", async () => {
     await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 1,
@@ -160,15 +157,14 @@ describe("Rate Limiting Middleware", () => {
 
       const next = createNext();
 
-      // Different rightmost IPs = different buckets (per-client throttling preserved)
-      const req1 = createRequest({ "x-forwarded-for": "spoofed, 10.0.0.1" });
-      const req2 = createRequest({ "x-forwarded-for": "spoofed, 10.0.0.2" });
+      const req1 = createRequest({ "x-real-ip": "198.51.100.1" });
+      const req2 = createRequest({ "x-real-ip": "203.0.113.8" });
 
       const res1 = await limiter(req1, next);
       assertEquals(res1.status, 200);
 
       const res2 = await limiter(req2, next);
-      assertEquals(res2.status, 200);
+      assertEquals(res2.status, 429);
     });
   });
 
@@ -195,7 +191,7 @@ describe("Rate Limiting Middleware", () => {
     });
   });
 
-  it("should use first IP from X-Forwarded-For chain when trustProxy is true", async () => {
+  it("should use the rightmost IP from X-Forwarded-For when trustProxy is true", async () => {
     await withStore(async (store) => {
       const limiter = createRateLimiter({
         maxRequests: 1,
@@ -206,12 +202,11 @@ describe("Rate Limiting Middleware", () => {
 
       const next = createNext();
 
-      const req = createRequest({ "x-forwarded-for": "1.2.3.4, 10.0.0.1, 172.16.0.1" });
+      const req = createRequest({ "x-forwarded-for": "198.51.100.1, 203.0.113.8" });
       const res = await limiter(req, next);
       assertEquals(res.status, 200);
 
-      // Same first IP should be rate limited
-      const req2 = createRequest({ "x-forwarded-for": "1.2.3.4, 99.99.99.99" });
+      const req2 = createRequest({ "x-forwarded-for": "192.0.2.5, 203.0.113.8" });
       const res2 = await limiter(req2, next);
       assertEquals(res2.status, 429);
     });

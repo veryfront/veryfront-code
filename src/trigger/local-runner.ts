@@ -136,6 +136,7 @@ export async function runTriggerTarget(
   }
 
   throw TRIGGER_NOT_SUPPORTED.create({
-    detail: "Agent trigger targets are Cloud-only for this milestone. Use a workflow or task for local trigger runs.",
+    detail:
+      "Agent trigger targets are Cloud-only for this milestone. Use a workflow or task for local trigger runs.",
   });
 }

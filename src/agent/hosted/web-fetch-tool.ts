@@ -1,7 +1,13 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import {
+  guardedEgressFetch,
+  type ResolveWorkerHost,
+} from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
 
 const DEFAULT_MAX_CONTENT_CHARS = 500_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
 /** Input payload for hosted web_fetch. */
 export type HostedWebFetchToolInput = {
@@ -37,7 +43,18 @@ export type HostedWebFetchToolOutput = {
 /** Options accepted by hosted web_fetch. */
 export type HostedWebFetchToolOptions = {
   fetch?: typeof fetch;
+  resolveHost?: ResolveWorkerHost;
   maxContentChars?: number;
+  maxResponseBytes?: number;
+  timeoutMs?: number;
+};
+
+type ResolvedHostedWebFetchToolOptions = {
+  fetch: typeof fetch;
+  resolveHost?: ResolveWorkerHost;
+  maxContentChars: number;
+  maxResponseBytes: number;
+  timeoutMs: number;
 };
 
 const getHostedWebFetchInputSchema = (maxContentChars: number) =>
@@ -110,7 +127,7 @@ function normalizeMaxContentChars(
 
 function resolveMaxContentChars(
   input: HostedWebFetchToolInput,
-  options: Required<HostedWebFetchToolOptions>,
+  options: ResolvedHostedWebFetchToolOptions,
 ): number {
   const optionMax = normalizeMaxContentChars(
     options.maxContentChars,
@@ -129,30 +146,116 @@ function resolveMaxContentChars(
   return Math.min(inputMax, optionMax);
 }
 
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > maxBytes) {
+    throw new Error("web_fetch response exceeds maximum size");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("web_fetch response exceeds maximum size");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function createFetchAbortScope(parent: AbortSignal | undefined, timeoutMs: number): {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromParent = () => controller.abort(parent?.reason);
+
+  if (parent?.aborted) abortFromParent();
+  else parent?.addEventListener("abort", abortFromParent, { once: true });
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("web_fetch timed out"));
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      parent?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
 async function executeHostedWebFetch(
   input: HostedWebFetchToolInput,
-  options: Required<HostedWebFetchToolOptions>,
+  options: ResolvedHostedWebFetchToolOptions,
   context?: ToolExecutionContext,
 ): Promise<HostedWebFetchToolOutput> {
   const url = parseFetchUrl(input.url);
   const offset = parseCursor(input.cursor);
   const maxContentChars = resolveMaxContentChars(input, options);
-  const response = await options.fetch(url.toString(), {
-    method: "GET",
-    redirect: "follow",
-    signal: context?.abortSignal,
-    headers: {
-      accept: "text/markdown,text/plain,text/html,application/xhtml+xml,application/xml,*/*;q=0.8",
-      "user-agent": "Veryfront web_fetch",
-    },
-  });
+  const abortScope = createFetchAbortScope(context?.abortSignal, options.timeoutMs);
+  let response: Response;
+  let text: string;
 
-  if (!response.ok) {
-    throw new Error(`web_fetch failed with HTTP ${response.status}`);
+  try {
+    response = await guardedEgressFetch(
+      url,
+      {
+        method: "GET",
+        redirect: "follow",
+        signal: abortScope.signal,
+        headers: {
+          accept:
+            "text/markdown,text/plain,text/html,application/xhtml+xml,application/xml,*/*;q=0.8",
+          "user-agent": "Veryfront web_fetch",
+        },
+      },
+      {
+        fetchImpl: options.fetch,
+        options: { resolveHost: options.resolveHost },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`web_fetch failed with HTTP ${response.status}`);
+    }
+
+    text = await readResponseTextWithLimit(response, options.maxResponseBytes);
+  } catch (error) {
+    if (abortScope.didTimeout()) {
+      throw new Error(`web_fetch timed out after ${options.timeoutMs}ms`, { cause: error });
+    }
+    throw error;
+  } finally {
+    abortScope.cleanup();
   }
 
   const mediaType = response.headers.get("content-type") ?? "text/plain";
-  const text = await response.text();
   if (offset > text.length) {
     throw new Error("web_fetch cursor exceeds fetched content length");
   }
@@ -188,9 +291,24 @@ async function executeHostedWebFetch(
 
 /** Create hosted web_fetch tool that allows direct explicit URL fetches. */
 export function createHostedWebFetchTool(options: HostedWebFetchToolOptions = {}) {
-  const resolvedOptions: Required<HostedWebFetchToolOptions> = {
+  const resolvedOptions: ResolvedHostedWebFetchToolOptions = {
     fetch: options.fetch ?? globalThis.fetch,
-    maxContentChars: options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS,
+    resolveHost: options.resolveHost,
+    maxContentChars: normalizeMaxContentChars(
+      options.maxContentChars,
+      "maxContentChars option",
+      DEFAULT_MAX_CONTENT_CHARS,
+    ),
+    maxResponseBytes: normalizeMaxContentChars(
+      options.maxResponseBytes,
+      "maxResponseBytes option",
+      DEFAULT_MAX_RESPONSE_BYTES,
+    ),
+    timeoutMs: normalizeMaxContentChars(
+      options.timeoutMs,
+      "timeoutMs option",
+      DEFAULT_FETCH_TIMEOUT_MS,
+    ),
   };
 
   return tool<HostedWebFetchToolInput, HostedWebFetchToolOutput>({

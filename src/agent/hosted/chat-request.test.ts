@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
@@ -276,6 +277,22 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.upstreamParentRunId, "run_parent_1");
     assertEquals(parsed.spawnedFromToolCallId, "tool_1");
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
+  });
+
+  it("rejects oversized hosted chat requests before schema parsing", async () => {
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({ padding: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES) }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+      },
+    );
+
+    if (!(response instanceof Response)) throw new Error("Expected error response");
+    assertEquals(response.status, 413);
+    assertEquals((await response.json()).errorCode, "REQUEST_TOO_LARGE");
   });
 
   it("preserves project slug when parsing runtime agent invocation hosted chat requests", async () => {

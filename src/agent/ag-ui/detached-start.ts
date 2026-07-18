@@ -3,7 +3,11 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import { getAgUiRequestSchema, normalizeAgUiMessages } from "./host-support.ts";
-import { extractRequest } from "./request-shared.ts";
+import {
+  createAgUiBodyLimitErrorResponse,
+  extractRequest,
+  parseAgUiJsonBody,
+} from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   AgentRuntime,
@@ -408,13 +412,19 @@ export function createAgUiDetachedStartHandler(
     const request = extractRequest(requestOrCtx);
 
     try {
-      const parsed = getAgUiDetachedStartRequestSchema().parse(await request.json());
+      const parsed = getAgUiDetachedStartRequestSchema().parse(await parseAgUiJsonBody(request));
       return await executeAgUiDetachedStart(options, {
         request: parsed,
         rawRequest: request,
         requestOrCtx,
       });
     } catch (error) {
+      const bodyLimitError = createAgUiBodyLimitErrorResponse(
+        error,
+        "Invalid AG-UI detached start request",
+      );
+      if (bodyLimitError) return bodyLimitError;
+
       if (
         error instanceof Error &&
         "issues" in error &&

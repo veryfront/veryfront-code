@@ -29,8 +29,23 @@ export interface HandlerCache<T> {
 
 // LRU-backed implementation of HandlerCache so entries evict naturally in
 // long-lived / multi-tenant processes instead of growing without bound.
-class LRUHandlerCache<T> implements HandlerCache<T> {
-  private readonly lru = new LRUCacheAdapter({ maxEntries: 1000 });
+export class LRUHandlerCache<T> implements HandlerCache<T> {
+  private readonly lru: LRUCacheAdapter;
+  private suppressEvictionCleanup = false;
+
+  constructor(
+    options: {
+      maxEntries?: number;
+      onEvict?: (value: T) => void;
+    } = {},
+  ) {
+    this.lru = new LRUCacheAdapter({
+      maxEntries: options.maxEntries ?? 1000,
+      onEvict: (_key, value) => {
+        if (!this.suppressEvictionCleanup) options.onEvict?.(value as T);
+      },
+    });
+  }
 
   get(key: string): T | undefined {
     return this.lru.get<T>(key);
@@ -40,11 +55,21 @@ class LRUHandlerCache<T> implements HandlerCache<T> {
   }
   delete(key: string): boolean {
     const had = this.lru.has(key);
-    this.lru.delete(key);
+    this.suppressEvictionCleanup = true;
+    try {
+      this.lru.delete(key);
+    } finally {
+      this.suppressEvictionCleanup = false;
+    }
     return had;
   }
   clear(): void {
-    this.lru.clear();
+    this.suppressEvictionCleanup = true;
+    try {
+      this.lru.clear();
+    } finally {
+      this.suppressEvictionCleanup = false;
+    }
   }
   entries(): IterableIterator<[string, T]> {
     return this.lru.entries<T>();
@@ -54,7 +79,11 @@ class LRUHandlerCache<T> implements HandlerCache<T> {
   }
 }
 
-const apiHandlerCache = new LRUHandlerCache<Promise<APIRouteHandler>>();
+const apiHandlerCache = new LRUHandlerCache<Promise<APIRouteHandler>>({
+  onEvict: (promise) => {
+    void destroyHandler(promise);
+  },
+});
 let injectedCache: HandlerCache<Promise<APIRouteHandler>> | null = null;
 
 function getCache(): HandlerCache<Promise<APIRouteHandler>> {

@@ -27,14 +27,18 @@ export function schedule(config: ScheduleConfig): ScheduleDefinition {
   const normalizedSchedule = requireString(scheduleExpression, "Schedule cron");
 
   if (!isTriggerTarget(config.target)) {
-    throw SCHEDULE_CONFIG_INVALID.create({ detail: "Schedule target must specify a valid task, workflow, or agent id." });
+    throw SCHEDULE_CONFIG_INVALID.create({
+      detail: "Schedule target must specify a valid task, workflow, or agent id.",
+    });
   }
 
   if (
     config.concurrencyPolicy !== undefined &&
     !CONCURRENCY_POLICIES.has(config.concurrencyPolicy)
   ) {
-    throw SCHEDULE_CONFIG_INVALID.create({ detail: "Schedule concurrencyPolicy must be Allow, Forbid, or Replace." });
+    throw SCHEDULE_CONFIG_INVALID.create({
+      detail: "Schedule concurrencyPolicy must be Allow, Forbid, or Replace.",
+    });
   }
 
   validatePositiveInteger(config.timeoutSeconds, "Schedule timeoutSeconds");

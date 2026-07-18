@@ -14,6 +14,7 @@ class FakeRunExecutor implements RunExecutor {
   initializeCalls = 0;
   destroyCalls = 0;
   created: RunExecutionConfig[] = [];
+  deleted: string[] = [];
   private executions = new Map<string, RunExecutionInfo>();
 
   createRunExecution(config: RunExecutionConfig): Promise<string> {
@@ -33,8 +34,15 @@ class FakeRunExecutor implements RunExecutor {
     return Promise.resolve([...this.executions.values()]);
   }
   deleteRunExecution(executionId: string): Promise<void> {
+    this.deleted.push(executionId);
     this.executions.delete(executionId);
     return Promise.resolve();
+  }
+  setExecutionStatus(executionId: string, status: "succeeded" | "failed"): void {
+    const execution = this.executions.get(executionId);
+    if (!execution) throw new Error(`Execution not found: ${executionId}`);
+    execution.status = status;
+    execution.completedAt = new Date();
   }
   initialize(): Promise<void> {
     this.initializeCalls++;
@@ -112,6 +120,12 @@ function createExecution(manager: WorkflowRunManager, run: WorkflowRun): Promise
   return (manager as unknown as {
     createExecutionForWorkflow(run: WorkflowRun): Promise<void>;
   }).createExecutionForWorkflow(run);
+}
+
+function syncExecutionStatuses(manager: WorkflowRunManager): Promise<void> {
+  return (manager as unknown as {
+    syncRunExecutionStatuses(): Promise<void>;
+  }).syncRunExecutionStatuses();
 }
 
 describe("workflow/worker/run-manager", () => {
@@ -260,6 +274,26 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(await backend.isLocked(run.id), false);
     assertEquals(manager.getActiveExecutions(), []);
     assertEquals(manager.getStats().executionsFailed, 1);
+  });
+
+  it("deletes executor records after observing terminal execution status", async () => {
+    const executor = new FakeRunExecutor();
+    const { backend, manager } = makeManager(executor);
+    track(manager);
+    const run = createPendingRun("run-terminal-cleanup");
+    await backend.createRun(run);
+
+    await createExecution(manager, run);
+    const executionId = executor.created[0]?.executionId;
+    assertExists(executionId);
+    executor.setExecutionStatus(executionId, "succeeded");
+
+    await syncExecutionStatuses(manager);
+
+    assertEquals(manager.getActiveExecutions(), []);
+    assertEquals(manager.getStats().executionsCompleted, 1);
+    assertEquals(executor.deleted, [executionId]);
+    assertEquals(await executor.getRunExecutionStatus(executionId), null);
   });
 
   it("does not claim pending or waiting runs cancelled before the running transition", async () => {

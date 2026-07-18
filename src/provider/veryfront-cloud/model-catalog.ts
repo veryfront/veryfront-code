@@ -1,4 +1,10 @@
-import type { VeryfrontCloudProviderId } from "./shared.ts";
+/** Public API contract for Veryfront Cloud provider ID. */
+export type VeryfrontCloudProviderId =
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "mistral"
+  | "moonshotai";
 
 /** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {

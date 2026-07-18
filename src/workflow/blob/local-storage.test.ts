@@ -58,6 +58,31 @@ describe("LocalBlobStorage", () => {
     });
   });
 
+  it("rejects blob IDs containing path traversal sequences", async () => {
+    await withTempStorage(async (storage) => {
+      await assertRejects(
+        () => storage.put("hello", { id: "../../outside" }),
+        Error,
+        "Invalid blob id",
+      );
+      await assertRejects(
+        () => storage.getText("../secret"),
+        Error,
+        "Invalid blob id",
+      );
+      await assertRejects(
+        () => storage.stat("nested/blob"),
+        Error,
+        "Invalid blob id",
+      );
+      await assertRejects(
+        () => storage.delete(".."),
+        Error,
+        "Invalid blob id",
+      );
+    });
+  });
+
   it("sanitizes local read failures", async () => {
     const storage = new LocalBlobStorage(".");
     (storage as unknown as { fs: FileSystem }).fs = {

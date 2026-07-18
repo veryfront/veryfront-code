@@ -24,7 +24,7 @@ const logger = baseLogger.component("runtime-handler");
  * The returned `settled` promise resolves once the underlying handler finishes
  * (whether it completed normally, threw, or was aborted). Callers that track
  * in-flight work for graceful drain should wait on `settled` before decrementing
- * their counters — otherwise a timed-out request may be counted as done while
+ * their counters. Otherwise a timed-out request may be counted as done while
  * work is still running.
  *
  * @param executeHandler - The async function to execute; receives an AbortSignal
@@ -38,7 +38,7 @@ export async function withRequestTimeout(
   method: string,
 ): Promise<{ response: Response; error?: Error; settled: Promise<void> }> {
   const controller = new AbortController();
-  const handlerPromise = executeHandler(controller.signal);
+  const handlerPromise = Promise.resolve().then(() => executeHandler(controller.signal));
 
   // settled resolves when the handler finishes regardless of outcome, giving
   // callers a hook to defer in-flight decrements until work truly completes.

@@ -36,6 +36,19 @@ describe("timeout-manager", () => {
       assertEquals(error.message, "Handler failed");
     });
 
+    it("returns error wrapper when a handler throws before returning a promise", async () => {
+      const handler = (): Promise<Response> => {
+        throw new Error("Synchronous handler failure");
+      };
+
+      const { response, error, settled } = await withRequestTimeout(handler, "/test", "GET");
+      await settled;
+
+      assertEquals(response.status, 500);
+      assertExists(error);
+      assertEquals(error.message, "Synchronous handler failure");
+    });
+
     it("wraps non-Error throws as Error", async () => {
       const handler = async (): Promise<Response> => {
         throw "string error";

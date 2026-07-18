@@ -8,7 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { resetInteractiveMode } from "../shared/interactive.ts";
+import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 import {
   confirmPrompt,
   ensureConfirmPromptAvailable,
@@ -205,6 +205,19 @@ describe("confirmPrompt", () => {
       VeryfrontError,
       "no interactive prompt is available",
     );
+  });
+
+  it("fails closed in non-interactive mode without explicit confirmation", async () => {
+    setNonInteractive(true);
+    try {
+      await assertRejects(
+        () => confirmPrompt("Delete everything?", true),
+        VeryfrontError,
+        "requires explicit confirmation",
+      );
+    } finally {
+      resetInteractiveMode();
+    }
   });
 });
 

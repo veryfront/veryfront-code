@@ -6,7 +6,7 @@ import {
 } from "../hosted/child-stream-watchdog.ts";
 import { mergeToolInputDelta, parseToolInputObject } from "./data-stream.ts";
 import { getParsedStreamedToolInput } from "./fork-runtime-part-mapper.ts";
-import type { ForkPart } from "./fork-runtime-stream.ts";
+import type { ForkPart } from "./fork-runtime-types.ts";
 
 type StreamedToolCallState = {
   toolCallId: string;

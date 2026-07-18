@@ -21,24 +21,18 @@ export {
 } from "./runtime-guards.ts";
 
 export {
-  __registerLogRecordEmitter,
   __registerTraceContextGetter,
   __registerTraceContextGetter as registerTraceContextGetter,
-  __resetLoggerConfigForTests,
-  __resetLogRecordEmitterForTests,
   agentLogger,
   bundlerLogger,
   createRunUserLogger,
-  getBaseLogger,
   logger,
   refreshLoggerConfig,
   rendererLogger,
   runWithRequestContextAsync,
   serverLogger,
 } from "./logger/index.ts";
-export type { LogEntry, Logger, RequestContext } from "./logger/index.ts";
-
-export { sanitizeUrlForSpan } from "./logger/redact.ts";
+export type { Logger, RequestContext } from "./logger/index.ts";
 
 export {
   BREAKPOINT_LG,

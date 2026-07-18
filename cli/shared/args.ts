@@ -37,9 +37,9 @@ function coerceValue(
   value: unknown,
   type: ArgSpec["type"],
 ): string | boolean | number | string[] {
-  if (type === "boolean") return Boolean(value);
+  if (type === "boolean") return parseBooleanValue(value) ?? String(value);
   if (type === "number") {
-    return typeof value === "number" ? value : parseInt(String(value), 10);
+    return typeof value === "number" ? value : Number(String(value));
   }
   if (type === "array") {
     if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -172,13 +172,85 @@ export const CommonArgs = {
 
 const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
 
-function maybeNumber(val: unknown): unknown {
-  if (typeof val === "string" && /^\d+$/.test(val)) return parseInt(val, 10);
-  return val;
+const BOOLEAN_FLAGS = new Set([
+  "all",
+  "auto",
+  "binary",
+  "build",
+  "cache",
+  "check",
+  "clear",
+  "color",
+  "compress",
+  "debug",
+  "delete",
+  "deploy",
+  "dry-run",
+  "force",
+  "github",
+  "global",
+  "google",
+  "headless",
+  "help",
+  "hmr",
+  "integrations",
+  "json",
+  "list",
+  "microsoft",
+  "no-animation",
+  "no-color",
+  "no-compress",
+  "no-gpg-sign",
+  "no-hmr",
+  "no-split",
+  "no-ssg",
+  "no-tui",
+  "open",
+  "parallel",
+  "prefetch",
+  "quiet",
+  "recursive",
+  "skip-env-prompt",
+  "skip-install",
+  "split",
+  "ssg",
+  "strict",
+  "studio",
+  "update",
+  "verbose",
+  "verify",
+  "version",
+  "yes",
+]);
+
+function parseBooleanValue(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value !== "string") return undefined;
+
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "1":
+    case "yes":
+    case "on":
+      return true;
+    case "false":
+    case "0":
+    case "no":
+    case "off":
+    case "":
+      return false;
+    default:
+      return undefined;
+  }
 }
 
 function isValue(arg: string | undefined): boolean {
-  return arg !== undefined && !arg.startsWith("-");
+  return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
 function parse(
@@ -191,7 +263,7 @@ function parse(
 
   function setValue(key: string, value: unknown): void {
     explicit[key] = true;
-    const converted = maybeNumber(value);
+    const converted = BOOLEAN_FLAGS.has(key) ? parseBooleanValue(value) ?? value : value;
 
     if (!ARRAY_FLAGS.has(key)) {
       result[key] = converted;
@@ -206,6 +278,11 @@ function parse(
     const arg = args[i];
     if (!arg) continue;
 
+    if (arg === "--") {
+      (result._ as string[]).push(...args.slice(i + 1));
+      break;
+    }
+
     if (arg.startsWith("--")) {
       const eqIdx = arg.indexOf("=");
 
@@ -216,6 +293,11 @@ function parse(
 
       const key = arg.slice(2);
       const next = args[i + 1];
+
+      if (BOOLEAN_FLAGS.has(key)) {
+        setValue(key, true);
+        continue;
+      }
 
       if (isValue(next)) {
         setValue(key, next);
@@ -231,6 +313,12 @@ function parse(
       const short = arg.slice(1);
       const key = aliasMap.get(short) ?? short;
       const next = args[i + 1];
+
+      if (BOOLEAN_FLAGS.has(key)) {
+        setValue(key, true);
+        if (key !== short) setValue(short, true);
+        continue;
+      }
 
       if (isValue(next)) {
         setValue(key, next);

@@ -85,6 +85,23 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       server.start();
       server.start();
     });
+
+    it("contains HTTP bind failures and remains stoppable", async () => {
+      const portNum = 19902;
+      const primary = new MCPDevServer({ httpPort: portNum });
+      const conflicting = new MCPDevServer({ httpPort: portNum });
+
+      try {
+        primary.start();
+        await waitForServerBind();
+        conflicting.start();
+        await waitForServerBind();
+        await conflicting.stop();
+      } finally {
+        await conflicting.stop();
+        await primary.stop();
+      }
+    });
   });
 
   describe("MCPServerConfig type", () => {
@@ -597,6 +614,49 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(response.status, 403);
       const data = await response.json();
       assertEquals(data.error.message, "Forbidden: Origin not allowed");
+    });
+
+    it("should reject origins whose host only starts with an allowed hostname", async () => {
+      const portNum = 19900;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      for (
+        const origin of [
+          "http://localhost.attacker.example",
+          "http://127.0.0.1.attacker.example",
+          "http://veryfront.me.attacker.example",
+        ]
+      ) {
+        const response = await postMcp(
+          portNum,
+          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          {
+            "Content-Type": "application/json",
+            Origin: origin,
+          },
+        );
+
+        assertEquals(response.status, 403, `Expected ${origin} to be rejected`);
+        assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
+      }
+    });
+
+    it("should reject an oversized request body", async () => {
+      const portNum = 19901;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, "x".repeat(1_048_577));
+
+      assertEquals(response.status, 413);
+      const data = await response.json();
+      assertEquals(data.error.code, -32600);
+      assertEquals(data.error.message, "Request body too large");
     });
 
     it("should allow request with no Origin header", async () => {

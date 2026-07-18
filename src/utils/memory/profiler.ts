@@ -302,14 +302,19 @@ export function getMemoryMonitoringState(): MemoryMonitoringState {
 }
 
 export async function forceGC(): Promise<boolean> {
-  // deno-lint-ignore no-explicit-any
-  const gc = (globalThis as any).gc;
-  if (typeof gc === "function") {
+  const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc;
+  if (typeof gc !== "function") {
+    // GC not exposed; pass --v8-flags=--expose-gc to enable
+    return false;
+  }
+
+  try {
     gc();
     return true;
+  } catch (error) {
+    logger.debug("Exposed garbage collection failed", { error });
+    return false;
   }
-  // GC not exposed; pass --v8-flags=--expose-gc to enable
-  return false;
 }
 
 export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS): void {

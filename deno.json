@@ -217,6 +217,7 @@
     "veryfront/trigger/validation": "./src/trigger/validation.ts",
     "veryfront/issues": "./src/issues/index.ts",
     "veryfront/discovery": "./src/discovery/index.ts",
+    "veryfront/discovery/runtime-modules-bootstrap": "./src/discovery/runtime-modules-bootstrap.ts",
     "veryfront/observability": "./src/observability/index.ts",
     "veryfront/provider/shared": "./src/provider/shared/index.ts",
     "veryfront/provider/types": "./src/provider/types.ts",

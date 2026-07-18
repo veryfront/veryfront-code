@@ -1,10 +1,8 @@
 import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
-import {
-  clearTrackedAgents,
-  clearTranspileCache,
-  createProjectDiscoveryConfig,
-  discoverAll,
-} from "#veryfront/discovery/index.ts";
+import { discoverAll } from "#veryfront/discovery/discovery-engine.ts";
+import { clearTrackedAgents } from "#veryfront/discovery/discovery-utils.ts";
+import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
+import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";

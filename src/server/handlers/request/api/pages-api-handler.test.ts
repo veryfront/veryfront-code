@@ -8,6 +8,7 @@ import {
   __injectCacheForTests,
   getApiHandler,
   type HandlerCache,
+  LRUHandlerCache,
   resetApiHandler,
   resetApiHandlerForProject,
 } from "./pages-api-handler.ts";
@@ -84,6 +85,30 @@ function createHandlerContext(
 }
 
 describe("server/handlers/request/api/pages-api-handler", () => {
+  describe("LRUHandlerCache", () => {
+    it("should clean up automatically evicted handlers without cleaning up manual removals", async () => {
+      const evicted: MockHandler[] = [];
+      const cache = new LRUHandlerCache<Promise<MockHandler>>({
+        maxEntries: 1,
+        onEvict: (promise) => {
+          void promise.then((handler) => evicted.push(handler));
+        },
+      });
+      const first = createMockHandler();
+      const second = createMockHandler();
+
+      cache.set("first", Promise.resolve(first));
+      cache.set("second", Promise.resolve(second));
+      await Promise.resolve();
+
+      assertEquals(evicted, [first]);
+
+      cache.delete("second");
+      await Promise.resolve();
+      assertEquals(evicted, [first]);
+    });
+  });
+
   describe("resetApiHandler", () => {
     it("should clear a specific project entry by key", async () => {
       const cache = createMockCache();

@@ -401,14 +401,19 @@ export class WorkflowRunManager {
           continue;
         }
 
-        if (executionInfo.status === tracked.status) {
-          continue;
-        }
-
-        tracked.status = executionInfo.status;
-
         // Handle terminal states
         if (executionInfo.status === "succeeded" || executionInfo.status === "failed") {
+          try {
+            await this.config.executor.deleteRunExecution(executionInfo.executionId);
+          } catch (error) {
+            tracked.status = executionInfo.status;
+            logger.warn(
+              `[WorkflowRunManager] Failed to clean up run execution ${executionInfo.executionId}:`,
+              error,
+            );
+            continue;
+          }
+
           this.activeExecutions.delete(executionInfo.runId);
 
           if (executionInfo.status === "succeeded") {
@@ -423,7 +428,14 @@ export class WorkflowRunManager {
               executionInfo.error,
             );
           }
+          continue;
         }
+
+        if (executionInfo.status === tracked.status) {
+          continue;
+        }
+
+        tracked.status = executionInfo.status;
       }
     } catch (error) {
       logger.error(`Failed to sync run execution statuses:`, error);

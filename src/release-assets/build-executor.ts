@@ -33,6 +33,7 @@ import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
+import { validatePathSync } from "#veryfront/security/path-validation.ts";
 import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
@@ -612,6 +613,26 @@ function isPathInsideRoot(filePath: string, rootPath: string): boolean {
   const file = normalize(filePath);
   const root = normalize(rootPath);
   return file === root || file.startsWith(`${root}/`) || file.startsWith(`${root}\\`);
+}
+
+function resolveMaterializedReleasePath(tempDir: string, filePath: string): string {
+  const result = validatePathSync(filePath, {
+    baseDir: tempDir,
+    level: "strict",
+    allowAbsolute: false,
+  });
+  const resolvedPath = result.canonicalPath ? normalize(result.canonicalPath) : null;
+
+  if (
+    !result.valid ||
+    !resolvedPath ||
+    resolvedPath === normalize(tempDir) ||
+    !isPathInsideRoot(resolvedPath, tempDir)
+  ) {
+    throw new Error("Release file path must stay within the build directory");
+  }
+
+  return resolvedPath;
 }
 
 async function collectLocalHttpDependencyModules(
@@ -1446,8 +1467,8 @@ async function runBuildInner(
 
   for (const file of files) {
     if (typeof file.content !== "string") continue;
+    const abs = resolveMaterializedReleasePath(tempDir, file.path);
     sourceByPath.set(file.path, file.content);
-    const abs = join(tempDir, file.path);
     await fs.mkdir(dirname(abs), { recursive: true });
     await fs.writeTextFile(abs, file.content);
   }

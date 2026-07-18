@@ -1,4 +1,35 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+
+export const AG_UI_MAX_REQUEST_BODY_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
+
+export async function parseAgUiJsonBody(request: Request): Promise<unknown> {
+  return JSON.parse(await readBodyWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES));
+}
+
+export function createAgUiBodyLimitErrorResponse(
+  error: unknown,
+  errorLabel: string,
+): Response | undefined {
+  if (!isRequestBodyTooLargeError(error)) {
+    return undefined;
+  }
+
+  return Response.json(
+    {
+      error: errorLabel,
+      details: [{
+        path: [],
+        message: `Request body exceeds ${AG_UI_MAX_REQUEST_BODY_BYTES} bytes`,
+      }],
+    },
+    { status: 413 },
+  );
+}
 
 /**
  * Detects a validation error thrown by a `Schema.parse()` call. Works with
@@ -47,6 +78,9 @@ export async function parseAgUiJsonRequestOrError<T>(
   try {
     return await parseRequest();
   } catch (error) {
+    const bodyLimitError = createAgUiBodyLimitErrorResponse(error, errorLabel);
+    if (bodyLimitError) return bodyLimitError;
+
     if (isSchemaValidationError(error)) {
       return Response.json(
         {

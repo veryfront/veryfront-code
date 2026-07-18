@@ -100,7 +100,9 @@ async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
       require: <T>(name: string): T => {
         const contract = tryResolveContract<T>(name);
         if (contract === undefined) {
-          throw INITIALIZATION_ERROR.create({ detail: `Missing required extension contract: ${name}` });
+          throw INITIALIZATION_ERROR.create({
+            detail: `Missing required extension contract: ${name}`,
+          });
         }
         return contract;
       },

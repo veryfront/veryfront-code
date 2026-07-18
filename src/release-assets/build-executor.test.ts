@@ -4,6 +4,7 @@ import "../transforms/plugins/__tests__/code-parser-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/compat/path";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import {
@@ -199,6 +200,26 @@ describe("release asset build executor", () => {
     // Project modules plus framework import-map dependencies are uploaded.
     assert(rec.uploads.length >= 2);
     assert(rec.uploads.every((u) => u.contentType === "text/javascript"));
+  });
+
+  it("rejects release file paths outside the materialization directory", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const tempDir = await tmp();
+    const escapedName = `vf-release-escape-${crypto.randomUUID()}.tsx`;
+    const escapedPath = join(tempDir, "..", escapedName);
+    const client = makeClient(
+      [{ path: `../${escapedName}`, content: "export default null;" }],
+      rec,
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      tempDir,
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+    assertEquals(await Deno.stat(escapedPath).then(() => true, () => false), false);
   });
 
   it("keeps transformed HTTP imports on their source URLs by default", async () => {

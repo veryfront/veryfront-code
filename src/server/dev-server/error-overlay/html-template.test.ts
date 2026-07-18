@@ -28,6 +28,12 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(script.includes("url: window.location.href"), true);
     });
 
+    it("targets runtime errors only at a validated Studio origin", () => {
+      const script = generateRuntimeScript();
+      assertEquals(script.includes("}, vfStudioTargetOrigin());"), true);
+      assertEquals(script.includes("}, '*');"), false);
+    });
+
     it("should use vfStudioTargetOrigin (not wildcard) for chatMessage postMessage (SEC-004)", () => {
       const script = generateRuntimeScript();
       // chatMessage (the Fix-in-Veryfront action triggered from the runtime
@@ -133,6 +139,12 @@ describe("server/dev-server/error-overlay/html-template", () => {
       // line and column are emitted as bare values (not JSON-stringified)
       assertEquals(html.includes("line: 42"), true);
       assertEquals(html.includes("column: 7"), true);
+    });
+
+    it("targets build errors only at a validated Studio origin", () => {
+      const html = generateErrorHTML({ type: "build", error: new Error("fail") });
+      assertEquals(html.includes("}, vfStudioTargetOrigin());"), true);
+      assertEquals(html.includes("}, '*');"), false);
     });
 
     it("should use undefined for missing file/line/column in postMessage errors[]", () => {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { type CacheTier, MultiTierCache } from "./multi-tier.ts";
 
 function createMockTier(
@@ -150,6 +151,19 @@ describe("MultiTierCache", () => {
       await cache.delete("key");
       assertEquals(l1.store.has("key"), false);
       assertEquals(l3.store.has("key"), false);
+    });
+
+    it("should report tiers that failed to delete the key", async () => {
+      const l1 = createMockTier("l1");
+      const l3 = createMockTier("l3");
+      l3.delete = () => Promise.reject(new Error("backend unavailable"));
+      const cache = new MultiTierCache({ name: "test", l1, l3, asyncBackfill: false });
+
+      await assertRejects(
+        () => cache.delete("key"),
+        VeryfrontError,
+        "Delete failed in cache tier(s): l3",
+      );
     });
   });
 
