@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { ContentSource, PreviewStyleArtifactInfo, ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 

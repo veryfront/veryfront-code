@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message as AgentMessage, ToolCall } from "#veryfront/agent/types.ts";
-import { createError, ensureError, toError } from "#veryfront/errors";
+import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /** Options accepted by use agent. */
 export interface UseAgentOptions {

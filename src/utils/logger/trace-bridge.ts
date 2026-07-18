@@ -8,7 +8,7 @@
  * @module
  */
 
-import { getTraceContext } from "#veryfront/observability";
+import { getTraceContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { __registerTraceContextGetter } from "./logger.ts";
 
 __registerTraceContextGetter(getTraceContext);

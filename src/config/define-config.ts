@@ -1,5 +1,5 @@
 import type { VeryfrontConfig, VeryfrontConfigInput } from "./schemas/index.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
 /** Define a Veryfront project configuration object. */

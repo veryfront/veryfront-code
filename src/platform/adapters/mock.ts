@@ -1,4 +1,5 @@
-import { createError, FILE_NOT_FOUND, toError } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {

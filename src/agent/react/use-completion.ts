@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createError, toError } from "#veryfront/errors";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /** Options accepted by use completion. */
 export interface UseCompletionOptions {

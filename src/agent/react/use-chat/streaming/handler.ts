@@ -1,4 +1,4 @@
-import { AGENT_ERROR } from "#veryfront/errors";
+import { AGENT_ERROR } from "#veryfront/errors/error-registry/agent.ts";
 import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,

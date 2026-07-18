@@ -29,4 +29,5 @@ export interface VeryfrontAPIConfig {
   };
 }
 
-export { API_CLIENT_ERROR, VeryfrontError } from "#veryfront/errors";
+export { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
+export { VeryfrontError } from "#veryfront/errors/types.ts";

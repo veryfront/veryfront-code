@@ -1,5 +1,6 @@
-import { logger as baseLogger } from "#veryfront/utils";
-import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import { buildProxyManagerCacheKey } from "#veryfront/cache/keys/index.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";

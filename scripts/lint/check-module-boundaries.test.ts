@@ -1,6 +1,7 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
+  analyzeModules,
   extractImports,
   findBroadBarrelViolations,
   findCyclicEdges,
@@ -116,5 +117,16 @@ describe("check-module-boundaries", () => {
       findRegressions(["existing", "new"], ["existing", "removed"]),
       ["new"],
     );
+  });
+
+  it("keeps discovery, agent, and eval outside eager dependency cycles", async () => {
+    const analysis = await analyzeModules();
+    const discoveryCycleEdges = analysis.cycleEdges.filter((edge) =>
+      edge.includes("src/discovery/") ||
+      edge.includes("src/agent/") ||
+      edge.includes("src/eval/")
+    );
+
+    assertEquals(discoveryCycleEdges, []);
   });
 });

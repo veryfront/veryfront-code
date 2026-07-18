@@ -1,4 +1,5 @@
-import { getBaseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {

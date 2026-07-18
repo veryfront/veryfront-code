@@ -1,5 +1,5 @@
-import { logger as baseLogger } from "#veryfront/utils";
-import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";

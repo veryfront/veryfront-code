@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createError, ensureError, toError } from "#veryfront/errors";
+import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {

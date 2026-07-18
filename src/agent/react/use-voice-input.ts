@@ -1,5 +1,5 @@
 import * as React from "react";
-import { agentLogger } from "#veryfront/utils";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /** Options accepted by use voice input. */
 export interface UseVoiceInputOptions {

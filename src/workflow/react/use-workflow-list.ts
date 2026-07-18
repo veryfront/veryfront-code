@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { REQUEST_ERROR } from "#veryfront/errors";
+import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
 
 /** Default interval for auto-refreshing the workflow list */

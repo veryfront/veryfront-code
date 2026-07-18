@@ -6,7 +6,8 @@
  * @module utils/semaphore
  */
 
-import { SEMAPHORE_TIMEOUT, VeryfrontError } from "#veryfront/errors";
+import { SEMAPHORE_TIMEOUT } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 /**
  * Thrown when a semaphore acquire exceeds its configured timeout.

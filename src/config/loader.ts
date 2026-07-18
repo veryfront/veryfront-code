@@ -4,7 +4,7 @@ import { extname, join, resolve } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -14,10 +14,10 @@ import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
   CONFIG_VALIDATION_FAILED,
-  VeryfrontError,
-} from "#veryfront/errors";
-import { SpanNames } from "#veryfront/observability";
+} from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";

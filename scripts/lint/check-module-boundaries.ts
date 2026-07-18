@@ -73,7 +73,7 @@ interface ModuleBoundaryBaseline {
   cycleEdges: string[];
 }
 
-interface ModuleAnalysis {
+export interface ModuleAnalysis {
   broadBarrelImports: BroadBarrelViolation[];
   cycleEdges: string[];
   parseFailures: string[];
@@ -378,7 +378,7 @@ async function readImportMap(): Promise<ImportMap> {
   );
 }
 
-async function analyzeModules(): Promise<ModuleAnalysis> {
+export async function analyzeModules(): Promise<ModuleAnalysis> {
   const files: string[] = [];
   for (const root of SCAN_ROOTS) await walkSourceFiles(root, files);
   files.sort();

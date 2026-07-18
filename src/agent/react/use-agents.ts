@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { ensureError, INPUT_VALIDATION_FAILED, NETWORK_ERROR } from "#veryfront/errors";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
+import { NETWORK_ERROR } from "#veryfront/errors/error-registry/server.ts";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { type AgentMetadata, normalizeAgentMetadata } from "./use-agent-metadata.ts";
 
 /** Options accepted by {@link useAgents}. */

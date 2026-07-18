@@ -4,7 +4,7 @@
  */
 
 import process from "node:process";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { isDenoCompiled } from "./runtime.ts";
 import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
 
