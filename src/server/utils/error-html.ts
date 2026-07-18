@@ -1,4 +1,5 @@
 import { escapeHTML } from "#veryfront/html/html-escape.ts";
+import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
 
 interface ErrorHtmlOptions {
   statusCode: number;
@@ -85,25 +86,9 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
     <p class="message">${escapeHTML(message)}</p>
   </div>
   <script>
+    ${studioTargetOriginHelperSource()}
     if (window.parent !== window) {
       try {
-        // Derive the parent's likely origin from document.referrer, validated
-        // against the Studio allowlist (mirrors vfStudioTargetOrigin in the dev
-        // error overlay). Falls back to this page's own origin so untrusted
-        // embedders silently drop the message instead of receiving error
-        // internals (paths / message text) via a wildcard '*' target.
-        var vfTargetOrigin = (function () {
-          try {
-            var ref = new URL(document.referrer || '');
-            var host = ref.hostname;
-            var validStudio = host === 'localhost' ||
-              host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
-              host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
-              host.endsWith('.veryfront.dev') || host === 'veryfront.dev';
-            if (validStudio) return ref.origin;
-          } catch (_) { /* referrer absent or unparseable */ }
-          return window.location.origin;
-        })();
         window.parent.postMessage({
           action: 'appUpdated',
           isInitialLoad: true,
@@ -113,7 +98,7 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
             type: '${errorType}',
             message: ${JSON.stringify(errorMessage).replace(/</g, "\\u003c")}
           }]
-        }, vfTargetOrigin);
+        }, vfStudioTargetOrigin());
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }
     }
   </script>

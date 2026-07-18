@@ -50,18 +50,13 @@ describe("server/dev-server/error-overlay/html-template", () => {
       );
     });
 
-    it("should embed vfStudioTargetOrigin helper with veryfront allowlist hosts (SEC-004)", () => {
+    it("embeds the exact hosted Studio origin policy", () => {
       const script = generateRuntimeScript();
-      // Helper must encode the same allowlist used by isFromStudio in the studio bridge.
       assertEquals(script.includes("function vfStudioTargetOrigin()"), true);
-      assertEquals(script.includes("'localhost'"), true);
-      assertEquals(script.includes("'.veryfront.org'"), true);
-      assertEquals(script.includes("'veryfront.org'"), true);
-      assertEquals(script.includes("'.veryfront.com'"), true);
-      assertEquals(script.includes("'veryfront.com'"), true);
-      assertEquals(script.includes("'.veryfront.dev'"), true);
-      assertEquals(script.includes("'veryfront.dev'"), true);
-      // Falls back to window.location.origin for untrusted embedders.
+      assertEquals(script.includes('"https://studio.veryfront.com"'), true);
+      assertEquals(script.includes('"https://studio.veryfront.org"'), true);
+      assertEquals(script.includes("endsWith"), false);
+      assertEquals(script.includes(".veryfront.dev"), false);
       assertEquals(script.includes("return window.location.origin"), true);
     });
   });
@@ -147,6 +142,39 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(html.includes("}, '*');"), false);
     });
 
+    it("notifies Studio when projectSlug is omitted", () => {
+      const html = generateErrorHTML({ type: "build", error: new Error("fail") });
+      const script = html.match(/<script[^>]*>([\s\S]*)<\/script>/)?.[1];
+      if (!script) throw new Error("Expected generated error-page script");
+
+      const calls: Array<{ message: unknown; targetOrigin: string }> = [];
+      const parent = {
+        postMessage(message: unknown, targetOrigin: string): void {
+          calls.push({ message, targetOrigin });
+        },
+      };
+      const fakeWindow = {
+        parent,
+        location: {
+          origin: "https://project.preview.veryfront.org",
+          href: "https://project.preview.veryfront.org/broken",
+          protocol: "https:",
+          host: "project.preview.veryfront.org",
+          reload(): void {},
+        },
+      };
+
+      new Function("window", "document", "WebSocket", script)(
+        fakeWindow,
+        { referrer: "https://studio.veryfront.com/project" },
+        class FakeWebSocket {},
+      );
+
+      assertEquals(calls.length, 1);
+      assertEquals((calls[0]?.message as { action?: unknown })?.action, "appUpdated");
+      assertEquals(calls[0]?.targetOrigin, "https://studio.veryfront.com");
+    });
+
     it("should use undefined for missing file/line/column in postMessage errors[]", () => {
       const html = generateErrorHTML({
         type: "build",
@@ -198,22 +226,17 @@ describe("server/dev-server/error-overlay/html-template", () => {
       );
     });
 
-    it("should embed vfStudioTargetOrigin helper with veryfront allowlist hosts (SEC-004)", () => {
+    it("embeds the exact hosted Studio origin policy", () => {
       const html = generateErrorHTML(
         { type: "runtime", error: new Error("fail"), file: "src/app.tsx" },
         undefined,
         "my-project",
       );
-      // Helper must encode the same allowlist used by isFromStudio in the studio bridge.
       assertEquals(html.includes("function vfStudioTargetOrigin()"), true);
-      assertEquals(html.includes("'localhost'"), true);
-      assertEquals(html.includes("'.veryfront.org'"), true);
-      assertEquals(html.includes("'veryfront.org'"), true);
-      assertEquals(html.includes("'.veryfront.com'"), true);
-      assertEquals(html.includes("'veryfront.com'"), true);
-      assertEquals(html.includes("'.veryfront.dev'"), true);
-      assertEquals(html.includes("'veryfront.dev'"), true);
-      // Falls back to window.location.origin for untrusted embedders.
+      assertEquals(html.includes('"https://studio.veryfront.com"'), true);
+      assertEquals(html.includes('"https://studio.veryfront.org"'), true);
+      assertEquals(html.includes("endsWith"), false);
+      assertEquals(html.includes(".veryfront.dev"), false);
       assertEquals(html.includes("return window.location.origin"), true);
     });
 

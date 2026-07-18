@@ -1,5 +1,6 @@
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
 
 /** Base delay multiplied by attempt count for WebSocket reconnection */
 const WS_RECONNECT_BASE_DELAY_MS = 1_000;
@@ -32,21 +33,7 @@ export function generateRuntimeScript(): string {
         .replace(/'/g, '&#39;');
     }
 
-    // Derive the parent's likely origin from document.referrer, validated against
-    // the Studio allowlist (mirrors isFromStudio in studio/bridge/bridge-messaging.ts).
-    // Falls back to window.location.origin so untrusted embedders silently drop the message.
-    function vfStudioTargetOrigin() {
-      try {
-        var ref = new URL(document.referrer || '');
-        var host = ref.hostname;
-        var validStudio = host === 'localhost' ||
-          host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
-          host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
-          host.endsWith('.veryfront.dev') || host === 'veryfront.dev';
-        if (validStudio) return ref.origin;
-      } catch (_) { /* referrer absent or unparseable */ }
-      return window.location.origin;
-    }
+    ${studioTargetOriginHelperSource()}
 
     window.showErrorOverlay = function(errorInfo) {
       const existing = document.getElementById('veryfront-error-overlay');
@@ -383,25 +370,10 @@ export function generateErrorHTML(
     </div>
     ${fixButtonHtml}
   </div>
-  <script${nonceAttr}>${
+  <script${nonceAttr}>${studioTargetOriginHelperSource()}${
     projectSlug
       ? `
     (function() {
-      // Derive the parent's likely origin from document.referrer, validated against
-      // the Studio allowlist (mirrors isFromStudio in studio/bridge/bridge-messaging.ts).
-      // Falls back to window.location.origin so untrusted embedders silently drop the message.
-      function vfStudioTargetOrigin() {
-        try {
-          var ref = new URL(document.referrer || '');
-          var host = ref.hostname;
-          var validStudio = host === 'localhost' ||
-            host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
-            host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
-            host.endsWith('.veryfront.dev') || host === 'veryfront.dev';
-          if (validStudio) return ref.origin;
-        } catch (_) { /* referrer absent or unparseable */ }
-        return window.location.origin;
-      }
       var slug = ${jsonForScript(projectSlug)};
       var errorName = ${jsonForScript(errorInfo.error.name)};
       var errorMessage = ${jsonForScript(errorInfo.error.message)};
