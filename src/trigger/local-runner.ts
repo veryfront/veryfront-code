@@ -1,4 +1,9 @@
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import {
+  TRIGGER_EXECUTION_FAILED,
+  TRIGGER_NOT_SUPPORTED,
+  TRIGGER_TARGET_NOT_FOUND,
+} from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
@@ -52,7 +57,10 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
   const discovery = await discoverRuntimeOrThrow(options);
   const task = findProjectRuntimeTask(discovery, options.target.id);
   if (!task) {
-    throw new Error(`Task target "${options.target.id}" not found.`);
+    throw TRIGGER_TARGET_NOT_FOUND.create({
+      detail: `Task target "${options.target.id}" not found.`,
+      context: { targetId: options.target.id },
+    });
   }
 
   const result = await runTask({
@@ -63,7 +71,10 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
   });
 
   if (!result.success) {
-    throw new Error(result.error ?? `Task target "${options.target.id}" failed.`);
+    throw TRIGGER_EXECUTION_FAILED.create({
+      detail: result.error ?? `Task target "${options.target.id}" failed.`,
+      context: { targetId: options.target.id },
+    });
   }
 
   return {
@@ -82,7 +93,10 @@ async function runWorkflowTarget(
 
   const workflow = discovery.workflows.get(options.target.id);
   if (!workflow) {
-    throw new Error(`Workflow target "${options.target.id}" not found.`);
+    throw TRIGGER_TARGET_NOT_FOUND.create({
+      detail: `Workflow target "${options.target.id}" not found.`,
+      context: { targetId: options.target.id },
+    });
   }
 
   const client = createWorkflowClient({
@@ -121,7 +135,7 @@ export async function runTriggerTarget(
     return await runWorkflowTarget(options);
   }
 
-  throw new Error(
-    "Agent trigger targets are Cloud-only for this milestone. Use a workflow or task for local trigger runs.",
-  );
+  throw TRIGGER_NOT_SUPPORTED.create({
+    detail: "Agent trigger targets are Cloud-only for this milestone. Use a workflow or task for local trigger runs.",
+  });
 }

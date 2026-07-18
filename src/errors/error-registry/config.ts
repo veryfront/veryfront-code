@@ -66,6 +66,33 @@ export const CONFIG_VALIDATION_FAILED = defineError({
   suggestion: "Check configuration values against requirements",
 });
 
+/** Webhook definition validation failures (required fields, target, eventFilter) */
+export const WEBHOOK_CONFIG_INVALID = defineError({
+  slug: "webhook-config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid webhook configuration",
+  suggestion: "Check webhook definition fields, target settings, and eventFilter conditions",
+});
+
+/** Schedule definition validation failures (required fields, cron, concurrencyPolicy, target) */
+export const SCHEDULE_CONFIG_INVALID = defineError({
+  slug: "schedule-config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid schedule configuration",
+  suggestion: "Check schedule definition fields, cron expression, target settings, and positive-integer limits",
+});
+
+/** Trigger ID format and input serialization validation failures */
+export const TRIGGER_CONFIG_INVALID = defineError({
+  slug: "trigger-config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid trigger configuration",
+  suggestion: "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
+});
+
 /** Registry fragment for CONFIG errors (slug → definition). */
 export const CONFIG_REGISTRY = {
   "config-not-found": CONFIG_NOT_FOUND,
@@ -76,4 +103,7 @@ export const CONFIG_REGISTRY = {
   "import-map-invalid": IMPORT_MAP_INVALID,
   "cors-config-invalid": CORS_CONFIG_INVALID,
   "config-validation-failed": CONFIG_VALIDATION_FAILED,
+  "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,
+  "schedule-config-invalid": SCHEDULE_CONFIG_INVALID,
+  "trigger-config-invalid": TRIGGER_CONFIG_INVALID,
 } as const;

@@ -86,7 +86,13 @@ export async function readDistributedCache(
     });
 
     const bundleManifestKey = `${transformCacheKey}:bm`;
-    const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
+    const manifestId = await distributedCache.get(bundleManifestKey).catch((error) => {
+      log.warn(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed for bundle manifest key`, {
+        cacheKey: bundleManifestKey,
+        error,
+      });
+      return null;
+    });
 
     if (moduleCode) {
       const cacheDir = getHttpBundleCacheDir();

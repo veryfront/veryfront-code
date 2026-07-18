@@ -46,6 +46,12 @@ export class GitHubFSAdapter implements FSAdapter {
       retry: githubConfig.retry,
     };
 
+    if (!rawConfig.token) {
+      throw CONFIG_INVALID.create({
+        detail: "GitHub adapter requires a token; set GITHUB_TOKEN or pass config.github.token",
+      });
+    }
+
     this.config = createGitHubConfig(rawConfig);
     this.client = new GitHubApiClient(this.config);
 

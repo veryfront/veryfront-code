@@ -220,13 +220,21 @@ export class MultiTierCache<T = string> {
       (t): t is CacheTier<T> => t !== undefined && t.delete !== undefined,
     );
 
+    const failedTiers: string[] = [];
     await Promise.all(
       tiers.map((tier) =>
         tier.delete?.(key).catch((error) => {
           logger.error(`[${this.config.name}] Delete error in ${tier.name}`, { key, error });
+          failedTiers.push(tier.name);
         })
       ),
     );
+
+    if (failedTiers.length > 0) {
+      throw new Error(
+        `[${this.config.name}] Delete failed in tier(s) [${failedTiers.join(", ")}]; key may still be present`,
+      );
+    }
   }
 
   async getOrCompute(key: string, computeFn: () => Promise<T>, ttlSeconds?: number): Promise<T> {
