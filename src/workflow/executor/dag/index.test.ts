@@ -194,6 +194,63 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["reader"]!.output, { sawWriter: false });
       assertEquals(result.context.writer, "written");
     });
+
+    it("isolates a mid-flight mutation from a sibling and merges both updates deterministically", async () => {
+      let releaseObserver!: () => void;
+      const mutatorAdvanced = new Promise<void>((resolve) => {
+        releaseObserver = resolve;
+      });
+
+      const batchExecutor = new MockStepExecutor(new Map(), async (node, context) => {
+        if (node.id === "observer") {
+          // Block until the sibling compound node has mutated its OWN snapshot,
+          // then report whether that mutation leaked into this node's snapshot.
+          await mutatorAdvanced;
+          return {
+            success: true,
+            output: { sawWriter: "writer" in context },
+            executionTime: 1,
+          };
+        }
+        // The compound node's inner step mutates its snapshot context mid-batch.
+        return { success: true, output: "written", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: batchExecutor });
+
+      // Two independent nodes (dependsOn: []) land in the same batch. The mutator
+      // is a compound (loop) node that writes into its snapshot before releasing
+      // the observer; the observer must still see the untouched batch-start view.
+      const nodes: WorkflowNode[] = [
+        {
+          id: "mutator",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: (_context: WorkflowContext, loop) => {
+              if (loop.iteration === 1) {
+                releaseObserver();
+                return false;
+              }
+              return true;
+            },
+            steps: [{ id: "writer", config: { type: "step" } as any }],
+          } as any,
+        },
+        { id: "observer", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      // Isolation: the observer ran against the batch-start snapshot, so the
+      // mutator's mid-flight write was invisible to it.
+      assertEquals(result.nodeStates["observer"]!.output, { sawWriter: false });
+      // Deterministic merge-back: after the batch settles, BOTH siblings'
+      // context updates are present in the merged context.
+      assertEquals(result.context.writer, "written");
+      assertEquals(result.context.observer, { sawWriter: false });
+    });
   });
 
   describe("error handling", () => {

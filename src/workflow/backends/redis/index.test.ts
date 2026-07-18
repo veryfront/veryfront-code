@@ -793,6 +793,57 @@ describe("RedisBackend", () => {
         "Approval not found",
       );
     });
+
+    it("updateApproval returns true and records the decision when the approval is pending", async () => {
+      await backend.createRun(createTestRun("run-ap-true"));
+      await backend.savePendingApproval("run-ap-true", makeApproval("ap-true"));
+
+      // Applied path: the pending precondition holds, so the decision lands.
+      assertEquals(
+        await backend.updateApproval("run-ap-true", "ap-true", {
+          approved: true,
+          approver: "admin",
+          comment: "looks good",
+        }),
+        true,
+      );
+
+      // The approval left the pending set and recorded the decider verbatim.
+      assertEquals(await backend.getPendingApprovals("run-ap-true"), []);
+      const stored = JSON.parse(mockRedis.lists.get("test:approvals:run-ap-true")![0]!);
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "admin");
+      assertEquals(stored.comment, "looks good");
+    });
+
+    it("updateApproval returns false (no-op) once the approval is already decided", async () => {
+      await backend.createRun(createTestRun("run-ap-decided"));
+      await backend.savePendingApproval("run-ap-decided", makeApproval("ap-decided"));
+
+      // First decision wins the race and applies.
+      assertEquals(
+        await backend.updateApproval("run-ap-decided", "ap-decided", {
+          approved: true,
+          approver: "first",
+        }),
+        true,
+      );
+
+      // Second, concurrent decision arrives after the approval is no longer
+      // pending: the precondition rejects it, so it is a no-op returning false
+      // rather than overwriting the first decision (lost-race path).
+      assertEquals(
+        await backend.updateApproval("run-ap-decided", "ap-decided", {
+          approved: false,
+          approver: "second",
+        }),
+        false,
+      );
+
+      const stored = JSON.parse(mockRedis.lists.get("test:approvals:run-ap-decided")![0]!);
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "first");
+    });
   });
 
   describe("enqueue / dequeue", () => {
