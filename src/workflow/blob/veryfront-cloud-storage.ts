@@ -2,14 +2,13 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
-
-const SAFE_BLOB_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 import {
   getVeryfrontCloudAuthToken,
   getVeryfrontCloudBootstrap,
   getVeryfrontCloudProjectSlug,
 } from "#veryfront/platform/cloud/resolver.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
+import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
 
 const DEFAULT_PREFIX = ".veryfront/blobs/";
 const DATA_SUFFIX = ".blob";
@@ -343,7 +342,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       // anything another store namespaced elsewhere.
       if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
       const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
-      if (SAFE_BLOB_ID_PATTERN.test(id)) ids.push(id);
+      if (isSafeBlobId(id)) ids.push(id);
     }
 
     const refs = await Promise.all(ids.map((id) => this.stat(id)));
@@ -382,22 +381,13 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     };
   }
 
-  private assertSafeBlobId(id: string): void {
-    if (!SAFE_BLOB_ID_PATTERN.test(id)) {
-      throw INVALID_ARGUMENT.create({
-        detail:
-          `Invalid blob id: "${id}". IDs must contain only alphanumeric characters, hyphens, and underscores.`,
-      });
-    }
-  }
-
   private getDataPath(id: string, prefix: string): string {
-    this.assertSafeBlobId(id);
+    assertSafeBlobId(id);
     return `${prefix}${id}${DATA_SUFFIX}`;
   }
 
   private getMetadataPath(id: string, prefix: string): string {
-    this.assertSafeBlobId(id);
+    assertSafeBlobId(id);
     return `${prefix}${id}${META_SUFFIX}`;
   }
 

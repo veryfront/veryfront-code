@@ -29,20 +29,46 @@ import type {
   WorkerStreamChunk,
   WorkerStreamEnd,
 } from "./worker-types.ts";
-import { installWorkerEgressGuard } from "./worker-egress-guard.ts";
+import { installWorkerEgressGuard, type WorkerEgressGuardOptions } from "./worker-egress-guard.ts";
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
-const allowInternalEgress = (() => {
-  try {
-    return new URL(import.meta.url).searchParams.get("allowInternalEgress") === "1";
-  } catch {
-    return false;
+type InitializeEgressMessage = {
+  type: "initialize-egress";
+  options: WorkerEgressGuardOptions;
+};
+let egressInitialized = false;
+let exitNotifierInstalled = false;
+
+function installWorkerExitNotifier(): void {
+  if (exitNotifierInstalled || typeof globalThis.close !== "function") return;
+
+  const postMessage = self.postMessage.bind(self);
+  const notifyExit = () => postMessage({ type: "worker-exit" });
+  const closeWorker = globalThis.close.bind(globalThis);
+  globalThis.close = () => {
+    try {
+      notifyExit();
+    } finally {
+      closeWorker();
+    }
+  };
+  if (typeof Deno.exit === "function") {
+    const exitWorker = Deno.exit.bind(Deno);
+    Deno.exit = ((code?: number): never => {
+      try {
+        notifyExit();
+      } catch {
+        // Exit even if the notification channel is already closed.
+      }
+      return exitWorker(code);
+    }) as typeof Deno.exit;
   }
-})();
+  exitNotifierInstalled = true;
+}
 
 /** True when `child` is the same as, or nested under, `root`. Cross-platform. */
 function isContained(root: string, child: string): boolean {
@@ -561,7 +587,9 @@ async function renderSSR(
 
 async function processWorkerRequest(request: WorkerRequest): Promise<void> {
   try {
-    installWorkerEgressGuard({ allowInternalEgress });
+    if (!egressInitialized) {
+      throw new Error("Worker egress guard is not initialized");
+    }
 
     // Data fetcher returns a different response shape than HTTP handlers
     if (request.type === "fetch-data") {
@@ -622,10 +650,33 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
 
 let requestQueue: Promise<void> = Promise.resolve();
 
-self.onmessage = (
-  event: MessageEvent<WorkerRequest | { type: "ping"; id: string } | { type: "clear-cache" }>,
-) => {
+function handleWorkerMessage(
+  event: MessageEvent<
+    | WorkerRequest
+    | InitializeEgressMessage
+    | { type: "ping"; id: string }
+    | { type: "clear-cache" }
+  >,
+): void {
+  // Dedicated workers receive host messages on a private channel. Deno marks
+  // those events as trusted, with an empty origin and no source object. Keep
+  // the listener private and reject synthetic events from project code before
+  // reading privileged messages such as the egress broker configuration.
+  if (
+    !event.isTrusted || event.origin !== "" || event.source !== null ||
+    event.currentTarget !== self
+  ) return;
+
   const msg = event.data;
+
+  if (msg.type === "initialize-egress") {
+    if (!egressInitialized) {
+      installWorkerExitNotifier();
+      installWorkerEgressGuard(msg.options);
+      egressInitialized = true;
+    }
+    return;
+  }
 
   // Health check
   if (msg.type === "ping") {
@@ -647,4 +698,6 @@ self.onmessage = (
     () => processWorkerRequest(request),
     () => processWorkerRequest(request),
   );
-};
+}
+
+self.addEventListener("message", handleWorkerMessage);

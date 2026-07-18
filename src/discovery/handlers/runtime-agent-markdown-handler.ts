@@ -4,7 +4,7 @@ import {
   type RuntimeAgentMarkdownDefinition,
 } from "../../agent/runtime/agent-definition.ts";
 import { agentRegistry, registerAgent } from "../../agent/composition/index.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureError } from "#veryfront/errors";
 import type { DiscoveryResult, FileDiscoveryContext } from "../types.ts";
 import { trackAgentPath } from "../discovery-utils.ts";
 import {

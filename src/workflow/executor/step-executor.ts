@@ -7,16 +7,16 @@ import {
   runWithoutCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
 import {
   AGENT_NOT_FOUND,
+  ensureError,
   INITIALIZATION_ERROR,
   INVALID_ARGUMENT,
+  isVeryfrontError,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
-} from "#veryfront/errors/error-registry.ts";
+} from "#veryfront/errors";
 import type {
   CapturedTenantContext,
   NodeState,
@@ -183,6 +183,7 @@ export class StepExecutor {
       try {
         const output = await runWithWorkflowTenant(tenant, async () => {
           const resolvedInput = await this.resolveInput(config.input, context);
+          abortSignal?.throwIfAborted();
           this.config.onStepStart?.(node.id, resolvedInput);
 
           const timeout = config.timeout
@@ -196,6 +197,7 @@ export class StepExecutor {
             abortSignal,
           );
         });
+        abortSignal?.throwIfAborted();
 
         abortSignal?.throwIfAborted();
         this.config.onStepComplete?.(node.id, output);
@@ -210,7 +212,7 @@ export class StepExecutor {
         lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
-          await this.sleep(this.calculateRetryDelay(attempt, retryConfig));
+          await this.sleep(this.calculateRetryDelay(attempt, retryConfig), abortSignal);
           continue;
         }
 
@@ -276,9 +278,21 @@ export class StepExecutor {
     return Math.floor(Math.min(baseDelay + jitter, maxDelay));
   }
 
-  private sleep(ms: number): Promise<void> {
-    // no cleanup needed: one-shot
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
+    abortSignal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        abortSignal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timeoutId);
+        abortSignal?.removeEventListener("abort", onAbort);
+        reject(abortSignal?.reason);
+      };
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) onAbort();
+    });
   }
 
   private async resolveInput(
@@ -375,7 +389,11 @@ export class StepExecutor {
     const resolvedAgent = typeof agent === "string" ? this.getAgent(agent) : agent;
     const agentInput = typeof input === "string" ? input : JSON.stringify(input);
 
-    const response: AgentResponse = await resolvedAgent.generate({ input: agentInput, context });
+    const response: AgentResponse = await resolvedAgent.generate({
+      input: agentInput,
+      context,
+      abortSignal,
+    });
     abortSignal?.throwIfAborted();
 
     return {

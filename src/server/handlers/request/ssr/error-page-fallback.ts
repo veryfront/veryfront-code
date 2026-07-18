@@ -7,6 +7,7 @@ import { serverLogger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = serverLogger.component("error-page-fallback");
@@ -110,7 +111,7 @@ export async function tryErrorPageFallback(
     // The user's custom error page failed to compile/load. Surface at warn so
     // they learn it's broken, before falling back to the default error output.
     logger.warn("Failed to load custom error page; falling back to default", {
-      error: e instanceof Error ? e.message : String(e),
+      errorName: e instanceof Error ? e.name : typeof e,
     });
     return null;
   }
@@ -120,12 +121,12 @@ const ERROR_PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 /** Special value to indicate "not found" in cache (distinguishes from cache miss) */
 const CACHE_NOT_FOUND = "__NOT_FOUND__";
 
-const errorPagePathCache = new Map<string, string | null>();
+const errorPagePathCache = new LRUCacheAdapter({ maxEntries: 1000 });
 
 async function getCachedPath(
   cacheKey: string,
 ): Promise<string | null | undefined> {
-  if (!injectedCacheRepo) return errorPagePathCache.get(cacheKey);
+  if (!injectedCacheRepo) return errorPagePathCache.get<string | null>(cacheKey);
 
   const cached = await injectedCacheRepo.get(cacheKey);
   if (cached === CACHE_NOT_FOUND) return null;

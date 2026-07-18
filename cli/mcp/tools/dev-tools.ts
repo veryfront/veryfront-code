@@ -44,13 +44,24 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
     openWorldHint: false,
   },
   description:
-    "Use this when you need to signal that a hot reload should occur. Note: currently a no-op stub that returns success without triggering an actual reload. For file-level HMR that sends a WebSocket update, use vf_trigger_hmr instead.",
+    "Use this when you need to reload connected development browsers after a change. Pass file for file-level HMR, or omit it to request a full reload. Returns failure when no browser is connected.",
   inputSchema: hotReloadInput,
-  execute: () =>
-    Promise.resolve({
+  execute: (input) => {
+    if (ReloadNotifier.getMetrics().activeReloadListeners <= 0) {
+      return Promise.resolve({
+        success: false,
+        message: "No HMR listeners registered. Is the server running with HMR enabled?",
+      });
+    }
+
+    ReloadNotifier.triggerReload(input.file ? [input.file] : undefined);
+    return Promise.resolve({
       success: true,
-      message: "Hot reload triggered. Changes should be visible in the browser.",
-    }),
+      message: input.file
+        ? `HMR triggered for ${input.file}. Browser will refresh after debounce (300ms).`
+        : "Full reload triggered. Browser will refresh after debounce (300ms).",
+    });
+  },
 };
 
 // ============================================================================

@@ -1,7 +1,7 @@
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
 import { createDefaultMDXComponents } from "./utils/index.ts";
 import { extractRouteParams } from "#veryfront/utils/route-path-utils.ts";
 import type { ComponentProps, EntityInfo, MDXComponents, PageBundle } from "#veryfront/types";

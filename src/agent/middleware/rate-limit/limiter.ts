@@ -1,5 +1,6 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { createError, toError } from "#veryfront/errors";
+import { setActiveSpanAttributes } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface RateLimitConfig {
   strategy: "fixed-window" | "sliding-window" | "token-bucket";

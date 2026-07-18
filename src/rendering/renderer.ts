@@ -32,7 +32,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
-import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
+import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   buildQueryAwareCacheKey,

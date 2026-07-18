@@ -7,7 +7,7 @@ import type { Metafile } from "veryfront/extensions/bundler";
 import { join, relative } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 const fs = createFileSystem();
 

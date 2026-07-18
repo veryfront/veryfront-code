@@ -2,7 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import type { Message } from "../types.ts";
-import { parseAgUiJsonRequestOrError } from "./request-shared.ts";
+import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "./request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -367,7 +367,7 @@ function normalizeAssistantMessage(
 
 /** Request payload for parse AG-UI. */
 export async function parseAgUiRequest(request: Request): Promise<AgUiRequest> {
-  return getAgUiRequestSchema().parse(await request.json());
+  return getAgUiRequestSchema().parse(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse AG-UI request or. */

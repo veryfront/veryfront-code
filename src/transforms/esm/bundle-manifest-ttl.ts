@@ -5,7 +5,7 @@ import {
   BUNDLE_MANIFEST_LRU_MAX_ENTRIES,
 } from "#veryfront/utils/constants/cache.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 const LOG_PREFIX = "[BundleManifest]";
 

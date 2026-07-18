@@ -6,7 +6,7 @@ import {
   parseToolInputObject,
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
-import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-stream.ts";
+import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
 
 type ForkToolCallPart = Extract<ForkPart, { type: "tool-call" }>;
 type ForkToolResultPart = Extract<ForkPart, { type: "tool-result" }>;

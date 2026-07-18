@@ -1,3 +1,4 @@
+import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
 /** Options accepted by project scoped remote tool. */
@@ -136,9 +137,9 @@ function validateRequiredToolInput(input: {
     return;
   }
 
-  throw new Error(
-    `Tool "${input.toolDefinition.name}" requires input: ${missingProperties.join(", ")}`,
-  );
+  throw INPUT_VALIDATION_FAILED.create({
+    detail: `Tool "${input.toolDefinition.name}" requires input: ${missingProperties.join(", ")}`,
+  });
 }
 
 /** Check whether a remote tool is project-navigation scoped. */
@@ -300,7 +301,9 @@ export function createProjectScopedRemoteToolCatalog(
     },
     async prepareExecution(executionInput) {
       if (!isRemoteToolNameAllowed(executionInput.toolName, input.allowedToolNames)) {
-        throw new Error(`Tool "${executionInput.toolName}" is not allowed for this run`);
+        throw PERMISSION_DENIED.create({
+          detail: `Tool "${executionInput.toolName}" is not allowed for this run`,
+        });
       }
 
       const { activeProjectId, toolDefinitions } = await listActiveToolDefinitions(

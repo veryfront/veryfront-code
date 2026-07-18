@@ -2,6 +2,7 @@ import {
   discoverProjectAgentRuntime,
   type ProjectAgentRuntimeDiscovery,
 } from "#veryfront/agent/project/agent-runtime.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -42,12 +43,12 @@ export async function discoverProjectTaskRuntime(
 
   if (options.throwOnErrors && discovery.errors.length > 0) {
     const lines = formatProjectRuntimeDiscoveryErrors(discovery.errors);
-    throw new Error(
-      [
+    throw INITIALIZATION_ERROR.create({
+      detail: [
         `Runtime discovery failed with ${discovery.errors.length} errors:`,
         ...lines.map((line) => `- ${line}`),
       ].join("\n"),
-    );
+    });
   }
 
   return discovery;

@@ -1,4 +1,5 @@
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
+import { API_CLIENT_ERROR, INVALID_ARGUMENT, TIMEOUT_ERROR } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { LiveEvalProjectFile } from "./runner.ts";
@@ -145,7 +146,7 @@ function createLiveEvalJsonHeaders(context: LiveEvalApiContext): Headers {
 
 function requireLiveEvalProjectId(projectId: string | null, errorMessage: string): string {
   if (!projectId) {
-    throw new Error(errorMessage);
+    throw INVALID_ARGUMENT.create({ detail: errorMessage });
   }
 
   return projectId;
@@ -195,7 +196,9 @@ function getProjectUploadBodySize(
   if (ArrayBuffer.isView(body)) {
     return body.byteLength;
   }
-  throw new Error("Project upload fixtures require size when body length cannot be inferred");
+  throw INVALID_ARGUMENT.create({
+    detail: "Project upload fixtures require size when body length cannot be inferred",
+  });
 }
 
 function createProjectUploadBody(body: BodyInit | Uint8Array, contentType: string): BodyInit {
@@ -243,11 +246,12 @@ async function waitForProjectUploadFixture(
     });
 
     if (!listResponse.ok) {
-      throw new Error(
-        `Failed to confirm project upload fixture: ${listResponse.status} ${await getResponseText(
-          listResponse,
-        )}`,
-      );
+      throw API_CLIENT_ERROR.create({
+        detail:
+          `Failed to confirm project upload fixture: ${listResponse.status} ${await getResponseText(
+            listResponse,
+          )}`,
+      });
     }
 
     const payload = getProjectUploadListResponseSchema().parse(await listResponse.json());
@@ -260,7 +264,9 @@ async function waitForProjectUploadFixture(
     }
   }
 
-  throw new Error(`Project upload fixture did not appear in time: ${input.filePath}`);
+  throw TIMEOUT_ERROR.create({
+    detail: `Project upload fixture did not appear in time: ${input.filePath}`,
+  });
 }
 
 /** Create live eval API client. */
@@ -295,14 +301,16 @@ export async function createLiveEvalConversation(
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to create eval conversation: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to create eval conversation: ${response.status} ${await getResponseText(
+        response,
+      )}`,
+    });
   }
 
   const payload = getLiveEvalIdResponseSchema().parse(await response.json());
   if (!payload.id) {
-    throw new Error("Conversation creation response did not include id");
+    throw INVALID_ARGUMENT.create({ detail: "Conversation creation response did not include id" });
   }
 
   return payload.id;
@@ -323,11 +331,12 @@ export async function deleteLiveEvalConversation(
   );
 
   if (!response.ok && response.status !== 404) {
-    throw new Error(
-      `Failed to delete eval conversation ${input.conversationId}: ${response.status} ${await getResponseText(
-        response,
-      )}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail:
+        `Failed to delete eval conversation ${input.conversationId}: ${response.status} ${await getResponseText(
+          response,
+        )}`,
+    });
   }
 }
 
@@ -356,16 +365,19 @@ export async function createLiveEvalProjectUploadFixture(
   );
 
   if (!createResponse.ok) {
-    throw new Error(
-      `Failed to create project upload URL: ${createResponse.status} ${await getResponseText(
-        createResponse,
-      )}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail:
+        `Failed to create project upload URL: ${createResponse.status} ${await getResponseText(
+          createResponse,
+        )}`,
+    });
   }
 
   const createPayload = getProjectUploadResponseSchema().parse(await createResponse.json());
   if (!createPayload.file_upload_url) {
-    throw new Error("Project upload response did not include file_upload_url");
+    throw INVALID_ARGUMENT.create({
+      detail: "Project upload response did not include file_upload_url",
+    });
   }
 
   const uploadResponse = await createFetch(context)(createPayload.file_upload_url, {
@@ -376,11 +388,11 @@ export async function createLiveEvalProjectUploadFixture(
   });
 
   if (!uploadResponse.ok) {
-    throw new Error(
-      `Failed to upload project fixture: ${uploadResponse.status} ${await getResponseText(
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to upload project fixture: ${uploadResponse.status} ${await getResponseText(
         uploadResponse,
       )}`,
-    );
+    });
   }
 
   return waitForProjectUploadFixture(context, {
@@ -414,9 +426,9 @@ export async function getLiveEvalProjectFile(
   }
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to read project file: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to read project file: ${response.status} ${await getResponseText(response)}`,
+    });
   }
 
   const payload = getProjectFileResponseSchema().parse(await response.json());
@@ -448,14 +460,14 @@ export async function createLiveEvalRelease(
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to create release: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to create release: ${response.status} ${await getResponseText(response)}`,
+    });
   }
 
   const payload = getLiveEvalIdResponseSchema().parse(await response.json());
   if (!payload.id) {
-    throw new Error("Release creation response did not include id");
+    throw INVALID_ARGUMENT.create({ detail: "Release creation response did not include id" });
   }
 
   return payload.id;
@@ -481,9 +493,11 @@ export async function deleteLiveEvalProjectFile(
   );
 
   if (!response.ok && response.status !== 404) {
-    throw new Error(
-      `Failed to delete project file: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to delete project file: ${response.status} ${await getResponseText(
+        response,
+      )}`,
+    });
   }
 }
 
@@ -501,9 +515,11 @@ export async function listOpenLiveEvalInputRequests(
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to list eval input requests: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to list eval input requests: ${response.status} ${await getResponseText(
+        response,
+      )}`,
+    });
   }
 
   const payload = getInputRequestListResponseSchema().parse(await response.json());
@@ -524,7 +540,9 @@ export async function waitForOpenLiveEvalInputRequest(
 
   while (Date.now() < deadline) {
     if (input.abortSignal.aborted) {
-      throw new Error("Eval sidecar aborted before an input request appeared");
+      throw TIMEOUT_ERROR.create({
+        detail: "Eval sidecar aborted before an input request appeared",
+      });
     }
 
     const requests = await listOpenLiveEvalInputRequests(context, input);
@@ -536,9 +554,10 @@ export async function waitForOpenLiveEvalInputRequest(
     await wait({ ms: pollIntervalMs });
   }
 
-  throw new Error(
-    `Timed out while waiting for an open input request in conversation ${input.conversationId}`,
-  );
+  throw TIMEOUT_ERROR.create({
+    detail:
+      `Timed out while waiting for an open input request in conversation ${input.conversationId}`,
+  });
 }
 
 /** Response payload for submit live eval input. */
@@ -560,9 +579,11 @@ export async function submitLiveEvalInputResponse(
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to submit eval input response: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to submit eval input response: ${response.status} ${await getResponseText(
+        response,
+      )}`,
+    });
   }
 }
 
@@ -584,8 +605,10 @@ export async function cancelLiveEvalInputRequest(
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to cancel eval input request: ${response.status} ${await getResponseText(response)}`,
-    );
+    throw API_CLIENT_ERROR.create({
+      detail: `Failed to cancel eval input request: ${response.status} ${await getResponseText(
+        response,
+      )}`,
+    });
   }
 }

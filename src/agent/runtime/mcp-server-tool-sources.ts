@@ -1,4 +1,5 @@
 import { createRemoteMCPToolSource, type RemoteToolSource } from "#veryfront/tool";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import type {
   AgentConfig,
   AgentHttpMcpServerConfig,
@@ -77,7 +78,9 @@ function createMcpServerToolSource(server: AgentHttpMcpServerConfig): RemoteTool
     },
     executeTool(toolName, args, context) {
       if (!isToolAllowed(toolName, server.toolPolicy)) {
-        throw new Error(`Tool "${toolName}" is not allowed for MCP server "${server.id}"`);
+        throw PERMISSION_DENIED.create({
+          detail: `Tool "${toolName}" is not allowed for MCP server "${server.id}"`,
+        });
       }
       return source.executeTool(toolName, args, context);
     },

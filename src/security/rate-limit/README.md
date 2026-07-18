@@ -151,6 +151,27 @@ For authentication endpoints.
 RateLimitPresets.auth();
 ```
 
+Preset proxy headers remain untrusted by default, so rotating
+`X-Forwarded-For` values cannot bypass the limit. If a trusted reverse proxy
+sets the client address, enable proxy trust explicitly:
+
+```typescript
+const limiter = RateLimitPresets.auth({ trustProxy: true });
+```
+
+You can also provide a custom key generator, for example to limit by API key or
+authenticated user ID:
+
+```typescript
+const limiter = RateLimitPresets.auth({
+  keyGenerator: (request) => request.headers.get("x-api-key") ?? "anonymous",
+});
+```
+
+Existing store-only calls remain supported. Use
+`RateLimitPresets.auth(store)` or include the store in the options object as
+`RateLimitPresets.auth({ store })`.
+
 ## Custom Store
 
 For distributed systems, implement the `RateLimitStore` interface:

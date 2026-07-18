@@ -4,7 +4,8 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "#veryfront/errors";
+import { assertSafeBlobId } from "./blob-id.ts";
 
 const logger = agentLogger.component("local-blob-storage");
 
@@ -22,6 +23,7 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   private getPath(id: string): string {
+    assertSafeBlobId(id);
     // Partition by first 2 chars to avoid too many files in one dir
     const prefix = id.slice(0, 2);
     return join(this.rootDir, prefix, id);
@@ -100,37 +102,39 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   async getText(id: string): Promise<string | null> {
+    const filePath = this.getPath(id);
     try {
-      return await this.fs.readTextFile(this.getPath(id));
+      return await this.fs.readTextFile(filePath);
     } catch (error) {
       if (isNotFoundError(error)) return null;
       // Genuine I/O failure (EACCES, disk error): don't mask it as "not found".
       logger.warn("Failed to read blob text", {
-        id,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
-      throw error;
+      throw UNKNOWN_ERROR.create({ detail: "Failed to read blob text from local storage" });
     }
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
+    const filePath = this.getPath(id);
     try {
-      return await this.fs.readFile(this.getPath(id));
+      return await this.fs.readFile(filePath);
     } catch (error) {
       if (isNotFoundError(error)) return null;
       // Genuine I/O failure (EACCES, disk error): don't mask it as "not found".
       logger.warn("Failed to read blob bytes", {
-        id,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
-      throw error;
+      throw UNKNOWN_ERROR.create({ detail: "Failed to read blob bytes from local storage" });
     }
   }
 
   async delete(id: string): Promise<void> {
+    const filePath = this.getPath(id);
+    const metadataPath = this.getMetadataPath(id);
     try {
-      await this.fs.remove(this.getPath(id));
-      await this.fs.remove(this.getMetadataPath(id));
+      await this.fs.remove(filePath);
+      await this.fs.remove(metadataPath);
     } catch (_) {
       /* expected: file may not exist during cleanup */
     }
@@ -141,8 +145,9 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   async stat(id: string): Promise<BlobRef | null> {
+    const metadataPath = this.getMetadataPath(id);
     try {
-      const json = await this.fs.readTextFile(this.getMetadataPath(id));
+      const json = await this.fs.readTextFile(metadataPath);
       const data = JSON.parse(json);
       return {
         ...data,

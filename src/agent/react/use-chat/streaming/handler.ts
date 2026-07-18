@@ -1,3 +1,4 @@
+import { AGENT_ERROR } from "#veryfront/errors/error-registry/agent.ts";
 import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
@@ -328,7 +329,7 @@ function processChatStreamEvent(
       return;
 
     case "error":
-      throw new Error(event.errorText);
+      throw AGENT_ERROR.create({ detail: event.errorText });
 
     default:
       if (event.type.startsWith("data-")) {

@@ -23,7 +23,8 @@ import {
   captureWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
 } from "../../source-integration-policy.ts";
-import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NOT_SUPPORTED, ORCHESTRATION_ERROR } from "#veryfront/errors";
+import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
@@ -31,6 +32,7 @@ import type {
   DAGExecutionResult,
   DAGExecutorConfig,
   DAGExecutorInternalConfig,
+  DAGInternalExecutionResult,
   NodeExecutionResult,
 } from "./types.ts";
 import { deriveNodeStatus, shouldCheckpoint } from "./utils.ts";
@@ -39,6 +41,15 @@ import { executeLoopNodeStrategy } from "./loop-node-strategy.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
+import {
+  applyContextPatch,
+  applyRecordPatch,
+  cloneExecutionState,
+  createContextPatch,
+  createRecordPatch,
+  createSetContextPatch,
+  mergeContextPatches,
+} from "./context-patch.ts";
 
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
@@ -56,11 +67,13 @@ export class DAGExecutor {
     run: WorkflowRun,
     startFromNode?: string,
     abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
   ): Promise<DAGExecutionResult> {
-    return await runWithWorkflowSourceIntegrationPolicy(
+    const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
       run,
-      () => this.executeUnwrapped(nodes, run, startFromNode, abortSignal),
+      () => this.executeUnwrapped(nodes, run, startFromNode, abortSignal, ownership),
     );
+    return result;
   }
 
   private async executeUnwrapped(
@@ -68,10 +81,12 @@ export class DAGExecutor {
     run: WorkflowRun,
     startFromNode?: string,
     abortSignal?: AbortSignal,
-  ): Promise<DAGExecutionResult> {
+    ownership?: CheckpointOwnership,
+  ): Promise<DAGInternalExecutionResult> {
     abortSignal?.throwIfAborted();
-    const context = { ...run.context };
-    const nodeStates = { ...run.nodeStates };
+    const context = cloneExecutionState(run.context, "Workflow context");
+    const nodeStates = cloneExecutionState(run.nodeStates, "Workflow node states");
+    let contextPatch = createSetContextPatch();
 
     const { adjList, inDegree, nodeMap } = buildGraph(nodes);
 
@@ -83,6 +98,7 @@ export class DAGExecutor {
         waiting: false,
         context,
         nodeStates,
+        contextPatch,
         error: "Workflow DAG contains cycles",
       };
     }
@@ -94,17 +110,38 @@ export class DAGExecutor {
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
+      // Clone the batch baseline and each node's view deeply. Workflow context
+      // is durable, structured-cloneable state, so this matches checkpoint and
+      // resume semantics while preventing nested mutation from crossing an
+      // in-flight node boundary.
+      const baseContext = cloneExecutionState(context, "Workflow context");
+      const baseNodeStates = cloneExecutionState(nodeStates, "Workflow node states");
+      const contextSnapshots = batch.map(() =>
+        cloneExecutionState(baseContext, "Workflow context")
+      );
+      const nodeStateSnapshots = batch.map(() =>
+        cloneExecutionState(baseNodeStates, "Workflow node states")
+      );
+
       const results = await Promise.allSettled(
-        batch.map((nodeId) =>
-          this.executeNode(nodeMap.get(nodeId)!, context, nodeStates, abortSignal)
+        batch.map((nodeId, i) =>
+          this.executeNode(
+            nodeMap.get(nodeId)!,
+            contextSnapshots[i]!,
+            nodeStateSnapshots[i]!,
+            abortSignal,
+            ownership,
+          )
         ),
       );
+      // Wait for the full in-flight batch to settle before propagating abort so
+      // the caller keeps its lock until cooperative cleanup has completed.
       abortSignal?.throwIfAborted();
 
       // Record the state of EVERY node in the batch before deciding the batch's
       // outcome. The whole batch already ran (Promise.allSettled), so returning
       // on the first failure would drop the persisted state of later nodes that
-      // actually succeeded — and those would re-execute on resume. We capture
+      // actually succeeded, and those would re-execute on resume. We capture
       // the earliest waiting/failed node (preserving index-order precedence) and
       // return only after all states are recorded.
       let outcome: { kind: "waiting" | "failed"; nodeId: string; error?: string } | undefined;
@@ -132,8 +169,26 @@ export class DAGExecutor {
 
         const nodeResult = result.value;
 
+        // Convert mutable callback effects into explicit top-level patches.
+        // Patches are applied in node declaration order, preserving the existing
+        // deterministic policy that a later sibling wins a same-key write.
+        const nodeStateSnapshot = nodeStateSnapshots[i]!;
+        applyRecordPatch(nodeStates, createRecordPatch(baseNodeStates, nodeStateSnapshot));
+        const contextSnapshot = contextSnapshots[i]!;
+        const nodeContextPatch = nodeResult.state.status === "failed"
+          ? createSetContextPatch()
+          : mergeContextPatches(
+            createContextPatch(baseContext, contextSnapshot),
+            nodeResult.contextPatch,
+          );
+        const isolatedContextPatch = cloneExecutionState(
+          nodeContextPatch,
+          "Workflow context changes",
+        );
+        applyContextPatch(context, isolatedContextPatch);
+        contextPatch = mergeContextPatches(contextPatch, isolatedContextPatch);
+
         nodeStates[nodeId] = nodeResult.state;
-        Object.assign(context, nodeResult.contextUpdates);
 
         if (nodeResult.waiting) {
           if (!outcome) outcome = { kind: "waiting", nodeId };
@@ -142,7 +197,7 @@ export class DAGExecutor {
 
         const nodeConfig = nodeMap.get(nodeId);
         if (nodeResult.state.status === "completed" && nodeConfig && shouldCheckpoint(nodeConfig)) {
-          await this.checkpoint(run.id, nodeId, context, nodeStates);
+          await this.checkpoint(run.id, nodeId, context, nodeStates, ownership);
         }
 
         if (nodeResult.state.status === "failed") {
@@ -170,6 +225,7 @@ export class DAGExecutor {
           waitingNode: outcome.nodeId,
           context,
           nodeStates,
+          contextPatch,
         };
       }
 
@@ -179,6 +235,7 @@ export class DAGExecutor {
           waiting: false,
           context,
           nodeStates,
+          contextPatch,
           error: `Node "${outcome.nodeId}" failed: ${outcome.error}`,
         };
       }
@@ -186,7 +243,7 @@ export class DAGExecutor {
       // Merge freshly-unblocked nodes with any overflow nodes still queued in
       // `ready` (the slice beyond maxConcurrency that has not run yet). Those
       // overflow nodes have inDegree 0 and no recorded state, so
-      // getReadyNodes() would return them again — de-duplicate to avoid
+      // getReadyNodes() would return them again. De-duplicate to avoid
       // scheduling (and double-decrementing dependents for) a node that is
       // already queued.
       const queued = new Set(ready);
@@ -202,6 +259,7 @@ export class DAGExecutor {
       waiting: false,
       context,
       nodeStates,
+      contextPatch,
     };
   }
 
@@ -210,22 +268,26 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const nodeId = node.id;
 
     const existingState = nodeStates[nodeId];
     if (existingState?.status === "completed") {
-      return { state: existingState, contextUpdates: {}, waiting: false };
+      return { state: existingState, contextPatch: createSetContextPatch(), waiting: false };
     }
 
     this.config.onNodeStart?.(nodeId);
 
-    if (node.config.skip && (await node.config.skip(context))) {
+    if (node.config.skip) {
+      const shouldSkip = await node.config.skip(context);
       abortSignal?.throwIfAborted();
-      const state = this.config.stepExecutor.createSkippedState(nodeId);
-      this.config.onNodeComplete?.(nodeId, state);
-      return { state, contextUpdates: {}, waiting: false };
+      if (shouldSkip) {
+        const state = this.config.stepExecutor.createSkippedState(nodeId);
+        this.config.onNodeComplete?.(nodeId, state);
+        return { state, contextPatch: createSetContextPatch(), waiting: false };
+      }
     }
 
     const config = node.config;
@@ -239,7 +301,7 @@ export class DAGExecutor {
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: (attemptSignal) =>
-            this.executeParallelNode(node, config, context, nodeStates, attemptSignal),
+            this.executeParallelNode(node, config, context, nodeStates, attemptSignal, ownership),
         });
       case "map":
         return executeCompositeNodeWithPolicy({
@@ -254,29 +316,49 @@ export class DAGExecutor {
               nodeStates,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(nodes, run, options, attemptSignal),
+                  this.executeChildGraph(nodes, run, options, attemptSignal, ownership),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
             }),
         });
-      case "branch":
+      case "branch": {
+        // A composite retry is another attempt at the same selected branch.
+        // Cache the first successful condition result so context produced by a
+        // partially successful child cannot switch the retry to the other arm.
+        let hasSelectedBranch = false;
+        let selectedBranch = false;
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeBranchNode(node, config, context, nodeStates, attemptSignal),
+          execute: async (attemptSignal) => {
+            if (!hasSelectedBranch) {
+              selectedBranch = await config.condition(context);
+              attemptSignal.throwIfAborted();
+              hasSelectedBranch = true;
+            }
+            return await this.executeBranchNode(
+              node,
+              config,
+              selectedBranch,
+              context,
+              nodeStates,
+              attemptSignal,
+              ownership,
+            );
+          },
         });
+      }
       case "wait":
-        return this.executeWaitNode(node, config, context);
+        return this.executeWaitNode(node, config, context, abortSignal);
       case "subWorkflow":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(node, config, context, attemptSignal),
+            this.executeSubWorkflowNode(node, config, context, attemptSignal, ownership),
         });
       case "loop":
         return executeCompositeNodeWithPolicy({
@@ -291,7 +373,7 @@ export class DAGExecutor {
               nodeStates,
               runtime: {
                 executeChildGraph: (nodes, run) =>
-                  this.executeChildGraph(nodes, run, undefined, attemptSignal),
+                  this.executeChildGraph(nodes, run, undefined, attemptSignal, ownership),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -329,7 +411,7 @@ export class DAGExecutor {
 
     return {
       state,
-      contextUpdates: result.success ? { [node.id]: result.output } : {},
+      contextPatch: createSetContextPatch(result.success ? { [node.id]: result.output } : {}),
       waiting: false,
     };
   }
@@ -340,6 +422,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -363,10 +446,16 @@ export class DAGExecutor {
       },
       undefined,
       abortSignal,
+      ownership,
     );
     abortSignal?.throwIfAborted();
 
-    Object.assign(nodeStates, result.nodeStates);
+    // Keep successful child work inside this isolated composite transaction so
+    // a parent retry can skip completed children without losing their context.
+    // The outer batch commits this snapshot only if the composite eventually
+    // completes or waits; a final failed state discards it in full.
+    applyContextPatch(context, result.contextPatch);
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
     const state: NodeState = {
       nodeId: node.id,
@@ -382,7 +471,7 @@ export class DAGExecutor {
 
     return {
       state,
-      contextUpdates: result.context,
+      contextPatch: result.contextPatch,
       waiting: result.waiting,
     };
   }
@@ -390,15 +479,15 @@ export class DAGExecutor {
   private async executeBranchNode(
     node: WorkflowNode,
     config: BranchNodeConfig,
+    conditionResult: boolean,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
 
-    const conditionResult = await config.condition(context);
-    abortSignal?.throwIfAborted();
     const branchNodes = conditionResult ? config.then : (config.else ?? []);
 
     if (branchNodes.length === 0) {
@@ -411,7 +500,7 @@ export class DAGExecutor {
         completedAt: new Date(),
       };
 
-      return { state, contextUpdates: {}, waiting: false };
+      return { state, contextPatch: createSetContextPatch(), waiting: false };
     }
 
     const result = await this.executeUnwrapped(
@@ -433,10 +522,12 @@ export class DAGExecutor {
       },
       undefined,
       abortSignal,
+      ownership,
     );
     abortSignal?.throwIfAborted();
 
-    Object.assign(nodeStates, result.nodeStates);
+    applyContextPatch(context, result.contextPatch);
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
     const state: NodeState = {
       nodeId: node.id,
@@ -455,7 +546,7 @@ export class DAGExecutor {
 
     return {
       state,
-      contextUpdates: result.context,
+      contextPatch: result.contextPatch,
       waiting: result.waiting,
     };
   }
@@ -464,12 +555,14 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: WaitNodeConfig,
     context: WorkflowContext,
+    abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
     this.config.onWaiting?.(node.id, config);
 
     const payload = typeof config.payload === "function"
       ? await config.payload(context)
       : config.payload;
+    abortSignal?.throwIfAborted();
 
     const state: NodeState = {
       nodeId: node.id,
@@ -485,7 +578,7 @@ export class DAGExecutor {
 
     return {
       state,
-      contextUpdates: {},
+      contextPatch: createSetContextPatch(),
       waiting: true,
     };
   }
@@ -495,6 +588,7 @@ export class DAGExecutor {
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
     abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -537,6 +631,7 @@ export class DAGExecutor {
       },
       undefined,
       abortSignal,
+      ownership,
     );
     abortSignal?.throwIfAborted();
 
@@ -560,7 +655,7 @@ export class DAGExecutor {
 
     return {
       state,
-      contextUpdates: result.completed ? { [node.id]: finalOutput } : {},
+      contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting: result.waiting,
     };
   }
@@ -570,6 +665,7 @@ export class DAGExecutor {
     nodeId: string,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    ownership?: CheckpointOwnership,
   ): Promise<void> {
     if (!this.config.checkpointManager) {
       return;
@@ -583,7 +679,14 @@ export class DAGExecutor {
       nodeStates: structuredClone(nodeStates),
     };
 
-    await this.config.checkpointManager.save(runId, checkpoint);
+    const saved = await this.config.checkpointManager.save(runId, checkpoint, ownership);
+    // Legacy test/double implementations returned void. Only an explicit false
+    // from the owner-aware CheckpointManager means the fenced append was denied.
+    if (saved === false) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow execution ownership changed before checkpoint persistence",
+      });
+    }
   }
 
   private async executeChildGraph(
@@ -591,9 +694,10 @@ export class DAGExecutor {
     run: WorkflowRun,
     options?: ChildGraphExecutionOptions,
     abortSignal?: AbortSignal,
-  ): Promise<DAGExecutionResult> {
+    ownership?: CheckpointOwnership,
+  ): Promise<DAGInternalExecutionResult> {
     if (!options?.maxConcurrency) {
-      return await this.executeUnwrapped(nodes, run, undefined, abortSignal);
+      return await this.executeUnwrapped(nodes, run, undefined, abortSignal, ownership);
     }
 
     // Run the child graph on a scoped executor rather than mutating
@@ -604,6 +708,6 @@ export class DAGExecutor {
       ...this.config,
       maxConcurrency: options.maxConcurrency,
     });
-    return await childExecutor.executeUnwrapped(nodes, run, undefined, abortSignal);
+    return await childExecutor.executeUnwrapped(nodes, run, undefined, abortSignal, ownership);
   }
 }

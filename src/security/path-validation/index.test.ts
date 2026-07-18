@@ -141,6 +141,33 @@ describe("security/path-validation/index", () => {
       assertEquals(result.valid, true);
       assertEquals(result.canonicalPath, "/project/lib/file.ts");
     });
+
+    it("should reject a missing target beneath a symlinked parent outside the base", async () => {
+      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
+        fs: {
+          realPath: (path: string) => {
+            if (path === "/project/link/new.txt") {
+              return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+            }
+            if (path === "/project/link") {
+              return Promise.resolve("/outside");
+            }
+            if (path === "/project") {
+              return Promise.resolve("/project");
+            }
+            return Promise.reject(new Error(`unexpected path: ${path}`));
+          },
+        },
+      };
+
+      const result = await validatePath("link/new.txt", {
+        baseDir: "/project",
+        adapter: mockAdapter,
+      });
+
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.OUTSIDE_BASE);
+    });
   });
 
   describe("validatePathSync", () => {

@@ -7,7 +7,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/distributed-cache
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
@@ -86,7 +86,13 @@ export async function readDistributedCache(
     });
 
     const bundleManifestKey = `${transformCacheKey}:bm`;
-    const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
+    const manifestId = await distributedCache.get(bundleManifestKey).catch((error) => {
+      log.warn(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed for bundle manifest key`, {
+        cacheKey: bundleManifestKey,
+        error,
+      });
+      return null;
+    });
 
     if (moduleCode) {
       const cacheDir = getHttpBundleCacheDir();

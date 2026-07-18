@@ -8,7 +8,7 @@
  * @module module-system/react-loader/ssr-module-loader/ssr-circuit-breaker
  */
 
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD } from "./constants.ts";
 import { failedComponents } from "./cache/index.ts";
 

@@ -14,5 +14,10 @@ export type {
 export { contentSecurityPolicy } from "./csp.ts";
 export { corsSimple } from "./cors-simple.ts";
 export { csrfProtection } from "./csrf.ts";
-export { rateLimit } from "./rate-limit.ts";
+export {
+  authRateLimit,
+  type AuthRateLimitOptions,
+  rateLimit,
+  type RateLimitOptions,
+} from "./rate-limit.ts";
 export { securityHeaders } from "./security-headers.ts";

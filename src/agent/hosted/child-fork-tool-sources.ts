@@ -5,6 +5,7 @@ import {
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
 } from "#veryfront/tool";
+import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
@@ -207,7 +208,13 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       globalTools: mergedGlobalTools,
     });
     if (!toolSources.ok) {
-      await sandboxResult.closeSandbox();
+      try {
+        await sandboxResult.closeSandbox();
+      } catch (closeError) {
+        input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
+          errorName: closeError instanceof Error ? closeError.name : typeof closeError,
+        });
+      }
       return toolSources;
     }
 
@@ -223,7 +230,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       await sandboxResult.closeSandbox();
     } catch (closeError) {
       input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
-        error: closeError,
+        errorName: closeError instanceof Error ? closeError.name : typeof closeError,
       });
     }
     throw error;
@@ -240,5 +247,5 @@ function throwIfAborted(abortSignal: AbortSignal | undefined): void {
     throw reason;
   }
 
-  throw new Error("Child fork aborted");
+  throw AGENT_ERROR.create({ detail: "Child fork aborted" });
 }

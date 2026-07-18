@@ -14,7 +14,7 @@ import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { skillRegistry } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
 import { listSkillSubdir, validateSkillPath } from "./path-safety.ts";

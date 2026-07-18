@@ -1,5 +1,4 @@
-import { VeryfrontError } from "#veryfront/errors/types.ts";
-import { readBodyWithLimit } from "#veryfront/security/index.ts";
+import { isRequestBodyTooLargeError, readBodyWithLimit } from "#veryfront/security/index.ts";
 import {
   DEFAULT_MAX_BODY_SIZE_BYTES,
   HTTP_PAYLOAD_TOO_LARGE,
@@ -15,12 +14,6 @@ export class InternalAgentRequestBodyTooLargeError extends Error {
     super(message);
     this.name = "InternalAgentRequestBodyTooLargeError";
   }
-}
-
-function isRequestBodyTooLargeError(error: unknown): error is VeryfrontError {
-  return error instanceof VeryfrontError &&
-    error.slug === "input-validation-failed" &&
-    error.detail === "Request body exceeds size limit";
 }
 
 export async function readInternalAgentRequestBody(

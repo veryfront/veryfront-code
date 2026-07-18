@@ -1,4 +1,4 @@
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureError } from "#veryfront/errors";
 import { withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";

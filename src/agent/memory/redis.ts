@@ -13,7 +13,7 @@ import {
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /**
  * Redis client interface (compatible with ioredis and node-redis)
@@ -153,8 +153,8 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
       // single message and permanently destroy the stored history. Surface the
       // corruption so the caller aborts instead of silently truncating.
       agentLogger.error("Corrupted JSON in Redis memory; refusing to overwrite", {
-        key: this.getKey(),
-        error,
+        errorName: error instanceof Error ? error.name : typeof error,
+        keyLength: this.getKey().length,
       });
       throw error;
     }

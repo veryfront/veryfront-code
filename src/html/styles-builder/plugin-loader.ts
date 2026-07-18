@@ -13,6 +13,7 @@ import {
   getErrorBySlug,
   IMPORT_RESOLUTION_ERROR,
   NETWORK_ERROR,
+  SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
 import { getTailwindPluginBundleUrl } from "#veryfront/build/binary-plugin-includes.ts";
@@ -35,14 +36,14 @@ const logger = serverLogger.component("tailwind");
  */
 function assertPluginAllowed(spec: string): void {
   if (!PACKAGE_SPEC_RE.test(spec)) {
-    throw new Error(`Invalid Tailwind plugin specifier: ${spec}`);
+    throw SECURITY_VIOLATION.create({ detail: `Invalid Tailwind plugin specifier: ${spec}` });
   }
   const name = bareName(spec);
   if (!TAILWIND_PLUGIN_ALLOWLIST.has(name)) {
-    throw new Error(
-      `Package "${name}" is not on the Tailwind plugin allowlist. ` +
+    throw SECURITY_VIOLATION.create({
+      detail: `Package "${name}" is not on the Tailwind plugin allowlist. ` +
         `See src/html/styles-builder/tailwind-plugin-allowlist.ts.`,
-    );
+    });
   }
 }
 

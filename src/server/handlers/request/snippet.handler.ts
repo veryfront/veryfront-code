@@ -2,10 +2,13 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
-import { FILE_NOT_FOUND, SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
-import { createErrorResponse } from "#veryfront/errors/http-error.ts";
+import {
+  createErrorResponse,
+  FILE_NOT_FOUND,
+  getErrorMessage,
+  SECURITY_VIOLATION,
+  VeryfrontError,
+} from "#veryfront/errors";
 import { validatePathSync } from "#veryfront/security";
 
 const logger = serverLogger.component("snippet-handler");

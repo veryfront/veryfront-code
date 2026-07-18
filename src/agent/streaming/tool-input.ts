@@ -145,12 +145,12 @@ export function parseToolInputObject(input: unknown): Record<string, unknown> {
       }
       logger.warn("Tool input decoded to a non-record value; using empty object", {
         parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
-        preview: input.slice(0, 200),
+        inputLength: input.length,
       });
     } catch (error) {
       logger.warn("Failed to parse tool input JSON; using empty object", {
-        error: error instanceof Error ? error.message : String(error),
-        preview: input.slice(0, 200),
+        errorName: error instanceof Error ? error.name : typeof error,
+        inputLength: input.length,
       });
       return {};
     }

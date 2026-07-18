@@ -7,7 +7,6 @@
 export {
   type CacheStats,
   checkMemoryPressure,
-  clearAllCaches,
   DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
   forceGC,
   type GCStats,

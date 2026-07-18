@@ -152,14 +152,25 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends Bas
   }
 }
 
+const DEFAULT_SUMMARY_MAX_CHARS = 4_000;
+const SUMMARY_OMISSION_MARKER = "; [...]; ";
+const SUMMARY_MESSAGE_PREFIX = "Previous conversation summary:\n";
+
 /** Implement summary memory. */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
   private summary = "";
   private summaryThreshold: number;
+  private summaryMaxChars: number;
+  private maxTokens?: number;
 
   constructor(private config: MemoryConfigBase) {
     this.summaryThreshold = config.maxMessages || 20;
+    this.maxTokens = config.maxTokens;
+    this.summaryMaxChars = Math.max(
+      1,
+      Math.min(DEFAULT_SUMMARY_MAX_CHARS, Math.floor((config.maxTokens ?? 1_000) * 4)),
+    );
   }
 
   add(message: M): Promise<void> {
@@ -171,6 +182,8 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         if (this.messages.length > this.summaryThreshold) {
           await this.summarizeOldMessages();
         }
+
+        this.enforceTokenLimit();
       },
       { "memory.type": "summary", "memory.threshold": this.summaryThreshold },
     );
@@ -189,7 +202,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
             parts: [
               {
                 type: "text" as const,
-                text: `Previous conversation summary:\n${this.summary}`,
+                text: `${SUMMARY_MESSAGE_PREFIX}${this.summary}`,
               },
             ],
             timestamp: Date.now(),
@@ -220,12 +233,10 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       "agent.memory.summary.getStats",
       async () => {
         const allMessages = await this.getMessages();
-        const baseTokens = estimateTokens(allMessages);
-        const summaryTokens = Math.ceil(this.summary.length / 4);
 
         return {
           totalMessages: allMessages.length,
-          estimatedTokens: baseTokens + summaryTokens,
+          estimatedTokens: estimateTokens(allMessages),
           type: "summary",
         };
       },
@@ -238,19 +249,73 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     const toSummarize = this.messages.slice(0, halfIndex);
     const remaining = this.messages.slice(halfIndex);
 
-    const topics = toSummarize
+    this.appendToSummary(toSummarize);
+    this.messages = remaining;
+
+    return Promise.resolve();
+  }
+
+  private appendToSummary(messages: M[]): void {
+    const topics = messages
       .filter((m) => m.role === "user")
       .map((m) => getTextFromMemoryParts(m.parts as Array<{ type: string; text?: string }>))
       .map((text) => text.substring(0, 50))
       .join("; ");
 
-    // Merge with the existing summary so earlier context accumulates instead of
-    // being discarded on each resummarization.
     const newSummary = `Discussed: ${topics}`;
-    this.summary = this.summary ? `${this.summary}; ${newSummary}` : newSummary;
-    this.messages = remaining;
+    const combinedSummary = this.summary ? `${this.summary}; ${newSummary}` : newSummary;
+    this.summary = this.boundSummary(combinedSummary);
+  }
 
-    return Promise.resolve();
+  private enforceTokenLimit(): void {
+    if (!this.maxTokens) return;
+
+    const maxChars = this.maxTokens * 4;
+    while (this.messages.length > 1 && this.totalTextChars() > maxChars) {
+      const oldest = this.messages.shift();
+      if (oldest) this.appendToSummary([oldest]);
+    }
+
+    if (!this.summary) return;
+
+    const tailChars = this.messages.reduce(
+      (total, message) =>
+        total +
+        getTextFromMemoryParts(message.parts as Array<{ type: string; text?: string }>).length,
+      0,
+    );
+    const availableSummaryChars = maxChars - tailChars - SUMMARY_MESSAGE_PREFIX.length;
+    if (availableSummaryChars <= 0) {
+      this.summary = "";
+      return;
+    }
+
+    this.summary = this.boundSummary(this.summary, availableSummaryChars);
+  }
+
+  private totalTextChars(): number {
+    const tailChars = this.messages.reduce(
+      (total, message) =>
+        total +
+        getTextFromMemoryParts(message.parts as Array<{ type: string; text?: string }>).length,
+      0,
+    );
+    return tailChars + (this.summary ? SUMMARY_MESSAGE_PREFIX.length + this.summary.length : 0);
+  }
+
+  private boundSummary(summary: string, maxChars = this.summaryMaxChars): string {
+    const boundedMaxChars = Math.min(this.summaryMaxChars, Math.max(0, Math.floor(maxChars)));
+    if (boundedMaxChars === 0) return "";
+    if (summary.length <= boundedMaxChars) return summary;
+    if (boundedMaxChars <= SUMMARY_OMISSION_MARKER.length) {
+      return summary.slice(-boundedMaxChars);
+    }
+
+    const contentBudget = boundedMaxChars - SUMMARY_OMISSION_MARKER.length;
+    const headLength = Math.ceil(contentBudget / 2);
+    const tailLength = contentBudget - headLength;
+    const tail = tailLength > 0 ? summary.slice(-tailLength) : "";
+    return summary.slice(0, headLength) + SUMMARY_OMISSION_MARKER + tail;
   }
 }
 

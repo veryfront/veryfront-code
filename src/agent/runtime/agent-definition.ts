@@ -1,4 +1,5 @@
 import { extract } from "#std/front-matter/yaml.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -138,13 +139,14 @@ function validateDelegates(agentId: string, delegates: string[] | undefined): vo
   }
   for (const delegateId of delegates) {
     if (delegateId === agentId) {
-      throw new Error(`Agent "${agentId}" cannot delegate to itself.`);
+      throw INVALID_ARGUMENT.create({ detail: `Agent "${agentId}" cannot delegate to itself.` });
     }
     if (!isProviderSafeDelegateId(delegateId)) {
-      throw new Error(
-        `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
           `"${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}" (must match [A-Za-z0-9_-], max 64 chars).`,
-      );
+      });
     }
   }
 }

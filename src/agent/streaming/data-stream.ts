@@ -27,12 +27,16 @@ export function parseDataStreamSseEvents(chunk: string): {
     }
 
     const payload = dataLines.join("\n");
+    if (payload.trim() === "[DONE]") {
+      return [];
+    }
+
     try {
       return [JSON.parse(payload) as AgUiRuntimeStreamEvent];
     } catch (error) {
       logger.warn("Dropped malformed SSE data block", {
-        error: error instanceof Error ? error.message : String(error),
-        preview: payload.slice(0, 200),
+        errorName: error instanceof Error ? error.name : typeof error,
+        payloadLength: payload.length,
       });
       return [];
     }

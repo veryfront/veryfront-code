@@ -215,9 +215,15 @@ export async function confirmPrompt(
   message: string,
   defaultValue = false,
 ): Promise<boolean> {
-  const { isInteractive } = await import("../shared/interactive.ts");
+  const { isAutoConfirmEnabled, isInteractive } = await import("../shared/interactive.ts");
   const interactive = isInteractive();
-  if (!interactive) return true;
+  if (!interactive) {
+    if (isAutoConfirmEnabled()) return true;
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "This operation requires explicit confirmation in non-interactive mode. Re-run with --yes, or use --force when the command supports it.",
+    });
+  }
 
   ensureConfirmPromptAvailable({ interactive, stdoutTTY: isTTY() });
 

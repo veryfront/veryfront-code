@@ -11,7 +11,7 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { extname } from "#veryfront/compat/path";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
 

@@ -1,4 +1,5 @@
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { RagDocumentMeta, RagStore } from "./types.ts";
@@ -123,17 +124,17 @@ function resolveUploadAuthorize(
 
   if ("type" in auth) {
     if (auth.type === "none" && auth.allowUnauthenticated === true) return null;
-    throw new Error(
-      "createUploadHandler auth type 'none' requires allowUnauthenticated: true.",
-    );
+    throw CONFIG_INVALID.create({
+      detail: "createUploadHandler auth type 'none' requires allowUnauthenticated: true.",
+    });
   }
 
   if (typeof auth.authorize === "function") return auth.authorize;
 
-  throw new Error(
-    "createUploadHandler auth must be { authorize } or " +
+  throw CONFIG_INVALID.create({
+    detail: "createUploadHandler auth must be { authorize } or " +
       "{ type: 'none', allowUnauthenticated: true }.",
-  );
+  });
 }
 
 async function authorizeUploadRequest(
