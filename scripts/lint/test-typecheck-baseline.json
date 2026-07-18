@@ -3,7 +3,6 @@
   "cli/commands/knowledge/command.test.ts",
   "cli/commands/lint/handler.test.ts",
   "cli/commands/merge/command.test.ts",
-  "cli/commands/serve/handler.test.ts",
   "cli/commands/test/handler.test.ts",
   "cli/commands/worker/handler.test.ts",
   "cli/help/formatters.test.ts",
@@ -95,7 +94,6 @@
   "src/security/path-validation/canonical.test.ts",
   "src/security/path-validation/index.test.ts",
   "src/security/repository-hardening.test.ts",
-  "src/security/sandbox/worker-egress-guard.test.ts",
   "src/server/build-service-worker.test.ts",
   "src/server/handlers/response/cors.test.ts",
   "src/server/runtime-handler/index.test.ts",
@@ -110,6 +108,5 @@
   "src/transforms/npm-import-rewrites.test.ts",
   "src/utils/cache/stores/memory/lru-list-manager.test.ts",
   "src/workflow/api/workflow-client.test.ts",
-  "src/workflow/blob/gcs-storage.test.ts",
-  "src/workflow/runtime/approval-manager.test.ts"
+  "src/workflow/blob/gcs-storage.test.ts"
 ]

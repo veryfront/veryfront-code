@@ -4,7 +4,7 @@
 
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
-import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Memory } from "./memory/memory-interface.ts";
 
 // Re-export schema-based types
@@ -343,6 +343,8 @@ export interface Agent {
     model?: ModelString;
     /** Override the maximum model output tokens for this request. */
     maxOutputTokens?: number;
+    /** Abort signal for cooperative cancellation. */
+    abortSignal?: AbortSignal;
   }): Promise<AgentResponse>;
 
   stream(input: {

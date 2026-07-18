@@ -15,9 +15,9 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
+import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
+import { CACHE_ERROR } from "#veryfront/errors";
 
 /**
  * Generic cache tier interface.
@@ -35,7 +35,8 @@ export interface CacheTier<T = string> {
 
   /**
    * Get the remaining TTL (in seconds) for a key, if this tier tracks expiry.
-   * Returns null when the key is absent or the tier cannot report a TTL.
+   * Returns null when the key is absent or expired. Tiers that cannot report a
+   * TTL must omit this method so callers can use their configured default.
    * Used so backfill to higher tiers preserves the source entry's remaining
    * lifetime instead of resurrecting a near-expired value with a fresh default.
    */
@@ -219,13 +220,22 @@ export class MultiTierCache<T = string> {
       (t): t is CacheTier<T> => t !== undefined && t.delete !== undefined,
     );
 
+    const failedTiers: string[] = [];
     await Promise.all(
       tiers.map((tier) =>
         tier.delete?.(key).catch((error) => {
           logger.error(`[${this.config.name}] Delete error in ${tier.name}`, { key, error });
+          failedTiers.push(tier.name);
         })
       ),
     );
+
+    if (failedTiers.length > 0) {
+      throw CACHE_ERROR.create({
+        detail: `Delete failed in cache tier(s): ${failedTiers.join(", ")}`,
+        context: { cacheName: this.config.name, failedTiers },
+      });
+    }
   }
 
   async getOrCompute(key: string, computeFn: () => Promise<T>, ttlSeconds?: number): Promise<T> {
@@ -407,20 +417,26 @@ export class MultiTierCache<T = string> {
     // Derive the backfill TTL from the source entry's remaining lifetime when the
     // source tier can report it. Writing defaultTtl unconditionally resurrects a
     // near-expired value (e.g. a 5s entry would get a fresh 300s on L1 backfill).
-    // Fall back to defaultTtl when the source tier does not track expiry.
+    // Fall back only when the source tier does not implement TTL reporting.
+    // Once a tier reports TTLs, an unknown result must fail closed.
     let ttl = this.config.defaultTtlSeconds;
     if (sourceTier?.getRemainingTtlSeconds) {
+      let remaining: number | null | undefined;
       try {
-        const remaining = await sourceTier.getRemainingTtlSeconds(key);
-        if (remaining !== null && remaining !== undefined) {
-          if (remaining <= 0) return; // already expired at source; do not resurrect
-          ttl = Math.min(remaining, this.config.defaultTtlSeconds);
-        }
+        remaining = await sourceTier.getRemainingTtlSeconds(key);
       } catch (error) {
-        logger.debug(`[${this.config.name}] remaining-TTL lookup failed; using default`, {
-          error: error instanceof Error ? error.message : String(error),
+        logger.debug(`[${this.config.name}] remaining-TTL lookup failed; skipping backfill`, {
+          errorName: error instanceof Error ? error.name : typeof error,
         });
+        return;
       }
+
+      // A TTL-aware source returning null no longer has an authoritative entry.
+      // Backfilling the previously read value with a fresh default would revive it.
+      if (typeof remaining !== "number" || Number.isNaN(remaining) || remaining <= 0) {
+        return;
+      }
+      ttl = Math.min(remaining, this.config.defaultTtlSeconds);
     }
 
     const backfillOps: Promise<void>[] = [];

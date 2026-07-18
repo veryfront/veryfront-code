@@ -12,6 +12,7 @@
 // CRITICAL: Extract esbuild binary and set env var BEFORE any imports
 // This must happen synchronously at the very start to ensure esbuild sees the correct path
 await import("veryfront/platform/esbuild-init");
+await import("veryfront/discovery/runtime-modules-bootstrap");
 
 // All imports below must be dynamic to ensure esbuild init completes first
 const { getArgs } = await import("veryfront/platform");

@@ -1,4 +1,5 @@
 import type { LiveEvalRuntime } from "./performance.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Public API contract for live eval case metadata. */
 export interface LiveEvalCaseMetadata {
@@ -99,11 +100,11 @@ export function resolveLiveEvalRequestedCaseIds(input: {
 
   const caseIds = input.caseSets[requestedCaseSetId];
   if (!caseIds) {
-    throw new Error(
-      `Unknown AG_UI_EVAL_CASE_SET "${requestedCaseSetId}". Known sets: ${
+    throw INVALID_ARGUMENT.create({
+      detail: `Unknown AG_UI_EVAL_CASE_SET "${requestedCaseSetId}". Known sets: ${
         Object.keys(input.caseSets).join(", ")
       }`,
-    );
+    });
   }
 
   for (const caseId of caseIds) {

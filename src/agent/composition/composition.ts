@@ -9,7 +9,9 @@
 
 import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
+import { setActiveSpanAttributes } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
@@ -34,9 +36,10 @@ async function runAgentAsStreamingTool(
     await stream.toDataStreamResponse().arrayBuffer();
 
     if (!finalResponse) {
-      throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
+      throw AGENT_ERROR.create({
+        detail: `Agent "${agent.id}" stream completed without a final response.`,
+      });
     }
-
     return finalResponse;
   };
 

@@ -1197,6 +1197,48 @@ describe("pullCommand", () => {
     }
   });
 
+  // Symlinked-destination write protection is covered by
+  // "rejects a remote write through a symlinked directory" (main's fail-loud
+  // contract). Our branch's earlier graceful-skip variant was dropped in favor
+  // of main's stricter hard-reject behavior.
+
+  it("rejects traversal in multi-project directory names before fetching", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+    let fetchCalls = 0;
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      _resetEnvironmentConfig();
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(Response.json({ data: [], page_info: {} }));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projects: ["../escape"],
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "Invalid project slug",
+      );
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("does not create a project directory or report success when a --projects pull fails before writing", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;

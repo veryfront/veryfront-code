@@ -1,7 +1,7 @@
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { COMPILATION_ERROR } from "#veryfront/errors";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getErrorCollector } from "#veryfront/observability";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 

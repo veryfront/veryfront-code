@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "./errors.ts";
-import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+  validateContentType,
+  validateRequestLimits,
+} from "./limits.ts";
 
 describe("security/input-validation/limits", () => {
   describe("validateRequestLimits", () => {
@@ -148,6 +153,62 @@ describe("security/input-validation/limits", () => {
         VeryfrontError,
         "exceeds size limit",
       );
+    });
+
+    it("should identify body-size errors without matching at call sites", async () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        body: "x".repeat(100),
+      });
+
+      try {
+        await readBodyWithLimit(req, 10);
+        throw new Error("Expected body-size validation to fail");
+      } catch (error) {
+        assertEquals(isRequestBodyTooLargeError(error), true);
+      }
+      assertEquals(isRequestBodyTooLargeError(new Error("unrelated")), false);
+    });
+
+    it("should reject an oversized Content-Length", async () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-length": "100" },
+        body: new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("hello"));
+            controller.close();
+          },
+        }),
+      });
+
+      await assertRejects(
+        () => readBodyWithLimit(req, 10),
+        VeryfrontError,
+        "exceeds size limit",
+      );
+    });
+
+    it("should cancel a streaming body once the limit is exceeded", async () => {
+      let cancelled = false;
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("too large"));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      });
+
+      await assertRejects(
+        () => readBodyWithLimit(req, 4),
+        VeryfrontError,
+        "exceeds size limit",
+      );
+      assertEquals(cancelled, true);
     });
 
     it("should reject request with no body", async () => {

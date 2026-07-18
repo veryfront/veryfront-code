@@ -128,7 +128,7 @@ interface RemoteFile {
   path: string;
 }
 
-async function scanLocalFiles(
+export async function scanLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<UploadOp[]> {
@@ -268,7 +268,9 @@ export function createBranch(
   projectSlug: string,
   branchName: string,
 ): Promise<BranchResponse> {
-  return client.post<BranchResponse>(`/projects/${projectSlug}/branches`, { name: branchName });
+  return client.post<BranchResponse>(`/projects/${encodeURIComponent(projectSlug)}/branches`, {
+    name: branchName,
+  });
 }
 
 function getErrorStatus(error: unknown): number | undefined {
@@ -292,7 +294,7 @@ async function getBranchByName(
     };
 
     const response = await client.get<ListBranchesResponse>(
-      `/projects/${projectSlug}/branches`,
+      `/projects/${encodeURIComponent(projectSlug)}/branches`,
       params,
     );
 
@@ -341,7 +343,7 @@ export async function resolvePushRemoteFiles(
 
 function buildFileUrl(projectSlug: string, path: string, branchId: string | null): string {
   const encodedPath = encodeURIComponent(path);
-  const base = `/projects/${projectSlug}/files/${encodedPath}`;
+  const base = `/projects/${encodeURIComponent(projectSlug)}/files/${encodedPath}`;
   return branchId ? `${base}?branch_id=${branchId}` : base;
 }
 

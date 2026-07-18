@@ -4,7 +4,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
+import { markRequestProfilePhase } from "#veryfront/observability";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 import { serverLogger } from "#veryfront/utils";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";

@@ -22,7 +22,7 @@ import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-par
 import type { ExtensionFactory } from "veryfront/extensions";
 import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/css/index.ts";
 import { serverLogger } from "#veryfront/utils";
-import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
+import { DEPENDENCY_MISSING, INITIALIZATION_ERROR, NETWORK_ERROR } from "#veryfront/errors";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { hashString } from "./candidate-extractor.ts";
@@ -100,7 +100,9 @@ async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
       require: <T>(name: string): T => {
         const contract = tryResolveContract<T>(name);
         if (contract === undefined) {
-          throw new Error(`Missing required extension contract: ${name}`);
+          throw INITIALIZATION_ERROR.create({
+            detail: `Missing required extension contract: ${name}`,
+          });
         }
         return contract;
       },

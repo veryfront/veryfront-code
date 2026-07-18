@@ -1,5 +1,13 @@
-import { createValidationError } from "./errors.ts";
+import { createValidationError, VeryfrontError } from "./errors.ts";
 import { DEFAULT_LIMITS, type RequestLimits } from "./types.ts";
+
+const REQUEST_BODY_TOO_LARGE_DETAIL = "Request body exceeds size limit";
+
+export function isRequestBodyTooLargeError(error: unknown): error is VeryfrontError {
+  return error instanceof VeryfrontError &&
+    error.slug === "input-validation-failed" &&
+    error.detail === REQUEST_BODY_TOO_LARGE_DETAIL;
+}
 
 export function validateRequestLimits(
   request: Request,
@@ -73,6 +81,19 @@ export async function readBodyWithLimit(
   request: Request,
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
 ): Promise<string> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) {
+      throw createValidationError("Invalid Content-Length header");
+    }
+    if (Number(contentLength) > maxSize) {
+      throw createValidationError(REQUEST_BODY_TOO_LARGE_DETAIL, {
+        maxSize,
+        contentLength: Number(contentLength),
+      });
+    }
+  }
+
   const reader = request.body?.getReader();
   if (!reader) throw createValidationError("No request body");
 
@@ -86,7 +107,8 @@ export async function readBodyWithLimit(
 
       totalSize += value.length;
       if (totalSize > maxSize) {
-        throw createValidationError("Request body exceeds size limit", {
+        await reader.cancel().catch(() => undefined);
+        throw createValidationError(REQUEST_BODY_TOO_LARGE_DETAIL, {
           maxSize,
           bytesRead: totalSize,
         });

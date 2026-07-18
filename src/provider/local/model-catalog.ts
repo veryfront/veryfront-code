@@ -7,7 +7,7 @@
  * @module provider/local
  */
 
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 export interface ModelInfo {
   /** HuggingFace model repository ID */

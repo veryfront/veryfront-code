@@ -1,8 +1,6 @@
 import { rendererLogger } from "#veryfront/utils";
-import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { markRequestProfilePhase, metrics, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CacheStore } from "../cache/types.ts";
 import type { CacheLookupStatus } from "../cache/cache-coordinator.ts";

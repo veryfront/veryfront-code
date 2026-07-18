@@ -1,4 +1,5 @@
 import { readRecord } from "./provider-records.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 
 /**
  * Which provider runtime a request is being sent to.
@@ -8,12 +9,8 @@ import { readRecord } from "./provider-records.ts";
  */
 export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moonshotai";
 
-/**
- * Upper bound on the number of characters of a provider error body we surface
- * in `ProviderError.message`. Prevents multi-MB error payloads from flowing
- * into logs and model context.
- */
-const MAX_ERROR_BODY_LENGTH = 2_000;
+/** Bytes inspected for structured provider error classification. */
+const MAX_ERROR_BODY_BYTES = 8_000;
 
 /**
  * Base class for typed provider errors. The `retryable` flag is the
@@ -83,10 +80,12 @@ export async function buildProviderError(
   provider: ProviderKind,
   response: Response,
 ): Promise<ProviderError> {
-  const rawBody = await response.text();
-  const message = (rawBody.trim() || `${response.status} ${response.statusText}`.trim())
-    .slice(0, MAX_ERROR_BODY_LENGTH);
   const status = response.status;
+  const { text: rawBody, truncated } = await readResponseTextPrefix(
+    response,
+    MAX_ERROR_BODY_BYTES,
+  );
+  const message = `Provider request failed with status ${status}`;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
 
   const parsedBody = (() => {
@@ -160,6 +159,9 @@ export async function buildProviderError(
         retryable: false,
       });
     }
+    if (truncated || parsedBody === undefined) {
+      return new ProviderRequestError({ provider, status, message, retryable: false });
+    }
     return new ProviderRateLimitError({
       provider,
       status,
@@ -181,6 +183,9 @@ export async function buildProviderError(
         retryable: false,
       });
     }
+    if (truncated || parsedBody === undefined) {
+      return new ProviderRequestError({ provider, status, message, retryable: false });
+    }
     return new ProviderRateLimitError({
       provider,
       status,
@@ -190,11 +195,10 @@ export async function buildProviderError(
     });
   }
 
-  // Transient server/gateway errors (500, 502, 503, 504 and other 5xx) are
-  // treated as retryable: a hung, restarting, or overloaded upstream may
-  // recover on a subsequent attempt. The provider-specific 529/503/429 cases
-  // above return earlier; this is the catch-all for the remaining 5xx codes.
-  if (status >= 500 && status <= 599) {
+  // Most 5xx responses are transient, including non-standard reverse-proxy
+  // statuses such as 520-524. 501 and 505 describe unsupported capabilities
+  // that an unchanged retry cannot fix.
+  if (status >= 500 && status <= 599 && status !== 501 && status !== 505) {
     return new ProviderOverloadedError({
       provider,
       status,

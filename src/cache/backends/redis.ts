@@ -1,7 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getRedisClient,
   isRedisConfigured,
@@ -57,6 +56,21 @@ export class RedisCacheBackend implements CacheBackend {
       return await this.client.get(this.prefixKey(key));
     } catch (error) {
       logger.debug("Get failed", { key, error });
+      return null;
+    }
+  }
+
+  async getRemainingTtlSeconds(key: string): Promise<number | null> {
+    if (!this.client?.ttl) return null;
+
+    try {
+      const remaining = await this.client.ttl(this.prefixKey(key));
+      if (remaining === -1) return Infinity;
+      return remaining >= 0 ? remaining : null;
+    } catch (error) {
+      logger.debug("TTL lookup failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       return null;
     }
   }
@@ -118,6 +132,7 @@ export class RedisCacheBackend implements CacheBackend {
       await this.client.del(this.prefixKey(key));
     } catch (error) {
       logger.debug("Del failed", { key, error });
+      throw error;
     }
   }
 
@@ -156,7 +171,7 @@ export class RedisCacheBackend implements CacheBackend {
       return deletedCount;
     } catch (error) {
       logger.debug("DelByPattern failed", { pattern, error });
-      return 0;
+      throw error;
     }
   }
 }

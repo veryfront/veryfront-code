@@ -4,7 +4,17 @@ import {
 } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { getFinalRunExitCode, getTenantFromEnv, runWithTenantContext } from "./shared.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { MemoryBackend } from "../backends/memory.ts";
+import { waitForApproval, workflow } from "../dsl/index.ts";
+import type { WorkflowRun } from "../types.ts";
+import {
+  createIsolatedWorkflowExecutor,
+  failRunExecution,
+  getFinalRunExitCode,
+  getTenantFromEnv,
+  runWithTenantContext,
+} from "./shared.ts";
 
 const ENV_KEYS = [
   "TENANT_PROJECT_SLUG",
@@ -45,6 +55,23 @@ function createLogger() {
     error: () => undefined,
     info: () => undefined,
     warn: () => undefined,
+  };
+}
+
+function createRun(id: string, status: WorkflowRun["status"], workerId?: string): WorkflowRun {
+  return {
+    id,
+    workflowId: "workflow-1",
+    status,
+    input: {},
+    nodeStates: {},
+    currentNodes: [],
+    context: { input: {} },
+    checkpoints: [],
+    pendingApprovals: [],
+    createdAt: new Date(),
+    sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+    workerId,
   };
 }
 
@@ -124,5 +151,107 @@ describe("workflow worker shared helpers", () => {
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "failed" } as never, false),
       1,
     );
+  });
+
+  it("persists approvals before an isolated executor returns a waiting run", async () => {
+    const backend = new MemoryBackend();
+    const workerId = "run-execution:approval-owner";
+    const executor = createIsolatedWorkflowExecutor(backend);
+    executor.register(
+      workflow({
+        id: "workflow-1",
+        steps: [waitForApproval("review", { message: "Review required" })],
+      }).definition,
+    );
+    const run = createRun("run-approval", "running", workerId);
+    await backend.createRun(run);
+
+    await executor.resume(run.id, undefined, workerId);
+
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+    const approvals = await backend.getPendingApprovals(run.id);
+    assertEquals(approvals.length, 1);
+    assertEquals(approvals[0]?.nodeId, "review");
+    assertEquals(approvals[0]?.message, "Review required");
+  });
+
+  it("does not fail cancelled, completed, or waiting runs after execution errors", async () => {
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+
+    for (const status of ["cancelled", "completed", "waiting"] as const) {
+      const backend = new MemoryBackend();
+      const run = createRun(`run-${status}`, status);
+      await backend.createRun(run);
+
+      assertEquals(
+        await failRunExecution(backend, createLogger(), exitCodes, run.id, new Error("late")),
+        1,
+      );
+      const persisted = await backend.getRun(run.id);
+      assertEquals(persisted?.status, status);
+      assertEquals(persisted?.error, undefined);
+    }
+  });
+
+  it("does not fail a run claimed by a new owner after lock loss", async () => {
+    const backend = new MemoryBackend();
+    const run = createRun("run-new-owner", "running", "run-execution:new-owner");
+    await backend.createRun(run);
+
+    assertEquals(
+      await failRunExecution(
+        backend,
+        createLogger(),
+        { SUCCESS: 0, WORKFLOW_FAILED: 1 },
+        run.id,
+        new Error("lost lock"),
+        "run-execution:old-owner",
+      ),
+      1,
+    );
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, "run-execution:new-owner");
+    assertEquals(persisted?.error, undefined);
+  });
+
+  it("does not fail a run reassigned between the owner check and status update", async () => {
+    class ReassignBeforeFailureBackend extends MemoryBackend {
+      override async updateRunIfStatusAndWorker(
+        runId: string,
+        expectedStatuses: WorkflowRun["status"][],
+        expectedWorkerId: string,
+        patch: Partial<WorkflowRun>,
+      ): Promise<boolean> {
+        if (patch.status === "failed") {
+          await super.updateRun(runId, { workerId: "run-execution:new-owner" });
+        }
+        return await super.updateRunIfStatusAndWorker(
+          runId,
+          expectedStatuses,
+          expectedWorkerId,
+          patch,
+        );
+      }
+    }
+
+    const backend = new ReassignBeforeFailureBackend();
+    const run = createRun("run-owner-race", "running", "run-execution:old-owner");
+    await backend.createRun(run);
+
+    await failRunExecution(
+      backend,
+      createLogger(),
+      { SUCCESS: 0, WORKFLOW_FAILED: 1 },
+      run.id,
+      new Error("lost lock"),
+      "run-execution:old-owner",
+    );
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, "run-execution:new-owner");
+    assertEquals(persisted?.error, undefined);
   });
 });

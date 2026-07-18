@@ -24,12 +24,28 @@ describe("utils/import-map", () => {
     assertEquals(merged["@/"], "/src/");
   });
 
-  it("parses import maps and tolerates invalid JSON", () => {
+  it("parses import maps and tolerates invalid JSON without logging its contents", () => {
     assertEquals(
       parseImportMapImports('{"imports":{"react":"https://cdn.test/react.js"}}').react,
       "https://cdn.test/react.js",
     );
-    assertEquals(parseImportMapImports("{not json}"), {});
+
+    const invalidImportMap = '{"imports":{"private":"private-import-target",}}';
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      assertEquals(parseImportMapImports(invalidImportMap), {});
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assertEquals(warnings.length, 1);
+    assertEquals(JSON.stringify(warnings).includes("private-import-target"), false);
+    assertEquals(warnings[0]?.[1], {
+      errorName: "SyntaxError",
+      inputLength: invalidImportMap.length,
+    });
   });
 
   it("reads the page import map from the document", () => {

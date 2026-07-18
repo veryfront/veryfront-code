@@ -9,7 +9,7 @@
  */
 
 import { SKILL_ALLOWED_TOOL_PATTERN_REGEX, SKILL_TOOL_IDS } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 /** Active skill file-backed capabilities available to skill infrastructure tools. */
 export type SkillToolAvailability = {

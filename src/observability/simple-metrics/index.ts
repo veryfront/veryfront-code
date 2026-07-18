@@ -71,7 +71,7 @@ import {
   recordSecurityHeaders,
   recordSSR,
 } from "./metrics-recorder.ts";
-import { createSnapshot, getRequestCount, resetMetrics } from "./metrics-state.ts";
+import { createSnapshot, getRequestCount } from "./metrics-state.ts";
 
 export const metrics = {
   incRequest,
@@ -92,6 +92,5 @@ export const metrics = {
   recordModuleTransform,
   recordRouteManifestLookup,
   snapshot: createSnapshot,
-  reset: resetMetrics,
   getRequestCount,
 };

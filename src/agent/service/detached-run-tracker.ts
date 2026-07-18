@@ -1,4 +1,5 @@
 import { RunResumeSessionManager } from "../runtime/resume-session.ts";
+import { AGENT_TIMEOUT } from "#veryfront/errors";
 
 /** Result returned from detached run drain. */
 export interface DetachedRunDrainResult {
@@ -167,7 +168,7 @@ export function createDetachedRunShutdownLifecycle<TResumeValue = unknown>(
           pendingRunIds: drainResult.pendingRunIds,
           count: drainResult.pendingRunIds.length,
         });
-        throw new Error(DETACHED_RUN_DRAIN_TIMEOUT_MESSAGE);
+        throw AGENT_TIMEOUT.create({ detail: DETACHED_RUN_DRAIN_TIMEOUT_MESSAGE });
       }
 
       options.logger.info("All connections and detached durable runs drained, exiting");

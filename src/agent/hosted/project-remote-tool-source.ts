@@ -15,6 +15,7 @@ import {
   defaultAgentServiceMcpServers,
 } from "../service/mcp-server-config.ts";
 import type { AgentMcpToolPolicy } from "../types.ts";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
@@ -321,7 +322,9 @@ function createHostedMcpToolPolicySource(
     },
     executeTool(toolName, args, context) {
       if (!isHostedMcpToolAllowed(toolName, policy)) {
-        throw new Error(`Tool "${toolName}" is not allowed for this MCP server`);
+        throw PERMISSION_DENIED.create({
+          detail: `Tool "${toolName}" is not allowed for this MCP server`,
+        });
       }
 
       return source.executeTool(toolName, args, context);

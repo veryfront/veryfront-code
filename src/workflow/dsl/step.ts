@@ -8,7 +8,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by step. */
 export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {

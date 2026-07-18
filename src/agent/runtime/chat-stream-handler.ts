@@ -19,8 +19,8 @@ import {
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { SpanKind } from "#veryfront/observability/tracing/api-shim.ts";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {

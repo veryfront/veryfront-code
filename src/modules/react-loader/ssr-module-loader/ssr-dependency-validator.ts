@@ -11,7 +11,7 @@ import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/es
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";

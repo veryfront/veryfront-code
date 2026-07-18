@@ -1,4 +1,4 @@
-import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { computeHash, rendererLogger } from "#veryfront/utils";
 import * as React from "react";

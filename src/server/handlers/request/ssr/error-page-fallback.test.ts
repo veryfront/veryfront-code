@@ -16,6 +16,11 @@ import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 function createMockAdapter(
   overrides: {
@@ -72,6 +77,7 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 
 afterEach(() => {
   __injectCacheForTests(null);
+  __resetLogRecordEmitterForTests();
   resetReactCache();
   __setServerModuleLoaderForTests(null);
 });
@@ -349,6 +355,49 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
         statusCode: 404,
       });
       assertEquals(result, null);
+    });
+
+    it("sanitizes custom error page load failures", async () => {
+      __injectCacheForTests({
+        context: {
+          projectId: "test-project",
+          environment: "preview",
+          versionId: "test-version",
+        },
+        get: () => Promise.reject(new Error("cache exposed <TOKEN> at <LOCAL_PATH>")),
+        set: () => Promise.resolve(),
+        delete: () => Promise.resolve(),
+      });
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+      });
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const result = await tryErrorPageFallback(
+        new Request("http://localhost/"),
+        makeCtx({ adapter }),
+        new ResponseBuilder(),
+        { statusCode: 500 },
+      );
+
+      assertEquals(result, null);
+      const failure = entries.find((entry) =>
+        entry.message === "Failed to load custom error page; falling back to default"
+      );
+      assertEquals(failure?.context, { errorName: "Error" });
+      assertEquals(JSON.stringify(entries).includes("<TOKEN>"), false);
+      assertEquals(JSON.stringify(entries).includes("<LOCAL_PATH>"), false);
     });
   });
 

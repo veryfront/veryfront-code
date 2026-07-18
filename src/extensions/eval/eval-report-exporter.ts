@@ -8,12 +8,13 @@
  * @module extensions/eval/eval-report-exporter
  */
 
-import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval";
-
-type EvalReportExportMaybePromise<T> = T | Promise<T>;
+import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval/types.ts";
 
 /** Contract name used for `resolve()` / `provide()`. */
 export const EvalReportExporterRegistryName = "EvalReportExporterRegistry" as const;
+
+/** Value that can be returned synchronously or as a promise. */
+type EvalReportExportMaybePromise<T> = T | Promise<T>;
 
 /** Sentinel used when record payload fields are removed for external export. */
 export const EvalReportRedactedValue = "[redacted]" as const;

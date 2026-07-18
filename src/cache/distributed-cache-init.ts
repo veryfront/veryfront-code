@@ -1,6 +1,6 @@
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { logger as baseLogger } from "#veryfront/utils";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { isApiCacheAvailable, isDiskCacheConfigured } from "./backend.ts";
 

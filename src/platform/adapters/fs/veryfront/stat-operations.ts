@@ -3,8 +3,7 @@ import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
-import { createError, toError, VeryfrontError } from "#veryfront/errors";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, fromError, toError, VeryfrontError } from "#veryfront/errors";
 import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
 import {

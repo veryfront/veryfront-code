@@ -5,7 +5,7 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { getApiHandler } from "./pages-api-handler.ts";
+import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
@@ -120,8 +120,7 @@ export class ApiHandlerWrapper extends BaseHandler {
           // Must run within runWithContext so VFS and registry scope are correct.
           await ensureProjectDiscovery(ctx);
 
-          const api = await getApiHandler(ctx);
-          const apiRes = await api.handle(req, ctx);
+          const apiRes = await withApiHandler(ctx, (api) => api.handle(req, ctx));
 
           if (!apiRes) {
             this.logDebug(

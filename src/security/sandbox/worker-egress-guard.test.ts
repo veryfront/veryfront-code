@@ -5,6 +5,8 @@ import {
   assertWorkerEgressAllowed,
   assertWorkerHostEgressAllowed,
   guardedEgressFetch,
+  guardedWorkerConnect,
+  guardedWorkerConnectTls,
   isInternalEgressIp,
   isInternalEgressOverrideEnabled,
   WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
@@ -44,6 +46,76 @@ describe("worker-egress-guard", () => {
     assertEquals(isInternalEgressIp("1.1.1.1"), false);
   });
 
+  it("blocks non-global IPv4 and IPv6 ranges", () => {
+    for (
+      const address of [
+        "192.0.0.1",
+        "192.0.2.1",
+        "192.88.99.1",
+        "198.51.100.1",
+        "203.0.113.1",
+        "224.0.0.1",
+        "239.255.255.255",
+        "240.0.0.1",
+        "255.255.255.255",
+        "64:ff9b::a00:1",
+        "64:ff9b:1::a00:1",
+        "100::1",
+        "2001::1",
+        "2001:2::1",
+        "2001:10::1",
+        "2001:20::1",
+        "2001:100::1",
+        "2001:db8::1",
+        "2002:0a00:1::1",
+        "3fff::1",
+        "3fff:fff::1",
+        "fec0::1",
+        "ff02::1",
+      ]
+    ) {
+      assertEquals(isInternalEgressIp(address), true, address);
+    }
+    assertEquals(isInternalEgressIp("8.8.4.4"), false);
+    assertEquals(isInternalEgressIp("2001:200::1"), false);
+    assertEquals(isInternalEgressIp("2001:4860:4860::8888"), false);
+  });
+
+  it("identifies hexadecimal IPv4-mapped IPv6 forms of internal addresses", () => {
+    assertEquals(isInternalEgressIp("::ffff:7f00:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:a00:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:a9fe:a9fe"), true);
+    assertEquals(isInternalEgressIp("::ffff:6440:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:c612:1"), true);
+    assertEquals(isInternalEgressIp("::ffff:5db8:d822"), false);
+  });
+
+  it("blocks a URL containing a hexadecimal IPv4-mapped loopback address", async () => {
+    await assertRejects(
+      () => assertWorkerEgressAllowed("http://[::ffff:7f00:1]/"),
+      WorkerEgressBlockedError,
+      "Worker network egress blocked",
+    );
+  });
+
+  it("does not let malformed IPv6 syntax bypass hostname resolution", async () => {
+    let resolutionCount = 0;
+    for (const hostname of ["2001:::1", "2001::1:"]) {
+      await assertRejects(
+        () =>
+          assertWorkerHostEgressAllowed(hostname, {
+            resolveHost: () => {
+              resolutionCount++;
+              return Promise.resolve(["127.0.0.1"]);
+            },
+          }),
+        WorkerEgressBlockedError,
+        "blocked for host",
+      );
+    }
+    assertEquals(resolutionCount, 2);
+  });
+
   it("blocks direct metadata, private, link-local, and localhost targets", async () => {
     await assertRejects(
       () => assertWorkerEgressAllowed("http://169.254.169.254/latest/meta-data/"),
@@ -79,7 +151,7 @@ describe("worker-egress-guard", () => {
           resolveHost: () => Promise.resolve(["10.1.2.3"]),
         }),
       WorkerEgressBlockedError,
-      "resolved to internal address",
+      "blocked for host",
     );
   });
 
@@ -116,12 +188,143 @@ describe("worker-egress-guard", () => {
     assertEquals(isInternalEgressOverrideEnabled("0"), false);
     assertEquals(isInternalEgressOverrideEnabled(undefined), false);
   });
+
+  it("pins raw TLS to the validated IP while preserving the original TLS hostname", async () => {
+    const tcpConnection = {} as Deno.TcpConn;
+    const tlsConnection = {} as Deno.TlsConn;
+    let connected: Deno.ConnectOptions | undefined;
+    let tlsOptions: Deno.StartTlsOptions | undefined;
+
+    const result = await guardedWorkerConnectTls(
+      {
+        hostname: "api.example.com",
+        port: 443,
+        caCerts: ["<TEST_CA>"],
+        alpnProtocols: ["h2", "http/1.1"],
+      },
+      { resolveHost: () => Promise.resolve(["93.184.216.34"]) },
+      {
+        connect: (options) => {
+          connected = options;
+          return Promise.resolve(tcpConnection);
+        },
+        startTls: (connection, options) => {
+          assertEquals(connection, tcpConnection);
+          tlsOptions = options;
+          return Promise.resolve(tlsConnection);
+        },
+      },
+    );
+
+    assertEquals(result, tlsConnection);
+    assertEquals(connected?.hostname, "93.184.216.34");
+    assertEquals(connected?.port, 443);
+    assertEquals(tlsOptions?.hostname, "api.example.com");
+    assertEquals(tlsOptions?.caCerts, ["<TEST_CA>"]);
+    assertEquals(tlsOptions?.alpnProtocols, ["h2", "http/1.1"]);
+  });
+
+  it("fails closed for raw TLS client certificates that startTls cannot preserve", async () => {
+    await assertRejects(
+      () =>
+        guardedWorkerConnectTls({
+          hostname: "api.example.com",
+          port: 443,
+          cert: "<TEST_CERT>",
+          key: "<TEST_KEY>",
+        }),
+      WorkerEgressBlockedError,
+      "client certificates are unavailable",
+    );
+  });
+
+  it("settles a raw connect when DNS resolution is aborted", async () => {
+    const controller = new AbortController();
+    let rejectResolution: ((error: Error) => void) | undefined;
+    const pending = guardedWorkerConnect(
+      {
+        hostname: "stalled.invalid",
+        port: 443,
+        signal: controller.signal,
+      },
+      {
+        resolveHost: () =>
+          new Promise<string[]>((_resolve, reject) => {
+            rejectResolution = reject;
+          }),
+      },
+      {
+        connect: () => {
+          throw new Error("connect must not run after DNS cancellation");
+        },
+      },
+    );
+
+    controller.abort(new Error("DNS lookup cancelled"));
+    await assertRejects(() => pending, Error, "DNS lookup cancelled");
+
+    // A late resolver rejection is consumed by the abort race.
+    rejectResolution?.(new Error("late DNS failure"));
+    await Promise.resolve();
+  });
 });
 
 describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   function redirectTo(location: string, status = 302): Response {
     return new Response(null, { status, headers: { location } });
   }
+
+  it("keeps non-network fetch schemes out of the HTTP broker", async () => {
+    let seenInput = "";
+    const response = await guardedEgressFetch("data:text/plain,hello", undefined, {
+      fetchImpl: (input) => {
+        seenInput = String(input);
+        return Promise.resolve(new Response("hello"));
+      },
+      options: {
+        httpBroker: { url: "http://127.0.0.1:1/fetch", token: "<TOKEN>" },
+      },
+    });
+    assertEquals(seenInput, "data:text/plain,hello");
+    assertEquals(await response.text(), "hello");
+  });
+
+  it("keeps the pinned tunnel alive until a streaming response finishes", async () => {
+    const server = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("a"));
+              setTimeout(() => {
+                controller.enqueue(new TextEncoder().encode("b"));
+                controller.close();
+              }, 25);
+            },
+          }),
+        ),
+    );
+    const address = server.addr;
+    if (address.transport !== "tcp") throw new Error("expected TCP test server");
+
+    try {
+      const response = await guardedEgressFetch(
+        `http://stream.invalid:${address.port}/data`,
+        undefined,
+        {
+          fetchImpl: globalThis.fetch.bind(globalThis),
+          options: {
+            allowInternalEgress: true,
+            resolveHost: () => Promise.resolve(["127.0.0.1"]),
+          },
+        },
+      );
+      assertEquals(await response.text(), "ab");
+    } finally {
+      await server.shutdown();
+    }
+  });
 
   it("blocks a public URL that redirects to an internal address", async () => {
     let calls = 0;
@@ -157,6 +360,8 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     const res = await guardedEgressFetch("http://93.184.216.34/a", undefined, { fetchImpl });
     assertEquals(res.status, 200);
     assertEquals(await res.text(), "ok");
+    assertEquals(res.url, "http://93.184.216.35/b");
+    assertEquals(res.redirected, true);
   });
 
   it("returns the redirect unfollowed when redirect mode is 'manual'", async () => {
@@ -169,12 +374,50 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     assertEquals(res.status, 302);
   });
 
+  it("cancels an unexposed redirect body when redirect mode is 'error'", async () => {
+    let cancellations = 0;
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancellations++;
+            },
+          }),
+          { status: 302, headers: { location: "http://93.184.216.34/next" } },
+        ),
+      );
+
+    await assertRejects(
+      () =>
+        guardedEgressFetch(
+          "http://93.184.216.34/start",
+          { redirect: "error" },
+          { fetchImpl },
+        ),
+      WorkerEgressBlockedError,
+    );
+    assertEquals(cancellations, 1);
+  });
+
   it("throws after exceeding the maximum redirect count", async () => {
-    const fetchImpl: typeof fetch = () => Promise.resolve(redirectTo("http://93.184.216.34/loop"));
+    let cancellations = 0;
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancellations++;
+            },
+          }),
+          { status: 302, headers: { location: "http://93.184.216.34/loop" } },
+        ),
+      );
     await assertRejects(
       () => guardedEgressFetch("http://93.184.216.34/loop", undefined, { fetchImpl }),
       WorkerEgressBlockedError,
     );
+    assertEquals(cancellations, 21);
   });
 
   it("strips Authorization and Cookie on a cross-origin redirect", async () => {
@@ -195,9 +438,8 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
       { fetchImpl },
     );
     assertEquals(res.status, 200);
-    assertEquals(seen[0].auth, "Bearer secret");
-    assertEquals(seen[1].auth, null);
-    assertEquals(seen[1].cookie, null);
+    assertEquals(seen[0], { auth: "Bearer secret", cookie: "sid=abc" });
+    assertEquals(seen[1], { auth: null, cookie: null });
   });
 
   it("preserves Authorization on a same-origin redirect", async () => {
@@ -218,6 +460,93 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     );
     assertEquals(seen[0], "Bearer secret");
     assertEquals(seen[1], "Bearer secret");
+  });
+
+  it("applies the Fetch redirect method and body rules", async () => {
+    const cases: Array<{
+      status: number;
+      method: string;
+      body?: string;
+      expectedMethod: string;
+      expectedBody?: string;
+    }> = [
+      { status: 301, method: "POST", body: "post-body", expectedMethod: "GET" },
+      {
+        status: 302,
+        method: "PUT",
+        body: "put-body",
+        expectedMethod: "PUT",
+        expectedBody: "put-body",
+      },
+      { status: 303, method: "PATCH", body: "patch-body", expectedMethod: "GET" },
+      { status: 303, method: "HEAD", expectedMethod: "HEAD" },
+    ];
+
+    for (const testCase of cases) {
+      const seen: Array<{ method: string | undefined; body: BodyInit | null | undefined }> = [];
+      let calls = 0;
+      const fetchImpl: typeof fetch = (_input, init) => {
+        seen.push({ method: init?.method, body: init?.body });
+        calls++;
+        return Promise.resolve(
+          calls === 1
+            ? redirectTo("http://93.184.216.34/landing", testCase.status)
+            : new Response(null, { status: 200 }),
+        );
+      };
+
+      await guardedEgressFetch(
+        "http://93.184.216.34/start",
+        { method: testCase.method, body: testCase.body },
+        { fetchImpl },
+      );
+
+      assertEquals(seen, [
+        { method: testCase.method, body: testCase.body },
+        { method: testCase.expectedMethod, body: testCase.expectedBody },
+      ]);
+    }
+  });
+
+  it("removes request body headers when a redirect downgrades to GET", async () => {
+    const seenHeaders: Headers[] = [];
+    let calls = 0;
+    const fetchImpl: typeof fetch = (_input, init) => {
+      seenHeaders.push(new Headers(init?.headers));
+      calls++;
+      return Promise.resolve(
+        calls === 1
+          ? redirectTo("http://93.184.216.34/landing", 303)
+          : new Response(null, { status: 200 }),
+      );
+    };
+
+    await guardedEgressFetch(
+      "http://93.184.216.34/start",
+      {
+        method: "POST",
+        body: "payload",
+        headers: {
+          "content-encoding": "gzip",
+          "content-language": "en",
+          "content-location": "/source",
+          "content-type": "text/plain",
+        },
+      },
+      { fetchImpl },
+    );
+
+    for (
+      const header of [
+        "content-encoding",
+        "content-language",
+        "content-location",
+        "content-type",
+      ]
+    ) {
+      assertEquals(seenHeaders[0]?.get(header) !== null, true);
+      assertEquals(seenHeaders[1]?.get(header), null);
+    }
   });
 
   it("blocks a redirect to a non-http(s) scheme (e.g. file://)", async () => {

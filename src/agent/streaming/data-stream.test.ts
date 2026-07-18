@@ -16,6 +16,8 @@ const encoder = new TextEncoder();
 function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
   const originalLog = console.log;
   const originalDebug = console.debug;
+  const originalWarn = console.warn;
+  const originalError = console.error;
   let capturedOutput = "";
 
   const capture = (msg: string) => {
@@ -24,12 +26,16 @@ function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
 
   console.log = capture;
   console.debug = capture;
+  console.warn = capture;
+  console.error = capture;
 
   return {
     getOutput: () => capturedOutput,
     restore: () => {
       console.log = originalLog;
       console.debug = originalDebug;
+      console.warn = originalWarn;
+      console.error = originalError;
     },
   };
 }
@@ -39,6 +45,8 @@ function encodeEvent(payload: Record<string, unknown>): Uint8Array {
 }
 
 async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
+  const originalFormat = Deno.env.get("LOG_FORMAT");
+  const originalLevel = Deno.env.get("LOG_LEVEL");
   Deno.env.set("LOG_FORMAT", "json");
   Deno.env.set("LOG_LEVEL", "DEBUG");
   __resetLoggerConfigForTests();
@@ -46,8 +54,10 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } finally {
-    Deno.env.delete("LOG_FORMAT");
-    Deno.env.delete("LOG_LEVEL");
+    if (originalFormat === undefined) Deno.env.delete("LOG_FORMAT");
+    else Deno.env.set("LOG_FORMAT", originalFormat);
+    if (originalLevel === undefined) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", originalLevel);
     __resetLoggerConfigForTests();
   }
 }
@@ -137,10 +147,28 @@ describe("agent/data-stream", () => {
     assertEquals(entry.message, "Data stream reader cancellation failed during cleanup");
   });
 
-  it("drops malformed SSE data blocks and returns an empty events array", () => {
-    const parsed = parseDataStreamSseEvents("data: {invalid json}\n\n");
-    assertEquals(parsed.events, []);
-    assertEquals(parsed.remainder, "");
+  it("drops malformed SSE data blocks without logging their payload", async () => {
+    const secret = "sensitive-tool-input";
+    const payload = `{"value":"${secret}"`;
+    const { getOutput, restore } = captureConsoleLog();
+    let parsed: ReturnType<typeof parseDataStreamSseEvents> | undefined;
+
+    try {
+      await withJsonDebugLogFormat(() => {
+        parsed = parseDataStreamSseEvents(`data: ${payload}\n\n`);
+        return Promise.resolve();
+      });
+    } finally {
+      restore();
+    }
+
+    const parsedResult = parsed!;
+    assertEquals(parsedResult.events, []);
+    assertEquals(parsedResult.remainder, "");
+    assertEquals(getOutput().includes(secret), false);
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.context?.payloadLength, payload.length);
+    assertEquals("preview" in (entry.context ?? {}), false);
   });
 
   it("drops blocks that contain no data: lines (e.g. comment-only or blank blocks)", () => {
@@ -155,12 +183,44 @@ describe("agent/data-stream", () => {
     assertEquals(blankBlock.remainder, "");
   });
 
-  it("drops the [DONE] sentinel block without throwing", () => {
+  it("drops the [DONE] sentinel block without logging a warning", async () => {
     // SSE streams commonly terminate with `data: [DONE]`. [DONE] is not valid
     // JSON, so parseDataStreamSseEvents must drop it silently and return [].
-    const parsed = parseDataStreamSseEvents("data: [DONE]\n\n");
-    assertEquals(parsed.events, []);
-    assertEquals(parsed.remainder, "");
+    const { getOutput, restore } = captureConsoleLog();
+    let parsed: ReturnType<typeof parseDataStreamSseEvents> | undefined;
+
+    try {
+      await withJsonDebugLogFormat(() => {
+        parsed = parseDataStreamSseEvents("data: [DONE]\n\n");
+        return Promise.resolve();
+      });
+    } finally {
+      restore();
+    }
+
+    assertEquals(getOutput(), "");
+    assertEquals(parsed!.events, []);
+    assertEquals(parsed!.remainder, "");
+  });
+
+  it("does not log malformed tool input content", async () => {
+    const secret = "sensitive-api-key";
+    const input = `{"apiKey":"${secret}"`;
+    const { getOutput, restore } = captureConsoleLog();
+
+    try {
+      await withJsonDebugLogFormat(() => {
+        assertEquals(parseToolInputObject(input), {});
+        return Promise.resolve();
+      });
+    } finally {
+      restore();
+    }
+
+    assertEquals(getOutput().includes(secret), false);
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.context?.inputLength, input.length);
+    assertEquals("preview" in (entry.context ?? {}), false);
   });
 
   it("normalizes streamed tool input placeholders consistently", () => {

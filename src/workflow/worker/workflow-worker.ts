@@ -31,8 +31,8 @@ export interface WorkflowWorkerConfig {
   /** Backend for workflow persistence (must support worker features) */
   backend: WorkflowBackend;
 
-  /** Function to resume a workflow run */
-  resumeFn: (runId: string) => Promise<void>;
+  /** Function to resume a workflow run under the worker that claimed it */
+  resumeFn: (runId: string, expectedWorkerId?: string) => Promise<void>;
 
   /** Interval between poll cycles (ms) */
   pollInterval?: number;
@@ -80,7 +80,7 @@ export interface WorkerStats {
  * ```typescript
  * const worker = new WorkflowWorker({
  *   backend: redisBackend,
- *   resumeFn: (runId) => client.resume(runId),
+ *   resumeFn: (runId, expectedWorkerId) => client.resume(runId, expectedWorkerId),
  *   pollInterval: 5000,
  *   stalledThreshold: 60000,
  * });
@@ -113,7 +113,8 @@ export class WorkflowWorker {
       throw CONFIG_INVALID.create({
         detail: "Backend does not support worker features. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, releaseLock, " +
-          "findStalledRuns, claimStalledRun. " +
+          "findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker. " +
           "Use RedisBackend with worker support enabled.",
       });
     }
@@ -315,7 +316,7 @@ export class WorkflowWorker {
 
         await runWithWorkflowSourceIntegrationPolicy(
           run,
-          () => this.config.resumeFn(run.id),
+          () => this.config.resumeFn(run.id, this.config.workerId),
         );
 
         this.stats.resumeCount++;

@@ -8,13 +8,14 @@ import { serverLogger, VERSION } from "#veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getErrorMessage } from "#veryfront/errors";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import {
   markRequestProfilePhase,
+  metrics,
+  type ModuleServeStatus,
   profilePhase,
-} from "#veryfront/observability/request-profiler.ts";
-import { metrics, type ModuleServeStatus } from "#veryfront/observability/simple-metrics/index.ts";
+} from "#veryfront/observability";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";

@@ -1,5 +1,5 @@
 import * as pathHelper from "#veryfront/compat/path";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 
 const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {

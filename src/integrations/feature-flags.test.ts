@@ -2,11 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  DECLARED_INTEGRATION_NAMES,
   EXPERIMENTAL_INTEGRATIONS_ENV,
   filterVisibleIntegrations,
   isSupportedIntegration,
   isVisibleIntegration,
+  SUPPORTED_INTEGRATION_NAMES,
 } from "./feature-flags.ts";
+import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 
 function setFlag(value: string | undefined): void {
   if (value === undefined) {
@@ -55,5 +58,20 @@ describe("integration feature flags", () => {
       ]).map((item) => item.id),
       ["figma"],
     );
+  });
+});
+
+describe("integration name registry", () => {
+  it("derives the declared integration list from the canonical registry", () => {
+    assertEquals(
+      new Set<string>(DECLARED_INTEGRATION_NAMES),
+      new Set<string>(ALL_INTEGRATION_NAMES),
+    );
+  });
+
+  it("keeps every supported integration within the canonical registry", () => {
+    const registry = new Set<string>(ALL_INTEGRATION_NAMES);
+    const missing = SUPPORTED_INTEGRATION_NAMES.filter((name) => !registry.has(name));
+    assertEquals(missing, []);
   });
 });

@@ -94,6 +94,37 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(await repo.get("nope"), null);
     });
 
+    it("preserves the L3 entry's remaining TTL when backfilling L1", async () => {
+      const { backend, repo } = makeRepo();
+      await backend.set("proj:production:v1:short", "value", 0.05);
+
+      assertEquals(await repo.get("short"), "value");
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      assertEquals(await repo.get("short"), null);
+    });
+
+    it("backfills L1 when the L3 backend cannot report its TTL", async () => {
+      let backendGets = 0;
+      const backend = {
+        type: "api" as const,
+        get: () => {
+          backendGets++;
+          return Promise.resolve("authoritative");
+        },
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+
+      assertEquals(await repo.get("key"), "authoritative");
+      await flush();
+
+      assertEquals(await repo.get("key"), "authoritative");
+      assertEquals(backendGets, 1);
+    });
+
     it("has reflects presence", async () => {
       const { repo } = makeRepo();
       assertEquals(await repo.has("k"), false);

@@ -47,6 +47,7 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -55,6 +56,7 @@ import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
@@ -107,13 +109,13 @@ const _agentEnvVarCache = new EnvironmentVariableCache(
 );
 
 // Cache: projectSlug → production environmentId (stable across restarts)
-const _productionEnvIdCache = new Map<string, string>();
+const _productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
 
 async function _resolveProductionEnvironmentId(
   projectSlug: string,
   token: string,
 ): Promise<string | null> {
-  const cached = _productionEnvIdCache.get(projectSlug);
+  const cached = _productionEnvIdCache.get<string>(projectSlug);
   if (cached) return cached;
   const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   try {
@@ -619,7 +621,9 @@ export class AgentStreamHandler extends BaseHandler {
   ): Promise<T> {
     const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
     if (!ctx.projectSlug || !fsWrapper.isMultiProjectMode?.() || !fsWrapper.runWithContext) {
-      throw new Error("Alternate agent source requires a multi-project runtime context");
+      throw INVALID_ARGUMENT.create({
+        detail: "Alternate agent source requires a multi-project runtime context",
+      });
     }
 
     const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";

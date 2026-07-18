@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { schedule } from "./factory.ts";
 import { isScheduleDefinition } from "./types.ts";
 
@@ -125,7 +126,7 @@ describe("schedule/factory", () => {
           cron: "0 8 * * 1-5",
           target: { kind: "workflow", id: "escalate-ticket" },
         }),
-      Error,
+      VeryfrontError,
       "Schedule id must start",
     );
 
@@ -136,7 +137,7 @@ describe("schedule/factory", () => {
           cron: "0 8 * * 1-5",
           target: { kind: "queue", id: "priority" } as never,
         }),
-      Error,
+      VeryfrontError,
       "Schedule target",
     );
   });
@@ -150,7 +151,7 @@ describe("schedule/factory", () => {
           target: { kind: "task", id: "sync-helpdesk" },
           input: { now: new Date() },
         }),
-      Error,
+      VeryfrontError,
       "Schedule input.now must be JSON-serializable.",
     );
   });

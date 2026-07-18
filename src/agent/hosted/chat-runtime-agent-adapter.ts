@@ -1,4 +1,5 @@
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -67,7 +68,7 @@ export function createHostedChatRuntimeAgentAdapter(
       );
 
       if (!streamResponse.body) {
-        throw new Error("Agent runtime returned an empty stream body");
+        throw AGENT_ERROR.create({ detail: "Agent runtime returned an empty stream body" });
       }
 
       const stream = createToolExecutionDataEventBridgeStream({

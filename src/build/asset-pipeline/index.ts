@@ -29,7 +29,7 @@ import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
 } from "./tailwind-processor/index.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getErrorMessage } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 
 export interface TailwindBatchOptions {

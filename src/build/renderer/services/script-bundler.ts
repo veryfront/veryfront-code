@@ -8,8 +8,7 @@ import type { Plugin } from "veryfront/extensions/bundler";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";
-import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { COMPILATION_ERROR } from "#veryfront/errors";
+import { COMPILATION_ERROR, createError, ensureError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 

@@ -1,4 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
@@ -432,11 +433,11 @@ export function createRuntimeLoadSkillTool(
     try {
       parsed = buildRuntimeLoadSkillInputSchema(options).parse({ skillId, file });
     } catch (error) {
-      throw new Error(
-        `Tool "load_skill" input validation failed: ${
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: `Tool "load_skill" input validation failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
-      );
+      });
     }
     skillId = parsed.skillId;
     file = parsed.file;
