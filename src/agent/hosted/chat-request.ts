@@ -36,6 +36,7 @@ export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
     allowedTools: v.array(v.string().min(1)).max(100).optional(),
     thinking: v.union([v.literal(false), v.number().int().positive()]).optional(),
     maxSteps: v.number().int().positive().optional(),
+    maxOutputTokens: v.number().int().positive().optional(),
   }).strip()
 );
 

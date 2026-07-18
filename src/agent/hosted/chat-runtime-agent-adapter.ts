@@ -29,6 +29,7 @@ export type HostedChatRuntimeAgentAdapterInput = {
   agentId?: string;
   conversationId?: string;
   authToken?: string;
+  maxOutputTokens?: number;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
     message: string,
@@ -55,6 +56,9 @@ export function createHostedChatRuntimeAgentAdapter(
           async () => {
             const response = await input.runtimeAgent.stream({
               messages: streamInput.messages,
+              ...(input.maxOutputTokens !== undefined
+                ? { maxOutputTokens: input.maxOutputTokens }
+                : {}),
               context: {
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.agentId ? { agentId: input.agentId } : {}),
