@@ -324,7 +324,12 @@ export function createConversationRunMirror(input: {
         if (pendingEventCount > 0) {
           agentLogger.warn(
             "Conversation run mirror disposed with unflushed events after an escaped flush error; dropping queued events",
-            { pendingEventCount, error: escapedFlushError.error },
+            {
+              pendingEventCount,
+              errorName: escapedFlushError.error instanceof Error
+                ? escapedFlushError.error.name
+                : typeof escapedFlushError.error,
+            },
           );
         }
       }

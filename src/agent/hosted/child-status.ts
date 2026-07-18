@@ -190,7 +190,7 @@ export async function monitorHostedChildRunStatus(
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
         agentLogger.error(
           `[monitorHostedChildRunStatus] Aborting status monitor after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures for run ${input.identifiers.childRunId}`,
-          { error },
+          { errorName: error instanceof Error ? error.name : typeof error },
         );
         // A transport failure is not an observed remote terminal state. Abort
         // local execution through a separate channel so lifecycle code still
@@ -198,7 +198,6 @@ export async function monitorHostedChildRunStatus(
         input.onMonitoringExhausted?.(
           new Error(
             `Stopped monitoring hosted child run ${input.identifiers.childRunId} after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures`,
-            { cause: error },
           ),
         );
         return;

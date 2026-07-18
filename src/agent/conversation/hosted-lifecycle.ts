@@ -93,7 +93,7 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
           agentLogger.error("Durable conversation run append failed", {
             conversationId: run.conversationId,
             runId: run.runId,
-            error,
+            errorName: error instanceof Error ? error.name : typeof error,
           });
         });
         return result;
