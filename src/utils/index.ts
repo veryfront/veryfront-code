@@ -24,8 +24,6 @@ export {
   __registerLogRecordEmitter,
   __registerTraceContextGetter,
   __registerTraceContextGetter as registerTraceContextGetter,
-  __resetLoggerConfigForTests,
-  __resetLogRecordEmitterForTests,
   agentLogger,
   bundlerLogger,
   cliLogger,

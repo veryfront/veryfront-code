@@ -84,13 +84,7 @@ export {
 } from "./tracing/otlp-setup.ts";
 
 // OpenTelemetry API shim (spans, metrics, context primitives)
-export {
-  _resetShimForTests,
-  getGlobalMetricsAPI,
-  SpanKind,
-  SpanStatusCode,
-  trace,
-} from "./tracing/api-shim.ts";
+export { getGlobalMetricsAPI, SpanKind, SpanStatusCode, trace } from "./tracing/api-shim.ts";
 export type {
   AttributeValue,
   Context,
@@ -123,8 +117,6 @@ export {
   recordApiRetry,
   recordContentCacheHit,
   recordContentNetworkFetch,
-  resetMetrics,
-  state,
 } from "./simple-metrics/index.ts";
 export type { ModuleServeStatus } from "./simple-metrics/index.ts";
 
