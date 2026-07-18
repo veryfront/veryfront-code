@@ -27,6 +27,7 @@ export type HostedChatRuntimeAgentAdapterInput = {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runId?: string;
   agentId?: string;
+  conversationId?: string;
   authToken?: string;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
@@ -57,6 +58,7 @@ export function createHostedChatRuntimeAgentAdapter(
               context: {
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.agentId ? { agentId: input.agentId } : {}),
+                ...(input.conversationId ? { conversationId: input.conversationId } : {}),
                 ...(input.authToken ? { authToken: input.authToken } : {}),
                 abortSignal: streamInput.abortSignal,
                 publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
