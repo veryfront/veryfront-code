@@ -1,4 +1,5 @@
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Public API contract for conversation root run descriptor. */
 export interface ConversationRootRunDescriptor {
@@ -71,7 +72,7 @@ export async function startConversationRootRun(input: {
 }): Promise<ConversationRunProjection | null> {
   if (input.providedRun) {
     if (!input.conversationId) {
-      throw new Error("CONVERSATION_ROOT_RUN_REQUIRES_CONVERSATION");
+      throw INVALID_ARGUMENT.create({ detail: "CONVERSATION_ROOT_RUN_REQUIRES_CONVERSATION" });
     }
 
     return normalizeProvidedRun({

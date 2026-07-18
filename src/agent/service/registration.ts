@@ -1,6 +1,7 @@
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
+import { CONFIG_INVALID, NETWORK_ERROR } from "#veryfront/errors";
 
 /** Public API contract for agent service registration mode. */
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
@@ -254,7 +255,7 @@ function requireExplicitRegistrationValue(
   envName: string,
 ): string {
   if (!value) {
-    throw new Error(`${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`);
+    throw CONFIG_INVALID.create({ detail: `${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` });
   }
   return value;
 }
@@ -315,7 +316,7 @@ async function readAgentPushRuntimeServiceResponse(
   response: Response,
 ): Promise<AgentPushRuntimeServiceRest> {
   if (!response.ok) {
-    throw new Error(`Agent runtime registration request failed with HTTP ${response.status}`);
+    throw NETWORK_ERROR.create({ detail: `Agent runtime registration request failed with HTTP ${response.status}` });
   }
 
   const parsed = agentPushRuntimeServiceResponseSchema.parse(await response.json());

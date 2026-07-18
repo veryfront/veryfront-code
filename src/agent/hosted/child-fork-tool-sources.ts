@@ -5,6 +5,7 @@ import {
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
 } from "#veryfront/tool";
+import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
@@ -246,5 +247,5 @@ function throwIfAborted(abortSignal: AbortSignal | undefined): void {
     throw reason;
   }
 
-  throw new Error("Child fork aborted");
+  throw AGENT_ERROR.create({ detail: "Child fork aborted" });
 }

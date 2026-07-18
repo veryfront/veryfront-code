@@ -4,6 +4,7 @@ import {
   type ResolveWorkerHost,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
+import { INVALID_ARGUMENT, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 
 const DEFAULT_MAX_CONTENT_CHARS = 500_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -75,14 +76,14 @@ function parseFetchUrl(value: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new Error("web_fetch requires an absolute URL");
+    throw INVALID_ARGUMENT.create({ detail: "web_fetch requires an absolute URL" });
   }
 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("web_fetch only supports http and https URLs");
+    throw INVALID_ARGUMENT.create({ detail: "web_fetch only supports http and https URLs" });
   }
   if (url.username || url.password) {
-    throw new Error("web_fetch does not support credentials in URLs");
+    throw INVALID_ARGUMENT.create({ detail: "web_fetch does not support credentials in URLs" });
   }
 
   return url;
@@ -94,16 +95,16 @@ function parseCursor(value: string | undefined): number {
   }
 
   if (!/^\d+$/.test(value)) {
-    throw new Error(
-      "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
+    });
   }
 
   const offset = Number(value);
   if (!Number.isSafeInteger(offset)) {
-    throw new Error(
-      "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: "web_fetch cursor must be a non-negative integer offset returned by a previous web_fetch result",
+    });
   }
 
   return offset;
@@ -119,7 +120,7 @@ function normalizeMaxContentChars(
   }
 
   if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`web_fetch ${label} must be a positive integer`);
+    throw INVALID_ARGUMENT.create({ detail: `web_fetch ${label} must be a positive integer` });
   }
 
   return value;
@@ -149,7 +150,7 @@ function resolveMaxContentChars(
 async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
   const contentLength = response.headers.get("content-length");
   if (contentLength && Number(contentLength) > maxBytes) {
-    throw new Error("web_fetch response exceeds maximum size");
+    throw INVALID_ARGUMENT.create({ detail: "web_fetch response exceeds maximum size" });
   }
 
   const reader = response.body?.getReader();
@@ -166,7 +167,7 @@ async function readResponseTextWithLimit(response: Response, maxBytes: number): 
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
         await reader.cancel().catch(() => undefined);
-        throw new Error("web_fetch response exceeds maximum size");
+        throw INVALID_ARGUMENT.create({ detail: "web_fetch response exceeds maximum size" });
       }
       chunks.push(value);
     }
@@ -242,13 +243,13 @@ async function executeHostedWebFetch(
     );
 
     if (!response.ok) {
-      throw new Error(`web_fetch failed with HTTP ${response.status}`);
+      throw NETWORK_ERROR.create({ detail: `web_fetch failed with HTTP ${response.status}` });
     }
 
     text = await readResponseTextWithLimit(response, options.maxResponseBytes);
   } catch (error) {
     if (abortScope.didTimeout()) {
-      throw new Error(`web_fetch timed out after ${options.timeoutMs}ms`, { cause: error });
+      throw TIMEOUT_ERROR.create({ detail: `web_fetch timed out after ${options.timeoutMs}ms`, cause: error });
     }
     throw error;
   } finally {
@@ -257,7 +258,7 @@ async function executeHostedWebFetch(
 
   const mediaType = response.headers.get("content-type") ?? "text/plain";
   if (offset > text.length) {
-    throw new Error("web_fetch cursor exceeds fetched content length");
+    throw INVALID_ARGUMENT.create({ detail: "web_fetch cursor exceeds fetched content length" });
   }
 
   const end = Math.min(text.length, offset + maxContentChars);

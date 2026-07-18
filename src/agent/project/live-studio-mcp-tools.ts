@@ -1,3 +1,4 @@
+import { RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import {
   createRemoteMCPToolSource,
   type HostToolSet,
@@ -139,7 +140,7 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
         const liveTool = liveState.tools[toolName];
 
         if (!liveTool || typeof liveTool.execute !== "function") {
-          throw new Error(`Studio MCP tool unavailable for current project: ${toolName}`);
+          throw RESOURCE_NOT_FOUND.create({ detail: `Studio MCP tool unavailable for current project: ${toolName}` });
         }
 
         return liveTool.execute(toolInput, execOptions);

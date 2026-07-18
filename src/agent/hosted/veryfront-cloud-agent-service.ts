@@ -42,6 +42,8 @@ import {
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "../../provider/veryfront-cloud/model-catalog.ts";
 import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
+import { AGENT_NOT_FOUND, CONFIG_INVALID, INITIALIZATION_ERROR } from "#veryfront/errors";
+import { agentLogger } from "#veryfront/utils";
 import {
   buildAgentRunTraceAttributes,
   buildExecuteToolTraceAttributes,
@@ -551,7 +553,7 @@ async function resolveAgentConfig(
   }
 
   if (source === "code") {
-    throw new Error(`Code agent "${agentId}" was not discovered.`);
+    throw AGENT_NOT_FOUND.create({ detail: `Code agent "${agentId}" was not discovered.` });
   }
 
   const agentConfig = loadMarkdownAgentConfig(context, agentId);
@@ -563,7 +565,7 @@ function getResolvedAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): RuntimeAgentMarkdownDefinition {
   if (!context.agentConfig) {
-    throw new Error("Agent service context has not been initialized.");
+    throw INITIALIZATION_ERROR.create({ detail: "Agent service context has not been initialized." });
   }
   return context.agentConfig;
 }
@@ -590,12 +592,12 @@ function resolveDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): 
     return agentId;
   }
 
-  throw new Error(
-    [
+  throw CONFIG_INVALID.create({
+    detail: [
       "agentId is required when agent discovery does not resolve to exactly one agent.",
       `Discovered agents: ${describeProjectAgentRuntimeAgentIdCandidates(candidates)}.`,
     ].join(" "),
-  );
+  });
 }
 
 async function initializeNodeVeryfrontCloudAgentServiceContext(
@@ -608,7 +610,7 @@ async function initializeNodeVeryfrontCloudAgentServiceContext(
 
 function getDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): string {
   if (!context.defaultAgentId) {
-    throw new Error("Agent service context has not been initialized.");
+    throw INITIALIZATION_ERROR.create({ detail: "Agent service context has not been initialized." });
   }
 
   return context.defaultAgentId;
@@ -1184,12 +1186,12 @@ export async function startAgentService(
     loadLogger: () => context.infrastructure.logger,
     initializeTelemetry: async () => {
       return await context.infrastructure.initializeOpenTelemetry().catch((error) => {
-        console.error("Failed to initialize OpenTelemetry:", error);
+        agentLogger.error("Failed to initialize OpenTelemetry:", { error });
         return false;
       });
     },
     onTelemetryInitialized: () => {
-      console.log("OpenTelemetry initialized successfully");
+      agentLogger.info("OpenTelemetry initialized successfully");
     },
     getTraceContext: () => getRuntimeTraceContext(),
     registerTraceContextGetter: (getter) => {
@@ -1210,7 +1212,7 @@ export async function startAgentService(
       }
     },
     onStartupError: (error) => {
-      console.error("Error in server startup:", error);
+      agentLogger.error("Error in server startup:", { error });
     },
     exit: processTarget?.exit,
     processTarget,

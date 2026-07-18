@@ -1,5 +1,6 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
 import {
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
   resolveHostedChildPromiseWithTimeout,
@@ -308,9 +309,9 @@ export async function resolveForkStepResponse(input: {
     : buildRecoverablePriorWorkState(input.currentMessages);
 
   if (!fallbackState) {
-    throw new Error(
-      "Agent runtime fork stream ended without onFinish and without recoverable output.",
-    );
+    throw AGENT_ERROR.create({
+      detail: "Agent runtime fork stream ended without onFinish and without recoverable output.",
+    });
   }
 
   return buildFallbackAgentResponse({

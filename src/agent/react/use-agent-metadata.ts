@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ensureError } from "#veryfront/errors";
+import { ensureError, INPUT_VALIDATION_FAILED, NETWORK_ERROR } from "#veryfront/errors";
 
 /** Source-defined prompt suggestion shown by chat surfaces. */
 export type AgentMetadataPromptSuggestion =
@@ -53,7 +53,7 @@ function isRecord(value: unknown): value is RecordValue {
 function getRequiredString(record: RecordValue, key: string): string {
   const value = record[key];
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Invalid agent metadata: ${key} is required`);
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid agent metadata: ${key} is required` });
   }
   return value;
 }
@@ -62,14 +62,14 @@ function getNullableString(record: RecordValue, key: string): string | null {
   const value = record[key];
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") {
-    throw new Error(`Invalid agent metadata: ${key} must be a string`);
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid agent metadata: ${key} must be a string` });
   }
   return value;
 }
 
 function normalizeSuggestion(value: unknown): AgentMetadataSuggestion {
   if (!isRecord(value)) {
-    throw new Error("Invalid agent metadata: suggestion must be an object");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agent metadata: suggestion must be an object" });
   }
 
   if (value.type === "task") {
@@ -80,7 +80,7 @@ function normalizeSuggestion(value: unknown): AgentMetadataSuggestion {
   }
 
   if (value.type !== "prompt") {
-    throw new Error("Invalid agent metadata: unsupported suggestion type");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agent metadata: unsupported suggestion type" });
   }
 
   if (typeof value.id === "string") {
@@ -100,12 +100,12 @@ function normalizeSuggestion(value: unknown): AgentMetadataSuggestion {
 function normalizeSuggestions(value: unknown): AgentMetadataSuggestions | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
-    throw new Error("Invalid agent metadata: suggestions must be an object");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agent metadata: suggestions must be an object" });
   }
 
   const rawSuggestions = value.suggestions;
   if (!Array.isArray(rawSuggestions)) {
-    throw new Error("Invalid agent metadata: suggestions must be an array");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agent metadata: suggestions must be an array" });
   }
 
   const welcomeMessage = value.welcomeMessage;
@@ -123,7 +123,7 @@ function normalizeSuggestions(value: unknown): AgentMetadataSuggestions | undefi
  */
 export function normalizeAgentMetadata(value: unknown): AgentMetadata {
   if (!isRecord(value)) {
-    throw new Error("Invalid agent metadata: agent must be an object");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agent metadata: agent must be an object" });
   }
 
   return {
@@ -138,7 +138,7 @@ export function normalizeAgentMetadata(value: unknown): AgentMetadata {
 /** Normalize the wire response from /api/agents/:id. */
 export function normalizeAgentMetadataResponse(value: unknown): AgentMetadata {
   if (!isRecord(value)) {
-    throw new Error("Invalid agent metadata response");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid agent metadata response" });
   }
   return normalizeAgentMetadata(value.agent);
 }
@@ -178,7 +178,7 @@ export function useAgentMetadata(agentId: string | null | undefined): UseAgentMe
         });
 
         if (!response.ok) {
-          throw new Error(`Agent metadata request failed: ${response.status}`);
+          throw NETWORK_ERROR.create({ detail: `Agent metadata request failed: ${response.status}` });
         }
 
         const nextAgent = normalizeAgentMetadataResponse(await response.json());

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { agentLogger } from "#veryfront/utils";
 
 /** Options accepted by use voice input. */
 export interface UseVoiceInputOptions {
@@ -196,7 +197,7 @@ export function useVoiceInput(
     try {
       recognitionRef.current.start();
     } catch (error) {
-      console.debug("Speech recognition already started", error);
+      agentLogger.debug("Speech recognition already started", { error });
     }
   }, [isListening]);
 

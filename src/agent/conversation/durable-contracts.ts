@@ -1,4 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
@@ -123,15 +124,15 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
         d.latest_external_event_sequence) as number | undefined;
 
       if (!runId || !conversationId || !messageId) {
-        throw new Error("Missing run identifiers in durable run response");
+        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing run identifiers in durable run response" });
       }
 
       if (latestEventId === undefined) {
-        throw new Error("Missing latestEventId in durable run response");
+        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing latestEventId in durable run response" });
       }
 
       if (latestExternalEventSequence === undefined) {
-        throw new Error("Missing latestExternalEventSequence in durable run response");
+        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing latestExternalEventSequence in durable run response" });
       }
 
       return {
@@ -260,7 +261,7 @@ export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
       const d = data as { run: Record<string, unknown> };
       const runId = (d.run.runId ?? d.run.run_id) as string | undefined;
       if (!runId) {
-        throw new Error("Missing run id in canonical create run response");
+        throw INPUT_VALIDATION_FAILED.create({ detail: "Missing run id in canonical create run response" });
       }
       return { runId };
     })

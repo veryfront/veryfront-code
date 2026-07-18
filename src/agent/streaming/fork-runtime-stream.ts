@@ -25,6 +25,7 @@ import {
 } from "../runtime/provider-native-tool-inventory.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "../types.ts";
 import {
   commitForkRuntimeStep,
@@ -449,9 +450,9 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
   return {
     fullStream: (async function* (): AsyncGenerator<ForkPart> {
       if (!input.initialMessages?.length && typeof input.prompt !== "string") {
-        throw new Error(
-          "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
-        );
+        throw INVALID_ARGUMENT.create({
+          detail: "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
+        });
       }
 
       const progress = createForkRuntimeProgress(createInitialForkRuntimeMessages({

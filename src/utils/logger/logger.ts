@@ -158,15 +158,15 @@ function getDefaultFormat(
 // ---- Eager config resolution ----
 
 /**
- * Eagerly resolved at module load time so the config is captured from
- * host process env vars BEFORE any per-request project env overlay is
- * active. The project overlay blocks access to host env (for security),
- * which would cause the logger to fall back to "text" format during SSR.
+ * Resolved lazily on first use (not at module load) to avoid a module
+ * initialization-order hazard: reading env during load can re-enter the
+ * platform env module while it is still initializing (TDZ crash in worker
+ * contexts). First resolution still happens at startup — before any
+ * per-request project env overlay is active — so the config is captured from
+ * host process env vars, which is the intended behavior (the project overlay
+ * blocks host env access, which would otherwise force a "text" fallback).
  */
-let loggerConfig: LoggerConfig = {
-  level: getDefaultLevel(),
-  format: getDefaultFormat(),
-};
+let loggerConfig: LoggerConfig | null = null;
 
 let logRecordEmitter: LogRecordEmitter | null = null;
 
@@ -195,6 +195,12 @@ export function __resetLogRecordEmitterForTests(): void {
 }
 
 function resolveLoggerConfig(): LoggerConfig {
+  if (loggerConfig === null) {
+    loggerConfig = {
+      level: getDefaultLevel(),
+      format: getDefaultFormat(),
+    };
+  }
   return loggerConfig;
 }
 

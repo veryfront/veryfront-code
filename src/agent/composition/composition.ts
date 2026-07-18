@@ -9,6 +9,7 @@
 
 import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
+import { AGENT_ERROR } from "#veryfront/errors";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
@@ -28,7 +29,7 @@ async function runAgentAsStreamingTool(agent: Agent, input: string): Promise<Age
   await stream.toDataStreamResponse().arrayBuffer();
 
   if (!finalResponse) {
-    throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
+    throw AGENT_ERROR.create({ detail: `Agent "${agent.id}" stream completed without a final response.` });
   }
 
   return finalResponse;

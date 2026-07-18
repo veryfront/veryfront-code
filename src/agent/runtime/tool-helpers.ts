@@ -11,7 +11,7 @@ import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
   executeRemoteIntegrationTool,
   isRemoteIntegrationTool,
@@ -219,7 +219,7 @@ async function executeRemoteToolFromSources(
     }
 
     if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
-      throw new Error(`Tool "${toolName}" is not allowed for this run`);
+      throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
 
     return {
@@ -297,7 +297,7 @@ export async function executeConfiguredTool(
   // Fall back to remote execution for integration tools (e.g., github:list-repos)
   if (isRemoteIntegrationTool(toolName)) {
     if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
-      throw new Error(`Tool "${toolName}" is not allowed for this run`);
+      throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
     return await executeRemoteIntegrationTool(toolName, input, context);
   }

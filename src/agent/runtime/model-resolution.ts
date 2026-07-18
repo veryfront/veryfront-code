@@ -5,6 +5,7 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
@@ -107,7 +108,7 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
 
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
   if (isUnsupportedVeryfrontCloudMistralModel(modelId)) {
-    throw new Error(`Unsupported Mistral model "${modelId}"`);
+    throw NOT_SUPPORTED.create({ detail: `Unsupported Mistral model "${modelId}"` });
   }
   return modelId;
 }

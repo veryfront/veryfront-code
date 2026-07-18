@@ -1,4 +1,5 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
   AppendConversationRunEventsResponseSchema,
   CompleteConversationRunResponseSchema,
@@ -885,9 +886,9 @@ async function controlPlaneJson<T>(input: {
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(
-        `${input.operation} failed (${response.status}): ${body || response.statusText}`,
-      );
+      throw NETWORK_ERROR.create({
+        detail: `${input.operation} failed (${response.status}): ${body || response.statusText}`,
+      });
     }
 
     return input.responseSchema.parse(await response.json());
@@ -897,7 +898,7 @@ async function controlPlaneJson<T>(input: {
       error.name === "AbortError" &&
       !timedAbort.wasAbortedByCaller()
     ) {
-      throw new Error(`${input.operation} timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms`);
+      throw TIMEOUT_ERROR.create({ detail: `${input.operation} timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms` });
     }
     throw error;
   } finally {
@@ -1048,9 +1049,9 @@ export async function appendConversationRunEvents(input: {
       error.name === "AbortError" &&
       !timedAbort.wasAbortedByCaller()
     ) {
-      throw new Error(
-        `Append conversation run events timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms`,
-      );
+      throw TIMEOUT_ERROR.create({
+        detail: `Append conversation run events timed out after ${AGENT_RUN_API_TIMEOUT_MS}ms`,
+      });
     }
     throw error;
   } finally {

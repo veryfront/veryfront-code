@@ -1,5 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
@@ -125,18 +126,18 @@ export async function getRuntimeProjectFile(
     }
 
     if (!response.ok) {
-      throw new Error(
-        `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readApiErrorMessage(
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readApiErrorMessage(
           response,
         )}`,
-      );
+      });
     }
 
     const parsed = getRuntimeProjectFileSchema().safeParse(await response.json());
     if (!parsed.success) {
-      throw new Error(
-        `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
-      );
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
+      });
     }
 
     return parsed.data;
@@ -160,18 +161,18 @@ export async function getRuntimeProjectFiles(
       const response = await fetchRuntimeProjectFilesRestResponse(url, options);
 
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch files for project ${options.projectId}: ${await readApiErrorMessage(
+        throw NETWORK_ERROR.create({
+          detail: `Failed to fetch files for project ${options.projectId}: ${await readApiErrorMessage(
             response,
           )}`,
-        );
+        });
       }
 
       const parsed = getRuntimeProjectFileListRestResponseSchema().safeParse(await response.json());
       if (!parsed.success) {
-        throw new Error(
-          `Failed to fetch files for project ${options.projectId}: invalid API response`,
-        );
+        throw NETWORK_ERROR.create({
+          detail: `Failed to fetch files for project ${options.projectId}: invalid API response`,
+        });
       }
 
       files.push(...parsed.data.data);

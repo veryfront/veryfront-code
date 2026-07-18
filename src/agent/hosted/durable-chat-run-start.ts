@@ -1,4 +1,5 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
+import { INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   compactHistoricalUiMessageToolInputs,
   type HistoricalToolInputCompactionDiagnostic,
@@ -118,12 +119,12 @@ async function parseAcceptedDetachedStartResponse(
   try {
     payload = await response.json();
   } catch (error) {
-    throw new Error("Invalid detached start accepted response: malformed JSON", { cause: error });
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid detached start accepted response: malformed JSON", cause: error });
   }
 
   const parsed = AgUiDetachedStartAcceptedSchema.safeParse(payload);
   if (!parsed.success) {
-    throw new Error("Invalid detached start accepted response: invalid payload");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid detached start accepted response: invalid payload" });
   }
 
   return {
@@ -147,7 +148,7 @@ async function executeHostedDurableChatRunStart<TExecution>(
 ): Promise<Response | HostedDurableRunAccepted> {
   const { durableRootRun, conversationId } = input.req;
   if (!durableRootRun || !conversationId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
 
   const execution = await input.prepareExecution(input.req);

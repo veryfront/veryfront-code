@@ -1,6 +1,7 @@
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 
 /** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
@@ -270,7 +271,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(body || `Veryfront API returned HTTP ${response.status}`);
+      throw NETWORK_ERROR.create({ detail: body || `Veryfront API returned HTTP ${response.status}` });
     }
 
     return schema.parse(await response.json());

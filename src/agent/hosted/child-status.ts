@@ -1,4 +1,5 @@
 import { type ConversationRunProjection, getConversationRun } from "../conversation/durable.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /** Public API contract for hosted child run identifiers. */
 export interface HostedChildRunIdentifiers {
@@ -185,9 +186,9 @@ export async function monitorHostedChildRunStatus(
       input.onMonitoringError?.(error, consecutiveFailures);
 
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        console.error(
+        agentLogger.error(
           `[monitorHostedChildRunStatus] Aborting status monitor after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures for run ${input.identifiers.childRunId}`,
-          error,
+          { error },
         );
         // Poll retries are exhausted: drive the parent fork to abort now via a
         // terminal failure state instead of leaving it to hit its idle timeout.

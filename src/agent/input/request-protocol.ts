@@ -1,4 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-input.ts";
@@ -241,7 +242,7 @@ export async function createInputRequest(input: {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(detail || `Failed to create durable input request (HTTP ${response.status})`);
+    throw NETWORK_ERROR.create({ detail: detail || `Failed to create durable input request (HTTP ${response.status})` });
   }
 
   return getCreateInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
@@ -267,7 +268,7 @@ export async function getInputRequest(input: {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(detail || `Failed to fetch durable input request (HTTP ${response.status})`);
+    throw NETWORK_ERROR.create({ detail: detail || `Failed to fetch durable input request (HTTP ${response.status})` });
   }
 
   return getGetInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;

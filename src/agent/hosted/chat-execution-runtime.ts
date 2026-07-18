@@ -3,6 +3,7 @@ import {
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
 import { getLastStreamStep } from "../../chat/final-step-fallback.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
 import {
@@ -298,7 +299,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   const cleanup = createHostedChatExecutionCleanup(input.cleanup);
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
 
   const rootStreamWatchdog = input.createRootStreamWatchdog
@@ -690,7 +691,7 @@ function resolveStreamingMessageId(input: {
 }): string | null {
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
 
   if (streamingMessageId) {
