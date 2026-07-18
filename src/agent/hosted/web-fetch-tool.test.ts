@@ -246,7 +246,7 @@ Deno.test("createHostedWebFetchTool blocks hostnames that resolve internally", a
   await assertRejects(
     () => tool.execute?.({ url: "https://service.example/private" }) as Promise<unknown>,
     Error,
-    "resolved to internal address",
+    "network egress blocked for host",
   );
   assertEquals(fetchCalls, 0);
 });
