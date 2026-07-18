@@ -128,6 +128,44 @@ describe("internal-agents/run-stream", () => {
     _resetShimForTests();
   });
 
+  it("forwards the scheduled output-token cap to the internal runtime", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedMaxOutputTokens: number | undefined;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "test",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: { maxOutputTokens: 1200 },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, _callbacks, _modelOverride, maxOutputTokens) => {
+          capturedMaxOutputTokens = maxOutputTokens;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    assertEquals(capturedMaxOutputTokens, 1200);
+  });
+
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
