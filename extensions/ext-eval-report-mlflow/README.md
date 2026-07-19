@@ -29,9 +29,14 @@ completed eval report to MLflow.
 Run every discovered eval:
 
 ```bash
-MLFLOW_TRACKING_URI=http://localhost:5001 \
+mlflow server --host 127.0.0.1 --port 5000 --serve-artifacts
+
+MLFLOW_TRACKING_URI=http://127.0.0.1:5000 \
 veryfront eval
 ```
+
+For the normal single-server `--serve-artifacts` setup, no separate artifact
+endpoint is required.
 
 `--export mlflow` remains available when one command should explicitly select
 the exporter. `VERYFRONT_EVAL_EXPORTERS` is useful in CI when the job should
@@ -59,14 +64,20 @@ veryfront eval eval:service-now-classification
 | `MLFLOW_TRACKING_TOKEN`                         | No       | Bearer token sent to MLflow Tracking REST endpoints. Prefer this over embedding credentials in `MLFLOW_TRACKING_URI`.         |
 | `MLFLOW_TRACKING_USERNAME`                      | No       | Username for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_PASSWORD`.                               |
 | `MLFLOW_TRACKING_PASSWORD`                      | No       | Password for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_USERNAME`.                               |
+| `MLFLOW_OAUTH_TOKEN_URL`                        | No       | OAuth 2.0 client-credentials token endpoint. Set with the next two variables.                                                 |
+| `MLFLOW_OAUTH_CLIENT_ID`                        | No       | OAuth 2.0 client ID.                                                                                                          |
+| `MLFLOW_OAUTH_CLIENT_SECRET`                    | No       | OAuth 2.0 client secret.                                                                                                      |
+| `MLFLOW_OAUTH_SCOPE`                            | No       | Optional OAuth client-credentials scope.                                                                                      |
+| `MLFLOW_EXPORT_ARTIFACTS`                       | No       | `true` by default. Set to `false` to export the run, metrics, parameters, and tags without report artifacts.                  |
 | `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids that override automatic MLflow selection. Use `mlflow` for this extension.        |
 | `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter override used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                         |
 | `VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE` | No       | CLI redaction opt-in for metric evidence. Leave unset or false unless evidence contains only safe labels or aggregates.       |
 
 `MLFLOW_TRACKING_URI` must be an HTTP(S) URI without embedded username/password
-credentials. Use `MLFLOW_TRACKING_TOKEN` or
-`MLFLOW_TRACKING_USERNAME`/`MLFLOW_TRACKING_PASSWORD` for authenticated tracking
-servers so credentials are not persisted in eval report export receipts.
+credentials. Use `MLFLOW_TRACKING_TOKEN`,
+`MLFLOW_TRACKING_USERNAME`/`MLFLOW_TRACKING_PASSWORD`, or the complete OAuth
+client-credentials set. OAuth takes precedence over the other methods, and
+credentials are not persisted in eval report export receipts.
 
 ## Config usage
 
@@ -160,9 +171,12 @@ v1 artifact transport supports:
 
 - Direct `PUT` uploads when the MLflow run artifact root is `http://` or
   `https://`.
+- Uploads through the tracking server itself when it returns a proxied
+  `mlflow-artifacts:/...` root, which is the normal local `--serve-artifacts`
+  setup.
 - Uploads through an explicit HTTP(S) MLflow artifact proxy configured with
-  `MLFLOW_ARTIFACTS_URI` when the tracking server returns a proxied root such as
-  `mlflow-artifacts:/...` or an object-store-backed root.
+  `MLFLOW_ARTIFACTS_URI` for a distinct artifact server or an object-store-backed
+  root.
 - Local artifact proxy derivation from `MLFLOW_ARTIFACTS_PORT`. For example,
   `MLFLOW_TRACKING_URI=http://localhost:5001` and
   `MLFLOW_ARTIFACTS_PORT=5600` derive
@@ -183,6 +197,12 @@ It does not upload directly to local filesystem artifact roots or vendor storage
 schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar backend-specific
 URIs. For object storage, run an MLflow artifact proxy and point
 `MLFLOW_ARTIFACTS_URI` at that HTTP(S) endpoint.
+
+Set `MLFLOW_EXPORT_ARTIFACTS=false` when an MLflow deployment exposes a
+backend-specific artifact root but no HTTP(S) artifact proxy. The exporter then
+still creates and finishes the MLflow run and sends its aggregate metrics,
+parameters, and tags; it intentionally skips report uploads and records
+`artifacts.logged=false` on the run.
 
 ## Future vendor exporters
 

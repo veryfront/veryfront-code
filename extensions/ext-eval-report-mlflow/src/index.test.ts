@@ -24,6 +24,11 @@ const MLFLOW_ENV_KEYS = [
   "MLFLOW_TRACKING_TOKEN",
   "MLFLOW_TRACKING_URI",
   "MLFLOW_TRACKING_USERNAME",
+  "MLFLOW_OAUTH_TOKEN_URL",
+  "MLFLOW_OAUTH_CLIENT_ID",
+  "MLFLOW_OAUTH_CLIENT_SECRET",
+  "MLFLOW_OAUTH_SCOPE",
+  "MLFLOW_EXPORT_ARTIFACTS",
 ] as const;
 
 const originalMlflowEnv = new Map(
@@ -291,6 +296,11 @@ describe("ext-eval-report-mlflow", () => {
           "MLFLOW_TRACKING_TOKEN",
           "MLFLOW_TRACKING_URI",
           "MLFLOW_TRACKING_USERNAME",
+          "MLFLOW_OAUTH_TOKEN_URL",
+          "MLFLOW_OAUTH_CLIENT_ID",
+          "MLFLOW_OAUTH_CLIENT_SECRET",
+          "MLFLOW_OAUTH_SCOPE",
+          "MLFLOW_EXPORT_ARTIFACTS",
         ],
       },
     ]);
@@ -429,6 +439,140 @@ describe("ext-eval-report-mlflow", () => {
     );
     assertExists(reportUpload);
     assertEquals(String(reportUpload.body).includes("secret-token"), false);
+  });
+
+  it("exchanges generic OAuth client credentials before writing tracking data", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
+    Deno.env.set("MLFLOW_OAUTH_TOKEN_URL", "https://identity.test/token");
+    Deno.env.set("MLFLOW_OAUTH_CLIENT_ID", "client-id");
+    Deno.env.set("MLFLOW_OAUTH_CLIENT_SECRET", "client-secret");
+    Deno.env.set("MLFLOW_OAUTH_SCOPE", "all-apis");
+    const { requests, fetchImpl } = createMlflowFetchRecorder();
+    let tokenRequest: RecordedMlflowRequest | undefined;
+    const oauthFetch = (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      if (String(input) === "https://identity.test/token") {
+        tokenRequest = {
+          url: String(input),
+          method: init?.method ?? "GET",
+          headers: new Headers(init?.headers),
+          body: typeof init?.body === "string" ? init.body : undefined,
+        };
+        return Promise.resolve(jsonResponse({ access_token: "oauth-access-token" }));
+      }
+      return fetchImpl(input, init);
+    };
+    const registry = createEvalReportExporterRegistry();
+    const extension = factory({ fetch: oauthFetch });
+
+    await extension.setup?.(createContext(registry));
+    const results = await registry.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    assertEquals(results[0]?.ok, true);
+    assertExists(tokenRequest);
+    assertEquals(tokenRequest.method, "POST");
+    assertEquals(
+      tokenRequest.headers.get("authorization"),
+      `Basic ${btoa("client-id:client-secret")}`,
+    );
+    assertEquals(tokenRequest.headers.get("content-type"), "application/x-www-form-urlencoded");
+    assertEquals(tokenRequest.body, "grant_type=client_credentials&scope=all-apis");
+    assertEquals(JSON.stringify(results).includes("client-secret"), false);
+    assertEquals(
+      requests
+        .filter((request) => request.method !== "PUT")
+        .every((request) => request.headers.get("authorization") === "Bearer oauth-access-token"),
+      true,
+    );
+    assertEquals(
+      requests
+        .filter((request) => request.method === "PUT")
+        .some((request) => request.headers.has("authorization")),
+      false,
+    );
+  });
+
+  it("requires complete OAuth client credentials before creating an exporter", () => {
+    assertThrows(
+      () =>
+        createEvalReportMlflowExporter({
+          trackingUri: "https://mlflow.test",
+          oauthClientId: "client-id",
+        }),
+      Error,
+      "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
+    );
+  });
+
+  it("uses the tracking server as the default proxy for mlflow-artifacts runs", async () => {
+    const { requests, fetchImpl } = createMlflowFetchRecorder({
+      artifactUri: "mlflow-artifacts:/exp-1/run-1/artifacts",
+    });
+    const exporter = createEvalReportMlflowExporter({
+      trackingUri: "http://mlflow.test:5001",
+    }, fetchImpl);
+
+    await exporter.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    const uploads = requests.filter((request) => request.method === "PUT");
+    assertEquals(uploads.length, 3);
+    assertEquals(
+      uploads.every((request) =>
+        request.url.startsWith(
+          "http://mlflow.test:5001/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/",
+        )
+      ),
+      true,
+    );
+  });
+
+  it("exports tracking data without artifacts when artifact export is disabled", async () => {
+    const { requests, fetchImpl } = createMlflowFetchRecorder({
+      artifactUri: "dbfs:/databricks/mlflow-tracking/exp-1/run-1/artifacts",
+    });
+    const exporter = createEvalReportMlflowExporter({
+      trackingUri: "https://mlflow.test",
+      exportArtifacts: false,
+    }, fetchImpl);
+
+    const receipt = await exporter.export(createReport(), {
+      projectReference: "customer-support-agent",
+      sourcePath: "evals/service-now-classification.eval.ts",
+    });
+
+    assertEquals(receipt.metadata?.artifacts, []);
+    assertEquals(receipt.metadata?.artifactVerification, undefined);
+    assertEquals(requests.some((request) => request.method === "PUT"), false);
+    assertEquals(
+      requests.some((request) => request.url.includes("/artifacts/list")),
+      false,
+    );
+
+    const logBatch = requests.filter((request) =>
+      request.url.endsWith("/api/2.0/mlflow/runs/log-batch")
+    ).at(-1);
+    assertExists(logBatch);
+    const tags = new Map(
+      JSON.parse(String(logBatch.body)).tags.map((tag: { key: string; value: string }) => [
+        tag.key,
+        tag.value,
+      ]),
+    );
+    assertEquals(tags.get("artifacts.logged"), "false");
+    assertEquals(tags.get("artifacts.count"), "0");
+    assertEquals(
+      requests.some((request) => request.url.endsWith("/api/2.0/mlflow/runs/update")),
+      true,
+    );
   });
 
   it("logs a Veryfront eval report as an MLflow run", async () => {
