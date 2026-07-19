@@ -31,6 +31,7 @@ import {
   createEvalModelArtifactPaths,
   createEvalModelComparisonArtifact,
   createEvalModelComparisonExitCode,
+  createEvalSuiteJunitXml,
   createJunitXml,
   createResolvedEvalModelComparisonConfig,
   createResultsJsonl,
@@ -770,6 +771,7 @@ describe("eval CLI command helpers", () => {
           candidateModels: [],
           projectDir,
           reportDir: `${projectDir}/suite`,
+          junit: `${projectDir}/suite/junit.xml`,
         },
         { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
       );
@@ -801,6 +803,24 @@ describe("eval CLI command helpers", () => {
         "eval:alpha",
         "eval:beta",
       ]);
+      const results = (await Deno.readTextFile(`${projectDir}/suite/results.jsonl`))
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const result = JSON.parse(line) as { id: string; status: string };
+          return { id: result.id, status: result.status };
+        });
+      assertEquals(results, [
+        { id: "eval:alpha", status: "passed" },
+        { id: "eval:beta", status: "failed" },
+      ]);
+      const junit = await Deno.readTextFile(`${projectDir}/suite/junit.xml`);
+      assertStringIncludes(
+        junit,
+        '<testsuites tests="2" failures="1" skipped="0">\n  <testsuite name="veryfront eval suite" tests="2" failures="1" skipped="0">',
+      );
+      assertStringIncludes(junit, '    <testcase classname="eval" name="eval:alpha" />');
+      assertStringIncludes(junit, '    <testcase classname="eval" name="eval:beta">');
       assertEquals(
         await Deno.stat(`${projectDir}/suite/001-alpha/summary.json`).then(() => true),
         true,
@@ -1643,6 +1663,43 @@ describe("eval CLI command helpers", () => {
     assertStringIncludes(
       xml,
       '<failure message="answer.exactMatch failed">Expected Paris, got Lyon</failure>',
+    );
+  });
+
+  it("serializes required export failures as suite JUnit failures", () => {
+    const junit = createEvalSuiteJunitXml({
+      kind: "eval-suite-summary",
+      runId: "suite-1",
+      startedAt: "2026-07-19T00:00:00.000Z",
+      endedAt: "2026-07-19T00:00:01.000Z",
+      total: 1,
+      passed: 0,
+      failed: 1,
+      results: [{
+        id: "eval:metadata-export",
+        name: "metadata export",
+        target: "agent:fixture",
+        status: "failed",
+        summary: {
+          runId: "eval-1",
+          evalId: "eval:metadata-export",
+          target: "agent:fixture",
+          records: 1,
+          passed: 1,
+          failed: 0,
+          passRate: 1,
+          metrics: [],
+        },
+      }],
+    });
+
+    assertStringIncludes(
+      junit,
+      '<testsuites tests="1" failures="1" skipped="0">\n  <testsuite name="veryfront eval suite" tests="1" failures="1" skipped="0">',
+    );
+    assertStringIncludes(
+      junit,
+      '<failure message="A required eval export failed.">A required eval export failed.</failure>',
     );
   });
 
