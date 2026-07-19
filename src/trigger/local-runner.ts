@@ -24,6 +24,8 @@ export interface RunTriggerTargetOptions {
   projectId?: string;
   target: TriggerTarget;
   input?: unknown;
+  agentInput?: string;
+  agentContext?: Record<string, unknown>;
   debug?: boolean;
 }
 
@@ -131,6 +133,49 @@ async function runWorkflowTarget(
   });
 }
 
+async function runAgentTarget(options: RunTriggerTargetOptions): Promise<TriggerTargetRunResult> {
+  const agentInput = options.agentInput;
+  if (agentInput === undefined) {
+    throw TRIGGER_NOT_SUPPORTED.create({
+      detail: "Local agent trigger runs require an explicit agent input.",
+    });
+  }
+
+  const start = Date.now();
+  const discovery = await discoverRuntimeOrThrow(options);
+  const agent = agentRegistry.get(options.target.id);
+  if (!agent) {
+    throw TRIGGER_TARGET_NOT_FOUND.create({
+      detail: `Agent target "${options.target.id}" not found.`,
+      context: { targetId: options.target.id },
+    });
+  }
+
+  return await runWithProjectAgentRuntime(discovery, async () => {
+    const response = await agent.generate({
+      input: agentInput,
+      ...(options.agentContext === undefined ? {} : { context: options.agentContext }),
+    });
+    if (response.status === "error") {
+      throw TRIGGER_EXECUTION_FAILED.create({
+        detail: `Agent target "${options.target.id}" failed.`,
+        context: { targetId: options.target.id },
+      });
+    }
+
+    return {
+      kind: "agent",
+      id: options.target.id,
+      output: {
+        text: response.text,
+        status: response.status,
+        toolCalls: response.toolCalls.length,
+      },
+      durationMs: Date.now() - start,
+    };
+  });
+}
+
 export async function runTriggerTarget(
   options: RunTriggerTargetOptions,
 ): Promise<TriggerTargetRunResult> {
@@ -142,8 +187,5 @@ export async function runTriggerTarget(
     return await runWorkflowTarget(options);
   }
 
-  throw TRIGGER_NOT_SUPPORTED.create({
-    detail:
-      "Agent trigger targets are Cloud-only for this milestone. Use a workflow or task for local trigger runs.",
-  });
+  return await runAgentTarget(options);
 }
