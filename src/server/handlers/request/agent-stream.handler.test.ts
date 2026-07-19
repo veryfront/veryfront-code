@@ -879,7 +879,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(contextCalls, ["main", "restrict-gmail"]);
+    assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
@@ -1968,7 +1968,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunFinished");
   });
 
-  it("uses the verified request credential for proxy and explicit agent source contexts", async () => {
+  it("uses the verified request credential for the exact agent source context", async () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
@@ -2026,26 +2026,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
-      agentSource: { type: "branch", branch: "main" },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "10000000-1000-4000-8000-100000000099",
+      },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
-    ctx.parsedDomain = {
-      slug: "demo-project",
-      branch: "feature-a",
-      environment: "preview",
-      isVeryfrontDomain: true,
-      isDraft: true,
-      allowIframeEmbed: true,
-    };
-    ctx.resolvedEnvironment = "preview";
-    ctx.requestContext = {
-      slug: "demo-project",
-      branch: "feature-a",
-      mode: "preview",
-      token: "",
-    };
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
@@ -2079,12 +2068,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(runWithContextCalls.length, 2);
+    assertEquals(runWithContextCalls.length, 1);
     assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
-    assertEquals(runWithContextCalls[0]?.branch, "feature-a");
-    assertEquals(runWithContextCalls[1]?.token, "request-scoped-user-token");
-    assertEquals(runWithContextCalls[1]?.branch, "main");
-    assertEquals(runWithContextCalls[1]?.productionMode, false);
+    assertEquals(runWithContextCalls[0]?.environmentName, "staging");
+    assertEquals(runWithContextCalls[0]?.releaseId, "10000000-1000-4000-8000-100000000099");
+    assertEquals(runWithContextCalls[0]?.productionMode, true);
     assertEquals(observedCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",

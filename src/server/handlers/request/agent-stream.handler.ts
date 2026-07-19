@@ -8,6 +8,7 @@ import {
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
+import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
@@ -689,7 +690,7 @@ export class AgentStreamHandler extends BaseHandler {
         hasAgentConfig: Boolean(payload.agentConfig),
       });
 
-      return await this.withProxyContext(requestScopedContext, () =>
+      const runWithAgentSourceContext = () =>
         this.withAgentSourceContext(
           requestScopedContext,
           payload.agentSource,
@@ -813,7 +814,11 @@ export class AgentStreamHandler extends BaseHandler {
               },
             );
           },
-        ), { verifiedControlPlaneClaims: verifiedClaims });
+        );
+      return await runWithVerifiedCacheApiCredential(
+        verifiedClaims,
+        runWithAgentSourceContext,
+      );
     } catch (error) {
       if (error instanceof InternalAgentRequestBodyTooLargeError) {
         return this.respond(builder.json({ error: error.message }, error.status));
