@@ -70,6 +70,16 @@ function resolveRequestToken(): string | undefined {
   return isValidApiToken(environmentToken) ? environmentToken : undefined;
 }
 
+function normalizeProjectSlug(projectSlug: string | undefined): string | undefined {
+  const normalized = projectSlug?.trim();
+  return normalized || undefined;
+}
+
+function resolveRequestProjectSlug(): string | undefined {
+  const requestProjectSlug = normalizeProjectSlug(getCurrentRequestContext()?.projectSlug);
+  return requestProjectSlug ?? normalizeProjectSlug(getEnvironmentConfig().projectSlug);
+}
+
 // ---------------------------------------------------------------------------
 // API communication
 // ---------------------------------------------------------------------------
@@ -121,11 +131,14 @@ async function postIntegrationApi(
   token: string,
   body?: unknown,
 ): Promise<Response> {
+  const projectSlug = resolveRequestProjectSlug();
+
   return await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      ...(projectSlug ? { "x-veryfront-project-slug": projectSlug } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(INTEGRATION_REQUEST_TIMEOUT_MS),
