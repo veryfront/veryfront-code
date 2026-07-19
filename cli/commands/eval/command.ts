@@ -91,6 +91,7 @@ type EvalArtifactPaths = {
 type EvalSuiteArtifactPaths = {
   directory: string;
   summary: string;
+  results: string;
   reportMarkdown: string;
 };
 
@@ -245,6 +246,7 @@ function createEvalSuiteArtifactPaths(reportDir: string): EvalSuiteArtifactPaths
   return {
     directory: reportDir,
     summary: join(reportDir, "summary.json"),
+    results: join(reportDir, "results.jsonl"),
     reportMarkdown: join(reportDir, "report.md"),
   };
 }
@@ -980,6 +982,34 @@ export function createJunitXml(report: EvalReport): string {
   return `${lines.join("\n")}\n`;
 }
 
+function createEvalSuiteResultsJsonl(summary: EvalSuiteSummary): string {
+  return summary.results.map((result) => JSON.stringify(result)).join("\n") +
+    (summary.results.length > 0 ? "\n" : "");
+}
+
+function createEvalSuiteJunitXml(summary: EvalSuiteSummary): string {
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites tests="${summary.total}" failures="${summary.failed}" skipped="0">`,
+  ];
+
+  for (const result of summary.results) {
+    const attrs = `classname="eval" name="${xmlEscape(result.id)}"`;
+    if (result.status === "passed") {
+      lines.push(`  <testcase ${attrs} />`);
+      continue;
+    }
+
+    const message = result.error ?? `${result.summary?.failed ?? 0} record(s) failed`;
+    lines.push(`  <testcase ${attrs}>`);
+    lines.push(`    <failure message="${xmlEscape(message)}">${xmlEscape(message)}</failure>`);
+    lines.push("  </testcase>");
+  }
+
+  lines.push("</testsuites>");
+  return `${lines.join("\n")}\n`;
+}
+
 async function writeTextFileEnsuringDir(path: string, content: string): Promise<void> {
   const dir = dirname(path);
   if (dir && dir !== ".") await Deno.mkdir(dir, { recursive: true });
@@ -1205,7 +1235,6 @@ function listEvals(evals: DiscoveredEval[], projectDir: string) {
 function unsupportedEvalSuiteOption(options: EvalOptions): string | undefined {
   const flags = [
     options.report ? "--report" : undefined,
-    options.junit ? "--junit" : undefined,
     options.baseline ? "--baseline" : undefined,
     options.writeBaseline ? "--write-baseline" : undefined,
     options.baselinePassRateDropThreshold !== undefined
@@ -1276,6 +1305,7 @@ async function writeEvalSuiteArtifacts(
   artifacts: EvalSuiteArtifactPaths,
 ): Promise<void> {
   await writeTextFileEnsuringDir(artifacts.summary, JSON.stringify(summary, null, 2));
+  await writeTextFileEnsuringDir(artifacts.results, createEvalSuiteResultsJsonl(summary));
   await writeTextFileEnsuringDir(artifacts.reportMarkdown, createEvalSuiteMarkdown(summary));
 }
 
@@ -1793,6 +1823,9 @@ async function runEvalSuite(input: {
 
   const summary = createEvalSuiteSummary(runId, startedAt, results);
   await writeEvalSuiteArtifacts(summary, artifacts);
+  if (input.options.junit) {
+    await writeTextFileEnsuringDir(input.options.junit, createEvalSuiteJunitXml(summary));
+  }
 
   if (isJsonMode()) {
     await outputJson(createSuccessEnvelope("eval", { suite: summary, artifacts }));
@@ -1800,6 +1833,7 @@ async function runEvalSuite(input: {
     cliLogger.info(`Eval suite: ${summary.passed}/${summary.total} passed`);
     cliLogger.info(`Report directory: ${artifacts.directory}`);
     cliLogger.info(`Suite report: ${artifacts.reportMarkdown}`);
+    if (input.options.junit) cliLogger.info(`JUnit: ${input.options.junit}`);
   }
 
   return summary.failed === 0 ? 0 : 1;

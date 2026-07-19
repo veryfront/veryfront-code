@@ -66,22 +66,26 @@ Each run writes `summary.json` and `results.jsonl` to the report directory. If
 `.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
 raw report in one JSON file.
 
-An all-eval run creates one suite directory with a summary and one child
-directory per eval. Evals run sequentially, so a failing eval does not prevent
-the remaining discovered evals from running.
+An all-eval run creates one suite directory and one child directory per eval.
+The suite directory contains the summary, one JSONL result per eval, and the
+markdown report. Use `--junit` to add a suite-level JUnit report. Evals run
+sequentially, so a failing eval does not prevent the remaining discovered evals
+from running.
 
 ```text
 .veryfront/evals/<suite-run-id>/
   summary.json
+  results.jsonl
   report.md
+  junit.xml
   001-deep-research/
     summary.json
     results.jsonl
     report.md
 ```
 
-`--report`, `--junit`, baselines, model overrides, and model comparison are
-single-eval options. Name the eval when using them.
+`--report`, baselines, model overrides, and model comparison are single-eval
+options. Name the eval when using them.
 
 The report and summary artifacts include `schemaVersion`. New reports also
 include dataset metadata with the dataset kind, optional path, example count,

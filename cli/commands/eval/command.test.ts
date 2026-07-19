@@ -770,6 +770,7 @@ describe("eval CLI command helpers", () => {
           candidateModels: [],
           projectDir,
           reportDir: `${projectDir}/suite`,
+          junit: `${projectDir}/suite/junit.xml`,
         },
         { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
       );
@@ -801,6 +802,21 @@ describe("eval CLI command helpers", () => {
         "eval:alpha",
         "eval:beta",
       ]);
+      const results = (await Deno.readTextFile(`${projectDir}/suite/results.jsonl`))
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const result = JSON.parse(line) as { id: string; status: string };
+          return { id: result.id, status: result.status };
+        });
+      assertEquals(results, [
+        { id: "eval:alpha", status: "passed" },
+        { id: "eval:beta", status: "failed" },
+      ]);
+      const junit = await Deno.readTextFile(`${projectDir}/suite/junit.xml`);
+      assertStringIncludes(junit, '<testsuites tests="2" failures="1" skipped="0">');
+      assertStringIncludes(junit, '<testcase classname="eval" name="eval:alpha" />');
+      assertStringIncludes(junit, '<testcase classname="eval" name="eval:beta">');
       assertEquals(
         await Deno.stat(`${projectDir}/suite/001-alpha/summary.json`).then(() => true),
         true,
