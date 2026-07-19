@@ -27,6 +27,11 @@ const ENV_ARTIFACTS_URI = "MLFLOW_ARTIFACTS_URI";
 const ENV_TRACKING_TOKEN = "MLFLOW_TRACKING_TOKEN";
 const ENV_TRACKING_USERNAME = "MLFLOW_TRACKING_USERNAME";
 const ENV_TRACKING_PASSWORD = "MLFLOW_TRACKING_PASSWORD";
+const ENV_OAUTH_TOKEN_URL = "MLFLOW_OAUTH_TOKEN_URL";
+const ENV_OAUTH_CLIENT_ID = "MLFLOW_OAUTH_CLIENT_ID";
+const ENV_OAUTH_CLIENT_SECRET = "MLFLOW_OAUTH_CLIENT_SECRET";
+const ENV_OAUTH_SCOPE = "MLFLOW_OAUTH_SCOPE";
+const ENV_EXPORT_ARTIFACTS = "MLFLOW_EXPORT_ARTIFACTS";
 
 const EXTENSION_METADATA = {
   contracts: {
@@ -45,6 +50,11 @@ const EXTENSION_METADATA = {
         "MLFLOW_TRACKING_TOKEN",
         "MLFLOW_TRACKING_URI",
         "MLFLOW_TRACKING_USERNAME",
+        "MLFLOW_OAUTH_TOKEN_URL",
+        "MLFLOW_OAUTH_CLIENT_ID",
+        "MLFLOW_OAUTH_CLIENT_SECRET",
+        "MLFLOW_OAUTH_SCOPE",
+        "MLFLOW_EXPORT_ARTIFACTS",
       ],
     },
   ],
@@ -108,7 +118,19 @@ export interface EvalReportMlflowExtensionConfig {
   trackingToken?: string;
   trackingUsername?: string;
   trackingPassword?: string;
+  oauthTokenUrl?: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthScope?: string;
+  exportArtifacts?: boolean;
   fetch?: EvalReportMlflowFetch;
+}
+
+interface MlflowOAuthClientCredentialsConfig {
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scope?: string;
 }
 
 export interface MlflowArtifactUploadResult {
@@ -155,6 +177,15 @@ function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {
       : {}),
     ...(typeof config.trackingPassword === "string"
       ? { trackingPassword: config.trackingPassword }
+      : {}),
+    ...(typeof config.oauthTokenUrl === "string" ? { oauthTokenUrl: config.oauthTokenUrl } : {}),
+    ...(typeof config.oauthClientId === "string" ? { oauthClientId: config.oauthClientId } : {}),
+    ...(typeof config.oauthClientSecret === "string"
+      ? { oauthClientSecret: config.oauthClientSecret }
+      : {}),
+    ...(typeof config.oauthScope === "string" ? { oauthScope: config.oauthScope } : {}),
+    ...(typeof config.exportArtifacts === "boolean"
+      ? { exportArtifacts: config.exportArtifacts }
       : {}),
     ...(typeof config.fetch === "function" ? { fetch: config.fetch as EvalReportMlflowFetch } : {}),
   };
@@ -256,6 +287,66 @@ function createTrackingAuthHeaders(
   return {};
 }
 
+function readBooleanEnv(name: string): boolean | undefined {
+  const value = readEnv(name)?.toLowerCase();
+  if (value === undefined) return undefined;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  throw new Error(`MLflow ${name} must be true or false.`);
+}
+
+function resolveOAuthClientCredentials(
+  config: Pick<
+    EvalReportMlflowExtensionConfig,
+    "oauthClientId" | "oauthClientSecret" | "oauthScope" | "oauthTokenUrl"
+  >,
+): MlflowOAuthClientCredentialsConfig | undefined {
+  const configured = [
+    config.oauthTokenUrl,
+    config.oauthClientId,
+    config.oauthClientSecret,
+  ].some((value) => value !== undefined && value.length > 0);
+  if (!configured) return undefined;
+
+  if (!config.oauthTokenUrl || !config.oauthClientId || !config.oauthClientSecret) {
+    throw new Error(
+      "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
+    );
+  }
+
+  return {
+    tokenUrl: normalizeHttpUri(config.oauthTokenUrl, "OAuth token URL"),
+    clientId: config.oauthClientId,
+    clientSecret: config.oauthClientSecret,
+    ...(config.oauthScope ? { scope: config.oauthScope } : {}),
+  };
+}
+
+async function createOAuthTrackingAuthHeaders(
+  fetchImpl: EvalReportMlflowFetch,
+  config: MlflowOAuthClientCredentialsConfig,
+): Promise<Record<string, string>> {
+  const body = new URLSearchParams({ grant_type: "client_credentials" });
+  if (config.scope) body.set("scope", config.scope);
+  const response = await fetchImpl(config.tokenUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Basic ${btoa(`${config.clientId}:${config.clientSecret}`)}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  const payload = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    throw new Error(`MLflow OAuth token request failed (${response.status}).`);
+  }
+  if (!isRecord(payload) || typeof payload.access_token !== "string" || !payload.access_token) {
+    throw new Error("MLflow OAuth token response did not include an access_token.");
+  }
+  return { authorization: `Bearer ${payload.access_token}` };
+}
+
 function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
@@ -269,6 +360,11 @@ function resolveExporterConfig(
     trackingToken: config.trackingToken ?? readEnv(ENV_TRACKING_TOKEN),
     trackingUsername: config.trackingUsername ?? readEnv(ENV_TRACKING_USERNAME),
     trackingPassword: config.trackingPassword ?? readEnv(ENV_TRACKING_PASSWORD),
+    oauthTokenUrl: config.oauthTokenUrl ?? readEnv(ENV_OAUTH_TOKEN_URL),
+    oauthClientId: config.oauthClientId ?? readEnv(ENV_OAUTH_CLIENT_ID),
+    oauthClientSecret: config.oauthClientSecret ?? readEnv(ENV_OAUTH_CLIENT_SECRET),
+    oauthScope: config.oauthScope ?? readEnv(ENV_OAUTH_SCOPE),
+    exportArtifacts: config.exportArtifacts ?? readBooleanEnv(ENV_EXPORT_ARTIFACTS),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   };
 }
@@ -1214,6 +1310,8 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
   readonly id: string;
   private readonly config: EvalReportMlflowExtensionConfig & {
     trackingUri: string;
+    exportArtifacts: boolean;
+    oauth?: MlflowOAuthClientCredentialsConfig;
   };
   private readonly fetchImpl: EvalReportMlflowFetch;
 
@@ -1227,10 +1325,13 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
     this.id = config.id;
     const trackingUri = normalizeHttpUri(config.trackingUri, "trackingUri");
     const artifactsUri = resolveArtifactsUri(config, trackingUri);
+    const oauth = resolveOAuthClientCredentials(config);
     this.config = {
       ...config,
       trackingUri,
+      exportArtifacts: config.exportArtifacts ?? true,
       ...(artifactsUri ? { artifactsUri: normalizeHttpUri(artifactsUri, "artifactsUri") } : {}),
+      ...(oauth ? { oauth } : {}),
     };
     this.fetchImpl = fetchImpl;
   }
@@ -1240,7 +1341,9 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
     context: EvalReportExportContext,
   ): Promise<EvalReportExportReceipt> {
     const trackingUri = this.config.trackingUri;
-    const authHeaders = createTrackingAuthHeaders(this.config);
+    const authHeaders = this.config.oauth
+      ? await createOAuthTrackingAuthHeaders(this.fetchImpl, this.config.oauth)
+      : createTrackingAuthHeaders(this.config);
     const selectedExperimentName = experimentName(this.config, report, context);
     const experimentId = await getOrCreateMlflowExperiment({
       fetchImpl: this.fetchImpl,
@@ -1281,33 +1384,42 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
         ]),
       });
 
-      const artifacts = await uploadReportArtifacts({
-        fetchImpl: this.fetchImpl,
-        artifactsUri: this.config.artifactsUri,
-        runArtifactUri,
-        report,
-      });
-      const artifactVerification = await verifyUploadedArtifacts({
-        fetchImpl: this.fetchImpl,
-        trackingUri,
-        authHeaders,
-        runId,
-        artifacts,
-      });
+      const artifacts = this.config.exportArtifacts
+        ? await uploadReportArtifacts({
+          fetchImpl: this.fetchImpl,
+          artifactsUri: this.config.artifactsUri ??
+            (runArtifactUri.startsWith("mlflow-artifacts:/") ? trackingUri : undefined),
+          runArtifactUri,
+          report,
+        })
+        : [];
+      const artifactVerification = this.config.exportArtifacts
+        ? await verifyUploadedArtifacts({
+          fetchImpl: this.fetchImpl,
+          trackingUri,
+          authHeaders,
+          runId,
+          artifacts,
+        })
+        : undefined;
 
       await logMlflowBatch(this.fetchImpl, trackingUri, {
         runId,
         authHeaders,
         tags: [
-          { key: "artifacts.logged", value: "true" },
+          { key: "artifacts.logged", value: String(this.config.exportArtifacts) },
           { key: "artifacts.count", value: String(artifacts.length) },
-          { key: "artifacts.verified", value: String(artifactVerification.verified) },
-          {
-            key: "artifacts.verified_count",
-            value: String(
-              artifactVerification.artifacts.length - artifactVerification.missing.length,
-            ),
-          },
+          ...(artifactVerification
+            ? [
+              { key: "artifacts.verified", value: String(artifactVerification.verified) },
+              {
+                key: "artifacts.verified_count",
+                value: String(
+                  artifactVerification.artifacts.length - artifactVerification.missing.length,
+                ),
+              },
+            ]
+            : []),
         ],
       });
 
@@ -1324,7 +1436,7 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
           experimentId,
           experimentName: selectedExperimentName,
           artifacts,
-          artifactVerification,
+          ...(artifactVerification ? { artifactVerification } : {}),
         },
       };
     } catch (error) {

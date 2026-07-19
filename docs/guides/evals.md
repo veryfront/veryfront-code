@@ -664,7 +664,10 @@ veryfront eval deep-research --export mlflow
 
 For authenticated MLflow Tracking servers, keep credentials out of
 `MLFLOW_TRACKING_URI`. Use `MLFLOW_TRACKING_TOKEN` for bearer auth or
-`MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth.
+`MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth. Standard
+OAuth client credentials are also supported through
+`MLFLOW_OAUTH_TOKEN_URL`, `MLFLOW_OAUTH_CLIENT_ID`,
+`MLFLOW_OAUTH_CLIENT_SECRET`, and an optional `MLFLOW_OAUTH_SCOPE`.
 
 When `MLFLOW_TRACKING_URI` is configured, `veryfront eval` automatically exports
 every completed eval report to MLflow. Set `VERYFRONT_EVAL_EXPORTERS=mlflow`
@@ -695,18 +698,25 @@ veryfront eval deep-research \
 ```
 
 MLflow artifact uploads support HTTP(S) run artifact roots directly. For
-proxied artifact roots such as `mlflow-artifacts:/...` or object-store-backed
-roots, configure an explicit HTTP(S) MLflow artifact server URI with
-`MLFLOW_ARTIFACTS_URI`. For local tracking on one port and artifact serving on
-another, set `MLFLOW_ARTIFACTS_PORT` to derive the artifact URI from
-`MLFLOW_TRACKING_URI`. v1 does not upload directly to local filesystem roots or
-backend-specific schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar
-URIs. After upload, the exporter makes a best-effort retrieval check through
+`mlflow-artifacts:/...` roots use the tracking server itself by default, so a
+normal local `mlflow server --serve-artifacts` setup needs only
+`MLFLOW_TRACKING_URI`. For a distinct artifact server or object-store-backed
+root, configure `MLFLOW_ARTIFACTS_URI`; `MLFLOW_ARTIFACTS_PORT` derives it from
+`MLFLOW_TRACKING_URI` for a local server on another port. v1 does not upload
+directly to local filesystem roots or backend-specific schemes such as `dbfs://`,
+`gs://`, `wasbs://`, or similar URIs. After upload, the exporter makes a
+best-effort retrieval check through
 MLflow `artifacts/list` for the `veryfront-eval` path and stores only the
 sanitized `verified`/`missing` paths in the export receipt. The check is
 non-fatal: because `artifacts/list` responses vary across MLflow deployments, a
 mismatch or a failing listing endpoint is logged as a warning rather than
 failing an export whose uploads already succeeded.
+
+When a tracking service provides no HTTP(S) artifact proxy, set
+`MLFLOW_EXPORT_ARTIFACTS=false`. Veryfront still sends the MLflow run's
+aggregate metrics, parameters, and tags, then skips report-artifact upload
+without relying on a backend-specific storage API. This is not needed for a
+normal local `mlflow server --serve-artifacts` setup.
 
 The MLflow exporter logs generic aggregate metrics from the normalized
 `EvalReport`; it does not know project-specific label formats. If a project
