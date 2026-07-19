@@ -987,25 +987,30 @@ function createEvalSuiteResultsJsonl(summary: EvalSuiteSummary): string {
     (summary.results.length > 0 ? "\n" : "");
 }
 
-function createEvalSuiteJunitXml(summary: EvalSuiteSummary): string {
+export function createEvalSuiteJunitXml(summary: EvalSuiteSummary): string {
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<testsuites tests="${summary.total}" failures="${summary.failed}" skipped="0">`,
+    `  <testsuite name="veryfront eval suite" tests="${summary.total}" failures="${summary.failed}" skipped="0">`,
   ];
 
   for (const result of summary.results) {
     const attrs = `classname="eval" name="${xmlEscape(result.id)}"`;
     if (result.status === "passed") {
-      lines.push(`  <testcase ${attrs} />`);
+      lines.push(`    <testcase ${attrs} />`);
       continue;
     }
 
-    const message = result.error ?? `${result.summary?.failed ?? 0} record(s) failed`;
-    lines.push(`  <testcase ${attrs}>`);
-    lines.push(`    <failure message="${xmlEscape(message)}">${xmlEscape(message)}</failure>`);
-    lines.push("  </testcase>");
+    const message = result.error ??
+      (result.summary?.failed
+        ? `${result.summary.failed} record(s) failed`
+        : "A required eval export failed.");
+    lines.push(`    <testcase ${attrs}>`);
+    lines.push(`      <failure message="${xmlEscape(message)}">${xmlEscape(message)}</failure>`);
+    lines.push("    </testcase>");
   }
 
+  lines.push("  </testsuite>");
   lines.push("</testsuites>");
   return `${lines.join("\n")}\n`;
 }
