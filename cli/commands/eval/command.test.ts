@@ -48,6 +48,7 @@ import {
   normalizeUsage,
   resolveEvalExporterIds,
   resolveEvalExportRedactionFromEnv,
+  resolveEvalExportRequired,
   resolveToolTargetId,
   runEvalCommand,
   runEvalWithGatewayBillingGroup,
@@ -62,6 +63,7 @@ const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
 const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
 const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
+const originalEvalExportRequired = Deno.env.get("VERYFRONT_EVAL_EXPORT_REQUIRED");
 const originalMlflowTrackingUri = Deno.env.get("MLFLOW_TRACKING_URI");
 const originalFetch = globalThis.fetch;
 const redactionEnvNames = [
@@ -112,6 +114,12 @@ function restoreEnv(): void {
     Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
   } else {
     Deno.env.set("VERYFRONT_EVAL_EXPORTERS", originalEvalExporters);
+  }
+
+  if (originalEvalExportRequired === undefined) {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT_REQUIRED");
+  } else {
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_REQUIRED", originalEvalExportRequired);
   }
 
   if (originalMlflowTrackingUri === undefined) {
@@ -276,6 +284,7 @@ describe("eval CLI command helpers", () => {
       "baseline-usage-increase-threshold": 0.15,
       "baseline-latency-increase-threshold": 0.2,
       export: "braintrust,langfuse",
+      "require-export": true,
       debug: true,
       "baseline-model": "anthropic/claude-opus-4-6",
       "candidate-model": ["moonshotai/kimi-k2.6"],
@@ -297,6 +306,7 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.baselineUsageIncreaseThreshold, 0.15);
       assertEquals(parsed.data.baselineLatencyIncreaseThreshold, 0.2);
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
+      assertEquals(parsed.data.requireExport, true);
       assertEquals(parsed.data.debug, true);
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
       assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2.6"]);
@@ -336,6 +346,15 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.example.com");
 
     assertEquals(resolveEvalExporterIds({ exporters: [] }), ["mlflow"]);
+  });
+
+  it("requires eval export only when the CLI flag or CI environment requests it", () => {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT_REQUIRED");
+    assertEquals(resolveEvalExportRequired({ requireExport: false }), false);
+    assertEquals(resolveEvalExportRequired({ requireExport: true }), true);
+
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_REQUIRED", "true");
+    assertEquals(resolveEvalExportRequired({ requireExport: false }), true);
   });
 
   it("keeps eval export redaction safe by default", () => {
@@ -1649,6 +1668,26 @@ describe("eval CLI command helpers", () => {
     );
   });
 
+  it("keeps exports best-effort locally but fails the CI gate when required", () => {
+    const passing = {
+      ...createReport(),
+      summary: { ...createReport().summary, failed: 0, passed: 2, passRate: 1 },
+    };
+    const exportedFailure = {
+      ...passing,
+      exports: [{ exporterId: "mlflow", ok: false as const, error: "unavailable" }],
+    };
+    const exportedSuccess = {
+      ...passing,
+      exports: [{ exporterId: "mlflow", ok: true as const }],
+    };
+
+    assertEquals(createEvalExitCode(exportedFailure), 0);
+    assertEquals(createEvalExitCode(exportedFailure, undefined, true), 1);
+    assertEquals(createEvalExitCode(exportedSuccess, undefined, true), 0);
+    assertEquals(createEvalExitCode(passing, undefined, true), 1);
+  });
+
   it("fails model comparison exit code only when an evaluated report fails", () => {
     const passing = {
       ...createReport(),
@@ -1658,5 +1697,14 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(createEvalModelComparisonExitCode([passing]), 0);
     assertEquals(createEvalModelComparisonExitCode([passing, failing]), 1);
+    assertEquals(
+      createEvalModelComparisonExitCode([
+        {
+          ...passing,
+          exports: [{ exporterId: "mlflow", ok: false as const, error: "unavailable" }],
+        },
+      ], true),
+      1,
+    );
   });
 });

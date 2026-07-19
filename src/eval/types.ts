@@ -485,6 +485,8 @@ export interface RunEvalOptions {
 export interface EvalReportExportConfig {
   registry?: EvalReportExporterRegistry;
   exporterIds?: string[];
+  /** Make failed or missing selected exports a CLI quality-gate failure. */
+  required?: boolean;
   context?: EvalReportExportContext;
 }
 

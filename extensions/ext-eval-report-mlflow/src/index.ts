@@ -32,6 +32,17 @@ const ENV_OAUTH_CLIENT_ID = "MLFLOW_OAUTH_CLIENT_ID";
 const ENV_OAUTH_CLIENT_SECRET = "MLFLOW_OAUTH_CLIENT_SECRET";
 const ENV_OAUTH_SCOPE = "MLFLOW_OAUTH_SCOPE";
 const ENV_EXPORT_ARTIFACTS = "MLFLOW_EXPORT_ARTIFACTS";
+const ENV_REQUEST_TIMEOUT_MS = "MLFLOW_REQUEST_TIMEOUT_MS";
+const ENV_RETRY_ATTEMPTS = "MLFLOW_RETRY_ATTEMPTS";
+const ENV_RETRY_DELAY_MS = "MLFLOW_RETRY_DELAY_MS";
+const ENV_RUN_URL_TEMPLATE = "MLFLOW_RUN_URL_TEMPLATE";
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_RETRY_ATTEMPTS = 2;
+const DEFAULT_RETRY_DELAY_MS = 250;
+const MAX_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_RETRY_ATTEMPTS = 5;
+const MAX_RETRY_DELAY_MS = 5_000;
 
 const EXTENSION_METADATA = {
   contracts: {
@@ -55,6 +66,10 @@ const EXTENSION_METADATA = {
         "MLFLOW_OAUTH_CLIENT_SECRET",
         "MLFLOW_OAUTH_SCOPE",
         "MLFLOW_EXPORT_ARTIFACTS",
+        "MLFLOW_REQUEST_TIMEOUT_MS",
+        "MLFLOW_RETRY_ATTEMPTS",
+        "MLFLOW_RETRY_DELAY_MS",
+        "MLFLOW_RUN_URL_TEMPLATE",
       ],
     },
   ],
@@ -123,6 +138,17 @@ export interface EvalReportMlflowExtensionConfig {
   oauthClientSecret?: string;
   oauthScope?: string;
   exportArtifacts?: boolean;
+  /** Bounded per-request timeout. Defaults to 10 seconds. */
+  requestTimeoutMs?: number;
+  /** Number of retries for safe requests. Defaults to 2 (three total attempts). */
+  retryAttempts?: number;
+  /** Initial retry delay. Defaults to 250 ms and uses exponential backoff. */
+  retryDelayMs?: number;
+  /**
+   * Optional web UI URL template. It must include `{experimentId}` and
+   * `{runId}` and may include `{trackingUri}`.
+   */
+  runUrlTemplate?: string;
   fetch?: EvalReportMlflowFetch;
 }
 
@@ -131,6 +157,12 @@ interface MlflowOAuthClientCredentialsConfig {
   clientId: string;
   clientSecret: string;
   scope?: string;
+}
+
+interface MlflowRequestOptions {
+  timeoutMs: number;
+  retryAttempts: number;
+  retryDelayMs: number;
 }
 
 export interface MlflowArtifactUploadResult {
@@ -187,8 +219,19 @@ function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {
     ...(typeof config.exportArtifacts === "boolean"
       ? { exportArtifacts: config.exportArtifacts }
       : {}),
+    ...(typeof config.requestTimeoutMs === "number"
+      ? { requestTimeoutMs: config.requestTimeoutMs }
+      : {}),
+    ...(typeof config.retryAttempts === "number" ? { retryAttempts: config.retryAttempts } : {}),
+    ...(typeof config.retryDelayMs === "number" ? { retryDelayMs: config.retryDelayMs } : {}),
+    ...(typeof config.runUrlTemplate === "string" ? { runUrlTemplate: config.runUrlTemplate } : {}),
     ...(typeof config.fetch === "function" ? { fetch: config.fetch as EvalReportMlflowFetch } : {}),
   };
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "::1" || hostname === "[::1]";
 }
 
 function normalizeHttpUri(uri: string, label: string): string {
@@ -200,14 +243,89 @@ function normalizeHttpUri(uri: string, label: string): string {
         `MLflow ${label} must not include credentials. Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.`,
       );
     }
-    if (url.protocol === "http:" || url.protocol === "https:") return trimmed;
+    if (url.protocol === "https:") return trimmed;
+    if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return trimmed;
+    if (url.protocol === "http:") {
+      throw new Error(
+        `MLflow ${label} must use HTTPS unless its host is localhost or a loopback IP.`,
+      );
+    }
   } catch (error) {
-    if (error instanceof Error && error.message.includes("must not include credentials")) {
+    if (
+      error instanceof Error &&
+      (error.message.includes("must not include credentials") ||
+        error.message.includes("must use HTTPS"))
+    ) {
       throw error;
     }
     // Use the consistent message below.
   }
   throw new Error(`MLflow ${label} must be an HTTP(S) URI: ${uri}`);
+}
+
+function normalizeInteger(
+  value: number,
+  label: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`MLflow ${label} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function readIntegerEnv(
+  name: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  const value = readEnv(name);
+  if (value === undefined) return undefined;
+  return normalizeInteger(Number(value), name, minimum, maximum);
+}
+
+function resolveMlflowRequestOptions(
+  config: Pick<
+    EvalReportMlflowExtensionConfig,
+    "requestTimeoutMs" | "retryAttempts" | "retryDelayMs"
+  >,
+): MlflowRequestOptions {
+  return {
+    timeoutMs: normalizeInteger(
+      config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      "requestTimeoutMs",
+      1,
+      MAX_REQUEST_TIMEOUT_MS,
+    ),
+    retryAttempts: normalizeInteger(
+      config.retryAttempts ?? DEFAULT_RETRY_ATTEMPTS,
+      "retryAttempts",
+      0,
+      MAX_RETRY_ATTEMPTS,
+    ),
+    retryDelayMs: normalizeInteger(
+      config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+      "retryDelayMs",
+      0,
+      MAX_RETRY_DELAY_MS,
+    ),
+  };
+}
+
+function normalizeRunUrlTemplate(template: string): string {
+  const normalized = template.trim();
+  if (!normalized.includes("{experimentId}") || !normalized.includes("{runId}")) {
+    throw new Error(
+      "MLflow runUrlTemplate must include {experimentId} and {runId}.",
+    );
+  }
+  const preview = normalized
+    .replaceAll("{trackingUri}", "https://tracking.example.test")
+    .replaceAll("{experimentId}", "experiment-id")
+    .replaceAll("{runId}", "run-id");
+  normalizeHttpUri(preview, "runUrlTemplate");
+  return normalized;
 }
 
 function normalizeArtifactsPort(value: string | number | undefined): string | undefined {
@@ -285,6 +403,97 @@ function createTrackingAuthHeaders(
     return { authorization: `Basic ${credentials}` };
   }
   return {};
+}
+
+function requestMethod(init: RequestInit | undefined): string {
+  return init?.method?.toUpperCase() ?? "GET";
+}
+
+function requestUrl(input: string | URL | Request): string {
+  return input instanceof Request ? input.url : String(input);
+}
+
+function isRetryableMlflowRequest(
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+): boolean {
+  const method = requestMethod(init);
+  if (method === "GET" || method === "PUT") return true;
+  if (method !== "POST") return false;
+  const pathname = new URL(requestUrl(input)).pathname;
+  // run updates replace the same state and are safe to repeat. `runs/search`
+  // is read-only despite the MLflow REST API using POST for it.
+  return pathname.endsWith("/runs/update") || pathname.endsWith("/runs/search");
+}
+
+function isTransientMlflowResponse(response: Response): boolean {
+  return response.status === 408 || response.status === 429 || response.status >= 500;
+}
+
+function retryDelayMs(options: MlflowRequestOptions, attempt: number): number {
+  return Math.min(
+    MAX_RETRY_DELAY_MS,
+    options.retryDelayMs * 2 ** attempt,
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms === 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  fetchImpl: EvalReportMlflowFetch,
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`MLflow request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      fetchImpl(input, { ...init, signal: controller.signal }),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+function createMlflowFetchWithPolicy(
+  fetchImpl: EvalReportMlflowFetch,
+  options: MlflowRequestOptions,
+): EvalReportMlflowFetch {
+  return async (input, init) => {
+    const retryable = isRetryableMlflowRequest(input, init);
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= options.retryAttempts; attempt += 1) {
+      try {
+        const response = await fetchWithTimeout(fetchImpl, input, init, options.timeoutMs);
+        if (
+          !retryable || !isTransientMlflowResponse(response) ||
+          attempt === options.retryAttempts
+        ) {
+          return response;
+        }
+      } catch (error) {
+        lastError = error;
+        if (!retryable || attempt === options.retryAttempts) throw error;
+      }
+
+      await sleep(retryDelayMs(options, attempt));
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("MLflow request failed.");
+  };
 }
 
 function readBooleanEnv(name: string): boolean | undefined {
@@ -365,6 +574,22 @@ function resolveExporterConfig(
     oauthClientSecret: config.oauthClientSecret ?? readEnv(ENV_OAUTH_CLIENT_SECRET),
     oauthScope: config.oauthScope ?? readEnv(ENV_OAUTH_SCOPE),
     exportArtifacts: config.exportArtifacts ?? readBooleanEnv(ENV_EXPORT_ARTIFACTS),
+    requestTimeoutMs: config.requestTimeoutMs ?? readIntegerEnv(
+      ENV_REQUEST_TIMEOUT_MS,
+      1,
+      MAX_REQUEST_TIMEOUT_MS,
+    ),
+    retryAttempts: config.retryAttempts ?? readIntegerEnv(
+      ENV_RETRY_ATTEMPTS,
+      0,
+      MAX_RETRY_ATTEMPTS,
+    ),
+    retryDelayMs: config.retryDelayMs ?? readIntegerEnv(
+      ENV_RETRY_DELAY_MS,
+      0,
+      MAX_RETRY_DELAY_MS,
+    ),
+    runUrlTemplate: config.runUrlTemplate ?? readEnv(ENV_RUN_URL_TEMPLATE),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   };
 }
@@ -431,6 +656,15 @@ function runName(
   return config.runName ?? `${report.definitionId}-${report.runId}`;
 }
 
+/**
+ * Eval run ids are generated once by the runner and persist in local report
+ * artifacts. Reusing this value lets a create-run response loss recover the
+ * already-created MLflow run without guessing from display names.
+ */
+function exportIdentity(report: EvalReport): string {
+  return report.runId;
+}
+
 function createRunTags(
   config: EvalReportMlflowExtensionConfig,
   report: EvalReport,
@@ -444,6 +678,7 @@ function createRunTags(
     tag("eval.target", report.target),
     tag("eval.target_kind", report.targetKind),
     tag("eval.run_id", report.runId),
+    tag("veryfront.export_id", exportIdentity(report)),
     tag("eval.status", report.summary.failed === 0 ? "passed" : "failed"),
     tag("eval.source_path", context.sourcePath),
     tag("eval.report_path", context.reportPath),
@@ -456,6 +691,21 @@ function createRunTags(
     tag("trace.id", context.trace?.traceId),
     tag("trace.span_id", context.trace?.spanId),
   ]);
+}
+
+function createMlflowRunUrl(input: {
+  trackingUri: string;
+  experimentId: string;
+  runId: string;
+  runUrlTemplate?: string;
+}): string {
+  const template = input.runUrlTemplate ??
+    `${input.trackingUri}/#/experiments/{experimentId}/runs/{runId}`;
+  const url = template
+    .replaceAll("{trackingUri}", input.trackingUri)
+    .replaceAll("{experimentId}", encodeURIComponent(input.experimentId))
+    .replaceAll("{runId}", encodeURIComponent(input.runId));
+  return normalizeHttpUri(url, "run URL");
 }
 
 function createRunParams(
@@ -1211,6 +1461,90 @@ async function getOrCreateMlflowExperiment(input: {
   return String(created.experiment_id);
 }
 
+type MlflowRunReference = {
+  runId: string;
+  artifactUri: string;
+  recovered: boolean;
+};
+
+function mlflowRunReference(payload: unknown, recovered: boolean): MlflowRunReference | undefined {
+  if (!isRecord(payload) || !isRecord(payload.run) || !isRecord(payload.run.info)) return undefined;
+  const runId = payload.run.info.run_id ?? payload.run.info.run_uuid;
+  if (typeof runId !== "string" || runId.length === 0) return undefined;
+  return {
+    runId,
+    artifactUri: typeof payload.run.info.artifact_uri === "string"
+      ? payload.run.info.artifact_uri
+      : "",
+    recovered,
+  };
+}
+
+function mlflowFilterString(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+}
+
+async function findMlflowRunByExportIdentity(input: {
+  fetchImpl: EvalReportMlflowFetch;
+  trackingUri: string;
+  authHeaders: Record<string, string>;
+  experimentId: string;
+  exportIdentity: string;
+}): Promise<MlflowRunReference | undefined> {
+  const payload = await mlflowPost(
+    input.fetchImpl,
+    input.trackingUri,
+    input.authHeaders,
+    "runs/search",
+    {
+      experiment_ids: [input.experimentId],
+      filter: `tags.\`veryfront.export_id\` = '${mlflowFilterString(input.exportIdentity)}'`,
+      max_results: 1,
+      order_by: ["attributes.start_time DESC"],
+    },
+  );
+  if (!isRecord(payload) || !Array.isArray(payload.runs)) return undefined;
+  const run = payload.runs[0];
+  if (!isRecord(run)) return undefined;
+  return mlflowRunReference({ run }, true);
+}
+
+async function createOrRecoverMlflowRun(input: {
+  fetchImpl: EvalReportMlflowFetch;
+  trackingUri: string;
+  authHeaders: Record<string, string>;
+  experimentId: string;
+  runName: string;
+  startedAt: number;
+  tags: MlflowTag[];
+  exportIdentity: string;
+}): Promise<MlflowRunReference> {
+  try {
+    const created = await mlflowPost(
+      input.fetchImpl,
+      input.trackingUri,
+      input.authHeaders,
+      "runs/create",
+      {
+        experiment_id: input.experimentId,
+        run_name: input.runName,
+        start_time: input.startedAt,
+        tags: input.tags,
+      },
+    );
+    const reference = mlflowRunReference(created, false);
+    if (!reference) throw new Error("MLflow runs/create response did not include a run id.");
+    return reference;
+  } catch (createError) {
+    // Do not retry `runs/create`: the server may have created a run before a
+    // timeout or connection loss. Instead, recover the deterministic run via
+    // its export identity. This keeps metrics/log batches from being duplicated.
+    const recovered = await findMlflowRunByExportIdentity(input).catch(() => undefined);
+    if (recovered) return recovered;
+    throw createError;
+  }
+}
+
 function artifactPathsFromListResponse(payload: unknown): string[] {
   if (!isRecord(payload) || !Array.isArray(payload.files)) return [];
   return payload.files
@@ -1311,6 +1645,7 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
   private readonly config: EvalReportMlflowExtensionConfig & {
     trackingUri: string;
     exportArtifacts: boolean;
+    request: MlflowRequestOptions;
     oauth?: MlflowOAuthClientCredentialsConfig;
   };
   private readonly fetchImpl: EvalReportMlflowFetch;
@@ -1326,14 +1661,20 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
     const trackingUri = normalizeHttpUri(config.trackingUri, "trackingUri");
     const artifactsUri = resolveArtifactsUri(config, trackingUri);
     const oauth = resolveOAuthClientCredentials(config);
+    const request = resolveMlflowRequestOptions(config);
+    const runUrlTemplate = config.runUrlTemplate
+      ? normalizeRunUrlTemplate(config.runUrlTemplate)
+      : undefined;
     this.config = {
       ...config,
       trackingUri,
       exportArtifacts: config.exportArtifacts ?? true,
+      request,
       ...(artifactsUri ? { artifactsUri: normalizeHttpUri(artifactsUri, "artifactsUri") } : {}),
+      ...(runUrlTemplate ? { runUrlTemplate } : {}),
       ...(oauth ? { oauth } : {}),
     };
-    this.fetchImpl = fetchImpl;
+    this.fetchImpl = createMlflowFetchWithPolicy(fetchImpl, request);
   }
 
   async export(
@@ -1354,23 +1695,19 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
       context,
     });
     const startedAt = Date.parse(report.startedAt);
-    const createdRun = await mlflowPost(
-      this.fetchImpl,
+    const createdRun = await createOrRecoverMlflowRun({
+      fetchImpl: this.fetchImpl,
       trackingUri,
       authHeaders,
-      "runs/create",
-      {
-        experiment_id: experimentId,
-        run_name: normalizeMlflowTagValue(runName(this.config, report)),
-        start_time: Number.isFinite(startedAt) ? startedAt : Date.now(),
-        tags: createRunTags(this.config, report, context),
-      },
-    );
+      experimentId,
+      runName: normalizeMlflowTagValue(runName(this.config, report)),
+      startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
+      tags: createRunTags(this.config, report, context),
+      exportIdentity: exportIdentity(report),
+    });
 
-    const runId = String(
-      createdRun.run.info.run_id ?? createdRun.run.info.run_uuid,
-    );
-    const runArtifactUri = String(createdRun.run.info.artifact_uri ?? "");
+    const runId = createdRun.runId;
+    const runArtifactUri = createdRun.artifactUri;
     try {
       const now = Date.now();
       await logMlflowBatch(this.fetchImpl, trackingUri, {
@@ -1431,10 +1768,16 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
 
       return {
         externalRunId: runId,
-        url: `${trackingUri}/#/experiments/${experimentId}/runs/${runId}`,
+        url: createMlflowRunUrl({
+          trackingUri,
+          experimentId,
+          runId,
+          runUrlTemplate: this.config.runUrlTemplate,
+        }),
         metadata: {
           experimentId,
           experimentName: selectedExperimentName,
+          ...(createdRun.recovered ? { recovered: true } : {}),
           artifacts,
           ...(artifactVerification ? { artifactVerification } : {}),
         },
