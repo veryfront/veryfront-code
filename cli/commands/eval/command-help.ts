@@ -3,12 +3,12 @@ import type { CommandHelp } from "../../help/types.ts";
 export const evalHelp: CommandHelp = {
   name: "eval",
   category: "ai",
-  description: "Discover and run eval definitions",
+  description: "List, run, and export discovered eval definitions",
   usage: "veryfront eval [eval-id] [options]",
   options: [
     {
       flag: "-l, --list",
-      description: "List discovered evals",
+      description: "List discovered evals without running them",
     },
     {
       flag: "--dataset-base <path>",
@@ -86,6 +86,7 @@ export const evalHelp: CommandHelp = {
   ],
   examples: [
     "veryfront eval --list",
+    "veryfront eval",
     "veryfront eval deep-research",
     "veryfront eval eval:deep-research --report-dir .veryfront/evals/deep-research",
     "veryfront eval eval:deep-research --report .veryfront/evals/deep-research/report.json --junit .veryfront/evals/deep-research/junit.xml",
@@ -93,6 +94,7 @@ export const evalHelp: CommandHelp = {
     "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6",
     "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6 --comparison-policy evals/model-comparison.policy.json",
     "veryfront eval deep-research --export braintrust,langfuse --json",
+    "MLFLOW_TRACKING_URI=https://mlflow.example.com veryfront eval",
     "veryfront eval deep-research --json",
   ],
 };

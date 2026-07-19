@@ -4,8 +4,8 @@ description: "Define and run quality checks for agents."
 order: 40
 ---
 
-Evals are project-defined quality checks in `evals/`. Run them locally with
-`veryfront eval <eval-id>` and store report artifacts in CI.
+Evals are project-defined quality checks in `evals/`. Use `veryfront eval` to
+run every discovered eval, or `veryfront eval <eval-id>` to run one.
 
 ## Prerequisites
 
@@ -40,7 +40,13 @@ export default evalAgent({
 });
 ```
 
-Run it:
+Run every discovered eval:
+
+```bash
+veryfront eval
+```
+
+Run one eval:
 
 ```bash
 veryfront eval deep-research
@@ -59,6 +65,23 @@ Each run writes `summary.json` and `results.jsonl` to the report directory. If
 `--report-dir` is omitted, Veryfront writes them under
 `.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
 raw report in one JSON file.
+
+An all-eval run creates one suite directory with a summary and one child
+directory per eval. Evals run sequentially, so a failing eval does not prevent
+the remaining discovered evals from running.
+
+```text
+.veryfront/evals/<suite-run-id>/
+  summary.json
+  report.md
+  001-deep-research/
+    summary.json
+    results.jsonl
+    report.md
+```
+
+`--report`, `--junit`, baselines, model overrides, and model comparison are
+single-eval options. Name the eval when using them.
 
 The report and summary artifacts include `schemaVersion`. New reports also
 include dataset metadata with the dataset kind, optional path, example count,
@@ -631,8 +654,8 @@ OpenTelemetry export.
 
 Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
-`MLFLOW_TRACKING_URI` to activate the extension, then select the default
-exporter id `mlflow` for the run.
+`MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
+exporter for the run.
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
@@ -643,8 +666,9 @@ For authenticated MLflow Tracking servers, keep credentials out of
 `MLFLOW_TRACKING_URI`. Use `MLFLOW_TRACKING_TOKEN` for bearer auth or
 `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth.
 
-Use `VERYFRONT_EVAL_EXPORTERS=mlflow` when CI should select the same exporter
-for every eval command without repeating `--export`:
+When `MLFLOW_TRACKING_URI` is configured, `veryfront eval` automatically exports
+every completed eval report to MLflow. Set `VERYFRONT_EVAL_EXPORTERS=mlflow`
+explicitly when CI should make that selection visible in its environment:
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
@@ -654,9 +678,8 @@ veryfront eval deep-research
 
 `--export` wins over `VERYFRONT_EVAL_EXPORTERS` when both are set. The legacy
 singular `VERYFRONT_EVAL_EXPORT` is used only when
-`VERYFRONT_EVAL_EXPORTERS` is unset. The MLflow exporter always registers under
-the fixed id `mlflow`, so select it with `--export mlflow` or
-`VERYFRONT_EVAL_EXPORTERS=mlflow`.
+`VERYFRONT_EVAL_EXPORTERS` is unset. Without either selector,
+`MLFLOW_TRACKING_URI` selects the fixed `mlflow` exporter automatically.
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
@@ -770,7 +793,13 @@ List discovered evals:
 veryfront eval --list
 ```
 
-Run the eval locally:
+Run every discovered eval locally:
+
+```bash
+veryfront eval
+```
+
+Run one eval locally:
 
 ```bash
 veryfront eval deep-research
