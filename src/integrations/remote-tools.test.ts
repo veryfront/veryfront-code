@@ -17,6 +17,7 @@ const ENV_KEYS = [
   "PROXY_MODE",
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_PROJECT_SLUG",
 ] as const;
 
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, getEnv(key)]));
@@ -80,9 +81,11 @@ describe("integrations/remote-tools", () => {
       PROXY_MODE: "1",
       VERYFRONT_API_BASE_URL: "https://api.test",
       VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
     });
 
     let authorizationHeader: string | null = null;
+    let projectSlugHeader: string | null = null;
 
     const definitions = await runWithRequestContext(
       {
@@ -95,6 +98,7 @@ describe("integrations/remote-tools", () => {
           async (input: string | URL | Request, init?: RequestInit) => {
             const request = input instanceof Request ? input : new Request(input, init);
             authorizationHeader = request.headers.get("Authorization");
+            projectSlugHeader = request.headers.get("x-veryfront-project-slug");
 
             return Response.json({
               tools: [
@@ -119,6 +123,7 @@ describe("integrations/remote-tools", () => {
     );
 
     assertEquals(authorizationHeader, "Bearer request-token");
+    assertEquals(projectSlugHeader, "request-project");
     assertEquals(definitions, [
       {
         name: "github__list_repos",
@@ -248,6 +253,46 @@ describe("integrations/remote-tools", () => {
 
     assertEquals(authorizationHeader, "Bearer env-token");
     assertEquals(definitions, []);
+  });
+
+  it("uses the environment project slug when no request context is active", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    let projectSlugHeader: string | null = null;
+    const definitions = await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+        return Response.json({ tools: [] });
+      },
+      async () => await getRemoteIntegrationToolDefinitions(),
+    );
+
+    assertEquals(projectSlugHeader, "environment-project");
+    assertEquals(definitions, []);
+  });
+
+  it("omits the project slug header when no project context is configured", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let projectSlugHeader: string | null = "unexpected";
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+        return Response.json({ tools: [] });
+      },
+      async () => await getRemoteIntegrationToolDefinitions(),
+    );
+
+    assertEquals(projectSlugHeader, null);
   });
 
   it("fails closed when the API lists a legacy integration tool alias", async () => {
@@ -392,6 +437,36 @@ describe("integrations/remote-tools", () => {
       error: "authentication_required",
       connectUrl: "/api/auth/github",
     });
+  });
+
+  it("forwards the request project slug when executing a remote integration tool", async () => {
+    setRemoteToolEnv({
+      PROXY_MODE: "1",
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    let projectSlugHeader: string | null = null;
+    const result = await runWithRequestContext(
+      {
+        projectSlug: "request-project",
+        token: "request-token",
+        productionMode: false,
+      },
+      async () =>
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+            return Response.json({ content: [], structuredContent: { ok: true } });
+          },
+          async () => await executeRemoteIntegrationTool("github__list_repos", {}),
+        ),
+    );
+
+    assertEquals(projectSlugHeader, "request-project");
+    assertEquals(result, { ok: true });
   });
 
   it("forwards run and agent context without caller-supplied end-user identity", async () => {
