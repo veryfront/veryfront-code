@@ -56,6 +56,40 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("normalizes schedule health configuration", () => {
+    const definition = schedule({
+      id: "triage-sweep",
+      schedule: "0 */6 * * *",
+      target: { kind: "task", id: "run-triage-sweep" },
+      health: { maxStalenessSeconds: 1_800 },
+    });
+
+    assertEquals(definition.health, { maxStalenessSeconds: 1_800 });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("rejects malformed schedule health configuration", () => {
+    for (
+      const health of [
+        {},
+        { maxStalenessSeconds: 0 },
+        { maxStalenessSeconds: 1.5 },
+        { maxStalenessSeconds: 60, unexpected: true },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          schedule({
+            id: "triage-sweep",
+            schedule: "0 */6 * * *",
+            target: { kind: "task", id: "run-triage-sweep" },
+            health: health as never,
+          }),
+        Error,
+      );
+    }
+  });
+
   it("preserves integration requirements", () => {
     const definition = schedule({
       id: "slack-digest",
@@ -315,6 +349,16 @@ describe("schedule/factory", () => {
   });
 
   it("does not treat malformed integration requirements as schedule definitions", () => {
+    assertEquals(
+      isScheduleDefinition({
+        id: "triage-sweep",
+        schedule: "0 */6 * * *",
+        target: { kind: "task", id: "run-triage-sweep" },
+        health: { maxStalenessSeconds: 0 },
+      }),
+      false,
+    );
+
     assertEquals(
       isScheduleDefinition({
         id: "slack-digest",

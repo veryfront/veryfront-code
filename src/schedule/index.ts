@@ -13,6 +13,7 @@
  *   timezone: "Europe/Stockholm",
  *   target: { kind: "workflow", id: "escalate-ticket" },
  *   input: { severity: "high" },
+ *   health: { maxStalenessSeconds: 1800 },
  * });
  * ```
  */
@@ -22,6 +23,7 @@ export type {
   ScheduleConcurrencyPolicy,
   ScheduleConfig,
   ScheduleDefinition,
+  ScheduleHealth,
   ScheduleIntegrationRequirement,
   ScheduleIntegrationRequirementConfig,
   ScheduleIntegrationResource,
