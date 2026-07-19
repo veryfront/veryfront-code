@@ -2,13 +2,13 @@
 
 > **Category:** Eval export | **Requires:** `EvalReportExporterRegistry` | **Optional**
 
-Registers the `mlflow` eval report exporter. The exporter id is fixed to
-`mlflow` so CLI selection via `VERYFRONT_EVAL_EXPORTERS` / `--export` stays
-predictable. Use this extension when completed Veryfront `EvalReport` payloads
-should be written to MLflow Tracking as one run per eval execution.
+Registers the `mlflow` eval report exporter. Configure `MLFLOW_TRACKING_URI` to
+select it automatically for CLI evals. Use this extension when completed
+Veryfront `EvalReport` payloads should be written to MLflow Tracking as one run
+per eval execution.
 
 > **npm packaging note:** CLI usage is bundled into the root `veryfront`
-> package, so `veryfront eval --export mlflow` works without installing a
+> package, so `veryfront eval` works without installing a
 > separate package. The standalone `@veryfront/ext-eval-report-mlflow` package
 > is intentionally not published until npm trusted publishing is configured for
 > that new package.
@@ -23,28 +23,29 @@ adapter or metric before export. The MLflow exporter only consumes the normalize
 ## Environment-only usage
 
 No `veryfront.config.ts` entry is required for the common CLI path. Set
-`MLFLOW_TRACKING_URI` to activate the first-party extension, then select the
-`mlflow` exporter for the eval run.
+`MLFLOW_TRACKING_URI` and `veryfront eval` automatically exports every
+completed eval report to MLflow.
 
-Select the exporter per command:
+Run every discovered eval:
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
-veryfront eval eval:service-now-classification --export mlflow
+veryfront eval
 ```
 
-Or select it entirely from the environment:
+`--export mlflow` remains available when one command should explicitly select
+the exporter. `VERYFRONT_EVAL_EXPORTERS` is useful in CI when the job should
+make the selection visible or choose a different exporter. Either takes
+precedence over automatic MLflow selection. `VERYFRONT_EVAL_EXPORT` remains a
+legacy singular fallback when `VERYFRONT_EVAL_EXPORTERS` is unset.
+
+For example:
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
 VERYFRONT_EVAL_EXPORTERS=mlflow \
 veryfront eval eval:service-now-classification
 ```
-
-`--export mlflow` is explicit for one CLI invocation. `VERYFRONT_EVAL_EXPORTERS`
-is useful in CI when every eval command in the job should export to the same
-backend. If both are set, the CLI flag wins. `VERYFRONT_EVAL_EXPORT` remains a
-legacy singular fallback when `VERYFRONT_EVAL_EXPORTERS` is unset.
 
 ## Environment variables
 
@@ -58,8 +59,8 @@ legacy singular fallback when `VERYFRONT_EVAL_EXPORTERS` is unset.
 | `MLFLOW_TRACKING_TOKEN`                         | No       | Bearer token sent to MLflow Tracking REST endpoints. Prefer this over embedding credentials in `MLFLOW_TRACKING_URI`.         |
 | `MLFLOW_TRACKING_USERNAME`                      | No       | Username for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_PASSWORD`.                               |
 | `MLFLOW_TRACKING_PASSWORD`                      | No       | Password for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_USERNAME`.                               |
-| `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids selected by the CLI when `--export` is omitted. Use `mlflow` for this extension.  |
-| `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter env var used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                          |
+| `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids that override automatic MLflow selection. Use `mlflow` for this extension.        |
+| `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter override used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                         |
 | `VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE` | No       | CLI redaction opt-in for metric evidence. Leave unset or false unless evidence contains only safe labels or aggregates.       |
 
 `MLFLOW_TRACKING_URI` must be an HTTP(S) URI without embedded username/password

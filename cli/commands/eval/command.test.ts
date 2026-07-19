@@ -9,6 +9,7 @@ import {
   evalAgent,
   type EvalReport,
   evalTool,
+  metrics,
 } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
@@ -61,6 +62,7 @@ const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
 const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
 const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
+const originalMlflowTrackingUri = Deno.env.get("MLFLOW_TRACKING_URI");
 const originalFetch = globalThis.fetch;
 const redactionEnvNames = [
   "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS",
@@ -110,6 +112,12 @@ function restoreEnv(): void {
     Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
   } else {
     Deno.env.set("VERYFRONT_EVAL_EXPORTERS", originalEvalExporters);
+  }
+
+  if (originalMlflowTrackingUri === undefined) {
+    Deno.env.delete("MLFLOW_TRACKING_URI");
+  } else {
+    Deno.env.set("MLFLOW_TRACKING_URI", originalMlflowTrackingUri);
   }
 
   for (const name of redactionEnvNames) {
@@ -320,6 +328,14 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
 
     assertEquals(resolveEvalExporterIds({ exporters: [] }), ["langfuse"]);
+  });
+
+  it("exports to MLflow when its tracking URI is configured", () => {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.example.com");
+
+    assertEquals(resolveEvalExporterIds({ exporters: [] }), ["mlflow"]);
   });
 
   it("keeps eval export redaction safe by default", () => {
@@ -670,6 +686,110 @@ describe("eval CLI command helpers", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(observedPolicies, [sourceIntegrationPolicy]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("runs every discovered eval sequentially and passes example metadata through agent context", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-suite-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-suite-auth-" });
+    const contexts: unknown[] = [];
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async (input: { context?: unknown }) => {
+        contexts.push(input.context);
+        return {
+          text: "expected",
+          messages: [],
+          status: "completed",
+          toolCalls: [],
+        } satisfies AgentResponse;
+      },
+    } as unknown as Agent;
+    const alpha = evalAgent({
+      id: "eval:alpha",
+      target: "agent:fixture",
+      dataset: [{
+        id: "alpha-example",
+        input: "alpha",
+        metadata: { fixtureScenario: "alpha" },
+      }],
+      metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+    });
+    const beta = evalAgent({
+      id: "eval:beta",
+      target: "agent:fixture",
+      dataset: [{
+        id: "beta-example",
+        input: "beta",
+        metadata: { fixtureScenario: "beta" },
+      }],
+      metrics: [metrics.answer.contains({ text: "missing" }).gate()],
+    });
+    alpha.source = { filePath: `${projectDir}/evals/alpha.eval.ts`, exportName: "default" };
+    beta.source = { filePath: `${projectDir}/evals/beta.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(beta.id, beta);
+    runtime.evals.set(alpha.id, alpha);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const exitCode = await runEvalCommand(
+        {
+          list: false,
+          exporters: [],
+          debug: false,
+          candidateModels: [],
+          projectDir,
+          reportDir: `${projectDir}/suite`,
+        },
+        { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+      );
+
+      assertEquals(exitCode, 1);
+      assertEquals(contexts, [
+        {
+          eval: {
+            definitionId: "eval:alpha",
+            exampleId: "alpha-example",
+            repetition: 1,
+            metadata: { fixtureScenario: "alpha" },
+          },
+        },
+        {
+          eval: {
+            definitionId: "eval:beta",
+            exampleId: "beta-example",
+            repetition: 1,
+            metadata: { fixtureScenario: "beta" },
+          },
+        },
+      ]);
+      const summary = JSON.parse(await Deno.readTextFile(`${projectDir}/suite/summary.json`));
+      assertEquals(summary.total, 2);
+      assertEquals(summary.passed, 1);
+      assertEquals(summary.failed, 1);
+      assertEquals(summary.results.map((result: { id: string }) => result.id), [
+        "eval:alpha",
+        "eval:beta",
+      ]);
+      assertEquals(
+        await Deno.stat(`${projectDir}/suite/001-alpha/summary.json`).then(() => true),
+        true,
+      );
+      assertEquals(
+        await Deno.stat(`${projectDir}/suite/002-beta/summary.json`).then(() => true),
+        true,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
