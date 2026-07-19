@@ -59,6 +59,10 @@ export const evalHelp: CommandHelp = {
       description: "Export the report through registered eval exporters",
     },
     {
+      flag: "--require-export",
+      description: "Fail the command when a selected eval export is missing or fails (for CI)",
+    },
+    {
       flag: "--model <provider/model>",
       description: "Override the target agent model",
     },
@@ -94,6 +98,7 @@ export const evalHelp: CommandHelp = {
     "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6",
     "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6 --comparison-policy evals/model-comparison.policy.json",
     "veryfront eval deep-research --export braintrust,langfuse --json",
+    "VERYFRONT_EVAL_EXPORTERS=mlflow VERYFRONT_EVAL_EXPORT_REQUIRED=true veryfront eval",
     "MLFLOW_TRACKING_URI=https://mlflow.example.com veryfront eval",
     "veryfront eval deep-research --json",
   ],

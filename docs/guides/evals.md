@@ -676,6 +676,7 @@ explicitly when CI should make that selection visible in its environment:
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
 VERYFRONT_EVAL_EXPORTERS=mlflow \
+VERYFRONT_EVAL_EXPORT_REQUIRED=true \
 veryfront eval deep-research
 ```
 
@@ -686,7 +687,17 @@ singular `VERYFRONT_EVAL_EXPORT` is used only when
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
-written.
+written. That best-effort behavior is the local default. CI can make a selected
+export a quality gate with `--require-export` or
+`VERYFRONT_EVAL_EXPORT_REQUIRED=true`; artifacts are still written before the
+command exits non-zero.
+
+Remote MLflow endpoints, OAuth token endpoints, artifact proxies, and optional
+run URL templates must use HTTPS. Plain HTTP remains supported only for local
+`localhost` or loopback MLflow development servers. Requests use bounded
+timeouts and retry only safe operations. The exporter does not blindly retry a
+run creation; it recovers a lost create response using the deterministic
+`veryfront.export_id` run tag.
 
 ```bash
 veryfront eval deep-research \

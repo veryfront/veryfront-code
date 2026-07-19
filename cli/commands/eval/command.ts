@@ -167,6 +167,7 @@ type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel
 const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
 const ENV_EVAL_EXPORTERS = "VERYFRONT_EVAL_EXPORTERS";
 const ENV_EVAL_EXPORT = "VERYFRONT_EVAL_EXPORT";
+const ENV_EVAL_EXPORT_REQUIRED = "VERYFRONT_EVAL_EXPORT_REQUIRED";
 const ENV_MLFLOW_TRACKING_URI = "MLFLOW_TRACKING_URI";
 const ENV_EVAL_EXPORT_INCLUDE_INPUTS = "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS";
 const ENV_EVAL_EXPORT_INCLUDE_OUTPUTS = "VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS";
@@ -769,8 +770,13 @@ export function createEvalModelComparisonArtifact(
   return compareEvalModelReports(reports, { ...policy, baselineModel });
 }
 
-export function createEvalModelComparisonExitCode(reports: EvalReport[]): 0 | 1 {
-  return reports.some((report) => report.summary.failed > 0) ? 1 : 0;
+export function createEvalModelComparisonExitCode(
+  reports: EvalReport[],
+  exportRequired = false,
+): 0 | 1 {
+  return reports.some((report) => createEvalExitCode(report, undefined, exportRequired) !== 0)
+    ? 1
+    : 0;
 }
 
 export function createResultsJsonl(report: EvalReport): string {
@@ -1001,8 +1007,11 @@ async function readEvalReport(path: string): Promise<EvalReport> {
 export function createEvalExitCode(
   report: EvalReport,
   baseline?: EvalReportComparison,
+  exportRequired = false,
 ): 0 | 1 {
-  return report.summary.failed === 0 && baseline?.regressed !== true ? 0 : 1;
+  const exportFailed = exportRequired &&
+    (!(report.exports?.length) || report.exports.some((result) => !result.ok));
+  return report.summary.failed === 0 && baseline?.regressed !== true && !exportFailed ? 0 : 1;
 }
 
 function resolveAgentTargetId(target: string): string {
@@ -1339,6 +1348,7 @@ export function createEvalCliExportConfig(
   return {
     registry,
     exporterIds,
+    required: resolveEvalExportRequired(options),
     context: {
       evalId: evalItem.definition.id,
       ...(projectReference ? { projectReference } : {}),
@@ -1394,6 +1404,13 @@ export function resolveEvalExporterIds(options: Pick<EvalOptions, "exporters">):
   if (legacyExporters.length > 0) return uniqueValues(legacyExporters);
 
   return readEvalCliEnv(ENV_MLFLOW_TRACKING_URI) ? ["mlflow"] : [];
+}
+
+export function resolveEvalExportRequired(
+  options: Pick<EvalOptions, "requireExport">,
+): boolean {
+  return options.requireExport === true ||
+    parseEvalExportBooleanEnv(ENV_EVAL_EXPORT_REQUIRED) === true;
 }
 
 function parseEvalExportBooleanEnv(name: string): boolean | undefined {
@@ -1620,7 +1637,10 @@ async function runEvalModelComparison(input: {
     if (input.options.report) cliLogger.info(`Report: ${input.options.report}`);
   }
 
-  return createEvalModelComparisonExitCode(reports);
+  return createEvalModelComparisonExitCode(
+    reports,
+    resolveEvalExportRequired(input.options),
+  );
 }
 
 async function outputEvalNotFound(id: string, evals: DiscoveredEval[]): Promise<1> {
@@ -1741,7 +1761,9 @@ async function runEvalSuite(input: {
       );
       const report = await exportEvalReportForCli(finalizedReport, exportConfig);
       await writeEvalArtifacts(report, evalArtifacts);
-      const status = createEvalExitCode(report) === 0 ? "passed" : "failed";
+      const status = createEvalExitCode(report, undefined, exportConfig?.required) === 0
+        ? "passed"
+        : "failed";
       results.push({
         id: evalItem.id,
         name: evalItem.name,
@@ -1833,6 +1855,12 @@ export async function runEvalCommand(
         cliLogger.info(`  - ${item.id} (${item.target})`);
       }
       return undefined;
+    }
+
+    if (resolveEvalExportRequired(options) && resolveEvalExporterIds(options).length === 0) {
+      return await outputEvalUsageError(
+        "--require-export requires --export <id> or a configured eval exporter.",
+      );
     }
 
     if (!options.id) {
@@ -2023,7 +2051,7 @@ export async function runEvalCommand(
         if (options.writeBaseline) cliLogger.info(`Baseline written: ${options.writeBaseline}`);
       }
 
-      return createEvalExitCode(report, baseline);
+      return createEvalExitCode(report, baseline, exportConfig?.required);
     } finally {
       await extensionSetup.loader.teardownAll();
     }

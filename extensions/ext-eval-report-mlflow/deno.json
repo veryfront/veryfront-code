@@ -31,7 +31,11 @@
           "MLFLOW_OAUTH_CLIENT_ID",
           "MLFLOW_OAUTH_CLIENT_SECRET",
           "MLFLOW_OAUTH_SCOPE",
-          "MLFLOW_EXPORT_ARTIFACTS"
+          "MLFLOW_EXPORT_ARTIFACTS",
+          "MLFLOW_REQUEST_TIMEOUT_MS",
+          "MLFLOW_RETRY_ATTEMPTS",
+          "MLFLOW_RETRY_DELAY_MS",
+          "MLFLOW_RUN_URL_TEMPLATE"
         ]
       }
     ],
