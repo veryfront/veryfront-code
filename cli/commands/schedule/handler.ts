@@ -45,6 +45,37 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       throw new Error(`Schedule "${opts.id}" not found.`);
     }
 
+    const triggerInput = input ?? schedule.input ?? {};
+    const scheduleConfig =
+      triggerInput && typeof triggerInput === "object" && !Array.isArray(triggerInput)
+        ? triggerInput as Record<string, unknown>
+        : {};
+    const scheduleName = schedule.name ?? schedule.id;
+    const scheduleTarget = scheduleConfig._schedule_target;
+    const conversationMode = scheduleTarget && typeof scheduleTarget === "object" &&
+        !Array.isArray(scheduleTarget)
+      ? (scheduleTarget as Record<string, unknown>).conversationMode
+      : undefined;
+    if (schedule.target.kind === "agent" && conversationMode === "existing") {
+      throw new Error(
+        "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+      );
+    }
+
+    const agentRunOptions = schedule.target.kind === "agent"
+      ? {
+        agentInput:
+          typeof scheduleConfig.prompt === "string" && scheduleConfig.prompt.trim().length > 0
+            ? scheduleConfig.prompt
+            : `Run scheduled agent ${schedule.target.id} for ${scheduleName}`,
+        agentContext: {
+          trigger: "schedule",
+          schedule: { id: schedule.id, name: scheduleName },
+          forwardedProps: scheduleConfig,
+        },
+      }
+      : {};
+
     const run = await runTriggerTarget({
       projectDir,
       adapter,
@@ -52,7 +83,8 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       cacheKey: configCacheKey,
       projectId,
       target: schedule.target,
-      input: input ?? schedule.input ?? {},
+      input: triggerInput,
+      ...agentRunOptions,
       debug: opts.debug,
     });
 
