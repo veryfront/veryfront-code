@@ -10,6 +10,7 @@ import {
 import type { Skill } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
+import { LocalScriptExecutor } from "./executor.ts";
 
 function createTestSkill(fsAdapter: FileSystemAdapter): Skill {
   return {
@@ -310,7 +311,9 @@ Do work.`,
         rootPath: skillRoot,
       });
 
-      const tool = createExecuteSkillScriptTool();
+      const tool = createExecuteSkillScriptTool({
+        executor: new LocalScriptExecutor(),
+      });
       const result = await tool.execute({
         skillId: "my-skill",
         script: "scripts/echo-style.sh",
