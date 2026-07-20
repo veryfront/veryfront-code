@@ -10,6 +10,15 @@ A pending-upload chip for the composer — one per attachment, with thumbnail, l
 import { AttachmentPill } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#attachmentpillroot--changed) — `changed`: lifecycle surfaces as `data-upload-state` / `data-error`
+- [`.Thumbnail`](#attachmentpillthumbnail--changed) — `changed`: wrapper `<div>` + `<img>` → one `<img>` (TBD)
+- [`.Icon`](#attachmentpillicon--changed) — `changed`: `<div>` → `<span>` (TBD)
+- [`.Label`](#attachmentpilllabel--changed) — `changed`: `<div>` → `<span>` (TBD)
+- [`.Retry`](#attachmentpillretry--changed) — `changed`: `icon` prop removed
+- [`.Remove`](#attachmentpillremove--changed) — `changed`: `icon` prop removed
+
 ## Anatomy
 
 `AttachmentPill.Root` renders one `<div>` and provides per-attachment context. It is **render-or-compose** (already true in today's implementation): childless, it renders the default row card; any children replace the default anatomy entirely. `<AttachmentPill>` is shorthand for `<AttachmentPill.Root>`.
@@ -85,7 +94,9 @@ Key mechanics: the parts are **in-flow flex children in DOM order** — square l
 
 Each part renders exactly one node, `extends` its native attributes, and takes `asChild` *(proposed — today the sub-parts accept only `className`, plus `icon` on `.Retry`/`.Remove`, which the proposal **removes** in favor of children)*.
 
-### `AttachmentPill.Root`
+### `AttachmentPill.Root` — `changed`
+
+**Changed:** the upload lifecycle — today baked into classes — surfaces as `data-upload-state` / `data-error`.
 
 The chip container — one `<div>` — plus the per-attachment context (`useAttachmentPill`). Childless, it renders the default row card: `Thumbnail`-or-`Icon` → `Label` → `Retry` → `Remove`; any children replace that anatomy entirely (no half-hidden chrome).
 
@@ -103,7 +114,7 @@ The chip container — one `<div>` — plus the per-attachment context (`useAtta
 
 **State attributes (proposed):** `data-upload-state="idle|uploading|processing|error|done"` · `data-error`. Today the lifecycle is expressed only through baked-in classes (dashed border for `selected`, destructive tint for `error`, shimmer while busy); the RFC surfaces it as `data-*`. **Note a vocabulary mismatch to resolve:** the source `AttachmentState` is `'selected' | 'uploading' | 'processing' | 'uploaded' | 'error'`, while the proposed attribute uses `idle`/`done` — presumably `selected → idle`, `uploaded → done`, but the mapping is TBD. The legacy two-value `status: 'uploading' | 'ready'` field (and its 70%-opacity dimming) is expected to be dropped — TBD.
 
-### `AttachmentPill.Thumbnail`
+### `AttachmentPill.Thumbnail` — `changed`
 
 The image square. Today it renders a `<div>` wrapper (`relative overflow-hidden`, rounded, `bg tertiary`) containing an `<img alt="" class="size-full object-cover">` plus, while busy, an `absolute inset-0` spinner overlay; the proposed parts table lists it as one `<img>` — reconciling the wrapper-vs-single-node shape (the overlay needs the wrapper) is TBD.
 
@@ -115,7 +126,7 @@ The image square. Today it renders a `<div>` wrapper (`relative overflow-hidden`
 | --- | --- | --- |
 | `asChild` *(proposed)* + native + `ref` | | Today accepts only `className`. |
 
-### `AttachmentPill.Icon`
+### `AttachmentPill.Icon` — `changed`
 
 The non-image square — a state glyph or file-type badge. Today one `<div>` (proposed parts table says `<span>` — TBD). Default content, in priority order: the **state glyph** when a lifecycle `state` is set (`selected` → clock, `uploading` → spinner, `processing` → file icon, `uploaded` → check, `error` → alert glyph), else the **uppercase file extension** (colored by type: pdf red, docx blue, csv emerald, md/mdx purple, txt neutral), else `"file"`. Error state swaps to a destructive-tinted box. **Always renders** (the default anatomy shows it only when `.Thumbnail` doesn't apply). Children *(proposed)* replace the glyph/badge.
 
@@ -125,7 +136,7 @@ The non-image square — a state glyph or file-type badge. Today one `<div>` (pr
 | --- | --- | --- |
 | `asChild` *(proposed)* + native + `ref` | | Today accepts only `className`. |
 
-### `AttachmentPill.Label`
+### `AttachmentPill.Label` — `changed`
 
 The two-line text column. Today one `<div>` (proposed parts table says `<span>` — TBD). Default content: line 1 = the file name (`attachment.name`, falling back to `"Attachment"`), shimmering while uploading/processing; line 2 = the state line — `"Ready to upload"` (selected) · `"Uploading · N%"` (with `progress`) · `"Processing document"` · `"Uploaded · 1.2 MB"` · `"Upload failed. Try again."` (error, destructive color) · else the file size or uppercase extension. Both lines truncate. **Always renders.**
 
@@ -135,7 +146,9 @@ The two-line text column. Today one `<div>` (proposed parts table says `<span>` 
 | --- | --- | --- |
 | `asChild` *(proposed)* + native + `ref` | | Today accepts only `className`; children *(proposed)* replace both lines (use `useAttachmentPill()`). |
 
-### `AttachmentPill.Retry`
+### `AttachmentPill.Retry` — `changed`
+
+**Changed:** the `icon` prop is removed — children replace the default glyph.
 
 The retry control — one `<button>`, `aria-label="Retry {name}"`. Default content: refresh icon. Retries a failed upload; errors surface per-attachment, not as a global throw. **Renders `null` unless the state is `error` *and* a retry handler is available** — safe to include unconditionally.
 
@@ -146,7 +159,9 @@ The retry control — one `<button>`, `aria-label="Retry {name}"`. Default conte
 | `asChild` *(proposed)* + native + `ref` | | Children replace the default icon. |
 | `icon` *(removed)* | `React.ReactNode` | Replaced by children. |
 
-### `AttachmentPill.Remove`
+### `AttachmentPill.Remove` — `changed`
+
+**Changed:** the `icon` prop is removed — children replace the default glyph.
 
 The remove (✕) control — one `<button>`, `aria-label="Remove {name}"`. Default content: X glyph. Removes the attachment from the pending set. **Renders `null` when no remove handler is available** (today also during a legacy `status="uploading"`).
 

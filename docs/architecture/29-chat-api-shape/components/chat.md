@@ -10,6 +10,17 @@ The L1 preset — a batteries-included chat surface built entirely from the publ
 import { Chat } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#chatroot--changed) — `changed`: container `<div>` deleted — zero nodes
+- [`.MessageList`](#chatmessagelist--changed) — `changed`: scroll state surfaces as imperative `data-*`
+- [`.Input`](#chatinput--changed) — `changed`: hidden centering div deleted — one `<form>`
+- [`.Empty`](#chatempty--changed) — `changed`: `icon`/content props → agent-derived defaults + composition
+- [`.Skeleton`](#chatskeleton--kept) — `kept`
+- [`.If`](#chatif--changed) — `changed`: `condition` → `test` selector; raw-boolean form dropped
+- [`.Message`](#chatmessage--changed) — `changed`: `<div>` → `<article>`; row state as `data-*`
+- [`.ErrorBanner`](#chaterrorbanner--changed) — `changed`: `error` optional with context fallback; `icon`/`retryLabel` removed
+
 ## Anatomy
 
 `<Chat>` with no children renders the full default composition below. Pass `children` to recompose using the compound parts (kept from today: `.Root .MessageList .Input .Empty .Skeleton .If .Message .ErrorBanner`):
@@ -189,7 +200,7 @@ Every today-only prop, with its replacement — this is the ledger a reviewer sh
 
 Every part is one node + `asChild` + `extends HTMLAttributes` + composed `ref` (the whole contract), except where noted. Each part is the same component as its standalone export — never a parallel implementation.
 
-### `Chat.Root`
+### `Chat.Root` — `changed`
 
 The scoped session provider (= [`ChatRoot`](./chat-root.md)). **Renders no node by default** (RFC — today it renders the container `<div>`; see that page's ledger). All session state enters here; every other part reads it from context.
 
@@ -203,7 +214,9 @@ The scoped session provider (= [`ChatRoot`](./chat-root.md)). **Renders no node 
 
 **State attributes (proposed):** `data-status="ready|submitted|streaming|error"` — only on a DOM node when `asChild` provides one.
 
-### `Chat.MessageList`
+### `Chat.MessageList` — `changed`
+
+**Changed:** scroll state surfaces as imperative `data-*` attributes (see below); full ledger on [`ChatMessageList`](./chat-message-list.md).
 
 The transcript (= [`ChatMessageList`](./chat-message-list.md)). One scroll container `<div>`; default content = `.Content` (the centered `role="log"` column mapping one [`Chat.Message`](./message.md) per turn) + `.ScrollButton`.
 
@@ -217,7 +230,7 @@ The transcript (= [`ChatMessageList`](./chat-message-list.md)). One scroll conta
 
 **State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` (imperative — no re-render per scroll tick) · `data-loading` · `data-empty`.
 
-### `Chat.Input`
+### `Chat.Input` — `changed`
 
 The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped context — the current hidden `max-w-[850px]` centering div is deleted; in the pasted composition that layout div is yours. Default content: `.Field` textarea + toolbar with `.Attach` / `.Model` / `.Submit` (Send↔Stop morph; `.Stop`/`.Send`/`.Voice` self-gate to `null` by state today).
 
@@ -230,7 +243,9 @@ The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped conte
 
 **State attributes (proposed):** `data-status` · `data-dragging` · `data-compact`.
 
-### `Chat.Empty`
+### `Chat.Empty` — `changed`
+
+**Changed:** today's `icon` / `title` / `description` / `suggestions` / `onSuggestion*` / `quickActions` props give way to agent-derived defaults and `ChatEmptyState.*` composition.
 
 The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`. Default content: agent `Avatar` (64px, image or initial) → `<h2>` heading (agent name; today's fallback string `"What can I help with?"`) → optional description `<p>` → suggestion chip row (typed `{ label, prompt }[]` via `getAgentPromptSuggestionItems`, #2978 — selection hands back the *item*). **Renders only on an empty, resolved thread** (via `Chat.If` in the composition).
 
@@ -242,7 +257,7 @@ The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`.
 
 Today's `icon?: ReactNode` prop falls to the **icon-slot ban** — compose `ChatEmptyState.Avatar` / children instead. Today's `title`/`description`/`suggestions`/`onSuggestion*`/`quickActions` props: derived from agent metadata in the default; compose `ChatEmptyState.*` for custom content.
 
-### `Chat.Skeleton`
+### `Chat.Skeleton` — `kept`
 
 The loading placeholder. One `<output aria-busy="true">` node. Default content: alternating skeleton rows in the same `max-w-[850px]` column as the real list — right-aligned user bubbles (`self-end`) and assistant rows (avatar circle + name bar + text lines) — plus a visually-hidden "Loading messages..." for assistive tech. Rendered while the thread's history or agent metadata is still loading (so the hero never flashes first).
 
@@ -252,7 +267,9 @@ The loading placeholder. One `<output aria-busy="true">` node. Default content: 
 | --- | --- | --- |
 | `asChild` + native + `ref` | | Own the node; children replace the default rows *(today: `className` only — the convention row is the proposed reshape)* |
 
-### `Chat.If`
+### `Chat.If` — `changed`
+
+**Changed:** today's `condition: boolean | fn` prop becomes the required `test` selector — the raw-boolean form is dropped.
 
 The selector conditional — **renders no node**; renders `children` when the selector passes, else `fallback`.
 
@@ -265,7 +282,7 @@ The selector conditional — **renders no node**; renders `children` when the se
 
 Outside a `Chat.Root`, the selector cannot run — today the part renders `fallback` (`null`) in that case.
 
-### `Chat.Message`
+### `Chat.Message` — `changed`
 
 One message row (= [`Message`](./message.md)). One **`<article>`** (today: a `<div>`) + scoped `MessageContext`. Default content: avatar/header, then parts in order (text as `Markdown`, reasoning, tool calls, sources), then hover-revealed actions. Session callbacks (`editMessage`, `reload`) come from `ChatRoot` context — never re-threaded per message.
 
@@ -278,7 +295,9 @@ One message row (= [`Message`](./message.md)). One **`<article>`** (today: a `<d
 
 **State attributes (proposed):** `data-role` · `data-agent-id` · `data-streaming` · `data-editing` · `data-error`.
 
-### `Chat.ErrorBanner`
+### `Chat.ErrorBanner` — `changed`
+
+**Changed:** `error` becomes optional (falling back to the session error from context); the `icon` and `retryLabel` props are removed.
 
 Session error display. Default content today: a centered wrapper (`max-w-2xl mx-auto`) holding a `ui` `Alert` (`variant="error"`, `role="alert"` per the a11y contract) with the error message and, when a retry handler exists, a link-style **Retry** button wired to `reload`. **Renders `null` while the session has no error** — safe to include unconditionally.
 

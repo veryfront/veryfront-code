@@ -86,6 +86,18 @@ hooks"; it's "never render an element the consumer can't supply themselves."
    first, `preventDefault` cancels internal), classes merge Tailwind-aware
    (consumer wins), refs compose, getters take overrides. See *Merge semantics* —
    normative, conformance-tested.
+10. **Default-render parity: the styling is already right — keep it.** The
+   reshape moves *ownership* of nodes; it does not redesign them. For every
+   component, the childless/L1 default render must produce the **identical DOM
+   tree and classes as today** — zero layout regressions. Wrappers deleted from
+   a primitive (e.g. `ChatInput`'s internal centering div, `ChatRoot`'s
+   container) reappear as explicit markup in the printed default composition,
+   so pixels never change. The only DOM deltas permitted are the ones
+   explicitly badged `changed` in the docs with a stated reason (currently:
+   `ChatMessageList`'s two-node root collapse, `StepIndicator`'s `<ol>/<li>`
+   restructure, `Message.Tokens`' popover trim) — each is a review item, not a
+   side effect. The conformance harness pins this with default-render DOM
+   snapshots.
 
 ---
 
@@ -220,6 +232,39 @@ assistant-ui viewport):
   form (context-sensitive, assistant-ui model); `Message.Root` gets
   `data-editing`; nearest provider wins — the explicit nested-context rule.
 - **Context precedence everywhere:** explicit prop > nearest context > default.
+- **Readiness flows into chat context:** `ChatContextValue` includes `ready:
+  boolean` — `ChatRoot` reads `activeReady` from the nearest
+  `ConversationsProvider` (standalone: `true`). `Chat.If` selectors and the
+  default composition gate skeletons on it; consumers never re-derive it.
+- **The edit mechanism, concretely:** `useChatInput` reads
+  `useMessageContextOptional()`. Inside a message with `isEditing`, it seeds
+  `value` from `textContent`, routes submit to `editMessage(message.id, value)`
+  instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra props —
+  nesting *is* the wiring.
+- **Scroll attachment + button anchoring:** `useChatScroll` returns
+  `viewportRef` (and `getViewportProps(overrides?)`) — attach either to your
+  scroller. `ChatMessageList.ScrollButton` anchors via `position: sticky` at
+  the viewport's bottom edge (no wrapper node, no portal) — proposed
+  resolution, review welcome.
+- **`useReasoning` gets an explicit-input form** — `useReasoning({ text,
+  isStreaming }?)` — so the L3 eject works without a `Reasoning.Root`
+  (mirrors `useToolCall(part?)` / `useSources(message?)`).
+- **`StepIndicator` model:** per-boundary context reader — `useStepIndicator()`
+  → `{ stepIndex, state: 'pending' | 'active' | 'complete' }`, steps derived
+  from `step-start` parts; `active` = the latest boundary while the message
+  streams. One shape, both docs pages.
+- **Audit-settled details:** `AttachmentPill.Root` takes `upload?:
+  UseUploadResult`, defaulting to the nearest `ChatInput` context's upload —
+  that's how `.Retry`/`.Remove` route without handler props. `ChatSidebar`
+  gains `.Item.Menu.Trigger` (the icon-slot replacement). `Sources.Root` drops
+  `data-open` (it has no disclosure). Childless `<Message.Parts/>` renders the
+  default per-type mapping (registry-aware) — the public default for
+  `.Content`. One conversation type: `Conversation` (no `ConversationSummary`).
+  Optional context hooks return `null` (never `undefined`), library-wide.
+  `Message.Tokens` popover trim is settled: it becomes a display-only `<span>`
+  (breakdown popover falls to the popper open question). `formatSize` joins the
+  public helpers. The canonical DOM-delta ledger is the docs pages' `changed`/
+  `new` badges — rule 10's inline list is illustrative, not exhaustive.
 
 ---
 
@@ -245,7 +290,7 @@ const parts = useMessageParts(message)         // typed part list
 const tool = useToolCall(part)                 // expanded state, input/output/error
 const sources = useSources(message)            // citation list
 const attachments = useAttachments({ url })    // durable files
-const picker = useAgentPicker({ agents })      // open state, selection, search
+const picker = useAgentPicker()                // context reader: open, query, options, select
 const list = useConversations()                // conversations, active, select/create/rename/remove
 
 // You render the DOM:
@@ -914,6 +959,13 @@ surface.
 
 - **`data-*` contract and prop-getter surface**: resolved — see *Cross-cutting
   contracts*.
+- **Every sub-part is a real named export + namespace alias** (generalizes
+  #2976): `export function ChatInputField(props: ChatInputFieldProps)` *and*
+  `ChatInput.Field = ChatInputField` — same function, two access styles. Every
+  `XxxProps` interface is exported. Flat names follow the AI Elements
+  convention (`ChatInputField` ~ `PromptInputTextarea`). Why: tree-shaking
+  (namespace-only compounds drag all parts into the bundle), typed wrapping in
+  consumer design systems, and no more "reachable only via the compound" leaves.
 - **One implementation per feature — `Message.*` is canonical.** The standalone
   `MessageActionBar` / `BranchPicker` / `Sources` / `Reasoning` names are the same
   components (namespace re-exports for use outside a `Message`), never parallel

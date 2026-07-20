@@ -10,6 +10,15 @@ A disclosure for one tool invocation — input, output, and the full lifecycle i
 import { ToolCall } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#toolcallroot--changed) — `changed`: `tool` → `part` rename; `icon` deleted; `data-state` approval lifecycle; auto-open on completion
+- [`.Trigger`](#toolcalltrigger--changed) — `changed`: `icon` deleted — children replace the default content
+- [`.Body`](#toolcallbody--kept) — `kept`
+- [`.Input`](#toolcallinput--changed) — `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
+- [`.Output`](#toolcalloutput--changed) — `changed`: becomes `Markdown`/`RichCodeBlock`-backed
+- [`.Error`](#toolcallerror--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -71,7 +80,9 @@ Compact variant (`variant="compact"`, default for skill tools) renders a single 
 
 ## Parts
 
-### `ToolCall.Root`
+### `ToolCall.Root` — `changed`
+
+Changed: today's `tool` prop is renamed `part`, the `icon` prop is deleted, the full lifecycle (including the approval states) surfaces as `data-state`, and `data-open` auto-opens on completion (today: collapsed by default, auto-open on error only).
 
 The card container (one `<div>`, bordered, rounded) + the compound's scoped context. The tool part enters here; sub-parts read it from context.
 
@@ -100,7 +111,9 @@ The card container (one `<div>`, bordered, rounded) + the compound's scoped cont
 [data-state='output-error'] { border-color: var(--danger); }
 ```
 
-### `ToolCall.Trigger`
+### `ToolCall.Trigger` — `changed`
+
+Changed: the `icon` prop is deleted — pass children to replace the default icon/name/badge content.
 
 One full-width `<button>`. Default content: wrench icon → tool name (`truncate`, from `part.toolName`) → status badge (a pill with per-state icon + label: pulsing clock while running, green check when completed, yellow clock awaiting approval, red X on error, orange X when denied) → chevron pushed right, rotating 180° when open. Always renders.
 
@@ -111,7 +124,7 @@ One full-width `<button>`. Default content: wrench icon → tool name (`truncate
 | ~~`icon`~~ | `ReactNode` | **Removed** (today overrides the leading wrench icon). Pass children to replace the default icon/name/badge content. |
 | `asChild` + native (`ButtonHTMLAttributes`, `ref`) | | Own the node; `data-open` *(proposed)* mirrors the root. |
 
-### `ToolCall.Body`
+### `ToolCall.Body` — `kept`
 
 One `<div>` (top border, padded). Default content: `Input` → `Output` → `Error`. **Renders `null` while the disclosure is collapsed** — safe to include unconditionally.
 
@@ -121,7 +134,9 @@ One `<div>` (top border, padded). Default content: `Input` → `Output` → `Err
 | --- | --- | --- |
 | `asChild` + native + `ref` | | Own the node; children replace the default `Input`/`Output`/`Error` stack. |
 
-### `ToolCall.Input`
+### `ToolCall.Input` — `changed`
+
+Changed: today's bespoke regex-highlighted `<pre>` moves onto `RichCodeBlock`, so the markdown `components` override map reaches it.
 
 The "Parameters" block: a muted `Parameters` heading + the tool input as syntax-highlighted JSON (keys green, strings amber, numbers blue, booleans purple; HTML-escaped first) on a secondary surface. **Renders `null` when `part.input === undefined`.** While `data-state="input-streaming"`, the input is the partial object streamed so far.
 
@@ -134,7 +149,9 @@ The "Parameters" block: a muted `Parameters` heading + the tool input as syntax-
 
 **Proposed:** the JSON rendering moves onto `RichCodeBlock`, so it falls under the markdown exception — the `Markdown` `components={{ code, … }}` override map reaches it. Today it is a bespoke `<pre>` with regex highlighting.
 
-### `ToolCall.Output`
+### `ToolCall.Output` — `changed`
+
+Changed: the value rendering becomes `Markdown`/`RichCodeBlock`-backed — the same markdown exception as `.Input`, every emitted element replaceable via the `components` map.
 
 The "Result" block: a muted `Result` heading + the output. Default rendering: an array of uniform objects becomes an auto `<table>` (title-cased column headers from the first row's keys); anything else renders as syntax-highlighted JSON. **Renders `null` when `part.output` is `undefined` or `null`.**
 
@@ -147,7 +164,7 @@ The "Result" block: a muted `Result` heading + the output. Default rendering: an
 
 **Proposed:** `Markdown`/`RichCodeBlock`-backed, same markdown exception as `.Input` — every emitted element stays replaceable via the `components` map.
 
-### `ToolCall.Error`
+### `ToolCall.Error` — `kept`
 
 One `<div>` wrapping an error-variant `Alert` (X-circle icon + `part.errorText`). **Renders `null` unless the part carries `errorText`.**
 

@@ -107,7 +107,7 @@ function MyChatInput() {
 }
 ```
 
-Editing reuses the same hook: a `ChatInput` rendered inside a `Message` *is* the edit form — nearest provider wins.
+Editing reuses the same hook, with a concrete mechanism: `useChatInput` reads `useMessageContextOptional()`. Inside a message whose context has `isEditing`, it seeds `value` from the message's `textContent`, routes submit to `editMessage(message.id, value)` instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra options — nesting *is* the wiring, which is why a `ChatInput` rendered inside a `Message` *is* the edit form (nearest provider wins).
 
 ## Used by
 

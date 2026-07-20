@@ -12,6 +12,12 @@ The citation list for a message, extracted from its source parts. Render it whol
 import { Sources } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#sourcesroot--changed) — `changed`: `renderItem` deleted; null-when-empty vs `data-empty` TBD
+- [`.List`](#sourceslist--changed) — `changed`: `<div>` → `<ul>`; `renderItem` deleted
+- [`.Pill`](#sourcespill--changed) — `changed`: `<button>` → `<a>`
+
 ## Anatomy
 
 ```tsx
@@ -65,7 +71,9 @@ The only absolutely-positioned element is the hover preview: `bottom-full left-0
 
 ## Parts
 
-### `Sources.Root`
+### `Sources.Root` — `changed`
+
+Changed: `renderItem` is deleted (compose `Sources.Pill` children instead), and today's render-`null`-when-empty vs the proposed `data-empty` node is TBD.
 
 The container (one `<div>`) + the compound's scoped context. The source list enters here; sub-parts read it from context.
 
@@ -92,7 +100,7 @@ The container (one `<div>`) + the compound's scoped context. The source list ent
 [data-empty] { display: none; }
 ```
 
-### `Sources.List`
+### `Sources.List` — `changed`
 
 The row itself. Today a `<div>`; **proposed `<ul>`**. Default content: one `Sources.Pill` per source (keyed `title-index`), each wired to the root's `onSourceClick`. Always renders when the root does.
 
@@ -104,7 +112,7 @@ The row itself. Today a `<div>`; **proposed `<ul>`**. Default content: one `Sour
 | ~~`renderItem`~~ | `({ item, index }) => ReactNode` | **Removed** — same rule as on the root. |
 | `asChild` + native + `ref` *(proposed)* | | Own the node. |
 
-### `Sources.Pill`
+### `Sources.Pill` — `changed`
 
 One source chip. Today a `<button>` inside a `relative` `<span>` wrapper; **proposed `<a>`** (a source with a `url` is a link — display-only leaf, no prop getter needed). Default content: a 16px numbered circle (`index + 1`) → the title truncated at 150px → a 6px score dot when `score` is present (emerald ≥ 0.7, amber ≥ 0.4, neutral below). Hovering reveals a preview card above the pill showing the snippet (3-line clamp) — **only when `snippet` exists**; no preview otherwise.
 

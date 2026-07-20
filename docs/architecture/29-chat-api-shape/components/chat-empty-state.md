@@ -10,6 +10,14 @@ The zero-messages view: hero agent avatar, heading, and a wrapping row of typed 
 import { ChatEmptyState, getAgentPromptSuggestionItems } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#chatemptystateroot--kept) — `kept`
+- [`.Avatar`](#chatemptystateavatar--changed) — `changed`: `isCreating` styling boolean → `data-creating` candidate (TBD)
+- [`.Heading`](#chatemptystateheading--changed) — `changed?`: keep-or-drop of `level` under `asChild` is TBD
+- [`.Suggestions`](#chatemptystatesuggestions--changed) — `changed`: `data-empty` state attribute added
+- [`.Suggestion`](#chatemptystatesuggestion--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -54,7 +62,7 @@ Conditional presence: the `<img>`/initial swap on `.Avatar` is runtime (image lo
 
 ## Parts
 
-### `ChatEmptyState.Root`
+### `ChatEmptyState.Root` — `kept`
 
 The container — one `<div>`. Already on the node contract today: `extends React.HTMLAttributes<HTMLDivElement>`, spreads `{...props}`, `ref` prop, `className` merges. **Layout: in-flow vertical flex column (`flex flex-1 flex-col`), children centered on both axes with `gap-3.5`; `flex-1` makes it fill a flex parent (the transcript area).**
 
@@ -63,7 +71,9 @@ The container — one `<div>`. Already on the node contract today: `extends Reac
 | `children` | `ReactNode` | The parts, in your order |
 | `asChild` *(proposed)* + native + `ref` | `HTMLAttributes<HTMLDivElement>` | Native spread and `ref` exist today; `asChild` is the proposed addition |
 
-### `ChatEmptyState.Avatar`
+### `ChatEmptyState.Avatar` — `changed`
+
+*Changed: the `isCreating` styling boolean is proposed to become `data-creating` (TBD in the RFC); everything else is as today.*
 
 The hero avatar — renders the shared `ui` `Avatar` (one `<div>` circle containing either the image or a single-initial `<span>`), sized 64px in `muted` tone. **Layout: in-flow `shrink-0` circle (`size-16`), a flex child of the Root column.** Default content: the agent's image when `src` resolves, otherwise the first initial of `alt` (container-query scaled to fill). Never null-renders — no `src` just means the initial.
 
@@ -74,7 +84,9 @@ The hero avatar — renders the shared `ui` `Avatar` (one `<div>` circle contain
 | `isCreating` | `boolean` | — | Pulses the avatar while the agent is being provisioned. *Proposed:* a styling boolean — candidate for `data-*` under rule 7 (`data-creating`), **TBD** in the RFC |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` (no `children`) | | Spread onto the Avatar node today; `asChild` proposed |
 
-### `ChatEmptyState.Heading`
+### `ChatEmptyState.Heading` — `changed?`
+
+*Changed?: whether `asChild` replaces the `level` prop (keep or drop) is TBD in the RFC; otherwise as today.*
 
 The title — one heading element, `<h2>` by default. **Layout: in-flow centered text block (`text-center text-balance`), a flex child of the Root column.** Default content: none — children are the text (typically the agent name).
 
@@ -84,7 +96,9 @@ The title — one heading element, `<h2>` by default. **Layout: in-flow centered
 | `children` | `ReactNode` | — | The heading text |
 | + native + `ref` | `HTMLAttributes<HTMLHeadingElement>` | | Spread today; `asChild` proposed |
 
-### `ChatEmptyState.Suggestions`
+### `ChatEmptyState.Suggestions` — `changed`
+
+*Changed: a `data-empty` state attribute is added (proposed); today emptiness is just rendering no children.*
 
 The chip container — one `<div role="group">`. **Layout: in-flow wrapping row (`flex flex-wrap justify-center gap-2`), pushed off the heading with `mt-4`; chips reflow onto multiple centered lines.** Default content: none — you map suggestion items onto `.Suggestion` children.
 
@@ -96,7 +110,7 @@ The chip container — one `<div role="group">`. **Layout: in-flow wrapping row 
 
 **State attributes (proposed):** `data-empty` — zero suggestion items (global list-container vocabulary). Today emptiness is simply "you rendered no children".
 
-### `ChatEmptyState.Suggestion`
+### `ChatEmptyState.Suggestion` — `kept`
 
 One prompt chip — one `<button>` (a `ui` Button, locked to `variant="tertiary"`, `size="sm"`, `h-9 px-3.5`). **Layout: in-flow flex-row chip inside the wrapping Suggestions row.** Default content: none — children are the label. Click behavior is yours (`onClick` → send the item's `prompt`).
 

@@ -14,6 +14,14 @@ import { MessageActionBar } from 'veryfront/chat'
 import { Message } from 'veryfront/chat' // Message.Actions, Message.CopyAction, …
 ```
 
+## Parts index
+
+- [`.Actions`](#messageactions--changed) — `changed`: `content` / handler props deleted; baked hover-reveal → `data-floating`
+- [`.CopyAction`](#messagecopyaction--changed) — `changed`: `icon` deleted; composed `onClick`; `data-copied`
+- [`.RegenerateAction`](#messageregenerateaction--changed) — `changed`: same leaf deltas as `.CopyAction`
+- [`.EditAction`](#messageeditaction--changed) — `changed`: immediate `editMessage` → edit mode (`startEdit`)
+- [`.Copied`](#deleted-parts) — `removed`: folded into `.CopyAction`'s `data-copied`
+
 ## Anatomy
 
 Each part renders one node, `extends` its native attributes, spreads `{...props}`, and takes `asChild`. A leaf renders its default icon when childless; pass children to replace it (no `icon` props).
@@ -54,7 +62,9 @@ In the `<Message>` childless default, this bar sits inside a footer layout div (
 
 ## Parts
 
-### `Message.Actions`
+### `Message.Actions` — `changed`
+
+Changed: today's context-free root props (`content`, `onCopy(e, next)`, `onEdit`, `onRegenerate`) are deleted — context supplies them — and the baked hover-reveal classes become `data-floating`.
 
 The bar container — one `<div>` + nothing else (the buttons read message context directly; there is no bar-scoped context).
 
@@ -70,7 +80,9 @@ Default content: `Message.CopyAction` + `Message.RegenerateAction`. **Renders `n
 
 **State attributes (proposed):** `data-floating` — hidden-but-animatable.
 
-### `Message.CopyAction`
+### `Message.CopyAction` — `changed`
+
+Changed: the `icon` prop is deleted (children replace the icon), today's `onClick(event, next)` wrap signature becomes a composed `onClick`, and copied feedback surfaces as `data-copied`.
 
 One `<button>`. Default content: copy icon (`size-3.5`), swapping to a check while copied; `aria-label`/`title` `"Copy to clipboard"` / `"Copied!"`. Copies the message's flat `textContent` via `useClipboard`. **Renders `null` when there is no text content.**
 
@@ -85,13 +97,17 @@ One `<button>`. Default content: copy icon (`size-3.5`), swapping to a check whi
 
 **State attributes (proposed):** `data-copied` — transient copied feedback (today expressed only by the icon/label swap).
 
-### `Message.RegenerateAction`
+### `Message.RegenerateAction` — `changed`
+
+Changed: same leaf deltas as `.CopyAction` — `icon` deleted, composed `onClick`.
 
 One `<button>`. Default content: refresh icon; `aria-label`/`title` `"Regenerate response"`. **Renders `null` unless regeneration is available** — assistant turns only, and only when `reload` exists on the nearest `ChatRoot` context (today: `onReload` gated `role !== 'user'`). Same props table as `.CopyAction` (children replace icon, composed `onClick`, `asChild`, native + `ref`).
 
 **Layout:** in-flow fixed `size-7` round icon button.
 
-### `Message.EditAction`
+### `Message.EditAction` — `changed`
+
+Changed: today it calls `editMessage(id, textContent)` immediately; proposed it enters edit mode (`startEdit`) with a nested `ChatInput` as the edit form.
 
 One `<button>`. Default content: pencil icon; `aria-label`/`title` `"Edit message"`. **Renders `null` when editing is unavailable or there is no text content.** Same props table as `.CopyAction`. **Semantics change (proposed):** today it calls `editMessage(id, textContent)` immediately; proposed it enters edit mode (`startEdit`) — `Message.Root` gets `data-editing` and a `ChatInput` rendered inside the message *is* the edit form.
 

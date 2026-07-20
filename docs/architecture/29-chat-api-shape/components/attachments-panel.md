@@ -12,6 +12,21 @@ A compound component for browsing and managing durable uploaded files, with the 
 import { AttachmentsPanel } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#attachmentspanelroot--changed) — `changed`: `loading` boolean → `data-loading` / `data-empty`; `uploads` defaults from `useAttachments`
+- [`.Header`](#attachmentspanelheader--changed) — `changed`: `<div>` → `<header>`
+- [`.List`](#attachmentspanellist--changed) — `changed`: `<div>` → `<ul>`
+- [`.Item`](#attachmentspanelitem--changed) — `changed`: pill `<div>` → `<li>`; `data-upload-state` / `data-active` / `data-error` proposed
+- [`.Item.Icon`](#attachmentspanelitemicon--changed) — `changed`: `<div>` → `<span>`
+- [`.Item.Preview`](#attachmentspanelitempreview--changed) — `changed`: wrapper square → one `<img>`
+- [`.Item.Name`](#attachmentspanelitemname-proposed--2975--new) — `new`: no source today (#2975)
+- [`.Item.Size`](#attachmentspanelitemsize-proposed--2975--new) — `new`: no source today (#2975)
+- [`.Item.Remove`](#attachmentspanelitemremove--changed) — `changed`: `icon` prop deleted
+- [`.Loading`](#attachmentspanelloading--changed) — `changed`: self-gates on fetch state (today Root-gated)
+- [`.Empty`](#attachmentspanelempty--changed) — `changed`: self-gates on zero files (today Root-gated)
+- [`.Action`](#attachmentspanelaction--changed) — `changed`: centering wrapper dropped — one `<button>`; `variant` fate TBD
+
 ## Anatomy
 
 ```tsx
@@ -73,7 +88,9 @@ Layout facts a reviewer should not have to open source for: the default row's tr
 
 Every part accepts `asChild`, merges `className` Tailwind-aware (consumer wins), composes `ref`s, and spreads native attributes of its node; consumer event handlers run first and `event.preventDefault()` cancels the internal handler.
 
-### `AttachmentsPanel.Root`
+### `AttachmentsPanel.Root` — `changed`
+
+**Changed:** the `loading` boolean gives way to `data-loading` / `data-empty`, with `uploads` defaulting from `useAttachments` context.
 
 The panel container + the compound's scoped context (read by every part and by `useAttachmentsPanel()`). Renders one `<div>` (today; column via `flex flex-col h-full`) plus, when `onAttach` is set, the visually-hidden `<input type="file" multiple>` that `.Action` triggers.
 
@@ -92,7 +109,7 @@ The panel container + the compound's scoped context (read by every part and by `
 
 **State attributes (proposed):** `data-loading` (fetch in flight) · `data-empty` (zero items). Today neither exists — loading/empty are presented only by which child the default anatomy mounts.
 
-### `AttachmentsPanel.Header`
+### `AttachmentsPanel.Header` — `changed`
 
 One node — today a `<div>`, **proposed `<header>`**. Default content: an `<h2>` reading **"Attachments"** and, when `onClose` is set, a `ui` icon `Button` (✕, `aria-label="Close attachments"`) that calls it. Children replace both.
 
@@ -104,7 +121,7 @@ One node — today a `<div>`, **proposed `<header>`**. Default content: an `<h2>
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | Own the node; children replace the default title + close button |
 
-### `AttachmentsPanel.List`
+### `AttachmentsPanel.List` — `changed`
 
 One node — today a `<div>`, **proposed `<ul>`**. Default content: one `.Item` per upload, plus the "Upload files" `.Action` (`variant="more"`) underneath when `onAttach` is set. Children replace the mapping entirely (own the iteration).
 
@@ -116,7 +133,7 @@ One node — today a `<div>`, **proposed `<ul>`**. Default content: one `.Item` 
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | Own the node; children replace the default `.Item` mapping (map `useAttachments().items` yourself) |
 
-### `AttachmentsPanel.Item`
+### `AttachmentsPanel.Item` — `changed`
 
 One file row — today implemented as a borderless [`AttachmentPill`](#context-what-the-parts-read) root `<div>` stretched `w-full`; **proposed `<li>`**. **Render-or-compose:** childless, it renders the default row anatomy — media square (image `Thumbnail` when the file resolves to an image, file-type `Icon` otherwise) → name + size label column → trailing overflow `⋯` menu (**Open** when `file.url` exists, **Delete** when `onRemoveUpload` is set; the menu null-renders when neither applies). Any children replace that row entirely — there is no half-hidden row card.
 
@@ -129,7 +146,7 @@ One file row — today implemented as a borderless [`AttachmentPill`](#context-w
 
 **State attributes (proposed):** `data-upload-state="idle | uploading | processing | error | done"` (upload lifecycle) · `data-active` (selected item) · `data-error` (this row's file errored — errors are per-item; there is no global upload error). Today none exist; lifecycle is presented only visually by the pill (spinner / check / alert glyph).
 
-### `AttachmentsPanel.Item.Icon`
+### `AttachmentsPanel.Item.Icon` — `changed`
 
 The file-type square shown when there is no image thumbnail — today delegates to `AttachmentPill.Icon`, a 40px `<div>` (**proposed `<span>`**) showing the state glyph (clock / spinner / check / alert) when an upload lifecycle state is set, otherwise the uppercase file-extension badge with a per-type color. Renders its default icon when childless; pass children to replace it (**no `icon` prop** — the icon-slot-prop pattern is banned RFC-wide).
 
@@ -139,7 +156,7 @@ The file-type square shown when there is no image thumbnail — today delegates 
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | Own the node; children replace the default glyph/extension |
 
-### `AttachmentsPanel.Item.Preview`
+### `AttachmentsPanel.Item.Preview` — `changed`
 
 The image thumbnail — today delegates to `AttachmentPill.Thumbnail`: a 40px square wrapping an `<img alt="" class="object-cover">` (**proposed: one `<img>`**), with an `absolute inset-0` spinner overlay while uploading/processing. **Renders `null` when the file is not an image (no resolvable `preview`/`url` src) or is in the error state** — safe to include alongside `.Icon` unconditionally.
 
@@ -149,19 +166,19 @@ The image thumbnail — today delegates to `AttachmentPill.Thumbnail`: a 40px sq
 | --- | --- | --- |
 | `asChild` + native (`ImgHTMLAttributes`, `ref`) | | Own the node |
 
-### `AttachmentsPanel.Item.Name` *(proposed — #2975)*
+### `AttachmentsPanel.Item.Name` *(proposed — #2975)* — `new`
 
 One `<span>`: the file's name, truncating. Does not exist today — today the source deliberately omits it (name is "plain text with no attachment-domain logic", read from the item context and rendered yourself, or via `AttachmentPill.Label` which renders a name + secondary line column). #2975 adds it so the default row is fully recomposable from leaves. Default content: `file.name`. Full prop set TBD beyond the shared node contract.
 
 **Layout:** in-flow text span; place it in your own `min-w-0` column to get truncation (see the Composed example).
 
-### `AttachmentsPanel.Item.Size` *(proposed — #2975)*
+### `AttachmentsPanel.Item.Size` *(proposed — #2975)* — `new`
 
 One `<span>`: the file's size formatted as `B` / `KB` / `MB` (the `formatSize` helper is already exported today). **Expected to render `null` when `file.size` is undefined** (TBD — fallback to type/extension label like today's secondary line is an open question). Full prop set TBD beyond the shared node contract.
 
 **Layout:** in-flow text span inside your label column.
 
-### `AttachmentsPanel.Item.Remove`
+### `AttachmentsPanel.Item.Remove` — `changed`
 
 One `<button>` (today a `ui` icon-ghost `Button` with a trash glyph, `aria-label="Remove <name>"`) that calls the panel's `onRemoveUpload(file.id)`. **Renders `null` when no `onRemoveUpload` is set on the panel** — safe to include unconditionally. Today it takes an `icon` override prop; **proposed: `icon` prop deleted** — childless renders the trash glyph, children replace it.
 
@@ -171,7 +188,7 @@ One `<button>` (today a `ui` icon-ghost `Button` with a trash glyph, `aria-label
 | --- | --- | --- |
 | `asChild` + native (`ButtonHTMLAttributes`, `ref`) | | Own the node; children replace the trash glyph |
 
-### `AttachmentsPanel.Loading`
+### `AttachmentsPanel.Loading` — `changed`
 
 One `<div>`: a column of item-shaped skeleton rows (40px square + two text bars), announced with `aria-busy="true"`, `aria-live="polite"`, `aria-label="Loading files"`. Today it renders whenever mounted and the *Root default anatomy* gates it (shown only while `loading` with zero uploads); **proposed: self-gates — renders `null` unless the panel is fetching**, so it is safe to include unconditionally (as the Default example does).
 
@@ -182,7 +199,7 @@ One `<div>`: a column of item-shaped skeleton rows (40px square + two text bars)
 | `count` | `number` | `3` | How many skeleton rows |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | | Own the node |
 
-### `AttachmentsPanel.Empty`
+### `AttachmentsPanel.Empty` — `changed`
 
 One `<div>`. Default content: a circled paperclip glyph, heading **"No files uploaded"**, hint **"Upload files to start asking questions about them"**, and — when `onAttach` is set — an "Upload files" `.Action`. Children replace all of it. Today it renders whenever mounted (Root's default anatomy gates it); **proposed: self-gates — renders `null` unless there are zero files** (as the Default/Composed examples assume).
 
@@ -192,7 +209,7 @@ One `<div>`. Default content: a circled paperclip glyph, heading **"No files upl
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | Own the node; children replace the default icon + copy + action |
 
-### `AttachmentsPanel.Action`
+### `AttachmentsPanel.Action` — `changed`
 
 The upload button — opens the native file picker (the hidden input wired in `.Root`), then calls your `onClick`. Default label **"Upload files"**; children replace it. Today it takes `variant: 'empty' | 'more'` (presentation only: `empty` = the pill button inside the empty state, `more` = a centered "add more" button below the list — which today wraps the button in a centering `<div>`, i.e. two nodes). **Proposed: exactly one `<button>` per the node contract — the centering wrapper becomes your layout div; whether `variant` survives at all is TBD.**
 

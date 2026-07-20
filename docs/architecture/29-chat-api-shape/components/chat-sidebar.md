@@ -12,6 +12,19 @@ The conversation list — browse, create, rename, and delete conversation thread
 import { ChatSidebar } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#chatsidebarroot--changed) — `changed`: `<div>` → `<nav>`; `isOpen`/`fill`/`renderItem` deleted, `loading` → `data-loading`
+- [`.NewButton`](#chatsidebarnewbutton--changed) — `changed`: two nodes → one `<button>`; `icon` deleted
+- [`.List`](#chatsidebarlist--changed) — `changed`: `<div>` → `<ul>`; `renderItem` deleted
+- [`.Group`](#chatsidebargroup--kept) — `kept`
+- [`.Item`](#chatsidebaritem--changed) — `changed`: `<div>` → `<li>`; `children` replaces the whole row; `data-active` means selection
+- [`.Item.Title`](#chatsidebaritemtitle-proposed--2977--new) — `new`: no addressable title leaf exists today (#2977)
+- [`.Item.Menu`](#chatsidebaritemmenu--changed) — `changed`: trigger `icon` prop deleted (replacement TBD)
+- [`.Item.Rename`](#chatsidebaritemrename--changed) — `changed`: `icon` deleted
+- [`.Item.Delete`](#chatsidebaritemdelete--changed) — `changed`: `icon` deleted
+- [`.Empty`](#chatsidebarempty--changed) — `changed`: self-gates on an empty list (today gated by `.List`)
+
 ## Anatomy
 
 ```tsx
@@ -77,7 +90,7 @@ Two row states swap the row's DOM entirely today: **rename mode** replaces the w
 
 Every part accepts `asChild`, merges `className` Tailwind-aware (consumer wins), composes `ref`s, and spreads native attributes of its node; consumer event handlers run first and `event.preventDefault()` cancels the internal handler.
 
-### `ChatSidebar.Root`
+### `ChatSidebar.Root` — `changed`
 
 The rail container + the compound's scoped context. One node — today a `<div>` (`flex flex-col h-full`, width-agnostic — the composed layout provides width; only the standalone preset adds the `w-60` rail chrome), **proposed `<nav>`**. Resolves every data/action prop against the surrounding `ConversationsProvider`: explicit prop > provider > default (`noop` select/delete; new-button hidden without a create action).
 
@@ -100,7 +113,7 @@ The rail container + the compound's scoped context. One node — today a `<div>`
 
 **State attributes (proposed):** `data-loading` (fetch in flight) · `data-empty` (zero conversations). Today neither exists on the root — loading is presented only by the skeleton `.List` mounts.
 
-### `ChatSidebar.NewButton`
+### `ChatSidebar.NewButton` — `changed`
 
 The "new conversation" action, wiring the resolved `onNew` from context. Today it renders **two** nodes — a padded wrapper `<div class="px-3 pt-4 pb-1">` around a full-width primary `Button`; **proposed: exactly one `<button>`** per the node contract (the padding wrapper becomes your layout). Default label **"New chat"**; children replace it. Today it takes a leading `icon` prop; **proposed: `icon` deleted** (icon-slot props are banned RFC-wide — childless renders the default, children replace).
 
@@ -113,7 +126,7 @@ The "new conversation" action, wiring the resolved `onNew` from context. Today i
 | `icon` | `ReactNode` | — | Leading icon (today; **proposed: deleted** — pass children) |
 | `asChild` + native (`ButtonHTMLAttributes`, `ref`) | | | Own the node; children replace "New chat" |
 
-### `ChatSidebar.List`
+### `ChatSidebar.List` — `changed`
 
 The scrollable region. One node — today a `<div>`, **proposed `<ul>`**. Default content, in priority order: **(1)** the loading skeleton — until the client mounts (conversations may load from `localStorage`, so the first paint has none; the skeleton avoids flashing "No chats yet") or while `loading`; **(2)** the conversations sorted newest-activity-first and bucketed into `.Group`s by recency (`Today` / `Yesterday` / `Previous 7 days` / `Older`, computed from `updatedAt`), one `.Item` per conversation; **(3)** `.Empty` when there are zero conversations. Children replace all of it — own the iteration.
 
@@ -125,7 +138,7 @@ The skeleton is an internal `<output aria-label="Loading conversations">` mirror
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | Own the node; children replace the skeleton/groups/empty default (map `useConversations().conversations` yourself) |
 
-### `ChatSidebar.Group`
+### `ChatSidebar.Group` — `kept`
 
 A labeled cluster of rows. Today it renders the `ui` `List` container (a `<div>` with tight `space-y-0.5` rhythm) holding an optional `ListLabel` heading; **proposed `<div>`**. Default content: the label (uppercase, 11px, faint — e.g. a recency bucket name) when `label` is provided, then your rows.
 
@@ -137,7 +150,7 @@ A labeled cluster of rows. Today it renders the `ui` `List` container (a `<div>`
 | `children` *(required)* | `ReactNode` | — | The rows |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | | Own the node |
 
-### `ChatSidebar.Item`
+### `ChatSidebar.Item` — `changed`
 
 One conversation row. Today it renders the `ui` `ListItem` `<div>`; **proposed `<li>`**. Select on click; rename/delete via the trailing `⋯` menu. Default content: truncating title line (`min-w-0 flex-1` column) + the hover-revealed action slot holding `.Item.Menu`.
 
@@ -154,13 +167,15 @@ Per-row state computed today: `isActive = conversation.id === activeId`; the row
 
 **State attributes:** `data-active` — present today via `ListItem` (for `isActive || menuOpen`); **proposed** as the documented contract (selection). Style with `data-[active]:bg-accent`.
 
-### `ChatSidebar.Item.Title` *(proposed — #2977)*
+### `ChatSidebar.Item.Title` *(proposed — #2977)* — `new`
 
 One `<span>`: the conversation's title, truncating. Does not exist today — the title is rendered internally by `ListItem`'s `title` prop, so a composed row currently has no addressable title leaf. #2977 adds it so the default row is fully recomposable. Default content: `conversation.title`. TBD: whether `.Title` also hosts the inline-rename input when rename mode is entered, or rename stays a whole-row swap. Full prop set TBD beyond the shared node contract.
 
 **Layout:** in-flow text span; give its wrapper `min-w-0`/`flex-1` (or class the span `truncate`) for ellipsis.
 
-### `ChatSidebar.Item.Menu`
+### `ChatSidebar.Item.Menu` — `changed`
+
+*Changed: the trigger-glyph `icon` prop is deleted per the icon-prop ban (replacement mechanism TBD); entries and behavior are otherwise as today.*
 
 The row's `⋯` actions menu, built on the `veryfront/ui` `DropdownMenu` (not a from-scratch popover). Two pieces: the **trigger** — an icon-ghost `<button>` (`aria-label="More actions for <title>"`, three-dots glyph) sitting in the row's action slot — and the **content** — a portalled popover (`align="end"`, min-width 160px) holding the entries. Default entries: `.Rename` then `.Delete`; children replace the *entries* (the trigger stays), so you can add or reorder actions without re-implementing the row. Open state lives on the item context (`menuOpen` / `setMenuOpen`) — which is how the row stays highlighted while the menu is open.
 
@@ -172,7 +187,7 @@ The row's `⋯` actions menu, built on the `veryfront/ui` `DropdownMenu` (not a 
 | `children` | `ReactNode` | `.Rename` + `.Delete` | The menu entries |
 | `asChild` + native + `ref` | | | TBD which node (trigger vs content) the native spread targets — the part spans a trigger + portal pair |
 
-### `ChatSidebar.Item.Rename`
+### `ChatSidebar.Item.Rename` — `changed`
 
 A menu entry (`ui` `DropdownMenuItem`) inside `.Menu`. Default content: pencil icon + **"Rename"**; children replace the label, and (today) an `icon` prop overrides the glyph — **proposed: `icon` deleted**. Selecting it enters the row's inline rename mode (`startRename` from the item context). **Renders `null` when rename is unavailable** (no `onRename` resolved from props or provider) — safe to include unconditionally.
 
@@ -183,7 +198,7 @@ A menu entry (`ui` `DropdownMenuItem`) inside `.Menu`. Default content: pencil i
 | `icon` | `ReactNode` | Glyph override (today; **proposed: deleted**) |
 | `asChild` + native + `ref` | | Own the entry; children replace "Rename" |
 
-### `ChatSidebar.Item.Delete`
+### `ChatSidebar.Item.Delete` — `changed`
 
 A menu entry (`ui` `DropdownMenuItem`) inside `.Menu`, styled destructive. Default content: trash icon + **"Delete"**; children replace the label (today also an `icon` prop — **proposed: deleted**). Selecting it calls the resolved delete with this row's id (`remove` from the item context). Always renders (delete falls back to a provider `remove`; today an unresolved delete is a no-op).
 
@@ -194,7 +209,7 @@ A menu entry (`ui` `DropdownMenuItem`) inside `.Menu`, styled destructive. Defau
 | `icon` | `ReactNode` | Glyph override (today; **proposed: deleted**) |
 | `asChild` + native + `ref` | | Own the entry; children replace "Delete" |
 
-### `ChatSidebar.Empty`
+### `ChatSidebar.Empty` — `changed`
 
 One `<div>`. Default content: a faint **"No chats yet"** paragraph; children replace it. Today it renders whenever mounted, and the *`.List` default anatomy* gates it (shown only with zero conversations after mount); **proposed: self-gates — renders `null` unless the conversation list is empty**, so it is safe to include unconditionally (as the Composed example assumes).
 

@@ -10,6 +10,10 @@ The batteries-included preset over `AgentPicker`: fetches the project's agents i
 import { ChatAgentPicker, agentsToPickerOptions } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`ChatAgentPicker`](#chatagentpicker--changed) — `changed`: `className` trigger alias removed; boolean state props → `data-*` (via `AgentPicker`)
+
 ## Anatomy
 
 `ChatAgentPicker` is a **preset**, not a compound: it has no parts of its own. It runs [`useAgents`](../hooks/use-agents.md), maps the result through `agentsToPickerOptions`, and renders the public [`AgentPicker`](./agent-picker.md) preset — so ejecting means pasting that composition (identical output, same code path):
@@ -49,7 +53,9 @@ function ChatAgentPicker({ value, onValueChange, minAgents = 2, enabled = true, 
 
 ## Parts
 
-### `ChatAgentPicker`
+### `ChatAgentPicker` — `changed`
+
+**Changed:** the `className` trigger alias is removed; the underlying boolean state props (`selected` / `isLoading` / `invalid`) become `data-*`.
 
 The whole preset — one component, no sub-parts. **Layout: whatever `AgentPicker` renders (or nothing).**
 

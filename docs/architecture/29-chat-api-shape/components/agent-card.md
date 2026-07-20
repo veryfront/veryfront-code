@@ -10,6 +10,14 @@ A status card for one running agent: identity header, live status, reasoning, to
 import { AgentCard } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#agentcardroot--changed) — `changed`: status surfaces as `data-agent-status`
+- [`.Header`](#agentcardheader--kept) — `kept`
+- [`.Reasoning`](#agentcardreasoning--kept) — `kept`
+- [`.Tools`](#agentcardtools--kept) — `kept`
+- [`.Body`](#agentcardbody--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -53,7 +61,9 @@ row (avatar → name → status, status right-aligned via `ml-auto`, not absolut
 
 ## Parts
 
-### `AgentCard.Root`
+### `AgentCard.Root` — `changed`
+
+**Changed:** agent status — today presented only visually (dot color + pulse) — surfaces as `data-agent-status` for styling.
 
 The card container (one `<div>`, `ui` Card surface) + the compound's scoped context. All agent data enters here; sub-parts read it from context.
 
@@ -70,7 +80,7 @@ The card container (one `<div>`, `ui` Card surface) + the compound's scoped cont
 
 **State attributes (proposed):** `data-agent-status="idle|thinking|tool_execution|streaming|completed|error"` — today status is presented only visually (dot color + pulse); the RFC surfaces it as `data-*` so you can style any part off `[data-agent-status="error"]`.
 
-### `AgentCard.Header`
+### `AgentCard.Header` — `kept`
 
 One `<div>` row. Default content: `Avatar` (image or initial) → agent name (`truncate`) → `Status` dot + label pushed right (`Thinking`/`Running tools`/`Responding`/`Completed`/`Error`/`Idle`, pulsing while active). Mirrors `Message.Header`.
 
@@ -78,7 +88,7 @@ One `<div>` row. Default content: `Avatar` (image or initial) → agent name (`t
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes<HTMLDivElement>`, `ref`) | | Own the node; children replace the default Avatar/name/Status content |
 
-### `AgentCard.Reasoning`
+### `AgentCard.Reasoning` — `kept`
 
 Renders the shared [`Reasoning`](./reasoning.md) block with the card's `thinking` text. **Renders `null` when `thinking` is empty** — safe to include unconditionally.
 
@@ -86,7 +96,7 @@ Renders the shared [`Reasoning`](./reasoning.md) block with the card's `thinking
 | --- | --- | --- |
 | `asChild` + native + `ref` | | Applied to the `Reasoning` root; all `Reasoning` behavior (auto-open while streaming, `data-open`) applies |
 
-### `AgentCard.Tools`
+### `AgentCard.Tools` — `kept`
 
 One `<div>` list. Default content: one [`ToolCall`](./tool-call.md) card per entry in `toolCalls` (agent tool statuses map onto the standard tool lifecycle: `pending → input-available`, `executing → input-streaming`, `completed → output-available`, `error → output-error`). **Renders `null` when there are no tool calls.**
 
@@ -94,7 +104,7 @@ One `<div>` list. Default content: one [`ToolCall`](./tool-call.md) card per ent
 | --- | --- | --- |
 | `asChild` + native + `ref` | | Own the list node; children replace the default `ToolCall` mapping (use `useAgentCard().toolCalls`) |
 
-### `AgentCard.Body`
+### `AgentCard.Body` — `kept`
 
 One `<div>` column. Default content: each message's text rendered as [`Markdown`](./markdown.md) (mirroring `Message.Content`). **Renders `null` when there are no messages.**
 

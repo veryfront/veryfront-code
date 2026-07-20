@@ -10,6 +10,12 @@ An inline footnote marker with a hover card — the default renderer behind the 
 import { InlineCitation } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`InlineCitation` (Root)](#inlinecitation-root--kept) — `kept`
+- [`.Trigger`](#inlinecitationtrigger--changed) — `changed`: `<button>` + span wrapper → `<a>`; `data-open` added
+- [`.Card`](#inlinecitationcard--changed) — `changed`: `data-open` added (today open state = mounted)
+
 ## Anatomy
 
 ```tsx
@@ -62,7 +68,7 @@ Hover mechanics today: entering the trigger opens the card after a **150ms delay
 
 ## Parts
 
-### `InlineCitation` (Root)
+### `InlineCitation` (Root) — `kept`
 
 The compound's scoped context — **renders no node of its own**; children (or the default `Trigger` + `Card`) render in place. Owns the hover open/close timers and the card positioning math.
 
@@ -86,7 +92,7 @@ The compound's scoped context — **renders no node of its own**; children (or t
 [data-open].my-citation-trigger { background: var(--accent-3); }
 ```
 
-### `InlineCitation.Trigger`
+### `InlineCitation.Trigger` — `changed`
 
 The inline marker. Today a `<button>` inside a `relative inline-block` `<span>` wrapper; **proposed `<a>`**. Default content: the number `index + 1` in a 15px round superscript pill (`align-super`, nudged up 1px, left margin so it hugs the preceding word). Always renders. Hovering starts the card's 150ms open timer; leaving starts the 100ms close timer; clicking calls the root's `onClick(index)` after your own `onClick`, unless you `preventDefault()`.
 
@@ -97,7 +103,9 @@ The inline marker. Today a `<button>` inside a `relative inline-block` `<span>` 
 | `children` | `ReactNode` | Replaces the default number. |
 | `asChild` *(proposed)* + native (`ButtonHTMLAttributes` today, `AnchorHTMLAttributes` proposed) + `ref` | | Own the node; your `onClick`/`onMouseEnter`/`onMouseLeave` compose with (don't replace) the hover/click behavior. |
 
-### `InlineCitation.Card`
+### `InlineCitation.Card` — `changed`
+
+*Changed: a `data-open` state attribute is added (today open state is expressed only by mounting/unmounting) and `asChild` opens up; the render gating itself is unchanged.*
 
 The hover card, one `<div>`. Default content: source title (2-line clamp) → url row with external-link icon (only when `url`) → snippet as an italic left-bordered quote, 4-line clamp (only when `snippet`) → a "Relevance" meter row with percentage (only when `score != null`; fill color emerald ≥ 0.7, amber ≥ 0.4, neutral below). **Renders `null` unless the card is open *and* a `source` was provided** — safe to include unconditionally. Hovering the card itself keeps it open (re-arms the show timer); leaving closes it after 100ms.
 

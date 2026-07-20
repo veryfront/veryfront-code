@@ -14,6 +14,13 @@ import { BranchPicker } from 'veryfront/chat'
 import { Message } from 'veryfront/chat' // Message.BranchPicker
 ```
 
+## Parts index
+
+- [`.Root`](#branchpickerroot--changed) — `changed`: controlled `current`/`total`/`onPrev`/`onNext` props removed — context-driven
+- [`.Previous`](#branchpickerprevious--changed) — `changed`: `icon` prop deleted; `data-disabled` proposed
+- [`.Count`](#branchpickercount--kept) — `kept`
+- [`.Next`](#branchpickernext--changed) — `changed`: `icon` prop deleted; `data-disabled` proposed
+
 ## Anatomy
 
 Each part renders one node, `extends` its native attributes, spreads `{...props}`, and takes `asChild`. Leaves render their default content when childless; pass children to replace it (no `icon` props).
@@ -57,7 +64,9 @@ Note: the branch picker is **not** part of `<Message>`'s childless default anato
 
 ## Parts
 
-### `BranchPicker.Root`
+### `BranchPicker.Root` — `changed`
+
+**Changed:** today's controlled `current` / `total` / `onPrev` / `onNext` props are removed — branch data and actions come from context via `useMessageBranches`.
 
 The container — one `<div>` + the picker's scoped state. As `Message.BranchPicker` it reads the branch info for the current message from context; **renders `null` unless the message has more than one branch** (`total <= 1`) — safe to include unconditionally.
 
@@ -73,7 +82,7 @@ The container — one `<div>` + the picker's scoped state. As `Message.BranchPic
 
 **State attributes (proposed):** `data-active` — selected branch (per the global `data-*` contract; today the picker exposes no state attributes).
 
-### `BranchPicker.Previous`
+### `BranchPicker.Previous` — `changed`
 
 One `<button>`. Default content: a left-chevron glyph (`size-3` svg); `aria-label="Previous variant"`. Switches to the previous branch. **Natively `disabled` on the first branch** (`current <= 1`) — dimmed and unclickable via `disabled:opacity-50 disabled:pointer-events-none`. Children replace the glyph (the `icon` prop is deleted — icon-slot ban).
 
@@ -87,7 +96,7 @@ One `<button>`. Default content: a left-chevron glyph (`size-3` svg); `aria-labe
 
 **State attributes (proposed):** `data-disabled` — on the interactive leaf when disabled (global contract; complements the native `disabled` attribute).
 
-### `BranchPicker.Count`
+### `BranchPicker.Count` — `kept`
 
 One `<span>`. Default content: the 1-based position over the total — `2/3`. `tabular-nums min-w-[2ch] text-center` so the row doesn't jitter as numbers change. Children replace the label (e.g. `Draft {index + 1} of {count}` from the hook). Always rendered when the Root is (no own null-condition).
 
@@ -98,7 +107,7 @@ One `<span>`. Default content: the 1-based position over the total — `2/3`. `t
 | `children` | `ReactNode` | `current/total` | Replace the default label. |
 | `asChild` + native (`HTMLAttributes<HTMLSpanElement>`, `ref`) | | — | Own the node. |
 
-### `BranchPicker.Next`
+### `BranchPicker.Next` — `changed`
 
 One `<button>` — the mirror of `.Previous`: right-chevron glyph, `aria-label="Next variant"`, switches to the next branch, **natively `disabled` on the last branch** (`current >= total`). Same props table and proposed `data-disabled` as `.Previous`.
 

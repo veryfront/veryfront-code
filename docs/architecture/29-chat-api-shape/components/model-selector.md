@@ -10,6 +10,15 @@ A searchable popover for choosing a model — provider-logo trigger, provider-gr
 import { ModelSelector } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#modelselectorroot--changed) — `changed`: `renderItem` + root `className` deleted; `models` moves leaf-first
+- [`.Trigger`](#modelselectortrigger--changed) — `changed`: gains leaf-first `models`; `data-open` / `data-disabled`
+- [`.Content`](#modelselectorcontent--changed) — `changed`: Command shell `<div>` collapses to one node
+- [`.Search`](#modelselectorsearch--changed) — `changed`: `CommandInput` row → one `<input>`
+- [`.List`](#modelselectorlist--changed) — `changed`: `<div>` scroll container → `<ul>`
+- [`.Item`](#modelselectoritem--changed) — `changed`: `role="option"` `<div>` → `<button>`; `selected` prop → `data-active`
+
 ## Anatomy
 
 The same anatomy as [`AgentPicker`](./agent-picker.md), minus `.Create` and `.Manage`:
@@ -79,7 +88,9 @@ Notes for the reviewer:
 
 ## Parts
 
-### `ModelSelector.Root`
+### `ModelSelector.Root` — `changed`
+
+Changed: `renderItem` and root-level `className` are deleted, and `models` moves from required-on-root to leaf-first (liftable) config.
 
 The compound's scoped context (selection, open state, disabled) + the popover root. **Layout: no in-flow layout of its own — but today it emits the `<span class="relative inline-block">` positioning anchor.** Same **popper-anchor open question** as `AgentPicker.Root`: either `ui` anchors to the trigger ref, or a narrow positioning-anchor exception is sanctioned; this Root depends on that decision.
 
@@ -96,7 +107,9 @@ The compound's scoped context (selection, open state, disabled) + the popover ro
 
 **`models` — config on the leaf, liftable (escalation rule):** the default home for `models` is the leaf that uses it — `<ModelSelector.Trigger models={MODELS} />` / `<ChatInput.Model models={MODELS} />`. When more than one leaf needs the same list it may be *lifted* to opt-in Root context (`<ModelSelector.Root models={MODELS}>`); **the leaf prop always wins** (explicit prop > nearest context > default). Today `models` is required on the root — the leaf-first placement is the proposed change.
 
-### `ModelSelector.Trigger`
+### `ModelSelector.Trigger` — `changed`
+
+Changed: gains the leaf-first `models` prop plus `data-open` / `data-disabled`; today it takes only `variant`, `children`, and `className`.
 
 One `<button>` (today a `ui` Pill or a round icon button merged onto `PopoverTrigger` via `asChild`; `aria-haspopup`/`aria-expanded` wired). Two default appearances via `variant`:
 
@@ -114,7 +127,9 @@ Children replace the default content (today children render inside a plain `<but
 
 **State attributes (proposed):** `data-open` (today only `aria-expanded`), `data-disabled`.
 
-### `ModelSelector.Content`
+### `ModelSelector.Content` — `changed`
+
+Changed: today it interposes the Command shell `<div>` (filter context); proposed one node, context via React.
 
 The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to `document.body`, `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`.** Today it also interposes the Command shell `<div>` (filter context); proposed: one node, context via React. **Renders `null` while closed.** Alignment today is fixed `align="start"`; public `align`/`side` props are **TBD**.
 
@@ -123,7 +138,9 @@ The popover panel — one `<div role="dialog">`. **Layout: not in flow — porta
 | `children` | `ReactNode` | `.Search` / `.List` / your own nodes |
 | `asChild` + native + `ref` *(proposed)* | | Own the panel node; today only `className` |
 
-### `ModelSelector.Search`
+### `ModelSelector.Search` — `changed`
+
+Changed: today a `CommandInput` row; proposed one `<input>` node.
 
 The filter input — one `<input>` (today a `CommandInput` row; same internal mechanics as `AgentPicker.Search`: `relative` row, absolute icon left / conditional clear button right, `h-12 w-full` input). Case-insensitive substring filter over item labels. **Layout: in-flow row at the top of the panel (border-b divider).**
 
@@ -132,7 +149,9 @@ The filter input — one `<input>` (today a `CommandInput` row; same internal me
 | `placeholder` | `string` | `"Search models..."` | |
 | `asChild` + native + `ref` *(proposed)* | | | Own the input node; today only `className` |
 
-### `ModelSelector.List`
+### `ModelSelector.List` — `changed`
+
+Changed: today a `<div>` scroll container; proposed node `<ul>`, plus `data-empty`.
 
 The option region — one scroll container (today `<div class="max-h-[320px] overflow-y-auto">`; proposed node `<ul>`). Default content (preset): "No models found." empty row, then provider-grouped `.Item` rows. Composed: children replace it. **Layout: in-flow block below `.Search`; the panel's only scrolling region.**
 
@@ -143,7 +162,9 @@ The option region — one scroll container (today `<div class="max-h-[320px] ove
 
 **State attributes (proposed):** `data-empty` (zero options).
 
-### `ModelSelector.Item`
+### `ModelSelector.Item` — `changed`
+
+Changed: today a `role="option"` `<div>`; proposed `<button>`, with the `selected` boolean prop replaced by `data-active`.
 
 One selectable model row — today a `role="option"` `<div>` (proposed: `<button>`). **Layout: in-flow `flex items-center gap-3 min-w-0` row; the label is `flex-1 truncate`; badge sits between label and check; check is `ml-auto`.** Default content: provider logo → label → badge pill (only when the option has `badge`) → check glyph (selected only). Filtered-out rows are `hidden`. Selecting calls `onChange` and closes the popover.
 

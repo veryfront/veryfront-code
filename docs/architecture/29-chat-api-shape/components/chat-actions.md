@@ -10,6 +10,14 @@ The composer's actions menu — a dropdown of data-driven rows (attach, custom a
 import { ChatActions } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#chatactionsroot--changed) — `changed`: `trigger` render prop + Root `className` alias removed
+- [`.Trigger`](#chatactionstrigger--changed) — `changed`: `data-open` proposed; absorbs the deleted `trigger` prop as children
+- [`.Content`](#chatactionscontent--kept) — `kept`
+- [`.Item`](#chatactionsitem--changed) — `changed`: `icon` prop removed; `disabled` also as `data-disabled`
+- [`.Preset`](#chatactionspreset--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -70,7 +78,9 @@ Notes for the reviewer:
 
 ## Parts
 
-### `ChatActions.Root`
+### `ChatActions.Root` — `changed`
+
+**Changed:** the `trigger` render prop and the Root-level `className` alias are removed — compose `.Trigger` children and class `.Content` directly.
 
 The scoped context provider + dropdown root. **Layout: no in-flow layout of its own — but today it emits the `ui` `DropdownMenu` anchor wrapper `<span class="relative inline-block">`** (same popper-anchor open question as `AgentPicker.Root`/`ModelSelector.Root`; noted for the RFC PR).
 
@@ -86,7 +96,9 @@ The scoped context provider + dropdown root. **Layout: no in-flow layout of its 
 
 **Removed (proposed):** `trigger?: ReactNode` — compose `.Trigger` children instead (composition, not render-prop config); Root-level `className` (today it styles the *menu surface* — class `.Content` directly).
 
-### `ChatActions.Trigger`
+### `ChatActions.Trigger` — `changed`
+
+**Changed:** open state surfaces as `data-open` (today only `aria-expanded`); the deleted Root `trigger` prop lands here as children.
 
 One `<button>` — the default is a `+` icon `ui` Button (`icon-tertiary` / `icon-lg`, `aria-label="Add attachments and settings"`), merged onto the dropdown trigger via `asChild` with `aria-haspopup`/`aria-expanded` wired. **Layout: in-flow `shrink-0` icon button (designed for a composer toolbar row).** Children replace the whole default button — a custom child must forward props to a single focusable element.
 
@@ -97,7 +109,7 @@ One `<button>` — the default is a `+` icon `ui` Button (`icon-tertiary` / `ico
 
 **State attributes (proposed):** `data-open` — today only `aria-expanded`.
 
-### `ChatActions.Content`
+### `ChatActions.Content` — `kept`
 
 The menu surface — one `<div role="menu">`. **Layout: not in flow — portalled to `document.body`, `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`, `p-2.5`.** **Renders `null` while closed** (unmounts). Default content: none — children are the rows (`.Item`s, `.Preset`, your own nodes).
 
@@ -107,7 +119,9 @@ The menu surface — one `<div role="menu">`. **Layout: not in flow — portalle
 | `children` | `ReactNode` | — | The rows |
 | `asChild` + native + `ref` *(proposed)* | | | Own the surface node; today only `className` |
 
-### `ChatActions.Item`
+### `ChatActions.Item` — `changed`
+
+**Changed:** the `icon` prop is removed (put the glyph in children); `disabled` is also reflected as `data-disabled`.
 
 One action row — one `<button role="menuitem">`. **Layout: in-flow full-width flex row (`flex w-full items-center gap-2.5 px-3 h-[36px]`); trailing content can push right with `ml-auto`.** Default content: none — children are the label (icon first, per the icon-slot ban: childless renders nothing special; put the glyph in children). Selecting runs `onSelect` and closes the menu.
 
@@ -119,7 +133,7 @@ One action row — one `<button role="menuitem">`. **Layout: in-flow full-width 
 | `children` | `ReactNode` | Row content (glyph + label) |
 | `asChild` + native + `ref` *(proposed)* | | Own the row node; today only `className`. `icon` prop removed (icon-slot ban) |
 
-### `ChatActions.Preset`
+### `ChatActions.Preset` — `kept`
 
 The default data-driven menu body, **rendered as a fragment — no node, no props** (today it takes none). Reads `useChatActions()` and emits, in order: the attach `.Item` (only when `onAttachFiles` exists) → one `.Item` per `actions` entry → a separator + the Settings submenu (only when `settings` exists; separator only when rows precede it). **Renders nothing when the context carries no attach/actions/settings.** Its purpose: a composed `Content` can keep the entire default body and add rows around it —
 

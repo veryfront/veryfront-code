@@ -10,6 +10,17 @@ A searchable popover for choosing an agent — pill trigger, filterable list, op
 import { AgentPicker } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#agentpickerroot--changed) — `changed`: `inputStyle`/`invalid`/`isLoading`/`className` removed; anchor `<span>` → zero nodes (open question)
+- [`.Trigger`](#agentpickertrigger--changed) — `changed`: `inputStyle`/`invalid`/`icon` removed; `data-open` proposed
+- [`.Content`](#agentpickercontent--changed) — `changed`: Command shell `<div>` collapses to one node
+- [`.Search`](#agentpickersearch--changed) — `changed`: one `<input>` node; icon/clear affordances TBD
+- [`.List`](#agentpickerlist--changed) — `changed`: `<div>` → `<ul>`; `isLoading` prop → `data-loading`
+- [`.Item`](#agentpickeritem--changed) — `changed`: `<div role="option">` → `<button>`; `selected` → `data-active`
+- [`.Create`](#agentpickercreate--changed) — `changed`: `CommandItem` → `<button>`; `icon` removed
+- [`.Manage`](#agentpickermanage--changed) — `changed`: same contract deltas as `.Create`
+
 ## Anatomy
 
 ```tsx
@@ -80,7 +91,7 @@ Notes for the reviewer:
 
 ## Parts
 
-### `AgentPicker.Root`
+### `AgentPicker.Root` — `changed`
 
 The compound's scoped context (selection, open state, options) + the popover root. **Layout: renders no in-flow layout of its own — but today it emits a `<span class="relative inline-block">` positioning anchor** (the popper-anchor open question, below); the proposed contract is zero nodes.
 
@@ -99,7 +110,9 @@ The compound's scoped context (selection, open state, options) + the popover roo
 
 **Popper anchor (open question):** today `Popover` renders a wrapper `<span class="relative inline-block">` as the positioning anchor — same as `veryfront/ui`'s `DropdownMenu`. Either `ui` fixes this (Floating UI can anchor to the trigger ref) or a narrow "positioning anchor" exception to the node contract is sanctioned for popper roots. `AgentPicker.Root` depends on that decision (goes to the team on the RFC PR).
 
-### `AgentPicker.Trigger`
+### `AgentPicker.Trigger` — `changed`
+
+**Changed:** `inputStyle` / `invalid` / `icon` are removed and open state surfaces as `data-open`.
 
 One `<button>` (today a `ui` Pill merged onto `PopoverTrigger` via `asChild`; `aria-haspopup` + `aria-expanded` wired). **Layout: in-flow `inline-flex h-9` row, `gap-1.5`; the name truncates (`min-w-0 truncate`); the chevron is pushed right with `ml-auto`.** Default content: selected agent's `Avatar` (when one is selected) → name (or `"Select agent"`) → chevron. Children replace the default content.
 
@@ -110,7 +123,7 @@ One `<button>` (today a `ui` Pill merged onto `PopoverTrigger` via `asChild`; `a
 
 **State attributes (proposed):** `data-open` — today open state is visible only via `aria-expanded`. **Removed (proposed):** `inputStyle`, `invalid` (today the input-style variant renders `data-invalid` on this button; the proposal keeps `data-invalid` on `.Search` and deletes the input-style variant — an input-look trigger is your `className`/`asChild`), `icon` (icon-slot ban — childless renders the chevron, children replace everything).
 
-### `AgentPicker.Content`
+### `AgentPicker.Content` — `changed`
 
 The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to `document.body`, `position: fixed`, placed by the floating logic 8px below the trigger rect (flips above on viewport-bottom collision, clamped to 8px gutters), `z-50`, `min-w-[280px]`.** Today it also interposes the Command shell `<div>` that owns the filter context; proposed: one node, context via React. **Renders `null` while closed** (the surface unmounts).
 
@@ -121,7 +134,7 @@ The popover panel — one `<div role="dialog">`. **Layout: not in flow — porta
 
 Alignment today is fixed `align="start"`; whether `align`/`side` become public props is **TBD**.
 
-### `AgentPicker.Search`
+### `AgentPicker.Search` — `changed`
 
 The filter input — one `<input>` (today a `CommandInput` row: the row `<div>` is `relative flex items-center`, the search icon and the clear button are `absolute` *within the row*, the input fills it at `h-12 w-full`; the clear button exists only while the query is non-empty). Bound to the compound's filter query — filtering is case-insensitive substring on item names. Safe to include always; the *preset* gates it on agent count > 5.
 
@@ -132,7 +145,7 @@ The filter input — one `<input>` (today a `CommandInput` row: the row `<div>` 
 
 **Layout: in-flow row at the top of the panel (border-b divider).** **State attributes:** `data-invalid` — kept from today (validation failed). Whether the icon/clear affordances survive the one-node contract (children? separate leaves?) is **TBD**.
 
-### `AgentPicker.List`
+### `AgentPicker.List` — `changed`
 
 The option region — one scroll container (today a `<div class="max-h-[320px] overflow-y-auto p-2.5">` with hidden scrollbar; proposed node `<ul>`). Default content (preset): "No agents found." empty row → the top `agents` group → skeleton loading rows (only while loading with no section data) → one labelled group per `sections` entry → the action group. Composed: children replace all of that.
 
@@ -143,7 +156,7 @@ The option region — one scroll container (today a `<div class="max-h-[320px] o
 
 **Layout: in-flow block below `.Search`; the panel's only scrolling region (`max-h-[320px]`).** **State attributes (proposed):** `data-empty` (zero options), `data-loading` (replaces the `isLoading` prop; today loading renders skeleton rows).
 
-### `AgentPicker.Item`
+### `AgentPicker.Item` — `changed`
 
 One selectable agent row — today a `role="option"` `<div>` (proposed: `<button>`). **Layout: in-flow `flex items-center gap-3 min-w-0` row; the name is `flex-1 truncate`; the check is `ml-auto`.** Default content: `Avatar` (image or initial) → name → check glyph (selected only). Filtered-out rows are `hidden` (today via the filter registry); `disabled` options dim and block pointer events (`aria-disabled`). Selecting calls `onValueChange` and closes the popover.
 
@@ -154,7 +167,7 @@ One selectable agent row — today a `role="option"` `<div>` (proposed: `<button
 
 **State attributes (proposed):** `data-active` — replaces today's `selected?: boolean` prop (preset passes it; composed items already default to matching the context `value`). **Removed (proposed):** `selected`, `icon` (check-glyph slot → icon-slot ban).
 
-### `AgentPicker.Create`
+### `AgentPicker.Create` — `changed`
 
 The "Create Agent" action row (today a `CommandItem`, proposed `<button>`). Default content: plus glyph → `"Create Agent"`. **Renders `null` unless `onCreate` was passed to `.Root`** — safe to include unconditionally. Selecting closes the popover, then calls `onCreate`. **Layout: in-flow row inside `.List`/`.Content`, same row mechanics as `.Item`.**
 
@@ -163,7 +176,7 @@ The "Create Agent" action row (today a `CommandItem`, proposed `<button>`). Defa
 | `children` | `ReactNode` | Replace the default label (childless renders glyph + "Create Agent") |
 | `asChild` + native + `ref` *(proposed)* | | Own the node; today only `className`. `icon` removed (icon-slot ban) |
 
-### `AgentPicker.Manage`
+### `AgentPicker.Manage` — `changed`
 
 Identical contract to `.Create`: default content sparkles glyph → `"Manage Agents"`; **renders `null` unless `onManage` was passed to `.Root`**; closes then calls `onManage`. Same props/layout as `.Create`.
 

@@ -14,6 +14,18 @@ Application shell layout — dockable sidebars, main pane, header — from `very
 import { AppShell } from 'veryfront/ui'
 ```
 
+## Parts index
+
+- [`AppShell` (root)](#appshell-root--kept) — `kept`
+- [`.Sidebar`](#appshellsidebar--kept) — `kept`
+- [`.SidebarHeader`](#appshellsidebarheader--kept) — `kept`
+- [`.SidebarContent`](#appshellsidebarcontent--kept) — `kept`
+- [`.SidebarFooter`](#appshellsidebarfooter--kept) — `kept`
+- [`.Main`](#appshellmain--kept) — `kept`
+- [`.Header`](#appshellheader--kept) — `kept`
+- [`.Content`](#appshellcontent--kept) — `kept`
+- [`.Trigger`](#appshelltrigger--changed) — `changed?`: `icon` slot + `data-open` under the RFC conventions — TBD, `ui`'s call
+
 ## Anatomy
 
 ```tsx
@@ -79,7 +91,7 @@ What the composition above renders today (classes abbreviated to layout-relevant
 
 ## Parts
 
-### `AppShell` (root)
+### `AppShell` (root) — `kept`
 
 One `<div>` (plus the token `<style>`), providing per-side open state to all parts. **Layout: in-flow horizontal flex row, `h-full w-full` — it fills its parent; it does not create viewport height itself.**
 
@@ -94,7 +106,7 @@ One `<div>` (plus the token `<style>`), providing per-side open state to all par
 
 Mobile (< 640px) open state is separate, always starts closed, is never persisted, and resets when the viewport widens.
 
-### `AppShell.Sidebar`
+### `AppShell.Sidebar` — `kept`
 
 One `<aside>`. **Layout: desktop — in-flow `shrink-0` flex column at fixed `width` (default 240px); mobile — a fixed full-viewport overlay (backdrop + edge-sliding `role="dialog"` panel, focus-trapped, Escape-to-close, scroll-locked). Renders `null` when its side is closed** — the column unmounts rather than collapsing, so content state inside does not survive a close.
 
@@ -104,7 +116,7 @@ One `<aside>`. **Layout: desktop — in-flow `shrink-0` flex column at fixed `wi
 | `width` | `number` | `240` | Width in px (desktop column and mobile overlay panel) |
 | + native + `ref` | `HTMLAttributes<HTMLElement>` | — | Spread onto the `<aside>`; `aria-label` defaults to `"Sidebar"` |
 
-### `AppShell.SidebarHeader`
+### `AppShell.SidebarHeader` — `kept`
 
 One `<div>`. **Layout: in-flow `shrink-0` slot at the top of the sidebar column** — natural height, never scrolls. Default content: none (slot).
 
@@ -113,7 +125,7 @@ One `<div>`. **Layout: in-flow `shrink-0` slot at the top of the sidebar column*
 | `border` | `boolean` | `false` | Draw the bottom divider |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` | — | Spread onto the div |
 
-### `AppShell.SidebarContent`
+### `AppShell.SidebarContent` — `kept`
 
 One `<div>`. **Layout: the sidebar's scroll region — `flex-1 min-h-0 overflow-y-auto`, absorbing all height between header and footer.** Default content: none (slot — a chat workspace puts [`ChatSidebar`](./chat-sidebar.md) here).
 
@@ -121,7 +133,7 @@ One `<div>`. **Layout: the sidebar's scroll region — `flex-1 min-h-0 overflow-
 | --- | --- | --- |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` | Spread onto the div |
 
-### `AppShell.SidebarFooter`
+### `AppShell.SidebarFooter` — `kept`
 
 One `<div>`. **Layout: in-flow `shrink-0` slot at the bottom of the sidebar column.** Default content: none.
 
@@ -130,7 +142,7 @@ One `<div>`. **Layout: in-flow `shrink-0` slot at the bottom of the sidebar colu
 | `border` | `boolean` | `false` | Draw the top divider |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` | — | Spread onto the div |
 
-### `AppShell.Main`
+### `AppShell.Main` — `kept`
 
 One `<div>`. **Layout: the flexible center — `flex-1 min-w-0` (takes all remaining row width; `min-w-0` is what lets chat content truncate instead of stretching the page), itself a vertical flex column for Header/Content.** Default content: none.
 
@@ -138,7 +150,7 @@ One `<div>`. **Layout: the flexible center — `flex-1 min-w-0` (takes all remai
 | --- | --- | --- |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` | Spread onto the div |
 
-### `AppShell.Header`
+### `AppShell.Header` — `kept`
 
 One `<header>`. **Layout: in-flow `shrink-0` horizontal toolbar row (`flex items-center gap-1 px-3 py-2`) at the top of `.Main`.** Default content: none (put `.Trigger`, titles, actions here).
 
@@ -147,7 +159,7 @@ One `<header>`. **Layout: in-flow `shrink-0` horizontal toolbar row (`flex items
 | `border` | `boolean` | `false` | Draw the bottom divider |
 | + native + `ref` | `HTMLAttributes<HTMLElement>` | — | Spread onto the `<header>` |
 
-### `AppShell.Content`
+### `AppShell.Content` — `kept`
 
 One `<div>`. **Layout: fills the remaining height of `.Main` (`flex-1 min-h-0`) and deliberately sets no overflow — the host owns scrolling** (in a chat workspace, `ChatMessageList` is the scroller). Default content: none.
 
@@ -155,7 +167,9 @@ One `<div>`. **Layout: fills the remaining height of `.Main` (`flex-1 min-h-0`) 
 | --- | --- | --- |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` | Spread onto the div |
 
-### `AppShell.Trigger`
+### `AppShell.Trigger` — `changed?`
+
+**Changed?** Whether the `icon` slot prop becomes children (icon-slot ban) and open state gains `data-open` is TBD — `ui`'s call.
 
 One `<button>` — a `ui` `Button` (`icon-ghost` / `icon-default` by default) wired with `aria-expanded`, `aria-controls` (the target sidebar's id), and an automatic `aria-label` (`"Open/Close left sidebar"`). **Layout: an in-flow icon button — place it anywhere inside the shell (typically `.Header`); works for either side.** Default content: the `PanelLeft`/`PanelRight` glyph matching `side`. Your `onClick` composes (runs first, then the toggle).
 

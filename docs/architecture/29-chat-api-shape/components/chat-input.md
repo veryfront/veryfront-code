@@ -10,6 +10,19 @@ The chat composer — a single `<form>` with composable leaves for the field, at
 import { ChatInput } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#chatinputroot--changed) — `changed`: two hidden wrapper divs deleted — one `<form>`; ~19 state props collapse into `chat`/`upload`/`voice`
+- [`.Field`](#chatinputfield--changed) — `changed`: IME guard + `submitMode` + paste-to-attach added; full native surface opened
+- [`.Submit`](#chatinputsubmit--changed) — `changed`: single always-rendered node (no Send-delegation null-render); `icon`/`stopIcon` removed
+- [`.Send`](#chatinputsend--changed) — `changed`: `icon` + `WrapClick` `onClick` removed
+- [`.Stop`](#chatinputstop--changed) — `changed`: `icon` + `WrapClick` `onClick` removed
+- [`.Voice`](#chatinputvoice--changed) — `changed`: baked listening styles → `data-listening`; `icon`/`WrapClick` removed
+- [`.Model`](#chatinputmodel--changed) — `changed`: `models` config moves here from the Root; `data-open` added
+- [`.Attach`](#chatinputattach--changed) — `changed`: multi-node (wrapper + hidden input + menu) → one `<button>`; `icon`/`WrapClick` removed
+- [`.Export`](#chatinputexport--changed) — `changed`: `icon` removed; `messages` likely defaults to context (TBD)
+- [`.Toolbar`](#chatinputtoolbar--kept) — `kept`
+
 ## Anatomy
 
 `ChatInput.Root` renders **one `<form>`** and provides scoped context to its children. It adds **zero** wrapper divs — today's Root renders two hidden wrappers (`flex-shrink-0 pb-6 pt-2` and `mx-auto w-full max-w-[850px] px-4`) around your children and no `<form>` at all; the proposal deletes both wrappers and makes the form the single node. Every layout element between the form, the textarea, and the buttons is markup you wrote. `<ChatInput>` is shorthand for `<ChatInput.Root>`.
@@ -96,7 +109,9 @@ Key mechanics: everything is **in-flow flex, in DOM order** — the Send button 
 
 Every part renders exactly one node, `extends` that node's native attributes, spreads `{...props}` onto it, and takes `asChild`. Icon-bearing leaves render their default icon when childless; pass children to replace it — the current `icon`/`stopIcon` props are **removed**, and the current wrap-signature `onClick(event, next)` (`WrapClick`) is **removed** in favor of standard composed handlers (yours first; `preventDefault` cancels the internal handler).
 
-### `ChatInput.Root`
+### `ChatInput.Root` — `changed`
+
+*Changed: today's two hidden wrapper divs are deleted and the `<form>` becomes the single node; ~19 `ComposerStateProps` collapse into the `chat`/`upload`/`voice` hook results.*
 
 One `<form>` + the compound's scoped context (`ChatInputContextProvider`). Native form submit runs the composer-owned pipeline: **fold pending attachments into `file` parts → guard while uploads are in flight → trim, send → clear input + attachments**. (This pipeline exists today in `useComposerValue` when `sendMessage` is supplied; the proposal makes it the only path, owned by `useChatInput`.)
 
@@ -127,7 +142,9 @@ One `<form>` + the compound's scoped context (`ChatInputContextProvider`). Nativ
 
 **State attributes (proposed):** `data-status="ready|submitted|streaming|error"` (mirrors `useChat().status`; today streaming is a `isLoading` boolean prop), `data-dragging` (file dragged over the form — today an internal `isDragActive` boolean toggling border classes), `data-compact` (single-line / narrow layout — trigger heuristic TBD).
 
-### `ChatInput.Field`
+### `ChatInput.Field` — `changed`
+
+*Changed: `submitMode`-driven, IME-guarded Enter and paste-to-attach are added, and the full native textarea surface + `asChild` open up (today only `placeholder`/`className`/`aria-label`).*
 
 One `<textarea>` (today: the `InputBox` primitive in multiline mode).
 
@@ -141,7 +158,9 @@ Default content: the input value — while dictating, the live transcript replac
 | `aria-label` | `string` | `placeholder ?? "Message"` | Accessible name. |
 | `asChild` *(proposed)* + native | `React.TextareaHTMLAttributes<HTMLTextAreaElement>` · `ref` | — | Today the field takes only `placeholder`/`className`/`aria-label`; the proposal opens the full native surface. |
 
-### `ChatInput.Submit`
+### `ChatInput.Submit` — `changed`
+
+*Changed: becomes a single always-rendered node (today it delegates to `.Send`/`.Stop` and inherits their null-render); `icon`/`stopIcon` are removed.*
 
 The canonical submit control: **one `<button>`** that morphs Send↔Stop as `data-status` changes.
 
@@ -158,7 +177,9 @@ Today `.Submit` delegates to `.Send`/`.Stop` (two components, `icon` + `stopIcon
 
 **State attributes:** `data-status="ready|submitted|streaming|error"` · `data-disabled`.
 
-### `ChatInput.Send`
+### `ChatInput.Send` — `changed`
+
+*Changed: `icon` and the `WrapClick` `onClick` signature are removed — children replace the glyph, handlers compose natively.*
 
 Send-only half of the split pair — one `<button>`, `aria-label="Send"`, default content: up-arrow icon.
 
@@ -171,7 +192,9 @@ Send-only half of the split pair — one `<button>`, `aria-label="Send"`, defaul
 | `asChild` + native + `ref` | | — | Children replace the default icon. |
 | `icon` *(removed)* / `onClick: WrapClick` *(removed)* | | — | Children compose; handlers compose natively. |
 
-### `ChatInput.Stop`
+### `ChatInput.Stop` — `changed`
+
+*Changed: `icon` and the `WrapClick` `onClick` signature are removed — children replace the glyph, handlers compose natively.*
 
 Stop-only half — one `<button>`, `aria-label="Stop"`, default content: stop-square icon.
 
@@ -184,7 +207,9 @@ Clicking calls the session's `stop()`. **Renders `null` unless streaming** — s
 | `asChild` + native + `ref` | | — | Children replace the default icon. |
 | `icon` *(removed)* / `onClick: WrapClick` *(removed)* | | — | Children compose; handlers compose natively. |
 
-### `ChatInput.Voice`
+### `ChatInput.Voice` — `changed`
+
+*Changed: the baked-in listening styles become a `data-listening` attribute you style yourself; `icon` and `WrapClick` `onClick` are removed.*
 
 One `<button>`, `aria-label="Voice input"`, `aria-pressed` while listening. Default content: microphone glyph.
 
@@ -197,7 +222,9 @@ One `<button>`, `aria-label="Voice input"`, `aria-pressed` while listening. Defa
 
 **State attributes (proposed):** `data-listening` — today the listening state is baked-in classes (`bg-[var(--primary)] text-[var(--secondary)]`); the proposal removes the baked styling and surfaces the attribute so you style `[data-listening]` yourself.
 
-### `ChatInput.Model`
+### `ChatInput.Model` — `changed`
+
+*Changed: `models` config moves here from the Root; `asChild` + native attrs open up (today `className` only) and `data-open` is added.*
 
 The model-selector **trigger** — one `<button>` (today it renders the `ModelSelector` component in `variant="icon"`; the popper strategy — portal vs. inline — is an open question in the RFC). Default content: the selected model's icon/label. **Renders `null` when no models are configured.** Disabled while streaming.
 
@@ -210,7 +237,9 @@ The model-selector **trigger** — one `<button>` (today it renders the `ModelSe
 
 **State attributes (proposed):** `data-open` — popper expanded. Selection/`onModelChange` wiring in the proposal: routed through the chat session (`setModel`); exact leaf-level override prop TBD.
 
-### `ChatInput.Attach`
+### `ChatInput.Attach` — `changed`
+
+*Changed: today's wrapper div + hidden file input + portalled menu collapse to one `<button>` (input owned by `useUpload`); `icon`, `WrapClick`, and the `attachAccept` Root prop are removed.*
 
 One `<button>` that opens the file picker, `aria-label` TBD (today `"Add document"`). Default content: plus icon. **Renders `null` when no `upload` is configured on the Root** (today: when neither `onAttach` nor `onSelectAttachment` is set).
 
@@ -225,7 +254,9 @@ Today `.Attach` is *not* one node: it renders a wrapper `<div>`, a visually-hidd
 
 Accept filter and file limits move to `useUpload({ accept, maxSize, maxFiles })` — the current `attachAccept` Root prop is **removed**.
 
-### `ChatInput.Export`
+### `ChatInput.Export` — `changed`
+
+*Changed: `icon` is removed; `messages` is required today but likely defaults to the nearest chat context (TBD).*
 
 One `<button>`, `aria-label="Export conversation"` (today with a "Export as Markdown" tooltip). Default content: down-arrow icon.
 
@@ -237,7 +268,7 @@ One `<button>`, `aria-label="Export conversation"` (today with a "Export as Mark
 | `asChild` *(proposed)* + native + `ref` | | — | Children replace the default icon. |
 | `icon` *(removed)* / `onClick: WrapClick` *(removed)* | | — | Children compose; handlers compose natively. |
 
-### `ChatInput.Toolbar`
+### `ChatInput.Toolbar` — `kept`
 
 One `<div role="toolbar">`.
 
@@ -350,6 +381,8 @@ function MyChatInput() {
 ### Editing a message
 
 `ChatInput` nested inside a `Message` *is* the edit form — nearest provider wins, and `Message.Root` gets `data-editing`. There is no separate edit-form component family.
+
+The mechanism is concrete: `useChatInput` reads `useMessageContextOptional()`. When it finds itself inside a message whose context has `isEditing`, it seeds `value` from the message's `textContent`, routes submit to `editMessage(message.id, value)` instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra props — nesting *is* the wiring.
 
 ## Customization
 

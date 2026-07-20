@@ -10,6 +10,10 @@ The scoped chat session provider — shares one `useChat()` result with its subt
 import { ChatRoot } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`ChatRoot`](#chatroot--changed) — `changed`: today's token-scope `<div>` + `<style>` are deleted — context only, zero nodes; 25 props collapse into `chat`
+
 ## Anatomy
 
 `ChatRoot` is a provider, not a layout element — you supply every layout div between it and the components it feeds:
@@ -52,7 +56,9 @@ What `ChatRoot` puts in the DOM **today** — the RFC deletes both nodes (contex
 
 ## Parts
 
-### `ChatRoot`
+### `ChatRoot` — `changed`
+
+*Changed: the node is deleted — today's token-scope `<div>` (and injected `<style>`) go away, leaving context only (the scope moves to `ChatThemeScope`); 25 individual props collapse into the one `chat` object.*
 
 The compound's context provider (`ChatContextProvider` internally). All session state enters here; `ChatInput`, `ChatMessageList`, `Message`, `Chat.If` and the `use*Context` hooks read it. Default content: `children`, unchanged — there is no default anatomy to describe because there is no node. Renders `children` unconditionally (no null-render condition).
 

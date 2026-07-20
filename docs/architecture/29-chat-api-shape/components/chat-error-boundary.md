@@ -10,6 +10,10 @@ An error boundary for chat surfaces — catches **render** errors in its subtree
 import { ChatErrorBoundary } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`ChatErrorBoundary`](#chaterrorboundary--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -53,7 +57,7 @@ While nothing has thrown, `ChatErrorBoundary` renders **children only — zero n
 
 ## Parts
 
-### `ChatErrorBoundary`
+### `ChatErrorBoundary` — `kept`
 
 A React error boundary (class component today). Default content: `children`, verbatim. **Render condition:** children until a descendant throws during render; then the `fallback` (function form receives `(error, reset)`), or the default card above when no fallback is given. `reset()` clears the caught error and re-renders children. Caught errors are also logged to the console and forwarded to `onError`.
 

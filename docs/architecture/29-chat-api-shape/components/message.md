@@ -10,6 +10,30 @@ One message row: a single `<article>` plus scoped context, with composable parts
 import { Message } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#messageroot--changed) — `changed`: `<div>`→`<article>`; per-message session props deleted
+- [`.Avatar`](#messageavatar--kept) — `kept`
+- [`.Header`](#messageheader--changed) — `changed`: `<div>`→`<header>`
+- [`.Name`](#messagename--changed) — `changed`: renamed from `Message.Header.Name`
+- [`.Timestamp`](#messagetimestamp--changed) — `changed`: `<span>`→`<time>`
+- [`.Content`](#messagecontent--changed) — `changed`: function-child moves to `.Parts`; `codeBlock` / `markdownComponents` deleted
+- [`.Parts`](#messageparts--changed) — `changed`: replaces `Message.Part` + `.Content`'s function-child
+- [`.Text`](#messagetext--changed) — `changed`: markdown exception, `components` map, streaming ownership
+- [`.Reasoning`](#messagereasoning--kept) — `kept`
+- [`.Source`](#messagesource--kept) — `kept`
+- [`.File`](#messagefile-proposed--no-current-source--new) — `new`: attachment part leaf
+- [`.Image`](#messageimage-proposed--no-current-source--new) — `new`: image part leaf
+- [`.Sources`](#messagesources--changed) — `changed`: `<section>`; `renderItem` deleted; `data-empty`
+- [`.Actions`](#messageactions--changed) — `changed`: baked hover-reveal classes → `data-floating`
+- [`.CopyAction`](#messagecopyaction--changed) — `changed`: `icon` deleted; composed `onClick`; `data-copied`
+- [`.RegenerateAction`](#messageregenerateaction--changed) — `changed`: same leaf deltas as `.CopyAction`
+- [`.EditAction`](#messageeditaction--changed) — `changed`: immediate `editMessage` → edit mode (`startEdit`)
+- [`.Feedback`](#messagefeedback-cut--removed) — `removed`: cut from v1 (no backend endpoint)
+- [`.BranchPicker`](#messagebranchpicker--kept) — `kept`
+- [`.Tokens`](#messagetokens--changed) — `changed`: popover pair → `<span>` (TBD); `renderItem` deleted
+- [`.Continuing`](#messagecontinuing--changed) — `changed`: `<div>`→`<span>`
+
 ## Anatomy
 
 `Message.Root` renders exactly **one `<article>`** *(proposed — today it renders the `MessageItem` primitive `<div>` with baked layout classes: `flex w-full flex-col gap-1.5`, user turns `ml-auto max-w-[80%] items-end`)* and provides scoped context (`MessageContextProvider`) to its children. There is no other node — every layout element between the parts is yours.
@@ -114,7 +138,9 @@ Not in the childless default: `Message.Avatar` (standalone — the header embeds
 
 ## Parts
 
-### `Message.Root`
+### `Message.Root` — `changed`
+
+Changed: today's `MessageItem` `<div>` becomes one `<article>`, and the per-message session props (`isStreaming`, `editMessage`, `getBranches`, `switchBranch`, `onReload`, `onFeedback`, `feedback`) are deleted in favor of `ChatRoot` context.
 
 The single message node (one `<article>`) + the compound's scoped context. All message data enters here; sub-parts read it from context.
 
@@ -145,7 +171,7 @@ The single message node (one `<article>`) + the compound's scoped context. All m
 [data-agent-id='researcher'] { --accent: var(--purple-9); }
 ```
 
-### `Message.Avatar`
+### `Message.Avatar` — `kept`
 
 One `<div>` (the `AgentAvatar` primitive). Default content: the agent's avatar image, else the name's initial, else the provider logomark for `metadata.model`. Identity resolves **per message** (multi-agent decision): `metadata.agentName` → `metadata.agentId` for the name, `metadata.agentAvatarUrl` for the image, `metadata.model` for the logomark fallback. Today it also falls back to the conversation-level `chat.agent` between those; under the RFC's per-message identity rule the message metadata is canonical — whether the conversation-level fallback survives is **TBD**. **Renders `null` on user turns.**
 
@@ -155,7 +181,7 @@ One `<div>` (the `AgentAvatar` primitive). Default content: the agent's avatar i
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes<HTMLDivElement>`, `ref`) | | Own the node (today: `className` only). |
 
-### `Message.Header`
+### `Message.Header` — `changed`
 
 One `<header>` *(proposed — today a `<div>` row)*. Default content: `AgentAvatar` (`size-8`) → `Message.Name` → `Message.Timestamp` pushed right. Ported 1:1 from Studio's `ChatMessageHeader`. **Renders `null` on user turns** — user messages have no header. Pass children to recompose the inner row from `Message.Name` / `Message.Timestamp`.
 
@@ -165,7 +191,9 @@ One `<header>` *(proposed — today a `<div>` row)*. Default content: `AgentAvat
 | --- | --- | --- |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | Own the node; children replace the default avatar/name/timestamp row. |
 
-### `Message.Name`
+### `Message.Name` — `changed`
+
+Changed: today shipped as `Message.Header.Name`; the flat `Message.Name` spelling is the proposed naming (canonical spelling TBD).
 
 One `<span>`. Default content: the agent name from message metadata (same chain as `.Avatar`), with the `"Assistant"` placeholder fallback — the placeholder lives **here**, deliberately not on the avatar, so `AgentAvatar` can still fall back to the model logomark. Children replace the text without losing styling/position. *(Today shipped as `Message.Header.Name`; the flat `Message.Name` spelling is the proposed naming — canonical spelling TBD.)*
 
@@ -176,7 +204,7 @@ One `<span>`. Default content: the agent name from message metadata (same chain 
 | `children` | `ReactNode` | Replace the default name text. |
 | `asChild` + native (`HTMLAttributes<HTMLSpanElement>`, `ref`) | | Own the node. |
 
-### `Message.Timestamp`
+### `Message.Timestamp` — `changed`
 
 One `<time>` *(proposed — today a `<span>` with `suppressHydrationWarning`)*. Default content: `HH:MM` via `toLocaleTimeString` from `message.createdAt`. **Renders `null` when `createdAt` is missing or invalid.** *(Today `Message.Header.Timestamp` — same naming note as `.Name`.)*
 
@@ -186,7 +214,9 @@ One `<time>` *(proposed — today a `<span>` with `suppressHydrationWarning`)*. 
 | --- | --- | --- |
 | `asChild` + native (`ref`) | | Own the node. Whether children can replace the formatted label is TBD (today: no children). |
 
-### `Message.Content`
+### `Message.Content` — `changed`
+
+Changed: today's function-child `(part, index) => ReactNode` moves to `Message.Parts`, and the `codeBlock` / `markdownComponents` props fold into the markdown `components` override map.
 
 One `<div>`, role-split default content:
 
@@ -203,7 +233,7 @@ When childless it renders that default loop; compose the body with `Message.Part
 
 **Removed (proposed):** today's function-child `(part, index) => ReactNode` moves to `Message.Parts`; `codeBlock` / `markdownComponents` fold into the markdown `components` override map (`renderCodeBlock` is deleted per the breaking-changes ledger).
 
-### `Message.Parts`
+### `Message.Parts` — `changed`
 
 **Renders no node** — a typed render-fn iterator over the message's parts. Replaces today's pair of `Message.Part` (opaque single-part leaf) + `Message.Content`'s function-child. Registry-aware: resolution order is **inline render fn → `tools` registry by name → default renderer**. Iterates the grouped parts (`groupPartsInOrder`), typed by `Message.Root`'s `ChatMessage<TMetadata, TDataParts, TTools>` generics — a tool part narrows per tool name.
 
@@ -215,7 +245,9 @@ When childless it renders that default loop; compose the body with `Message.Part
 
 **TBD:** whether a childless `<Message.Parts />` renders the default renderer per part (which would make `.Content`'s childless default expressible as public composition), and whether the render fn also receives `index`.
 
-### `Message.Text`
+### `Message.Text` — `changed`
+
+Changed: streaming ownership (incremental block parse, repair, hardening) is a proposed addition, and today's `codeBlock` / `markdownComponents` props are replaced by the `components` override map.
 
 The text-part leaf — **Markdown-backed, the sanctioned multi-node exception** (see the markdown exception in the RFC): it renders the part's text as `Markdown` (today `my-2 text-[15px] leading-7`) with streaming ownership (incremental block parse, fence/emphasis repair, link/image-prefix hardening). Every emitted element is replaceable via the `components` map — still no unreachable node.
 
@@ -228,7 +260,7 @@ The text-part leaf — **Markdown-backed, the sanctioned multi-node exception** 
 
 **State attributes (proposed):** `data-streaming` — present while this part is streaming.
 
-### `Message.Reasoning`
+### `Message.Reasoning` — `kept`
 
 Renders the shared [`Reasoning`](./reasoning.md) block with the part's text and streaming flag (auto-open while streaming, `data-open`). See that page for its own parts.
 
@@ -238,7 +270,7 @@ Renders the shared [`Reasoning`](./reasoning.md) block with the part's text and 
 | --- | --- | --- |
 | `part` *(required)* | the narrowed `reasoning` part | The part to render. |
 
-### `Message.Source`
+### `Message.Source` — `kept`
 
 One citation pill (`SourcePill`, `<a>`-backed). Inside a `Message.Sources` function-child it inherits the row's `onSourceClick`; standalone it renders with no handler.
 
@@ -251,7 +283,7 @@ One citation pill (`SourcePill`, `<a>`-backed). Inside a `Message.Sources` funct
 | `onClick` | `() => void` | Override; falls back to the enclosing `Message.Sources` handler. |
 | `asChild` + native (`ref`) | | Own the node (today: `className` only). |
 
-### `Message.File` *(proposed — no current source)*
+### `Message.File` *(proposed — no current source)* — `new`
 
 New part leaf: sent and received attachments are renderable parts. Proposed default content mirrors today's default file-part renderer: an `AttachmentPill` (`w-[200px]`) showing filename (fallback `"Attachment"`), media type/size, and an image preview when `mediaType` starts with `image/` — read-only, no upload-lifecycle badge.
 
@@ -264,7 +296,7 @@ New part leaf: sent and received attachments are renderable parts. Proposed defa
 
 **TBD:** exact node and anatomy beyond the pill default.
 
-### `Message.Image` *(proposed — no current source)*
+### `Message.Image` *(proposed — no current source)* — `new`
 
 New part leaf for image parts — presumably one `<img>` for `image/*` file parts. Generated-image chrome beyond this leaf is explicitly out of scope for v1 (lands additively later).
 
@@ -277,7 +309,7 @@ New part leaf for image parts — presumably one `<img>` for `image/*` file part
 
 **TBD:** exact node, prop shape, and whether the default renderer routes `image/*` file parts here instead of `.File`.
 
-### `Message.Sources`
+### `Message.Sources` — `changed`
 
 One `<section>` *(proposed — today the `Sources` collection root)*. Default content: one citation pill per source extracted from the message's tool results (`extractSourcesFromParts`). **Renders `null` when the message yields no sources** (today's behavior; the proposed `data-empty` state implies a mounted-empty node — which of the two v1 ships is **TBD**). In a composed `.Content` body sources are not auto-appended — place this part yourself. See [Sources](./sources.md).
 
@@ -293,7 +325,7 @@ One `<section>` *(proposed — today the `Sources` collection root)*. Default co
 
 **State attributes (proposed):** `data-empty` — no sources.
 
-### `Message.Actions`
+### `Message.Actions` — `changed`
 
 One `<div>`. Default content: `Message.CopyAction` + `Message.RegenerateAction` (`Message.EditAction` stays available but is off by default). **Renders `null` when the message has no text content** (today). Hover reveal is today baked in as `opacity-0 group-hover/msg:opacity-100`; the RFC replaces the baked classes with `data-floating` so you own the reveal — **hidden-but-animatable, never unmounted to hide**.
 
@@ -306,7 +338,7 @@ One `<div>`. Default content: `Message.CopyAction` + `Message.RegenerateAction` 
 
 **State attributes (proposed):** `data-floating` — hidden-but-animatable.
 
-### `Message.CopyAction`
+### `Message.CopyAction` — `changed`
 
 One `<button>`. Default content: copy icon, swapping to a check while copied; `aria-label`/`title` `"Copy to clipboard"` / `"Copied!"`. Copies the message's `textContent` via `useClipboard`. **Renders `null` when there is no text content.** Children replace the default icon (the `icon` prop is deleted — icon-slot ban); today's `onClick(event, next)` wrap-signature becomes a standard composed `onClick` (consumer first; `preventDefault` skips the internal copy) per the merge-semantics contract.
 
@@ -320,23 +352,23 @@ One `<button>`. Default content: copy icon, swapping to a check while copied; `a
 
 **State attributes (proposed):** `data-copied` — transient copied feedback (today expressed only by the icon/label swap).
 
-### `Message.RegenerateAction`
+### `Message.RegenerateAction` — `changed`
 
 One `<button>`. Default content: refresh icon; `aria-label`/`title` `"Regenerate response"`. **Renders `null` unless regeneration is available** — assistant turns only, and only when `reload` exists on the `ChatRoot` context (today: `onReload`, gated `role !== 'user'`). Same props table as `.CopyAction` (children replace icon, composed `onClick`, `asChild`, native).
 
 **Layout:** in-flow fixed `size-7` round icon button.
 
-### `Message.EditAction`
+### `Message.EditAction` — `changed`
 
 One `<button>`. Default content: pencil icon; `aria-label`/`title` `"Edit message"`. **Renders `null` when editing is unavailable or there is no text content.** Same props table as `.CopyAction`. **Semantics change (proposed):** today it calls `editMessage(id, textContent)` immediately; proposed it enters edit mode (`startEdit`) — `Message.Root` gets `data-editing` and a `ChatInput` rendered inside the message *is* the edit form (nearest provider wins; no separate edit-form family).
 
 **Layout:** in-flow fixed `size-7` round icon button; not in the childless default cluster.
 
-### `Message.Feedback` *(cut)*
+### `Message.Feedback` *(cut)* — `removed`
 
 There is no `Message.Feedback` in v1 — cut (no backend endpoint behind `onFeedback`); it returns additively when the endpoint exists.
 
-### `Message.BranchPicker`
+### `Message.BranchPicker` — `kept`
 
 One `<div>` container: ‹ previous · `2/3` count · next ›. **Renders `null` unless the message has more than one branch** (`total <= 1`). Today it accepts **no props at all**; proposed it takes `asChild` + native attributes like every part. Branch data/actions come from `ChatRoot`'s existing `getBranches` / `switchBranch` via `useMessageBranches`. Full anatomy and per-leaf props: [BranchPicker](./branch-picker.md).
 
@@ -344,7 +376,7 @@ One `<div>` container: ‹ previous · `2/3` count · next ›. **Renders `null`
 
 **State attributes (proposed):** `data-active` — selected branch.
 
-### `Message.Tokens`
+### `Message.Tokens` — `changed`
 
 Proposed node: one `<span>`. Today it renders a Popover pair — a trigger `<button>` showing the compact total (`726`, `79.8k`; hover-revealed like the actions, pinned visible while open) that opens a breakdown card (Model · Input · Output · Total, from `metadata.usage`: `inputTokens` / `outputTokens` / `reasoningTokens`). **Renders `null` on user turns and when total tokens are 0** (no usage metadata). **TBD:** whether the popover chrome stays on this leaf (the popper-anchor open question) or the leaf trims to the plain usage `<span>`.
 
@@ -356,7 +388,7 @@ Proposed node: one `<span>`. Today it renders a Popover pair — a trigger `<but
 
 **Removed (proposed):** `renderItem` for the breakdown rows (render-prop config, deleted per the ledger).
 
-### `Message.Continuing`
+### `Message.Continuing` — `changed`
 
 One `<span>` *(proposed — today a `<div>`, `mt-3 text-sm`)*. Default content: a `Continuing...` `Shimmer`. **Renders `null` when the message is not streaming.** Children replace the shimmer.
 

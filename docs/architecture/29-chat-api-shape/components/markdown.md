@@ -14,6 +14,13 @@ import { Markdown, RichCodeBlock } from 'veryfront/chat'
 
 Every other primitive in `veryfront/chat` renders exactly one DOM node. `Markdown` (and therefore [`Message.Text`](./message.md), which it backs) necessarily renders a node *tree* — a paragraph of prose becomes `<p>`, `<a>`, `<code>`, and so on. It is the **only** sanctioned exception to the node contract, tamed by one rule: **every emitted element type is replaceable** through the `components` override map. There is still no unreachable node — if `Markdown` can emit it, you can supply the component that renders it.
 
+## Parts index
+
+- [`Markdown`](#markdown--changed) — `changed`: `renderCodeBlock` deleted; hardening props + streaming ownership proposed
+- [`components`](#components--the-override-map--changed) — `changed`: block-code hook moves from `pre` interception to the `code` key; virtual `citation` slot
+- [Streaming](#streaming-proposed--owned-here--new) — `new`: incremental parsing, mid-stream repair, URL hardening
+- [`RichCodeBlock`](#richcodeblock--changed) — `changed`: deprecated plain-`<pre>` fork collapses onto the `ui` `CodeBlock`; `copyIcon` / `collapseIcon` deleted
+
 ## Anatomy
 
 Not a compound — one component, one override map:
@@ -84,7 +91,9 @@ Notes for the reviewer:
 
 ## Props
 
-### `Markdown`
+### `Markdown` — `changed`
+
+Changed: `renderCodeBlock` is deleted (it *is* `components.code` now), and the hardening props (`allowedLinkPrefixes` / `allowedImagePrefixes`) plus streaming ownership are proposed additions.
 
 **Layout: one in-flow container `<div>` around the emitted tree** — the container carries the typographic rhythm; native attributes spread onto it.
 
@@ -99,17 +108,19 @@ Notes for the reviewer:
 
 **Removed (proposed):** `renderCodeBlock` — it *is* `components.code` now (breaking-changes ledger).
 
-### `components` — the override map
+### `components` — the override map — `changed`
+
+Changed: today block code is intercepted at the `pre` renderer; the proposed map is keyed `code` (how the `pre`/`code` split maps onto that key is TBD) and adds the virtual `citation` slot.
 
 The react-markdown convention: a map from emitted element type to the component that renders it.
 
 - **Every emitted element type is replaceable.** Pass a component for any element `Markdown` emits and yours renders instead — including the built-in defaults for `pre`/`code`, `table`, `th`, `td`, `a`, and `blockquote` documented in the DOM above.
-- **`code`** — defaults to [`RichCodeBlock`](#richcodeblock). The default renderer receives `{ language, code }` extracted from the fence.
+- **`code`** — defaults to [`RichCodeBlock`](#richcodeblock--changed). The default renderer receives `{ language, code }` extracted from the fence.
 - **`citation`** — a *virtual* slot (no HTML element named `citation`): renders footnote markers generated from source parts. Defaults to [`InlineCitation`](./inline-citation.md) — numbered pills.
 
 Because [`ToolCall.Input`](./tool-call.md) and `ToolCall.Output` are `RichCodeBlock`/`Markdown`-backed, the same `components` map reaches those surfaces too.
 
-### Streaming (proposed — owned here)
+### Streaming (proposed — owned here) — `new`
 
 Streaming is owned by `Markdown` (the streamdown model) — consumers never hand-roll token handling. None of this exists in today's implementation (which re-renders the whole tree per update and loads the parser lazily):
 
@@ -117,7 +128,9 @@ Streaming is owned by `Markdown` (the streamdown model) — consumers never hand
 - **Repair of unterminated syntax.** Unterminated code fences and emphasis are repaired mid-stream, so a half-arrived ` ``` ` never breaks the rendered tree.
 - **Hardening.** `allowedLinkPrefixes` / `allowedImagePrefixes` restrict which URLs links and images may point at — streamed model output is a security surface, and hardening is table stakes.
 
-## `RichCodeBlock`
+## `RichCodeBlock` — `changed`
+
+Changed: today's deprecated plain-`<pre>` fork and the `ui` `CodeBlock` collapse into one name aliasing the `ui` primitive; `copyIcon` / `collapseIcon` are deleted.
 
 The **default `components.code` renderer** — an alias over the `veryfront/ui` `CodeBlock` (shiki highlighting, copy button with ~2s copied feedback, language label, collapsible shell, mermaid support). **Layout: an in-flow block card (`my-4 rounded border overflow-hidden`): header row (`flex justify-between`, label left / actions right) above the scrolling `<pre>`.**
 

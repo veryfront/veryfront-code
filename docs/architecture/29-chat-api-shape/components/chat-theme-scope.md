@@ -10,6 +10,10 @@ One `<div>` carrying the design-token scope for the chat UI beneath it — the s
 import { ChatThemeScope } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`ChatThemeScope`](#chatthemescope--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -45,7 +49,7 @@ The actual HTML from today's source:
 
 ## Parts
 
-### `ChatThemeScope`
+### `ChatThemeScope` — `kept`
 
 The single token-scope node. Default content: the injected token `<style>` (an implementation detail with no layout footprint — whether it survives as an inline tag or moves to a stylesheet is TBD in implementation; the node contract governs the `<div>`) followed by `children`. Renders unconditionally — no null-render case. Nesting scopes is harmless; the innermost wins by CSS cascade.
 

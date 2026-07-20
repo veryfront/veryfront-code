@@ -10,6 +10,12 @@ A labelled divider between an assistant turn's steps, with per-step lifecycle st
 import { StepIndicator } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#stepindicatorroot--changed) — `changed`: `<div>` → `<ol>`; `isComplete` boolean → `data-state`; `icon` deleted
+- [`.Rule`](#stepindicatorrule--changed) — `changed`: `<div>` → `<li>`
+- [`.Label`](#stepindicatorlabel--changed) — `changed`: `<div>` → `<span>`; `icon` override → children
+
 ## Anatomy
 
 ```tsx
@@ -45,7 +51,9 @@ No absolute positioning, no conditional parts — everything always renders; onl
 
 ## Parts
 
-### `StepIndicator.Root`
+### `StepIndicator.Root` — `changed`
+
+Changed: today's `<div>` flex row becomes an `<ol>`, the `isComplete` boolean becomes `data-state="pending|active|complete"`, and the `icon` prop is deleted.
 
 The container + the compound's scoped context. Today one `<div>` flex row; **proposed `<ol>`**. Step data enters here; sub-parts read it from context.
 
@@ -71,7 +79,7 @@ The container + the compound's scoped context. Today one `<div>` flex row; **pro
 [data-state='complete'] .check { display: inline; }
 ```
 
-### `StepIndicator.Rule`
+### `StepIndicator.Rule` — `changed`
 
 One of the flanking horizontal rules. Today a `<div>`; **proposed `<li>`**. Default content: none — it *is* the 1px line. Always renders; two appear in the default anatomy, one either side of the label.
 
@@ -81,7 +89,7 @@ One of the flanking horizontal rules. Today a `<div>`; **proposed `<li>`**. Defa
 | --- | --- | --- |
 | `asChild` + native + `ref` *(proposed)* | | Own the node. Today the part takes only `className`. |
 
-### `StepIndicator.Label`
+### `StepIndicator.Label` — `changed`
 
 The step pill. Today a `<div>`; **proposed `<span>`**. Default content: status glyph — green `CheckCircle` when complete, a 2px-dot pulsing while pending *(the `active` glyph is TBD)* — followed by the text `Step {stepIndex + 1}`. Always renders.
 

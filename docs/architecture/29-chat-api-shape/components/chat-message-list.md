@@ -10,6 +10,12 @@ The transcript — one scroll container with an accessible log region and a scro
 import { ChatMessageList } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#chatmessagelist-root--changed) — `changed`: today's two nodes collapse to one scroll container; data/render props deleted; imperative `data-*` scroll state added
+- [`.Content`](#chatmessagelistcontent--changed) — `changed`: `role="log"` + streaming a11y contract move here from the scroll container
+- [`.ScrollButton`](#chatmessagelistscrollbutton--changed) — `changed`: stays mounted, inert + unfocusable at bottom (today it unmounts)
+
 ## Anatomy
 
 ```tsx
@@ -58,7 +64,9 @@ What the transcript renders today (as composed by the preset), annotated per nod
 
 Every part renders **one** node, takes `asChild`, extends its node's `HTMLAttributes`, merges `className` (Tailwind-aware, consumer wins), and composes `ref`.
 
-### `ChatMessageList` (`.Root`)
+### `ChatMessageList` (`.Root`) — `changed`
+
+*Changed: today's two nodes (relative wrapper + scroll div) collapse into one scroll container; `messages`/`isLoading`/`renderMessage`/`renderScrollButton` and friends are deleted (see the ledger below), and imperative `data-*` scroll state is added.*
 
 The scroll container `<div>` + the compound's scoped context. Default content: `<ChatMessageList.Content />` + `<ChatMessageList.ScrollButton />`; pass children to replace the viewport composition. Always renders (no null condition) — an empty thread is the container with `data-empty`.
 
@@ -75,7 +83,9 @@ The scroll container `<div>` + the compound's scoped context. Default content: `
 
 **Behavior (today → contract):** stick-to-bottom follows new content only while pinned; a new *user* turn force-scrolls (and re-pins) even from scrolled-up history. The RFC subsumes both into [`useChatScroll`](../hooks/use-chat-scroll.md): escape-on-scroll-up + resume threshold, `turnAnchor: "bottom" | "top"`, position restore on thread switch, `preserveScrollOnPrepend`. How scroll options surface on the component (props vs. hook-only) is TBD in implementation.
 
-### `ChatMessageList.Content`
+### `ChatMessageList.Content` — `changed`
+
+*Changed: `role="log"` and the streaming a11y contract move here from the scroll container (`aria-relevant="additions"`, `aria-busy` while streaming).*
 
 The transcript column — one `<div>`, `role="log"`. Default content: one [`Message`](./message.md) per entry in the session's `messages` (keyed by id, streaming row marked via context), followed by a pending assistant placeholder row **only while loading and the last message is not yet an assistant turn**. Children replace the default map entirely (read `messages` from [`useChatContext`](../hooks/use-chat-context.md)).
 
@@ -87,7 +97,9 @@ The transcript column — one `<div>`, `role="log"`. Default content: one [`Mess
 
 **A11y (proposed):** `role="log"`, `aria-relevant="additions"`, `aria-busy` while streaming (no token-level SR spam); completion announced once via a visually-hidden `role="status"` region. *(Today `role="log" aria-live="polite"` sits on the scroll container, not on `.Content` — the RFC moves it here.)*
 
-### `ChatMessageList.ScrollButton`
+### `ChatMessageList.ScrollButton` — `changed`
+
+*Changed: stays mounted at bottom — inert + unfocusable — instead of unmounting, and the `icon` prop falls to the icon-slot ban; today it exists only via the deleted `renderScrollButton` prop.*
 
 One `<button>` (`aria-label="Scroll to bottom"`). Default content: a down-arrow icon when childless; pass children to replace it (today's `icon` prop falls to the icon-slot ban). Clicking smooth-scrolls to the bottom and re-pins.
 

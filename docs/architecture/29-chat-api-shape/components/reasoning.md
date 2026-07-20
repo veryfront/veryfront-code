@@ -12,6 +12,12 @@ A disclosure for a model's reasoning part — auto-opens while streaming, auto-c
 import { Reasoning } from 'veryfront/chat'
 ```
 
+## Parts index
+
+- [`.Root`](#reasoningroot--changed) — `changed`: `icon` / `labels` props deleted; `data-open` / `data-streaming` proposed
+- [`.Trigger`](#reasoningtrigger--changed) — `changed`: `icon` / `labels` props deleted — children own the content
+- [`.Content`](#reasoningcontent--kept) — `kept`
+
 ## Anatomy
 
 ```tsx
@@ -45,7 +51,9 @@ No absolute positioning — both parts are in-flow; the disclosure works by moun
 
 ## Parts
 
-### `Reasoning.Root`
+### `Reasoning.Root` — `changed`
+
+Changed: the `icon` and `labels` props are deleted (children on `.Trigger` own the content), and `data-open` / `data-streaming` are proposed state attributes.
 
 The disclosure wrapper (one `<div>`) + the compound's scoped context. The reasoning text and streaming flag enter here; sub-parts read them from context.
 
@@ -77,7 +85,9 @@ The disclosure wrapper (one `<div>`) + the compound's scoped context. The reason
 [data-open] .chevron { rotate: 180deg; }
 ```
 
-### `Reasoning.Trigger`
+### `Reasoning.Trigger` — `changed`
+
+Changed: the `icon` and `labels` props are deleted — pass children to replace the default label + chevron content.
 
 One full-width `<button>`. Default content: the label — a shimmering `Thinking...` while streaming, a plain `Thought process` when done — followed by a chevron inside a rotating wrapper (`-rotate-90` when closed, so a custom glyph never needs to know about open state). Always renders.
 
@@ -89,7 +99,7 @@ One full-width `<button>`. Default content: the label — a shimmering `Thinking
 | ~~`labels`~~ | `{ thinking?, thought? }` | **Removed** — children own the text. |
 | `asChild` + native (`ButtonHTMLAttributes`, `ref`) | | Own the node; `data-open` *(proposed)* mirrors the root. |
 
-### `Reasoning.Content`
+### `Reasoning.Content` — `kept`
 
 One `<div>`. Default content: the reasoning `text` rendered as [`Markdown`](./markdown.md) at 14px (the compact variant size). **Renders `null` while the disclosure is closed** — safe to include unconditionally.
 
