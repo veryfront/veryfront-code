@@ -12,7 +12,11 @@ The message action buttons — a namespace re-export of the `Message.Actions` fa
 import { MessageActionBar } from 'veryfront/chat'
 // canonical form:
 import { Message } from 'veryfront/chat' // Message.Actions, Message.CopyAction, …
+// every sub-part is also a flat named export, with its Props type:
+import { Message, MessageCopyAction, type MessageCopyActionProps } from 'veryfront/chat'
 ```
+
+`Message.CopyAction` and `MessageCopyAction` are the same function — namespace alias and flat export, two access styles (same for every sub-part).
 
 ## Parts index
 

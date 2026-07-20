@@ -8,6 +8,9 @@ One `<div>` carrying the design-token scope for the chat UI beneath it — the s
 
 ```tsx
 import { ChatThemeScope } from 'veryfront/chat'
+
+// Flat style (RFC decision: every part is a real named export with its Props type)
+import { ChatThemeScope, type ChatThemeScopeProps } from 'veryfront/chat'
 ```
 
 ## Parts index

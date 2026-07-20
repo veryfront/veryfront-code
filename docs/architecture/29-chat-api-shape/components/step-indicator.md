@@ -8,6 +8,8 @@ A labelled divider between an assistant turn's steps, with per-step lifecycle st
 
 ```tsx
 import { StepIndicator } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { StepIndicator, StepIndicatorLabel, type StepIndicatorLabelProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -19,16 +21,16 @@ import { StepIndicator } from 'veryfront/chat'
 ## Anatomy
 
 ```tsx
-<StepIndicator.Root>       {/* proposed <ol>; today a <div> flex row */}
-  <StepIndicator.Rule>     {/* proposed <li>; a flanking horizontal rule */}
-    <StepIndicator.Label /> {/* status glyph + "Step N" pill */}
-  </StepIndicator.Rule>
+<StepIndicator.Root>        {/* proposed <ol>; today a <div> flex row — ONE per step boundary */}
+  <StepIndicator.Rule />    {/* proposed <li>; the leading horizontal rule */}
+  <StepIndicator.Label />   {/* status glyph + "Step N" pill — a sibling BETWEEN the rules, never nested */}
+  <StepIndicator.Rule />    {/* the trailing rule */}
 </StepIndicator.Root>
 ```
 
 `<StepIndicator>` with **no children renders the default anatomy**: `Rule` → `Label` → `Rule` — a horizontal rule broken by a centered step pill. Pass children to recompose.
 
-> **Proposed restructure.** Today's component is *one divider per step boundary*: a `<div>` taking `stepIndex` + `isComplete` and rendering rule–pill–rule. The RFC recasts it as list semantics — `.Root <ol>` · `.Rule <li>` · `.Label <span>` — with the boolean `isComplete` replaced by `data-state="pending|active|complete"`. **TBD:** whether the proposed `.Root` hosts *all* steps of a turn (a real `<ol>` of steps) or remains one element per boundary with list semantics for accessibility only; and how `active` is derived (today's data model is binary complete/pending — `active` has no source equivalent yet).
+> **Proposed restructure.** Today's component is *one divider per step boundary*: a `<div>` taking `stepIndex` + `isComplete` and rendering rule–pill–rule. The RFC recasts it as list semantics — `.Root <ol>` · `.Rule <li>` · `.Label <span>` — with the boolean `isComplete` replaced by `data-state="pending|active|complete"`. Resolved: `.Root` stays **one element per step boundary** (the list semantics are for accessibility, not a turn-wide list of steps); step boundaries derive from the message's `step-start` parts, and `active` is the latest boundary while the message streams.
 
 ## Default DOM (childless render)
 
@@ -102,7 +104,7 @@ The step pill. Today a `<div>`; **proposed `<span>`**. Default content: status g
 
 ## Context (what the parts read)
 
-`useStepIndicator()` — throws outside a `StepIndicator`:
+`useStepIndicator()` — a **per-boundary context reader**; throws outside a `StepIndicator`:
 
 ```ts
 {
@@ -111,7 +113,9 @@ The step pill. Today a `<div>`; **proposed `<span>`**. Default content: status g
 }
 ```
 
-*Grounding:* today's context is `{ stepIndex, isComplete, icon }`. The RFC replaces the boolean + icon slot with the three-value `state`. **TBD:** the exact hook return shape (whether prop getters are needed for a component with no interactivity).
+Steps derive from the message's `step-start` parts; `state: 'active'` is the latest boundary while the message streams. No prop getters — the component has no interactivity. One shape, shared with [`useStepIndicator`](../hooks/use-step-indicator.md).
+
+*Grounding:* today's context is `{ stepIndex, isComplete, icon }`. The RFC replaces the boolean + icon slot with the three-value `state`.
 
 ## Examples
 
@@ -125,14 +129,13 @@ Step rendering ships as part of the public `<Chat>` composition's defaults.
 
 ### Composed (L2)
 
+One `StepIndicator` per step boundary; `.Label` is a sibling *between* the two `.Rule`s, never nested inside one:
+
 ```tsx
-<StepIndicator.Root className="my-steps">
-  <StepIndicator.Rule className="my-step">
-    <StepIndicator.Label className="my-step-label">Searching</StepIndicator.Label>
-  </StepIndicator.Rule>
-  <StepIndicator.Rule className="my-step">
-    <StepIndicator.Label className="my-step-label">Summarizing</StepIndicator.Label>
-  </StepIndicator.Rule>
+<StepIndicator.Root stepIndex={stepIndex} className="my-step">
+  <StepIndicator.Rule className="my-step-rule" />
+  <StepIndicator.Label className="my-step-label">Searching</StepIndicator.Label>
+  <StepIndicator.Rule className="my-step-rule" />
 </StepIndicator.Root>
 ```
 
@@ -140,24 +143,30 @@ Style each step off `[data-state]` — no boolean props.
 
 ### Headless (L3)
 
+The hook is a per-boundary context reader, so a custom divider sits inside a `StepIndicator.Root`:
+
 ```tsx
-function MySteps() {
-  const steps = useStepIndicator()   // step state (pending | active | complete per step)
+function MyStepDivider() {
+  const { stepIndex, state } = useStepIndicator()   // per-boundary; throws outside a StepIndicator
   return (
-    <ol className="anything">
-      {/* map the hook's step state to your own <li> elements */}
-    </ol>
+    <div className="anything" data-state={state}>
+      Step {stepIndex + 1}
+    </div>
   )
 }
+
+<StepIndicator.Root stepIndex={stepIndex}>
+  <MyStepDivider />
+</StepIndicator.Root>
 ```
 
-`useStepIndicator()` returns the step state that drives `data-state="pending|active|complete"`.
+`useStepIndicator()` returns `{ stepIndex, state }` — the per-boundary state that drives `data-state="pending|active|complete"`.
 
 ## Customization (eject path)
 
 1. **L1:** paste the public `<Chat>` composition and edit the step rendering.
 2. **L2:** compose `StepIndicator.*` with your own labels and layout; swap nodes via `asChild`.
-3. **L3:** `useStepIndicator()` + your own list markup.
+3. **L3:** `useStepIndicator()` (per-boundary `{ stepIndex, state }`) + your own markup inside a `StepIndicator.Root`.
 
 ## Related
 

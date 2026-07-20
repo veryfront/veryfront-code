@@ -24,7 +24,18 @@ None — state comes from the nearest `ModelSelector.Root`. The `models` config 
 
 ## Returns
 
-The `ModelSelector` compound's context — the state that `.Trigger`, `.Search`, `.List`, and `.Item` render from (surfaced on the DOM as `data-open` / `data-active` / `data-empty`). The RFC specifies this hook as the compound's reader; it lists no further return shape.
+The `ModelSelector` compound's context — the state that `.Trigger`, `.Search`, `.List`, and `.Item` render from (surfaced on the DOM as `data-open` / `data-active` / `data-empty`):
+
+```ts
+{
+  value?: string                 // selected "provider/model"
+  selectedModel?: ModelOption    // resolved option (value match, else first model)
+  onSelect: (value) => void      // select + close + onValueChange
+  open: boolean
+  setOpen: (open: boolean) => void
+  disabled?: boolean
+}
+```
 
 ## Example
 
@@ -33,10 +44,16 @@ Drive your own element inside the compound:
 ```tsx
 function MyModelOptions() {
   const selector = useModelSelector()
-  return <div className="anything">{/* your markup from the selector context */}</div>
+  return (
+    <div className="anything">
+      <button onClick={() => selector.setOpen(!selector.open)}>
+        {selector.selectedModel?.label ?? 'Select model'}
+      </button>
+    </div>
+  )
 }
 
-<ModelSelector.Root>
+<ModelSelector.Root value={model} onValueChange={setModel}>
   <ModelSelector.Trigger models={MODELS} />
   <ModelSelector.Content>
     <MyModelOptions />

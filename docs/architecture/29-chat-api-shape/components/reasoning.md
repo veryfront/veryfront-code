@@ -10,6 +10,8 @@ A disclosure for a model's reasoning part — auto-opens while streaming, auto-c
 
 ```tsx
 import { Reasoning } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { Reasoning, ReasoningTrigger, type ReasoningTriggerProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -112,10 +114,11 @@ One `<div>`. Default content: the reasoning `text` rendered as [`Markdown`](./ma
 
 ## Context (what the parts read)
 
-`useReasoning()` — throws outside `Reasoning.Root`:
+`useReasoning({ text, isStreaming }?)` — explicit input at L3 (no `Reasoning.Root` needed, mirroring `useToolCall(part?)` / `useSources(message?)`); argless it reads the surrounding `Reasoning.Root` context and throws outside one:
 
 ```ts
 {
+  text: string
   open: boolean
   toggle: () => void
   isStreaming: boolean
@@ -125,7 +128,7 @@ One `<div>`. Default content: the reasoning `text` rendered as [`Markdown`](./ma
 }
 ```
 
-*Grounding:* today's context is `{ text, isStreaming, isOpen, toggle }`. The RFC adds the prop getters and `duration`. **TBD:** how `duration` is measured (first-token → last-token wall clock vs. provider-reported) — nothing tracks it in today's source.
+*Grounding:* today's context is `{ text, isStreaming, isOpen, toggle }`. The RFC adds the prop getters, `duration`, and the explicit-input form. **TBD:** how `duration` is measured (first-token → last-token wall clock vs. provider-reported) — nothing tracks it in today's source.
 
 ## Examples
 
@@ -143,7 +146,7 @@ Rendered by the default part renderer inside `<Chat>` / `ChatMessageList` for re
 <Message.Parts>
   {(part) =>
     isReasoningPart(part) ? (
-      <Reasoning.Root className="my-reasoning">
+      <Reasoning.Root text={part.text} isStreaming={part.state === 'streaming'} className="my-reasoning">
         <Reasoning.Trigger className="my-reasoning-trigger">Thinking…</Reasoning.Trigger>
         <Reasoning.Content className="my-reasoning-content" />
       </Reasoning.Root>
@@ -156,8 +159,8 @@ Rendered by the default part renderer inside `<Chat>` / `ChatMessageList` for re
 ### Headless (L3)
 
 ```tsx
-function MyReasoning() {
-  const reasoning = useReasoning()
+function MyReasoning({ part }: { part: ReasoningPart }) {
+  const reasoning = useReasoning({ text: part.text, isStreaming: part.state === 'streaming' })   // explicit — no Reasoning.Root needed
   return (
     <div className="anything" data-open={reasoning.open || undefined}>
       <button {...reasoning.getTriggerProps()} className="anything">
@@ -173,7 +176,7 @@ function MyReasoning() {
 
 1. **L1:** the default reasoning rendering is part of the public `<Chat>` composition — paste it to change it.
 2. **L2:** handle reasoning parts in your `Message.Parts` render fn and compose `Reasoning.*` your way; swap any node via `asChild`.
-3. **L3:** `useReasoning()` + your own elements via the prop getters.
+3. **L3:** `useReasoning({ text, isStreaming })` + your own elements via the prop getters — no `Reasoning.Root` needed.
 
 ## Related
 

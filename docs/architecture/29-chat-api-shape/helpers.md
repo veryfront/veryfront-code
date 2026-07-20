@@ -23,6 +23,7 @@ Every helper is a plain function you can call anywhere — in your own part rend
 | `exportAsMarkdown(messages)` | Transcript export to markdown. |
 | `downloadMarkdown(messages, filename?)` | Transcript export + download. |
 | `extractChatMessageMetadata(value)` | Typed metadata off a message. |
+| `formatSize(bytes)` | `string` — human-readable byte size (`B` / `KB` / `MB`); the primitive under [`AttachmentsPanel`](./components/attachments-panel.md)'s `.Item.Size`. |
 | `agentsToPickerOptions(agents)` | Maps agents to picker options — used by [`ChatAgentPicker`](./components/chat-agent-picker.md). |
 | `mergeProps(...propsObjects)` | **New, public** — the normative merge used internally by every prop getter and `asChild` (React Aria model). |
 

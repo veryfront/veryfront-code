@@ -99,6 +99,7 @@ One graduation path, not three products: every L1 default is public L2; every L2
 - [useConversations](./hooks/use-conversations.md) — list, active thread, CRUD, `selectAgent`
 - [useConversation](./hooks/use-conversation.md) — one conversation
 - [useConversationsContext](./hooks/use-conversations-context.md) — read `ConversationsProvider`
+- [useChatSidebarItem](./hooks/use-chat-sidebar-item.md) — per-row `ChatSidebar.Item` context reader
 
 ### Agents & models
 

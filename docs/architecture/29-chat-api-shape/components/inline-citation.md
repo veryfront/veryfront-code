@@ -8,6 +8,8 @@ An inline footnote marker with a hover card — the default renderer behind the 
 
 ```tsx
 import { InlineCitation } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { InlineCitation, InlineCitationTrigger, type InlineCitationTriggerProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -94,9 +96,9 @@ The compound's scoped context — **renders no node of its own**; children (or t
 
 ### `InlineCitation.Trigger` — `changed`
 
-The inline marker. Today a `<button>` inside a `relative inline-block` `<span>` wrapper; **proposed `<a>`**. Default content: the number `index + 1` in a 15px round superscript pill (`align-super`, nudged up 1px, left margin so it hugs the preceding word). Always renders. Hovering starts the card's 150ms open timer; leaving starts the 100ms close timer; clicking calls the root's `onClick(index)` after your own `onClick`, unless you `preventDefault()`.
+The inline marker. Today a `<button>` inside a `relative inline-block` `<span>` wrapper; **proposed `<a>`** — a citation is a link to its source, so the marker gets native anchor semantics (and the wrapper span is deleted). Default content: the number `index + 1` in a 15px round superscript pill (`align-super`, nudged up 1px, left margin so it hugs the preceding word). Always renders. Hovering starts the card's 150ms open timer; leaving starts the 100ms close timer; clicking calls the root's `onClick(index)` after your own `onClick`, unless you `preventDefault()`.
 
-**Layout:** inline-flex pill that flows with the surrounding text (superscript alignment); its wrapper span is `inline-block relative` — though the card does *not* position against it (see `.Card`).
+**Layout:** inline-flex pill that flows with the surrounding text (superscript alignment); the `<a>` is the only node in the proposed shape (today's wrapper span never positioned the card anyway — see `.Card`).
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -158,7 +160,7 @@ Nothing to wire — source parts in an assistant message render numbered pills i
 
 ### Composed (L2)
 
-Restyle or retag the default parts inside your own citation renderer.
+Restyle or retag the default parts inside your own citation renderer. `Markdown` wraps custom `components.citation` renderers in the `InlineCitation` root context, so `.Trigger` / `.Card` work bare inside one; standalone use (outside the citation slot) requires the Root.
 
 ```tsx
 function MyCitation(props) {

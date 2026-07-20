@@ -27,7 +27,12 @@ None.
 
 ### State
 
-The session context provided by the nearest [`ChatRoot`](../components/chat-root.md) — i.e. the `chat={useChat()}` value that is the single shared context (#2973).
+The session context provided by the nearest [`ChatRoot`](../components/chat-root.md) — i.e. the `chat={useChat()}` value that is the single shared context (#2973) — plus derived flags:
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `isEmpty` | `boolean` | Derived — the selector field `Chat.If` examples use |
+| `ready` | `boolean` | `ChatRoot` reads `activeReady` from the nearest `ConversationsProvider`; standalone: `true` |
 
 ### Actions
 

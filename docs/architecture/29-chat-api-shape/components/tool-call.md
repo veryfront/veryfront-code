@@ -8,6 +8,8 @@ A disclosure for one tool invocation — input, output, and the full lifecycle i
 
 ```tsx
 import { ToolCall } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { ToolCall, ToolCallTrigger, type ToolCallTriggerProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -17,7 +19,7 @@ import { ToolCall } from 'veryfront/chat'
 - [`.Body`](#toolcallbody--kept) — `kept`
 - [`.Input`](#toolcallinput--changed) — `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
 - [`.Output`](#toolcalloutput--changed) — `changed`: becomes `Markdown`/`RichCodeBlock`-backed
-- [`.Error`](#toolcallerror--kept) — `kept`
+- [`.Error`](#toolcallerror--changed) — `changed`: `role="alert"` proposed (today's Alert renders no role)
 
 ## Anatomy
 
@@ -61,7 +63,7 @@ The actual HTML of `<ToolCall part={part} />` today (classes abbreviated to layo
       <div class="overflow-x-auto rounded-md bg-secondary">…auto-table or JSON…</div>  <!-- wide tables scroll horizontally -->
     </div>
     <div class="mt-3 border-t pt-3">                                 <!-- .Error — ONLY when part.errorText exists -->
-      <div role="alert">…error Alert: icon + text…</div>
+      <div>…error Alert: icon + text…</div>                          <!-- role="alert" is PROPOSED — today's Alert renders no role -->
     </div>
   </div>
 </div>
@@ -164,7 +166,9 @@ The "Result" block: a muted `Result` heading + the output. Default rendering: an
 
 **Proposed:** `Markdown`/`RichCodeBlock`-backed, same markdown exception as `.Input` — every emitted element stays replaceable via the `components` map.
 
-### `ToolCall.Error` — `kept`
+### `ToolCall.Error` — `changed`
+
+Changed: `role="alert"` is a *proposed* addition — today's error Alert renders no role.
 
 One `<div>` wrapping an error-variant `Alert` (X-circle icon + `part.errorText`). **Renders `null` unless the part carries `errorText`.**
 
@@ -186,15 +190,15 @@ With `variant="compact"` (the default for skill tools), the root renders a singl
 
 ```ts
 {
-  part: ToolPart            // narrowed per tool name via TTools
-  state: ToolState          // drives data-state
-  input: unknown            // partial while streaming
+  part: ChatToolPart | ChatDynamicToolPart   // narrowed per tool name via TTools
+  state: ToolCallState                       // drives data-state
+  input: unknown                             // partial while streaming
   output: unknown
-  error: string | undefined
+  errorText: string | undefined
   isOpen: boolean
   toggle: () => void
-  getTriggerProps: () => ButtonProps
-  getBodyProps: () => DivProps
+  getTriggerProps: (overrides?: ButtonProps) => ButtonProps
+  getBodyProps: (overrides?: DivProps) => DivProps
 }
 ```
 
@@ -262,7 +266,7 @@ function MyToolCard({ part }: { part: MyToolPart }) {
         <div {...tool.getBodyProps()}>
           <pre>{JSON.stringify(tool.input, null, 2)}</pre>   {/* partial while streaming */}
           {tool.output && <div>{/* render output your way */}</div>}
-          {tool.error && <div role="alert">{String(tool.error)}</div>}
+          {tool.errorText && <div role="alert">{tool.errorText}</div>}
         </div>
       )}
     </div>

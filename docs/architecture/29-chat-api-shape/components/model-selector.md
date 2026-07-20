@@ -8,11 +8,14 @@ A searchable popover for choosing a model — provider-logo trigger, provider-gr
 
 ```tsx
 import { ModelSelector } from 'veryfront/chat'
+
+// every sub-part is also a flat named export (same function), with its props type
+import { ModelSelector, ModelSelectorItem, type ModelSelectorItemProps } from 'veryfront/chat'
 ```
 
 ## Parts index
 
-- [`.Root`](#modelselectorroot--changed) — `changed`: `renderItem` + root `className` deleted; `models` moves leaf-first
+- [`.Root`](#modelselectorroot--changed) — `changed`: `renderItem` + root `className` deleted; `onChange` renamed `onValueChange`; `models` moves leaf-first
 - [`.Trigger`](#modelselectortrigger--changed) — `changed`: gains leaf-first `models`; `data-open` / `data-disabled`
 - [`.Content`](#modelselectorcontent--changed) — `changed`: Command shell `<div>` collapses to one node
 - [`.Search`](#modelselectorsearch--changed) — `changed`: `CommandInput` row → one `<input>`
@@ -24,7 +27,7 @@ import { ModelSelector } from 'veryfront/chat'
 The same anatomy as [`AgentPicker`](./agent-picker.md), minus `.Create` and `.Manage`:
 
 ```tsx
-<ModelSelector.Root value={model} onChange={setModel}>
+<ModelSelector.Root value={model} onValueChange={setModel}>
   <ModelSelector.Trigger models={MODELS} />  {/* pill: provider logo · label · chevron (or icon-only) */}
   <ModelSelector.Content>                    {/* portalled popover panel + search context */}
     <ModelSelector.Search />                 {/* filter input (preset shows it only past 6 models) */}
@@ -51,7 +54,8 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
   </button>
   <!-- variant="icon" instead renders: round size-9 button, logo centered, no label/chevron -->
 
-  <!-- .Content — only while open. NOT in flow: portalled to document.body,
+  <!-- .Content — only while open. NOT in flow: portalled to the nearest
+       [data-vf-ui] scope root (falls back to document.body),
        position: fixed, placed 8px below the trigger rect by the floating logic
        (flips above on viewport-bottom collision; clamped to 8px gutters). -->
   <div role="dialog" class="z-50 min-w-[260px] rounded-lg overflow-hidden shadow-sm">
@@ -90,14 +94,14 @@ Notes for the reviewer:
 
 ### `ModelSelector.Root` — `changed`
 
-Changed: `renderItem` and root-level `className` are deleted, and `models` moves from required-on-root to leaf-first (liftable) config.
+Changed: `renderItem` and root-level `className` are deleted, `onChange` is renamed `onValueChange` (callback convention, matching `AgentPicker.Root`), and `models` moves from required-on-root to leaf-first (liftable) config.
 
 The compound's scoped context (selection, open state, disabled) + the popover root. **Layout: no in-flow layout of its own — but today it emits the `<span class="relative inline-block">` positioning anchor.** Same **popper-anchor open question** as `AgentPicker.Root`: either `ui` anchors to the trigger ref, or a narrow positioning-anchor exception is sanctioned; this Root depends on that decision.
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
 | `value` | `string` | — | Selected `"provider/model"` value; `undefined` = agent default (resolves to the first model for display) |
-| `onChange` *(required)* | `(model: string) => void` | — | Called with the chosen value (selection also closes the popover) |
+| `onValueChange` *(required)* | `(model: string) => void` | — | Called with the chosen value (selection also closes the popover). *Renamed from today's `onChange`* |
 | `disabled` | `boolean` | — | Blocks opening; dims the trigger |
 | `models` | `ModelOption[]` | — | *Liftable* config — see below. `ModelOption = { value, label, provider?, description?, badge? }` |
 | `children` | `ReactNode` | — | Omit for the default preset; pass to recompose |
@@ -131,7 +135,7 @@ Children replace the default content (today children render inside a plain `<but
 
 Changed: today it interposes the Command shell `<div>` (filter context); proposed one node, context via React.
 
-The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to `document.body`, `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`.** Today it also interposes the Command shell `<div>` (filter context); proposed: one node, context via React. **Renders `null` while closed.** Alignment today is fixed `align="start"`; public `align`/`side` props are **TBD**.
+The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to the nearest `[data-vf-ui]` scope root (falls back to `document.body`), `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`.** Today it also interposes the Command shell `<div>` (filter context); proposed: one node, context via React. **Renders `null` while closed.** Alignment today is fixed `align="start"`; public `align`/`side` props are **TBD**.
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -166,7 +170,7 @@ The option region — one scroll container (today `<div class="max-h-[320px] ove
 
 Changed: today a `role="option"` `<div>`; proposed `<button>`, with the `selected` boolean prop replaced by `data-active`.
 
-One selectable model row — today a `role="option"` `<div>` (proposed: `<button>`). **Layout: in-flow `flex items-center gap-3 min-w-0` row; the label is `flex-1 truncate`; badge sits between label and check; check is `ml-auto`.** Default content: provider logo → label → badge pill (only when the option has `badge`) → check glyph (selected only). Filtered-out rows are `hidden`. Selecting calls `onChange` and closes the popover.
+One selectable model row — today a `role="option"` `<div>` (proposed: `<button>`). **Layout: in-flow `flex items-center gap-3 min-w-0` row; the label is `flex-1 truncate`; badge sits between label and check; check is `ml-auto`.** Default content: provider logo → label → badge pill (only when the option has `badge`) → check glyph (selected only). Filtered-out rows are `hidden`. Selecting calls `onValueChange` and closes the popover.
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -183,7 +187,7 @@ One selectable model row — today a `role="option"` `<div>` (proposed: `<button
 {
   value?: string                 // selected "provider/model"
   selectedModel?: ModelOption    // resolved option (value match, else first model)
-  onSelect: (value) => void      // select + close + onChange
+  onSelect: (value) => void      // select + close + onValueChange
   open: boolean
   setOpen: (open) => void
   disabled?: boolean
@@ -214,13 +218,13 @@ Inside the composer, the model trigger is `ChatInput.Model` with `models` on the
 Standalone preset:
 
 ```tsx
-<ModelSelector models={MODELS} value={model} onChange={setModel} />
+<ModelSelector models={MODELS} value={model} onValueChange={setModel} />
 ```
 
 ### Composed
 
 ```tsx
-<ModelSelector.Root value={model} onChange={setModel}>
+<ModelSelector.Root value={model} onValueChange={setModel}>
   <ModelSelector.Trigger models={MODELS} variant="icon" className="my-trigger" />
   <ModelSelector.Content className="my-panel">
     <ModelSelector.Search placeholder="Search models…" />

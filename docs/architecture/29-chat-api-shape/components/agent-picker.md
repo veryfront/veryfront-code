@@ -8,6 +8,9 @@ A searchable popover for choosing an agent — pill trigger, filterable list, op
 
 ```tsx
 import { AgentPicker } from 'veryfront/chat'
+
+// every sub-part is also a flat named export (same function), with its props type
+import { AgentPicker, AgentPickerItem, type AgentPickerItemProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -52,8 +55,9 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
     <svg class="ml-auto size-3.5 shrink-0">…</svg>                         <!-- chevron pushed right via ml-auto -->
   </button>
 
-  <!-- .Content — only while open. NOT in flow: portalled to document.body by the
-       Floating helper, position: fixed, placed 8px below the trigger rect (flips
+  <!-- .Content — only while open. NOT in flow: portalled by the Floating helper
+       to the nearest [data-vf-ui] scope root (falls back to document.body),
+       position: fixed, placed 8px below the trigger rect (flips
        above when it would overflow the viewport bottom; clamped to 8px gutters). -->
   <div role="dialog" class="z-50 min-w-[280px] rounded-lg overflow-hidden shadow-sm">
     <div class="overflow-hidden rounded-lg">                        <!-- Command shell (filter context) -->
@@ -97,7 +101,7 @@ The compound's scoped context (selection, open state, options) + the popover roo
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `agents` *(required)* | `AgentOption[]` | — | Options for the default (top) group. `AgentOption = { id, name, avatarUrl?, disabled? }` (`avatarSrc` is deprecated) |
+| `agents` *(required)* | `AgentOption[]` | — | Options for the default (top) group. `AgentOption = { id, name, description?, avatarUrl?, disabled? }` (`avatarSrc` is deprecated) |
 | `value` | `string` | — | Selected agent id (controlled) |
 | `onValueChange` | `(id: string) => void` | — | Called with the chosen agent id (selection also closes the popover) |
 | `sections` | `AgentPickerSection[]` | `[]` | Extra labelled groups below the default group: `{ label?, agents }` |
@@ -125,7 +129,7 @@ One `<button>` (today a `ui` Pill merged onto `PopoverTrigger` via `asChild`; `a
 
 ### `AgentPicker.Content` — `changed`
 
-The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to `document.body`, `position: fixed`, placed by the floating logic 8px below the trigger rect (flips above on viewport-bottom collision, clamped to 8px gutters), `z-50`, `min-w-[280px]`.** Today it also interposes the Command shell `<div>` that owns the filter context; proposed: one node, context via React. **Renders `null` while closed** (the surface unmounts).
+The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to the nearest `[data-vf-ui]` scope root (falls back to `document.body`), `position: fixed`, placed by the floating logic 8px below the trigger rect (flips above on viewport-bottom collision, clamped to 8px gutters), `z-50`, `min-w-[280px]`.** Today it also interposes the Command shell `<div>` that owns the filter context; proposed: one node, context via React. **Renders `null` while closed** (the surface unmounts).
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -143,7 +147,7 @@ The filter input — one `<input>` (today a `CommandInput` row: the row `<div>` 
 | `placeholder` | `string` | `"Search agents..."` | |
 | `asChild` + native + `ref` *(proposed)* | | | Own the input node; today only `className` (on the `<input>`) |
 
-**Layout: in-flow row at the top of the panel (border-b divider).** **State attributes:** `data-invalid` — kept from today (validation failed). Whether the icon/clear affordances survive the one-node contract (children? separate leaves?) is **TBD**.
+**Layout: in-flow row at the top of the panel (border-b divider).** **State attributes:** `data-invalid` — proposed (moved from the input-style trigger — today it lives on the trigger button; validation failed). Whether the icon/clear affordances survive the one-node contract (children? separate leaves?) is **TBD**.
 
 ### `AgentPicker.List` — `changed`
 
@@ -203,7 +207,7 @@ Identical contract to `.Create`: default content sparkles glyph → `"Manage Age
 | --- | --- | --- | --- |
 | `data-open` | `.Trigger` | Picker is expanded | proposed |
 | `data-active` | `.Item` | Current selection | proposed (replaces `selected`) |
-| `data-invalid` | `.Search` | Validation failed | kept from today |
+| `data-invalid` | `.Search` | Validation failed | proposed (moved from the input-style trigger — today it lives on the trigger button) |
 | `data-empty` | `.List` | Zero options | proposed |
 | `data-loading` | `.List` | Agents fetch in flight | proposed (replaces `isLoading`) |
 
@@ -238,6 +242,8 @@ Identical contract to `.Create`: default content sparkles glyph → `"Manage Age
 
 ### Headless
 
+`useAgentPicker()` throws outside `AgentPicker.Root`, so the headless list still sits inside the Root:
+
 ```tsx
 function MyAgentList() {
   const picker = useAgentPicker()
@@ -254,6 +260,10 @@ function MyAgentList() {
     </>
   )
 }
+
+<AgentPicker.Root agents={options} value={agentId} onValueChange={setAgentId}>
+  <MyAgentList />
+</AgentPicker.Root>
 ```
 
 ## Customization (eject path)

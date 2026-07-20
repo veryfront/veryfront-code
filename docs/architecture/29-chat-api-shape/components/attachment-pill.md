@@ -8,14 +8,16 @@ A pending-upload chip for the composer — one per attachment, with thumbnail, l
 
 ```tsx
 import { AttachmentPill } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { AttachmentPill, AttachmentPillRetry, type AttachmentPillRetryProps } from 'veryfront/chat'
 ```
 
 ## Parts index
 
-- [`.Root`](#attachmentpillroot--changed) — `changed`: lifecycle surfaces as `data-upload-state` / `data-error`
-- [`.Thumbnail`](#attachmentpillthumbnail--changed) — `changed`: wrapper `<div>` + `<img>` → one `<img>` (TBD)
-- [`.Icon`](#attachmentpillicon--changed) — `changed`: `<div>` → `<span>` (TBD)
-- [`.Label`](#attachmentpilllabel--changed) — `changed`: `<div>` → `<span>` (TBD)
+- [`.Root`](#attachmentpillroot--changed) — `changed`: lifecycle surfaces as `data-upload-state` / `data-error`; gains `upload?` (defaults to the nearest `ChatInput` context's upload)
+- [`.Thumbnail`](#attachmentpillthumbnail--changed) — `changed`: wrapper `<div>` + `<img>` → one `<img>`
+- [`.Icon`](#attachmentpillicon--changed) — `changed`: `<div>` → `<span>`
+- [`.Label`](#attachmentpilllabel--changed) — `changed`: `<div>` → `<span>`
 - [`.Retry`](#attachmentpillretry--changed) — `changed`: `icon` prop removed
 - [`.Remove`](#attachmentpillremove--changed) — `changed`: `icon` prop removed
 
@@ -96,7 +98,7 @@ Each part renders exactly one node, `extends` its native attributes, and takes `
 
 ### `AttachmentPill.Root` — `changed`
 
-**Changed:** the upload lifecycle — today baked into classes — surfaces as `data-upload-state` / `data-error`.
+**Changed:** the upload lifecycle — today baked into classes — surfaces as `data-upload-state` / `data-error`; the Root gains `upload?: UseUploadResult`, defaulting to the nearest `ChatInput` context's upload — this is how `.Retry`/`.Remove` route without handler props.
 
 The chip container — one `<div>` — plus the per-attachment context (`useAttachmentPill`). Childless, it renders the default row card: `Thumbnail`-or-`Icon` → `Label` → `Retry` → `Remove`; any children replace that anatomy entirely (no half-hidden chrome).
 
@@ -108,15 +110,18 @@ The chip container — one `<div>` — plus the per-attachment context (`useAtta
 | --- | --- | --- | --- |
 | `asChild` *(proposed)* | `boolean` | `false` | Merge onto your own element instead of rendering a `<div>`. |
 | `attachment` *(required)* | `AttachmentInfo` | — | The attachment this pill represents (an item from `useUpload().attachments`): `{ id, name, state?, progress?, type?, size?, preview?, url?, status? }`. |
-| `onRemove` | `(id: string) => void` | — | Enables `.Remove`. **TBD:** the proposal routes remove/retry through `useUpload` context, which would make these props optional overrides. |
-| `onRetry` | `(id: string) => void` | — | Enables `.Retry` in the error state. |
+| `upload` *(proposed)* | `UseUploadResult` | nearest `ChatInput` context's upload | Where `.Retry`/`.Remove` route (`retry(id)`/`remove(id)`). Explicit prop > nearest context — inside a `ChatInput` with `upload` configured, the pill needs no wiring. |
+| `onRemove` | `(id: string) => void` | routes through `upload` | Optional override for `.Remove`; by default removal routes through `upload`. |
+| `onRetry` | `(id: string) => void` | routes through `upload` | Optional override for `.Retry` in the error state; by default retry routes through `upload`. |
 | `bordered` | `boolean` | `true` | `false` = flat, borderless row (used by `AttachmentsPanel`). **TBD:** survives, or is replaced by styling off `data-*`. |
 
 **State attributes (proposed):** `data-upload-state="idle|uploading|processing|error|done"` · `data-error`. Today the lifecycle is expressed only through baked-in classes (dashed border for `selected`, destructive tint for `error`, shimmer while busy); the RFC surfaces it as `data-*`. **Note a vocabulary mismatch to resolve:** the source `AttachmentState` is `'selected' | 'uploading' | 'processing' | 'uploaded' | 'error'`, while the proposed attribute uses `idle`/`done` — presumably `selected → idle`, `uploaded → done`, but the mapping is TBD. The legacy two-value `status: 'uploading' | 'ready'` field (and its 70%-opacity dimming) is expected to be dropped — TBD.
 
 ### `AttachmentPill.Thumbnail` — `changed`
 
-The image square. Today it renders a `<div>` wrapper (`relative overflow-hidden`, rounded, `bg tertiary`) containing an `<img alt="" class="size-full object-cover">` plus, while busy, an `absolute inset-0` spinner overlay; the proposed parts table lists it as one `<img>` — reconciling the wrapper-vs-single-node shape (the overlay needs the wrapper) is TBD.
+**Changed:** today's wrapper `<div>` + `<img>` collapse to **one `<img>`**.
+
+The image square. Today it renders a `<div>` wrapper (`relative overflow-hidden`, rounded, `bg tertiary`) containing an `<img alt="" class="size-full object-cover">` plus, while busy, an `absolute inset-0` spinner overlay; the proposal commits to one `<img>` as the single node. Narrow TBD: where the busy-spinner overlay renders in the single-`<img>` shape (the overlay needs a positioned box the `<img>` alone can't provide).
 
 **Layout:** fixed `size-10 shrink-0` square, in-flow first flex child; its `relative` box scopes the busy overlay to the square only.
 
@@ -128,7 +133,9 @@ The image square. Today it renders a `<div>` wrapper (`relative overflow-hidden`
 
 ### `AttachmentPill.Icon` — `changed`
 
-The non-image square — a state glyph or file-type badge. Today one `<div>` (proposed parts table says `<span>` — TBD). Default content, in priority order: the **state glyph** when a lifecycle `state` is set (`selected` → clock, `uploading` → spinner, `processing` → file icon, `uploaded` → check, `error` → alert glyph), else the **uppercase file extension** (colored by type: pdf red, docx blue, csv emerald, md/mdx purple, txt neutral), else `"file"`. Error state swaps to a destructive-tinted box. **Always renders** (the default anatomy shows it only when `.Thumbnail` doesn't apply). Children *(proposed)* replace the glyph/badge.
+**Changed:** today's `<div>` becomes **one `<span>`**.
+
+The non-image square — a state glyph or file-type badge. Default content, in priority order: the **state glyph** when a lifecycle `state` is set (`selected` → clock, `uploading` → spinner, `processing` → file icon, `uploaded` → check, `error` → alert glyph), else the **uppercase file extension** (colored by type: pdf red, docx blue, csv emerald, md/mdx purple, txt neutral), else `"file"`. Error state swaps to a destructive-tinted box. **Always renders** (the default anatomy shows it only when `.Thumbnail` doesn't apply). Children *(proposed)* replace the glyph/badge.
 
 **Layout:** fixed `size-10 shrink-0` flex-centered square; `relative` scopes the legacy-uploading spinner overlay (`absolute inset-0`) to itself.
 
@@ -138,7 +145,9 @@ The non-image square — a state glyph or file-type badge. Today one `<div>` (pr
 
 ### `AttachmentPill.Label` — `changed`
 
-The two-line text column. Today one `<div>` (proposed parts table says `<span>` — TBD). Default content: line 1 = the file name (`attachment.name`, falling back to `"Attachment"`), shimmering while uploading/processing; line 2 = the state line — `"Ready to upload"` (selected) · `"Uploading · N%"` (with `progress`) · `"Processing document"` · `"Uploaded · 1.2 MB"` · `"Upload failed. Try again."` (error, destructive color) · else the file size or uppercase extension. Both lines truncate. **Always renders.**
+**Changed:** today's `<div>` becomes **one `<span>`**.
+
+The two-line text column. Default content: line 1 = the file name (`attachment.name`, falling back to `"Attachment"`), shimmering while uploading/processing; line 2 = the state line — `"Ready to upload"` (selected) · `"Uploading · N%"` (with `progress`) · `"Processing document"` · `"Uploaded · 1.2 MB"` · `"Upload failed. Try again."` (error, destructive color) · else the file size or uppercase extension. Both lines truncate. **Always renders.**
 
 **Layout:** `min-w-0 flex-1` — the only growing child; it fills the row (pushing `.Retry`/`.Remove` to the end) and truncates instead of widening the chip.
 
@@ -207,21 +216,27 @@ The L1 preset renders pills for pending uploads automatically:
 
 ### Composed (L2)
 
-Map the upload state to pills and compose the anatomy you want:
+Map the upload state to pills and compose the anatomy you want. Inside a `<ChatInput>` with `upload` configured, the pills need no wiring — `.Retry`/`.Remove` route through the nearest `ChatInput` context's upload by default (pass `upload` on `.Root` only when rendering outside a composer):
 
 ```tsx
-function PendingAttachments({ upload }: { upload: UseUploadResult }) {
+function Composer({ chat }) {
+  const upload = useUpload({ api: '/api/uploads' })
   return (
-    <div className="my-pill-row">
-      {upload.attachments.map((a) => (
-        <AttachmentPill key={a.id} attachment={a} className="my-pill">
-          <AttachmentPill.Thumbnail className="my-thumb" />
-          <AttachmentPill.Label />
-          <AttachmentPill.Retry />       {/* shown via [data-upload-state="error"] styling */}
-          <AttachmentPill.Remove aria-label="Remove file" />
-        </AttachmentPill>
-      ))}
-    </div>
+    <ChatInput chat={chat} upload={upload}>
+      <div className="my-pill-row">
+        {upload.attachments.map((a) => (
+          <AttachmentPill key={a.id} attachment={a} className="my-pill">
+            {/* no upload prop needed — retry/remove route via the ChatInput context */}
+            <AttachmentPill.Thumbnail className="my-thumb" />
+            <AttachmentPill.Label />
+            <AttachmentPill.Retry />       {/* shown via [data-upload-state="error"] styling */}
+            <AttachmentPill.Remove aria-label="Remove file" />
+          </AttachmentPill>
+        ))}
+      </div>
+      <ChatInput.Field />
+      <ChatInput.Submit />
+    </ChatInput>
   )
 }
 ```

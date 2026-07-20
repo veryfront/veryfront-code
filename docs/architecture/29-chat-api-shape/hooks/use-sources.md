@@ -73,7 +73,7 @@ function MySources({ message }: { message: ChatMessage }) {
 
 ## Used by
 
-- [`Sources`](../components/sources.md) — `.Root` (`data-open`, `data-empty`) · `.List` · `.Pill`. Also available as `Message.Sources` (same component, namespace re-export).
+- [`Sources`](../components/sources.md) — `.Root` (`data-empty`; no `data-open` — the row has no disclosure) · `.List` · `.Pill`. Also available as `Message.Sources` (same component, namespace re-export).
 - [`InlineCitation`](../components/inline-citation.md) — footnote markers rendered from the same source parts via the markdown `components.citation` slot.
 
 ## Related

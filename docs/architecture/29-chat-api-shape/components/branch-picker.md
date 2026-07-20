@@ -12,7 +12,11 @@ Previous/next navigation between message branches — a namespace re-export of `
 import { BranchPicker } from 'veryfront/chat'
 // canonical form:
 import { Message } from 'veryfront/chat' // Message.BranchPicker
+// every sub-part is also a flat named export, with its Props type:
+import { BranchPicker, BranchPickerCount, type BranchPickerCountProps } from 'veryfront/chat'
 ```
+
+`BranchPicker.Count` and `BranchPickerCount` are the same function — namespace alias and flat export, two access styles (same for every sub-part).
 
 ## Parts index
 

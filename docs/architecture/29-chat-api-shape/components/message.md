@@ -8,12 +8,16 @@ One message row: a single `<article>` plus scoped context, with composable parts
 
 ```tsx
 import { Message } from 'veryfront/chat'
+// every sub-part is also a flat named export, with its Props type:
+import { Message, MessageAvatar, type MessageAvatarProps } from 'veryfront/chat'
 ```
+
+`Message.Avatar` and `MessageAvatar` are the same function — namespace alias and flat export, two access styles (same for every sub-part).
 
 ## Parts index
 
 - [`.Root`](#messageroot--changed) — `changed`: `<div>`→`<article>`; per-message session props deleted
-- [`.Avatar`](#messageavatar--kept) — `kept`
+- [`.Avatar`](#messageavatar--changed) — `changed`: per-branch node (`<img>` / `<div>` fallback) → one node
 - [`.Header`](#messageheader--changed) — `changed`: `<div>`→`<header>`
 - [`.Name`](#messagename--changed) — `changed`: renamed from `Message.Header.Name`
 - [`.Timestamp`](#messagetimestamp--changed) — `changed`: `<span>`→`<time>`
@@ -21,7 +25,7 @@ import { Message } from 'veryfront/chat'
 - [`.Parts`](#messageparts--changed) — `changed`: replaces `Message.Part` + `.Content`'s function-child
 - [`.Text`](#messagetext--changed) — `changed`: markdown exception, `components` map, streaming ownership
 - [`.Reasoning`](#messagereasoning--kept) — `kept`
-- [`.Source`](#messagesource--kept) — `kept`
+- [`.Source`](#messagesource--changed) — `changed`: `<button>`-in-`<span>` → `<a>` (same delta as `Sources.Pill`)
 - [`.File`](#messagefile-proposed--no-current-source--new) — `new`: attachment part leaf
 - [`.Image`](#messageimage-proposed--no-current-source--new) — `new`: image part leaf
 - [`.Sources`](#messagesources--changed) — `changed`: `<section>`; `renderItem` deleted; `data-empty`
@@ -31,7 +35,7 @@ import { Message } from 'veryfront/chat'
 - [`.EditAction`](#messageeditaction--changed) — `changed`: immediate `editMessage` → edit mode (`startEdit`)
 - [`.Feedback`](#messagefeedback-cut--removed) — `removed`: cut from v1 (no backend endpoint)
 - [`.BranchPicker`](#messagebranchpicker--kept) — `kept`
-- [`.Tokens`](#messagetokens--changed) — `changed`: popover pair → `<span>` (TBD); `renderItem` deleted
+- [`.Tokens`](#messagetokens--changed) — `changed`: popover pair → display-only `<span>` (settled); `renderItem` deleted
 - [`.Continuing`](#messagecontinuing--changed) — `changed`: `<div>`→`<span>`
 
 ## Anatomy
@@ -65,6 +69,8 @@ import { Message } from 'veryfront/chat'
 </Message.Root>
 ```
 
+The render-fn branches above show `.Text` / `.Reasoning` / `ToolCall`; the remaining part leaves — `Message.Source`, `Message.File`, `Message.Image` — slot into the same branches for their part types.
+
 `<Message message={m} />` with **no children renders the default anatomy** (render-or-compose): `Header` → `Content` → `Sources` → `Continuing` → a footer row (`Actions` + `Tokens`). The footer row's `<div>` is a layout div — when you paste the public composition, it's yours.
 
 Every part renders one node, `extends` the native attributes of that node, spreads `{...props}` onto it, and takes `asChild`.
@@ -74,7 +80,8 @@ Every part renders one node, `extends` the native attributes of that node, sprea
 What `<Message message={m} />` actually renders (classes abbreviated to the layout-relevant ones; today's source, with the proposed `<article>` tag). Nothing in this compound is absolutely positioned — the action bar and token trigger are **in-flow, revealed by opacity** on row hover.
 
 ```html
-<article class="group/msg flex w-full flex-col gap-1.5 items-start">
+<article data-message-item="" data-role="assistant"
+         class="group/msg flex w-full flex-col gap-1.5 items-start">
             <!-- Message.Root — flex COLUMN, gap 1.5. `group/msg` is the hover
                  scope every reveal below keys off. Assistant: items-start.
                  User turns instead: ml-auto max-w-[80%] items-end (right-aligned,
@@ -108,9 +115,13 @@ What `<Message message={m} />` actually renders (classes abbreviated to the layo
                  above whitespace-pre-wrap text. -->
   </div>
 
-  <section class="…">…pills…</section>
-            <!-- Message.Sources — in-flow wrap of citation pills; present
-                 only when the message yields sources -->
+  <div class="mt-1">
+    <div class="flex flex-wrap gap-2">…pills…</div>
+  </div>
+            <!-- Message.Sources — today the Sources root <div class="mt-1">
+                 plus the inner list <div> wrapping the citation pills
+                 (proposed retag: one <section> — see the part subsection);
+                 present only when the message yields sources -->
 
   <div class="mt-3 text-sm">Continuing…</div>
             <!-- Message.Continuing — in-flow; present only while streaming -->
@@ -154,11 +165,12 @@ The single message node (one `<article>`) + the compound's scoped context. All m
 
 **Removed (proposed):** today's `MessageRootProps` thread session concerns per message — `isStreaming?`, `editMessage?`, `getBranches?`, `switchBranch?`, `onReload?`, `onFeedback?`, `feedback?`. All are deleted: streaming derives from `ChatRoot` (`streamingMessageId === message.id` — already today's default when `isStreaming` is omitted), and session callbacks (`editMessage`, `reload`, `getBranches`, `switchBranch`) come from the nearest `ChatRoot` context — **never re-threaded per message**.
 
-**State attributes (proposed)** — today none of these exist as `data-*`; role/streaming are presented only structurally:
+**State attributes** — the `MessageItem` primitive already emits `data-message-item` and `data-role` today (`primitives/message-list.tsx`); those two are **kept**. The rest are proposed additions (streaming/editing/error are presented only structurally today):
 
 | Attribute | Values | Meaning |
 | --- | --- | --- |
-| `data-role` | `user \| assistant \| system` | Author role. |
+| `data-message-item` | present | Part marker — *kept* (exists today). |
+| `data-role` | `user \| assistant \| system` | Author role — *kept* (exists today). |
 | `data-agent-id` | `<id>` | Producing agent — per-message, for per-agent styling in multi-agent conversations. |
 | `data-streaming` | present | This message is streaming now (also on `Message.Text`). |
 | `data-editing` | present | The edit composer is active. |
@@ -171,9 +183,11 @@ The single message node (one `<article>`) + the compound's scoped context. All m
 [data-agent-id='researcher'] { --accent: var(--purple-9); }
 ```
 
-### `Message.Avatar` — `kept`
+### `Message.Avatar` — `changed`
 
-One `<div>` (the `AgentAvatar` primitive). Default content: the agent's avatar image, else the name's initial, else the provider logomark for `metadata.model`. Identity resolves **per message** (multi-agent decision): `metadata.agentName` → `metadata.agentId` for the name, `metadata.agentAvatarUrl` for the image, `metadata.model` for the logomark fallback. Today it also falls back to the conversation-level `chat.agent` between those; under the RFC's per-message identity rule the message metadata is canonical — whether the conversation-level fallback survives is **TBD**. **Renders `null` on user turns.**
+Changed: today the `AgentAvatar` primitive renders a *different node per fallback branch* — an `<img>` when `avatarUrl` resolves (dropping to the next branch on load error), a `<div>` holding the name's initial otherwise, else the `ModelAvatar` logomark. The proposal normalizes this to **one node** regardless of which content branch wins.
+
+Default content: the agent's avatar image, else the name's initial, else the provider logomark for `metadata.model`. Identity resolves **per message** (multi-agent decision): `metadata.agentName` → `metadata.agentId` for the name, `metadata.agentAvatarUrl` for the image, `metadata.model` for the logomark fallback. Today it also falls back to the conversation-level `chat.agent` between those; under the RFC's per-message identity rule the message metadata is canonical — whether the conversation-level fallback survives is **TBD**. **Renders `null` on user turns.**
 
 **Layout:** in-flow fixed square (`size-8` when embedded in the header); never shrinks.
 
@@ -241,9 +255,9 @@ When childless it renders that default loop; compose the body with `Message.Part
 
 | Prop | Type | Description |
 | --- | --- | --- |
-| `children` | `(part) => ReactNode` | Render each typed part; return a `Message.*` leaf, a `ToolCall`, or your own markup. |
+| `children` | `(part) => ReactNode` | Render each typed part; return a `Message.*` leaf, a `ToolCall`, or your own markup. Omit to render the default per-type mapping. |
 
-**TBD:** whether a childless `<Message.Parts />` renders the default renderer per part (which would make `.Content`'s childless default expressible as public composition), and whether the render fn also receives `index`.
+**Childless default (settled):** `<Message.Parts />` with no render fn renders the default per-type mapping (registry-aware) — this is the public default behind `.Content`, so `.Content`'s childless body is expressible as public composition. **TBD:** whether the render fn also receives `index`.
 
 ### `Message.Text` — `changed`
 
@@ -258,7 +272,7 @@ The text-part leaf — **Markdown-backed, the sanctioned multi-node exception** 
 | `part` *(required)* | the narrowed `text` part | The part to render. |
 | `components` | `Components` | Markdown element override map (`code`, `a`, `img`, `citation`, …). Replaces today's `codeBlock` / `markdownComponents` props. |
 
-**State attributes (proposed):** `data-streaming` — present while this part is streaming.
+**State attributes (proposed):** `data-streaming` — present while this part is streaming. Owner: message-level streaming (`streamingMessageId === message.id`) *combined with* this being the tail part of the message — only the last part of a streaming message carries it.
 
 ### `Message.Reasoning` — `kept`
 
@@ -270,9 +284,11 @@ Renders the shared [`Reasoning`](./reasoning.md) block with the part's text and 
 | --- | --- | --- |
 | `part` *(required)* | the narrowed `reasoning` part | The part to render. |
 
-### `Message.Source` — `kept`
+### `Message.Source` — `changed`
 
-One citation pill (`SourcePill`, `<a>`-backed). Inside a `Message.Sources` function-child it inherits the row's `onSourceClick`; standalone it renders with no handler.
+Changed: today's `SourcePill` renders a `<button>` inside a relative `<span>` wrapper (the hover-preview anchor); proposed it becomes one `<a>` — the same delta as `Sources.Pill`.
+
+One citation pill (`SourcePill`, proposed `<a>`-backed). Inside a `Message.Sources` function-child it inherits the row's `onSourceClick`; standalone it renders with no handler.
 
 **Layout:** inline pill; flows in `.Sources`' wrap row.
 
@@ -311,13 +327,13 @@ New part leaf for image parts — presumably one `<img>` for `image/*` file part
 
 ### `Message.Sources` — `changed`
 
-One `<section>` *(proposed — today the `Sources` collection root)*. Default content: one citation pill per source extracted from the message's tool results (`extractSourcesFromParts`). **Renders `null` when the message yields no sources** (today's behavior; the proposed `data-empty` state implies a mounted-empty node — which of the two v1 ships is **TBD**). In a composed `.Content` body sources are not auto-appended — place this part yourself. See [Sources](./sources.md).
+One `<section>` *(proposed retag — today the `Sources` collection root renders a `<div class="mt-1">` plus an inner list `<div class="flex flex-wrap gap-2">`)*. Default content: one citation pill per source extracted from the message's tool results (`extractSourcesFromParts`). **Renders `null` when the message yields no sources** (today's behavior; the proposed `data-empty` state implies a mounted-empty node — which of the two v1 ships is **TBD**). In a composed `.Content` body sources are not auto-appended — place this part yourself. See [Sources](./sources.md).
 
 **Layout:** in-flow wrap row of pills below the content column.
 
 | Prop | Type | Description |
 | --- | --- | --- |
-| `onSourceClick` | `(source, index) => void` | Falls back to `ChatRoot` context's handler. |
+| `onSourceClick` | `(source, index) => void` | Click handler for the default pills. No context fallback — the `ChatRoot`-level `onSourceClick` is removed per the ledger; clicking routes via composition only. |
 | `children` | nodes or `(source, index) => ReactNode` | Function-child maps each source; nodes recompose via `Sources.List` / `Sources.Pill`. |
 | `asChild` + native (`ref`) | | Own the node. |
 
@@ -336,7 +352,7 @@ One `<div>`. Default content: `Message.CopyAction` + `Message.RegenerateAction` 
 | `children` | `ReactNode` | Compose your own bar; omitted → the default cluster. |
 | `asChild` + native (`HTMLAttributes<HTMLDivElement>`, `ref`) | | Own the node (already `extends HTMLAttributes` today). |
 
-**State attributes (proposed):** `data-floating` — hidden-but-animatable.
+**State attributes (proposed):** `data-floating` — present whenever the bar is hidden-but-mounted (row not hovered *and* not the last message), removed while the bar is visible. Owner: `Message.Root`'s hover/last-message tracking — the bar itself does no tracking.
 
 ### `Message.CopyAction` — `changed`
 
@@ -378,7 +394,7 @@ One `<div>` container: ‹ previous · `2/3` count · next ›. **Renders `null`
 
 ### `Message.Tokens` — `changed`
 
-Proposed node: one `<span>`. Today it renders a Popover pair — a trigger `<button>` showing the compact total (`726`, `79.8k`; hover-revealed like the actions, pinned visible while open) that opens a breakdown card (Model · Input · Output · Total, from `metadata.usage`: `inputTokens` / `outputTokens` / `reasoningTokens`). **Renders `null` on user turns and when total tokens are 0** (no usage metadata). **TBD:** whether the popover chrome stays on this leaf (the popper-anchor open question) or the leaf trims to the plain usage `<span>`.
+One display-only `<span>` **(settled)**. Today it renders a Popover pair — a trigger `<button>` showing the compact total (`726`, `79.8k`; hover-revealed like the actions, pinned visible while open) that opens a breakdown card (Model · Input · Output · Total, from `metadata.usage`: `inputTokens` / `outputTokens` / `reasoningTokens`). **Renders `null` on user turns and when total tokens are 0** (no usage metadata). The popover trim is settled: the leaf becomes a plain usage `<span>` because the library ships no positioning primitive — the breakdown popover falls to the popper-anchor open question and returns (if at all) with its resolution.
 
 **Layout:** in-flow trigger revealed by opacity on `group/msg` hover (stays visible while its popover is open); the popover panel is positioned by the Popover primitive relative to the trigger.
 
@@ -459,16 +475,27 @@ You own every layout div; parts read the message from `Message.Root`'s context.
 
 #### Editing
 
-A `ChatInput` rendered *inside* the message **is** the edit form — nearest provider wins, no separate edit-form family. `Message.Root` carries `data-editing` while active.
+A `ChatInput` rendered *inside* the message **is** the edit form — nearest provider wins, no separate edit-form family. `Message.Root` carries `data-editing` while active. Gate the nested composer on `isEditing` from `useMessageContext()`: `useChatInput` reads the message context, seeds `value` from `textContent`, routes submit to `editMessage(message.id, value)`, and maps Escape to `cancelEdit`.
 
 ```tsx
-<Message.Root message={m}>
-  {/* when isEditing, render the composer in place */}
-  <ChatInput>
-    <ChatInput.Field />
-    <ChatInput.Submit />
-  </ChatInput>
-</Message.Root>
+function EditableMessage({ m }: { m: ChatMessage }) {
+  return (
+    <Message.Root message={m}>
+      <MessageBody />
+    </Message.Root>
+  )
+}
+
+function MessageBody() {
+  const { isEditing } = useMessageContext()
+  if (!isEditing) return <Message.Content />
+  return (
+    <ChatInput>
+      <ChatInput.Field />
+      <ChatInput.Submit />
+    </ChatInput>
+  )
+}
 ```
 
 ### Headless (L3)

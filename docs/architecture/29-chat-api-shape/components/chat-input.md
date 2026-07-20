@@ -8,6 +8,8 @@ The chat composer — a single `<form>` with composable leaves for the field, at
 
 ```tsx
 import { ChatInput } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { ChatInput, ChatInputField, type ChatInputFieldProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -20,7 +22,7 @@ import { ChatInput } from 'veryfront/chat'
 - [`.Voice`](#chatinputvoice--changed) — `changed`: baked listening styles → `data-listening`; `icon`/`WrapClick` removed
 - [`.Model`](#chatinputmodel--changed) — `changed`: `models` config moves here from the Root; `data-open` added
 - [`.Attach`](#chatinputattach--changed) — `changed`: multi-node (wrapper + hidden input + menu) → one `<button>`; `icon`/`WrapClick` removed
-- [`.Export`](#chatinputexport--changed) — `changed`: `icon` removed; `messages` likely defaults to context (TBD)
+- [`.Export`](#chatinputexport--changed) — `changed`: `icon` removed; `messages` defaults to the Root's resolved chat; tooltip wrapper collapses to one `<button>`
 - [`.Toolbar`](#chatinputtoolbar--kept) — `kept`
 
 ## Anatomy
@@ -64,7 +66,7 @@ What the batteries `<ChatInput …/>` actually renders today, annotated with the
     <form>                                                      <!-- ← the proposal's .Root: the ONLY node it keeps -->
       <!-- the "card": relative = positioning context for the drop overlay; drag handlers live HERE, not on the form -->
       <div class="relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent
-                  bg-[var(--secondary)] px-3 py-2 shadow-sm md:px-4 md:py-3">
+                  bg-[var(--secondary)] px-3 py-2 shadow-sm transition-all md:px-4 md:py-3">
                                                                 <!-- + border-dashed border-[var(--edge-medium)] while dragging -->
 
         <!-- drop overlay — ONLY while dragging; absolute inset-0 z-10 relative to the CARD, fills it,
@@ -226,7 +228,7 @@ One `<button>`, `aria-label="Voice input"`, `aria-pressed` while listening. Defa
 
 *Changed: `models` config moves here from the Root; `asChild` + native attrs open up (today `className` only) and `data-open` is added.*
 
-The model-selector **trigger** — one `<button>` (today it renders the `ModelSelector` component in `variant="icon"`; the popper strategy — portal vs. inline — is an open question in the RFC). Default content: the selected model's icon/label. **Renders `null` when no models are configured.** Disabled while streaming.
+The model-selector **trigger** — one `<button>` (today it renders the `ModelSelector` component in `variant="icon"`; the popper strategy — portal vs. inline — is an open question in the RFC). Default content: the selected model's icon/label. **Renders `null` when no models are configured** — today the null-render also requires `onModelChange` (`chat-composer.tsx:223` guards `!models || models.length === 0 || !onModelChange`); the proposal drops that requirement, since selection routes through the chat session's `setModel` from context. Disabled while streaming.
 
 **Layout:** in-flow flex child (the trigger); the open list is a popper/portal, not part of the toolbar's flow.
 
@@ -256,7 +258,7 @@ Accept filter and file limits move to `useUpload({ accept, maxSize, maxFiles })`
 
 ### `ChatInput.Export` — `changed`
 
-*Changed: `icon` is removed; `messages` is required today but likely defaults to the nearest chat context (TBD).*
+*Changed: `icon` is removed; `messages` is required today but defaults to the Root's resolved chat (`useChatContextOptional()`); today's tooltip `<span>` wrapper + portalled tooltip collapse to one `<button>`.*
 
 One `<button>`, `aria-label="Export conversation"` (today with a "Export as Markdown" tooltip). Default content: down-arrow icon.
 
@@ -264,7 +266,7 @@ One `<button>`, `aria-label="Export conversation"` (today with a "Export as Mark
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `messages` | `ChatMessage[]` | — *(required today)* | The messages to export. **TBD:** the proposal likely defaults this to the nearest chat context so the leaf needs no props. |
+| `messages` | `ChatMessage[]` | transcript from `useChatContextOptional()` | The messages to export. *(Required today.)* Defaults to the Root's resolved chat — the nearest chat context — so the leaf needs no props. |
 | `asChild` *(proposed)* + native + `ref` | | — | Children replace the default icon. |
 | `icon` *(removed)* / `onClick: WrapClick` *(removed)* | | — | Children compose; handlers compose natively. |
 

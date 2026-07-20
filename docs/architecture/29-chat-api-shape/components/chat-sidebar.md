@@ -10,6 +10,9 @@ The conversation list — browse, create, rename, and delete conversation thread
 
 ```tsx
 import { ChatSidebar } from 'veryfront/chat'
+
+// Every sub-part is also a flat named export, with its props interface:
+import { ChatSidebar, ChatSidebarItemTitle, type ChatSidebarItemTitleProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -20,7 +23,8 @@ import { ChatSidebar } from 'veryfront/chat'
 - [`.Group`](#chatsidebargroup--kept) — `kept`
 - [`.Item`](#chatsidebaritem--changed) — `changed`: `<div>` → `<li>`; `children` replaces the whole row; `data-active` means selection
 - [`.Item.Title`](#chatsidebaritemtitle-proposed--2977--new) — `new`: no addressable title leaf exists today (#2977)
-- [`.Item.Menu`](#chatsidebaritemmenu--changed) — `changed`: trigger `icon` prop deleted (replacement TBD)
+- [`.Item.Menu`](#chatsidebaritemmenu--changed) — `changed`: trigger `icon` prop deleted — replaced by `.Item.Menu.Trigger`
+- [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger--new) — `new`: the addressable trigger button (the icon-slot replacement)
 - [`.Item.Rename`](#chatsidebaritemrename--changed) — `changed`: `icon` deleted
 - [`.Item.Delete`](#chatsidebaritemdelete--changed) — `changed`: `icon` deleted
 - [`.Empty`](#chatsidebarempty--changed) — `changed`: self-gates on an empty list (today gated by `.List`)
@@ -35,6 +39,7 @@ import { ChatSidebar } from 'veryfront/chat'
       <ChatSidebar.Item>           {/* <li> — one conversation row · data-active (proposed) */}
         <ChatSidebar.Item.Title /> {/* <span> — conversation title, truncating (proposed, #2977) */}
         <ChatSidebar.Item.Menu>    {/* ui DropdownMenu — hover-revealed ⋯ trigger + portalled entries */}
+          <ChatSidebar.Item.Menu.Trigger />  {/* <button> — the ⋯ trigger; children replace the glyph (new) */}
           <ChatSidebar.Item.Rename />  {/* menu item — inline rename; null without onRename */}
           <ChatSidebar.Item.Delete />  {/* menu item — destructive delete */}
         </ChatSidebar.Item.Menu>
@@ -98,7 +103,7 @@ The rail container + the compound's scoped context. One node — today a `<div>`
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `conversations` | `ConversationSummary[]` | provider's list | Conversations to show, newest first |
+| `conversations` | [`Conversation[]`](../hooks/use-conversations.md#the-conversation-type) | provider's list | Conversations to show, newest first |
 | `activeId` | `string \| null` | provider's `activeConversationId` | Selected conversation; drives each `.Item`'s active state |
 | `onSelect` | `(id: string) => void` | provider's `select` | Row click |
 | `onDelete` | `(id: string) => void` | provider's `remove` | `.Item.Delete` |
@@ -117,7 +122,7 @@ The rail container + the compound's scoped context. One node — today a `<div>`
 
 The "new conversation" action, wiring the resolved `onNew` from context. Today it renders **two** nodes — a padded wrapper `<div class="px-3 pt-4 pb-1">` around a full-width primary `Button`; **proposed: exactly one `<button>`** per the node contract (the padding wrapper becomes your layout). Default label **"New chat"**; children replace it. Today it takes a leading `icon` prop; **proposed: `icon` deleted** (icon-slot props are banned RFC-wide — childless renders the default, children replace).
 
-**Layout:** in-flow `shrink-0` block above the scroll region; the button spans the rail's width.
+**Layout:** in-flow block above the scroll region (pinned there by `.List` owning `flex-1`); the button spans the rail's width.
 
 **Render conditions:** always renders when mounted (click no-ops if no create action resolved). The *preset* includes it only when `onNew` is passed or a provider is present.
 
@@ -162,30 +167,44 @@ Per-row state computed today: `isActive = conversation.id === activeId`; the row
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `conversation` *(required)* | `ConversationSummary` | — | The row's conversation; provides the per-item context (`useChatSidebarItem()`) the leaves read |
+| `conversation` *(required)* | [`Conversation`](../hooks/use-conversations.md#the-conversation-type) | — | The row's conversation; provides the per-item context ([`useChatSidebarItem()`](../hooks/use-chat-sidebar-item.md)) the leaves read |
 | `asChild` + native (`HTMLAttributes`, `ref`) | | | Own the node; children compose the row (proposed) / fill the action slot (today) |
 
 **State attributes:** `data-active` — present today via `ListItem` (for `isActive || menuOpen`); **proposed** as the documented contract (selection). Style with `data-[active]:bg-accent`.
 
 ### `ChatSidebar.Item.Title` *(proposed — #2977)* — `new`
 
-One `<span>`: the conversation's title, truncating. Does not exist today — the title is rendered internally by `ListItem`'s `title` prop, so a composed row currently has no addressable title leaf. #2977 adds it so the default row is fully recomposable. Default content: `conversation.title`. TBD: whether `.Title` also hosts the inline-rename input when rename mode is entered, or rename stays a whole-row swap. Full prop set TBD beyond the shared node contract.
+One `<span>`: the conversation's title, truncating. Does not exist today — the title is rendered internally by `ListItem`'s `title` prop, so a composed row currently has no addressable title leaf. #2977 adds it so the default row is fully recomposable. Default content: `conversation.title`. TBD: whether `.Title` also hosts the inline-rename input when rename mode is entered, or rename stays a whole-row swap.
 
 **Layout:** in-flow text span; give its wrapper `min-w-0`/`flex-1` (or class the span `truncate`) for ellipsis.
 
+| Prop | Type | Description |
+| --- | --- | --- |
+| `asChild` + native (`HTMLAttributes`, `ref`) | | Convention only — the shared node contract; no part-specific props are proposed |
+
 ### `ChatSidebar.Item.Menu` — `changed`
 
-*Changed: the trigger-glyph `icon` prop is deleted per the icon-prop ban (replacement mechanism TBD); entries and behavior are otherwise as today.*
+*Changed: the trigger-glyph `icon` prop is deleted per the icon-prop ban — its replacement is the new [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger--new) sub-part; entries and behavior are otherwise as today.*
 
-The row's `⋯` actions menu, built on the `veryfront/ui` `DropdownMenu` (not a from-scratch popover). Two pieces: the **trigger** — an icon-ghost `<button>` (`aria-label="More actions for <title>"`, three-dots glyph) sitting in the row's action slot — and the **content** — a portalled popover (`align="end"`, min-width 160px) holding the entries. Default entries: `.Rename` then `.Delete`; children replace the *entries* (the trigger stays), so you can add or reorder actions without re-implementing the row. Open state lives on the item context (`menuOpen` / `setMenuOpen`) — which is how the row stays highlighted while the menu is open.
+The row's `⋯` actions menu, built on the `veryfront/ui` `DropdownMenu` (not a from-scratch popover). Two pieces: the **trigger** — an icon-ghost `<button>` (`aria-label="More actions for <title>"`, three-dots glyph) sitting in the row's action slot, addressable as `.Item.Menu.Trigger` — and the **content** — a portalled popover (`align="end"`, min-width 160px) holding the entries. Default entries: `.Rename` then `.Delete`; children replace the *entries* (the default trigger stays unless you render `.Trigger` yourself), so you can add or reorder actions without re-implementing the row. Open state lives on the item context (`menuOpen` / `setMenuOpen`) — which is how the row stays highlighted while the menu is open.
 
 **Layout:** trigger is an in-flow child of the hover-revealed action slot; content is positioned by the `DropdownMenu` popper **outside the row's flow** (portal), so it never affects row height or the list's scroll.
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `icon` | `ReactNode` | `⋯` glyph | Trigger glyph override (today; **proposed: deleted** per the icon-prop ban — replacement mechanism for the trigger glyph is TBD, since `children` here means the entries) |
+| `icon` | `ReactNode` | `⋯` glyph | Trigger glyph override (today; **proposed: deleted** per the icon-prop ban — replaced by `.Item.Menu.Trigger`, whose *children* are your trigger content; `children` of `.Menu` remain the entries) |
 | `children` | `ReactNode` | `.Rename` + `.Delete` | The menu entries |
 | `asChild` + native + `ref` | | | TBD which node (trigger vs content) the native spread targets — the part spans a trigger + portal pair |
+
+### `ChatSidebar.Item.Menu.Trigger` — `new`
+
+The menu's trigger button as an addressable one-node part — the replacement for the deleted `icon` slot prop. One `<button>` in the row's action slot (`aria-label="More actions for <title>"`); childless it renders the default three-dots glyph, **children replace the trigger content**. Entries are unaffected — they stay children of `.Menu`.
+
+**Layout:** in-flow child of the hover-revealed action slot, as today.
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| `asChild` + native (`ButtonHTMLAttributes`, `ref`) | | Own the node; children replace the `⋯` glyph |
 
 ### `ChatSidebar.Item.Rename` — `changed`
 
@@ -225,7 +244,7 @@ Two layers. The **sidebar context** (provided by `.Root`, resolved props-over-pr
 
 ```ts
 {
-  conversations: ConversationSummary[]
+  conversations: Conversation[]
   activeId: string | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
@@ -236,11 +255,11 @@ Two layers. The **sidebar context** (provided by `.Root`, resolved props-over-pr
 }
 ```
 
-The **item context**, `useChatSidebarItem()` — exported today; throws outside `ChatSidebar.Item`. This is what makes a swapped or extended row menu keep rename/delete/select behaviour:
+The **item context**, [`useChatSidebarItem()`](../hooks/use-chat-sidebar-item.md) — exported today; throws outside `ChatSidebar.Item`. This is what makes a swapped or extended row menu keep rename/delete/select behaviour:
 
 ```ts
 {
-  conversation: ConversationSummary
+  conversation: Conversation
   isActive: boolean
   canRename: boolean            // an onRename is wired somewhere
   startRename: () => void       // enter inline rename (no-op when unavailable)
@@ -345,6 +364,7 @@ Swapping one row leaf never forces ejecting the list; swapping the list never fo
 ## Related
 
 - [`useConversations`](../hooks/use-conversations.md) — conversation list state and actions (the L3 hook underneath).
+- [`useChatSidebarItem`](../hooks/use-chat-sidebar-item.md) — the per-row `ChatSidebar.Item` context reader.
 - [`useConversation`](../hooks/use-conversation.md) — a single conversation by id.
 - [`useConversationsContext`](../hooks/use-conversations-context.md) — reads the `ConversationsProvider` context.
 - `AppShell` (from `veryfront/ui`) — the layout shell the sidebar typically lives in.

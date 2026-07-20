@@ -16,7 +16,7 @@ The existing signature is kept as today:
 
 ```ts
 function useAgentMetadata(agentId: string): {
-  agent: Agent | undefined
+  agent: AgentMetadata | undefined
   isLoading: boolean
   error: Error | null
 }
@@ -32,7 +32,7 @@ function useAgentMetadata(agentId: string): {
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `agent` | `Agent \| undefined` | The agent's metadata (responses pass through the `normalizeAgentMetadata` helper). |
+| `agent` | `AgentMetadata \| undefined` | The agent's metadata (responses pass through the `normalizeAgentMetadata` helper). |
 | `isLoading` | `boolean` | Fetch in flight. |
 | `error` | `Error \| null` | Fetch error, if any. |
 

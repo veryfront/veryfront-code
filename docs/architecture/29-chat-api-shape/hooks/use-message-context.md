@@ -15,24 +15,25 @@ import { useMessageContext, useMessageContextOptional } from 'veryfront/chat'
 ```ts
 function useMessageContext<TMessage extends ChatMessage = ChatMessage>(): UseMessageContextResult<TMessage>
 
-// Returns undefined instead of throwing when no Message.Root is above.
+// Returns null instead of throwing when no Message.Root is above
+// (optional context hooks return null, library-wide).
 function useMessageContextOptional<TMessage extends ChatMessage = ChatMessage>():
-  UseMessageContextResult<TMessage> | undefined
+  UseMessageContextResult<TMessage> | null
 
 interface UseMessageContextResult<TMessage extends ChatMessage> {
   // State
   message: TMessage
   role: 'user' | 'assistant' | 'system'
   isStreaming: boolean
-  parts: TMessage['parts']
+  parts: PartGroup[]        // grouped, render-order parts
   textContent: string
   copied: boolean
   isEditing: boolean
   // Actions
   copy: () => void
-  regenerate: () => void
   startEdit: () => void
   cancelEdit: () => void
+  regenerate?: () => void   // assistant turns with reload only
 }
 ```
 
@@ -49,7 +50,7 @@ This hook takes no options — it is a context reader. It must be called under a
 | `message` | `TMessage` | The full `ChatMessage<TMetadata, TDataParts, TTools>` object. |
 | `role` | `'user' \| 'assistant' \| 'system'` | Message author (mirrored as `data-role` on `Message.Root`). |
 | `isStreaming` | `boolean` | This message is streaming now (mirrored as `data-streaming`). |
-| `parts` | `TMessage['parts']` | The message's part list. |
+| `parts` | `PartGroup[]` | The message's parts, grouped in render order (the same groups `useMessageParts` returns). |
 | `textContent` | `string` | Flat text of the message (`getTextContent`). |
 | `copied` | `boolean` | Transient copied feedback (mirrored as `data-copied` on copy buttons). |
 | `isEditing` | `boolean` | Edit composer active (mirrored as `data-editing` on `Message.Root`). |
@@ -59,7 +60,7 @@ This hook takes no options — it is a context reader. It must be called under a
 | Name | Type | Description |
 | --- | --- | --- |
 | `copy` | `() => void` | Copy `textContent` to the clipboard; sets `copied` transiently. |
-| `regenerate` | `() => void` | Regenerate this message (session `reload` from `ChatRoot` context). |
+| `regenerate` | `() => void` *(optional)* | Regenerate this message (session `reload` from `ChatRoot` context). Present on assistant turns with `reload` only — absent otherwise. |
 | `startEdit` | `() => void` | Enter edit mode — render a `ChatInput` inside the message; it *is* the edit form. |
 | `cancelEdit` | `() => void` | Leave edit mode without submitting. |
 

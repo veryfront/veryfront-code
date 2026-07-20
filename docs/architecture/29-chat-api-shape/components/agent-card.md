@@ -8,6 +8,9 @@ A status card for one running agent: identity header, live status, reasoning, to
 
 ```tsx
 import { AgentCard } from 'veryfront/chat'
+
+// every sub-part is also a flat named export (same function), with its props type
+import { AgentCard, AgentCardHeader, type AgentCardHeaderProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -40,9 +43,9 @@ floated or absolutely positioned:
 <div class="flex flex-col gap-3 …card outline surface, md padding"
      data-agent-status="thinking">                     <!-- .Root — vertical stack -->
   <div class="flex items-center gap-2">                <!-- .Header — one horizontal row -->
-    <span class="size-8 …">…</span>                    <!--   avatar: fixed square, first in row -->
+    <div class="size-8 …">…</div>                      <!--   avatar: fixed square, first in row -->
     <span class="min-w-0 truncate font-medium">…</span><!--   name: truncates when narrow -->
-    <span class="ml-auto …">● Thinking</span>          <!--   status: ml-auto pushes it to the row end -->
+    <div class="ml-auto …">● Thinking</div>            <!--   status: ml-auto pushes it to the row end -->
   </div>
   <div>…</div>                                         <!-- .Reasoning — only when `thinking` present -->
   <div class="flex flex-col gap-2">                    <!-- .Tools — vertical list, only when toolCalls.length > 0 -->
@@ -73,7 +76,7 @@ The card container (one `<div>`, `ui` Card surface) + the compound's scoped cont
 | `name` | `string` | `"Agent"` | Display name shown by `.Header` |
 | `avatarUrl` | `string` | — | Avatar image; falls back to the name's initial |
 | `messages` | `AgentMessage[]` | — | Streamed output; `.Body` renders each as Markdown |
-| `toolCalls` | `ToolCall[]` | `[]` | `.Tools` renders each through the `ToolCall` card |
+| `toolCalls` | `AgentToolCall[]` | `[]` | `.Tools` renders each through the `ToolCall` card |
 | `thinking` | `string` | — | Reasoning text; `.Reasoning` renders only when present |
 | `asChild` | `boolean` | `false` | Merge onto your own element |
 | + native | `React.HTMLAttributes<HTMLDivElement>` · `ref` | — | Spread onto the single node; `className` merges |
@@ -123,9 +126,30 @@ One `<div>` column. Default content: each message's text rendered as [`Markdown`
   status: AgentStatus
   thinking?: string
   messages?: AgentMessage[]
-  toolCalls: ToolCall[]
+  toolCalls: AgentToolCall[]
   presentation: { color: StatusColor; label: string; pulse: boolean }
 }
+```
+
+The card's data types:
+
+```ts
+type AgentMessage = {
+  id: string
+  parts: Array<{ type: 'text'; text: string } | { type: string }>  // `.Body` renders the text parts
+}
+
+// renamed from the agent-side `ToolCall` type to avoid colliding with the `ToolCall` component
+type AgentToolCall = {
+  id: string
+  name: string
+  status: 'pending' | 'executing' | 'completed' | 'error'
+  args: Record<string, unknown>
+  result?: unknown
+  error?: string
+}
+
+type StatusColor = 'gray' | 'blue' | 'green' | 'red' | 'yellow'  // the `ui` Status color union
 ```
 
 ## Examples

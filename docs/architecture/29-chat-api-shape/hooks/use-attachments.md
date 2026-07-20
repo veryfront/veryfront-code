@@ -22,8 +22,8 @@ function useAttachments(options: UseAttachmentsOptions): UseAttachmentsResult
 interface UseAttachmentsOptions {
   /** Endpoint for the durable file store. Provide `url` or `transport`. */
   url?: string
-  /** Transport object, as an alternative to `url`. */
-  transport?: unknown
+  /** Transport object, as an alternative to `url`. Shape TBD in implementation. */
+  transport?: Transport
   /** Scopes persistence, mirroring `ConversationsProvider`'s `storageKey`. */
   storageKey?: string
 }
@@ -32,7 +32,7 @@ interface UseAttachmentsResult {
   items: UploadedFile[]
   isLoading: boolean
   upload: (files: File[]) => void
-  add: (...args: unknown[]) => void
+  add: (...args: unknown[]) => void  // params TBD in implementation
   remove: (id: string) => void
   clear: () => void
   refresh: () => void
@@ -44,7 +44,7 @@ interface UseAttachmentsResult {
 | Option | Type | Description |
 | --- | --- | --- |
 | `url` | `string` | The upload/list endpoint. One of `url` or `transport`. |
-| `transport` | object | Custom transport, as an alternative to `url`. |
+| `transport` | `Transport` | Custom transport, as an alternative to `url` (`Transport` shape TBD in implementation). |
 | `storageKey` | `string` | Optional persistence scope. |
 
 ## Returns
@@ -61,7 +61,7 @@ interface UseAttachmentsResult {
 | Name | Description |
 | --- | --- |
 | `upload` | Upload files to the durable store. |
-| `add` | Add an item to the list. |
+| `add` | Add an item to the list. Params TBD in implementation. |
 | `remove` | Remove an item. |
 | `clear` | Remove all items. |
 | `refresh` | Re-fetch the list. |

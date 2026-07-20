@@ -8,6 +8,9 @@ The composer's actions menu — a dropdown of data-driven rows (attach, custom a
 
 ```tsx
 import { ChatActions } from 'veryfront/chat'
+
+// every sub-part is also a flat named export (same function), with its props type
+import { ChatActions, ChatActionsItem, type ChatActionsItemProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -44,8 +47,9 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
     <svg>＋</svg>
   </button>
 
-  <!-- .Content — only while open. NOT in flow: portalled to document.body by
-       Floating, position: fixed, 8px below the trigger rect (flips above on
+  <!-- .Content — only while open. NOT in flow: portalled by Floating to the
+       nearest [data-vf-ui] scope root (falls back to document.body),
+       position: fixed, 8px below the trigger rect (flips above on
        viewport-bottom collision; clamped to 8px gutters), align="start". -->
   <div role="menu" class="z-50 min-w-[260px] rounded-lg p-2.5 shadow-sm overflow-hidden">
     <!-- .Preset — NO node; emits the following siblings directly: -->
@@ -96,6 +100,8 @@ The scoped context provider + dropdown root. **Layout: no in-flow layout of its 
 
 **Removed (proposed):** `trigger?: ReactNode` — compose `.Trigger` children instead (composition, not render-prop config); Root-level `className` (today it styles the *menu surface* — class `.Content` directly).
 
+`ChatActionItem.icon` survives the icon-prop ban because it is a *data field* describing the menu model, not a component prop — the ban targets `icon` slot props on components (like the removed `.Item` `icon`).
+
 ### `ChatActions.Trigger` — `changed`
 
 **Changed:** open state surfaces as `data-open` (today only `aria-expanded`); the deleted Root `trigger` prop lands here as children.
@@ -111,7 +117,7 @@ One `<button>` — the default is a `+` icon `ui` Button (`icon-tertiary` / `ico
 
 ### `ChatActions.Content` — `kept`
 
-The menu surface — one `<div role="menu">`. **Layout: not in flow — portalled to `document.body`, `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`, `p-2.5`.** **Renders `null` while closed** (unmounts). Default content: none — children are the rows (`.Item`s, `.Preset`, your own nodes).
+The menu surface — one `<div role="menu">`. **Layout: not in flow — portalled to the nearest `[data-vf-ui]` scope root (falls back to `document.body`), `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`, `p-2.5`.** **Renders `null` while closed** (unmounts). Default content: none — children are the rows (`.Item`s, `.Preset`, your own nodes).
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |

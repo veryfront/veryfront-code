@@ -8,7 +8,7 @@ Scoped context providers — every one renders zero DOM nodes.
 
 - **Providers render zero nodes.** A provider contributes context, never markup. (`ChatRoot` can opt into a node via `asChild`, and only then.)
 - **Raw context objects stay unexported.** You read context through the matching `use*Context` hook, never `useContext(SomeExportedContext)`.
-- **Every `use*Context` has an `Optional` variant** — e.g. `useChatContextOptional` — which returns instead of throwing when no provider is present.
+- **Every `use*Context` has an `Optional` variant** — e.g. `useChatContextOptional` — which returns instead of throwing when no provider is present. **Library-wide convention: every `use*ContextOptional` returns `null` outside its provider — never `undefined`.**
 - **Precedence is uniform everywhere:** explicit prop > nearest context > default.
 
 Context is **scoped, not app-wide magic**: a `<ChatInput>` shares state with *its* children only; nothing is a global store the whole tree reads implicitly. Nested providers follow nearest-provider-wins — this is what lets a `ChatInput` rendered *inside* a `Message` become that message's edit composer.

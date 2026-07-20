@@ -21,7 +21,7 @@ function useAttachmentPill(): {
 }
 ```
 
-A context reader: it reads the attachment provided by the nearest `AttachmentPill.Root`. The *list* of attachments comes from [`useUpload().attachments`](./use-upload.md) — this hook is per-item.
+A context reader: it reads the attachment provided by the nearest `AttachmentPill.Root`. The *list* of attachments comes from [`useUpload().attachments`](./use-upload.md) — this hook is per-item. `retry()`/`remove()` route through the Root's `upload?: UseUploadResult` prop, which defaults to the nearest `ChatInput` context's upload (explicit prop > nearest context) — so inside a composer, no handler wiring is needed.
 
 ## Options
 
@@ -40,8 +40,8 @@ None.
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `retry` | `() => void` | Retry this attachment's failed upload. |
-| `remove` | `() => void` | Remove this attachment from the pending set. |
+| `retry` | `() => void` | Retry this attachment's failed upload. Routes through the Root's `upload` (default: the nearest `ChatInput` context's upload). |
+| `remove` | `() => void` | Remove this attachment from the pending set. Routes through the Root's `upload` (default: the nearest `ChatInput` context's upload). |
 
 ### Prop getters
 

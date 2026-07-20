@@ -16,10 +16,12 @@ import { useAgentPicker } from 'veryfront/chat'
 function useAgentPicker(): AgentPickerContext & {
   query: string
   setQuery: (query: string) => void
-  options: AgentPickerOption[]
-  select: (option: AgentPickerOption) => void
+  options: AgentOption[]
+  select: (option: AgentOption) => void
 }
 ```
+
+`AgentOption = { id, name, description?, avatarUrl?, disabled? }` — the same option type `AgentPicker.Root` takes.
 
 A **context reader plus picker state**: it reads the scoped context provided by `AgentPicker.Root` and exposes the search/selection surface. Per the providers contract, the raw context object stays unexported.
 
@@ -31,12 +33,16 @@ None — state comes from the nearest `AgentPicker.Root`.
 
 | Name | Type | Description |
 | --- | --- | --- |
+| `value` | `string \| undefined` | Selected agent id. |
+| `onSelect` | `(id: string) => void` | Select an agent by id and close (also fires the Root's `onValueChange`). |
+| `open` | `boolean` | Popover open state (surfaced on the DOM as `data-open` on `.Trigger`). |
+| `setOpen` | `(open: boolean) => void` | Set the open state (also fires `onOpenChange`). |
+| `onCreate` | `(() => void) \| undefined` | Present only when the Root received it. |
+| `onManage` | `(() => void) \| undefined` | Present only when the Root received it. |
 | `query` | `string` | The current search query. |
 | `setQuery` | `(query: string) => void` | Update the search query. |
-| `options` | `AgentPickerOption[]` | The (filtered) picker options. |
-| `select` | `(option) => void` | Select an option. |
-
-Plus the compound's context (open/selection state that `.Trigger`, `.Item`, etc. render from — surfaced on the DOM as `data-open` / `data-active`).
+| `options` | `AgentOption[]` | The (filtered) picker options. |
+| `select` | `(option: AgentOption) => void` | Select an option. |
 
 ## Example
 
@@ -55,7 +61,7 @@ function MyOptions() {
       <ul className="anything">
         {picker.options.map((option) => (
           <li key={option.id}>
-            <button onClick={() => picker.select(option)}>{option.label}</button>
+            <button onClick={() => picker.select(option)}>{option.name}</button>
           </li>
         ))}
       </ul>
@@ -63,7 +69,7 @@ function MyOptions() {
   )
 }
 
-<AgentPicker.Root>
+<AgentPicker.Root agents={agents}>
   <AgentPicker.Trigger />
   <AgentPicker.Content>
     <MyOptions />

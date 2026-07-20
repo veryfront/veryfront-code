@@ -8,6 +8,9 @@ An error boundary for chat surfaces — catches **render** errors in its subtree
 
 ```tsx
 import { ChatErrorBoundary } from 'veryfront/chat'
+
+// Flat style (RFC decision: every part is a real named export with its Props type)
+import { ChatErrorBoundary, type ChatErrorBoundaryProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -38,8 +41,10 @@ While nothing has thrown, `ChatErrorBoundary` renders **children only — zero n
                                                                 crashed subtree occupied — NOT an overlay -->
   <div class="flex items-start gap-4">                     <!-- horizontal row, top-aligned -->
     <div class="size-10 rounded-full flex items-center justify-center flex-shrink-0">
-      <svg aria-hidden>⚠</svg>                             <!-- fixed 40px icon circle, never shrinks;
-                                                                sits left of the text column -->
+      <svg>⚠</svg>                                         <!-- fixed 40px icon circle, never shrinks;
+                                                                sits left of the text column; `aria-hidden`
+                                                                on the svg is a PROPOSED a11y addition —
+                                                                today's DOM lacks it -->
     </div>
     <div class="flex-1 min-w-0">                           <!-- text column: takes remaining width;
                                                                 min-w-0 lets long messages wrap, not overflow -->
@@ -72,7 +77,7 @@ A React error boundary (class component today). Default content: `children`, ver
 
 All four props exist today and are **kept** (the RFC lists this component as signature-kept). Not on the convention row: as a boundary it renders no node of its own, so `asChild` / native-attr spread / `ref` don't apply to the boundary itself. The default fallback card is multi-node today; whether it gets reshaped onto the node contract (a composable fallback part) is TBD in implementation.
 
-**State attributes:** none specified. Per the streaming a11y contract, errors render with `role="alert"` (the default card already does); decorative icons are `aria-hidden`.
+**State attributes:** none specified. Per the streaming a11y contract, errors render with `role="alert"` (the default card already does today); making the decorative icon `aria-hidden` is a **proposed** a11y addition — today's svg lacks it.
 
 ## Hook: `useChatErrorHandler`
 

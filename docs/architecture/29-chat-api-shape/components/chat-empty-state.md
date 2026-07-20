@@ -8,6 +8,9 @@ The zero-messages view: hero agent avatar, heading, and a wrapping row of typed 
 
 ```tsx
 import { ChatEmptyState, getAgentPromptSuggestionItems } from 'veryfront/chat'
+
+// every sub-part is also a flat named export (same function), with its props type
+import { ChatEmptyState, ChatEmptyStateSuggestion, type ChatEmptyStateSuggestionProps } from 'veryfront/chat'
 ```
 
 ## Parts index

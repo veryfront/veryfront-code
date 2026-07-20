@@ -8,6 +8,12 @@ The transcript — one scroll container with an accessible log region and a scro
 
 ```tsx
 import { ChatMessageList } from 'veryfront/chat'
+
+// Flat style (RFC decision: every sub-part is a real named export with its Props type)
+import {
+  ChatMessageList, ChatMessageListContent, ChatMessageListScrollButton,
+  type ChatMessageListProps, type ChatMessageListContentProps, type ChatMessageListScrollButtonProps,
+} from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -29,7 +35,7 @@ import { ChatMessageList } from 'veryfront/chat'
 
 ## Default DOM (childless render)
 
-What the transcript renders today (as composed by the preset), annotated per node. **Note:** today `.Root` is *two* nodes — a non-scrolling `relative` wrapper plus the scroll div — because the scroll button must overlay the visible viewport, not scroll away with the content. The RFC's single-node contract collapses this to **one** scroll container; how the button then anchors is part of the implementation:
+What the transcript renders today (as composed by the preset), annotated per node. **Note:** today `.Root` is *two* nodes — a non-scrolling `relative` wrapper plus the scroll div — because the scroll button must overlay the visible viewport, not scroll away with the content. The RFC's single-node contract collapses this to **one** scroll container; the button then anchors via **`position: sticky` at the viewport's bottom edge** — inside the scroll container, no wrapper node, no portal (proposed resolution, review welcome):
 
 ```html
 <div class="relative flex-1 min-h-0 flex flex-col">          <!-- wrapper (today): fills leftover height in the
@@ -103,7 +109,7 @@ The transcript column — one `<div>`, `role="log"`. Default content: one [`Mess
 
 One `<button>` (`aria-label="Scroll to bottom"`). Default content: a down-arrow icon when childless; pass children to replace it (today's `icon` prop falls to the icon-slot ban). Clicking smooth-scrolls to the bottom and re-pins.
 
-**Layout:** absolute overlay — bottom-center of the visible viewport (`absolute bottom-4 left-1/2 -translate-x-1/2`), floating above the rows; never in the scroll flow.
+**Layout:** today, absolute overlay — bottom-center of the visible viewport (`absolute bottom-4 left-1/2 -translate-x-1/2`) on the non-scrolling wrapper. **Proposed:** with `.Root` collapsed to one scroll container, the button anchors via **`position: sticky` at the viewport's bottom edge** — inside the scroller, no wrapper node, no portal — floating above the rows either way.
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -140,10 +146,13 @@ useChatScroll() // per the scroll contract:
   scrollToMessage(id: string): void
   scrollToStart(): void
   scrollToEnd(): void
+  // attachment
+  viewportRef: Ref
+  getViewportProps(overrides?): …
 }
 ```
 
-Container attachment at L3 (ref vs. prop getter) is TBD in implementation.
+Container attachment at L3 is resolved: attach `viewportRef` or spread `getViewportProps(overrides?)` on your scroller (see [`useChatScroll`](../hooks/use-chat-scroll.md)).
 
 ## Examples
 
@@ -185,7 +194,7 @@ Drive your own transcript with [`useChatScroll`](../hooks/use-chat-scroll.md) �
 function MyTranscript({ chat }) {
   const scroll = useChatScroll({ turnAnchor: 'bottom', preserveScrollOnPrepend: true })
   return (
-    <div className="my-scroller">
+    <div {...scroll.getViewportProps({ className: 'my-scroller' })}>
       <div role="log" aria-relevant="additions" aria-busy={chat.status === 'streaming'}>
         {chat.messages.map((m) => <MyRow key={m.id} message={m} />)}
       </div>

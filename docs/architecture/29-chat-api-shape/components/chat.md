@@ -8,6 +8,12 @@ The L1 preset — a batteries-included chat surface built entirely from the publ
 
 ```tsx
 import { Chat } from 'veryfront/chat'
+
+// Flat equivalents (RFC decision: every sub-part is a real named export with its Props type)
+import {
+  ChatRoot, ChatMessageList, ChatInput, ChatEmpty, ChatSkeleton, ChatIf, ChatErrorBanner,
+  type ChatProps, type ChatIfProps, type ChatErrorBannerProps,
+} from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -28,12 +34,17 @@ import { Chat } from 'veryfront/chat'
 ```tsx
 <Chat agentId="support-agent" api="/api/ag-ui">
   <Chat.Root>                       {/* session context — zero nodes (RFC) */}
-    <Chat.If test={(s) => s.isEmpty}>
+    <Chat.If test={(s) => s.isEmpty && !s.ready}>
+      <Chat.Skeleton />             {/* history/agent metadata still loading */}
+    </Chat.If>
+    <Chat.If test={(s) => s.isEmpty && s.ready}>
       <Chat.Empty />                {/* idle hero: avatar · heading · suggestion chips */}
     </Chat.If>
-    <Chat.MessageList>              {/* scroll container */}
-      <Chat.Message />              {/* one row per turn (default map) */}
-    </Chat.MessageList>
+    <Chat.If test={(s) => !s.isEmpty}>
+      <Chat.MessageList>            {/* scroll container */}
+        <Chat.Message />            {/* one row per turn (default map) */}
+      </Chat.MessageList>
+    </Chat.If>
     <Chat.ErrorBanner />            {/* null while there is no session error */}
     <Chat.Input />                  {/* the composer: one <form> */}
   </Chat.Root>
@@ -72,7 +83,9 @@ The actual HTML `<Chat agentId api />` renders today (thread with messages), ann
   </div>
 
   <div class="max-w-2xl mx-auto px-4 pb-3">                  <!-- Chat.ErrorBanner: in-flow between list and composer; -->
-    <div role="alert">…message… <button>Retry</button></div> <!-- only present while session error is non-null -->
+    <div>…message… <button>Retry</button></div>              <!-- only present while session error is non-null; -->
+                                                             <!-- ui Alert is a plain <div> today — role="alert" is a -->
+                                                             <!-- PROPOSED a11y addition (streaming a11y contract) -->
   </div>
 
   <div class="flex-shrink-0 pb-6">                           <!-- Chat.Input outer: pinned by flex order, never shrinks -->
@@ -80,7 +93,7 @@ The actual HTML `<Chat agentId api />` renders today (thread with messages), ann
       <div class="flex flex-wrap items-center gap-2 pb-4">…</div>
                                                              <!-- pending AttachmentPill row: only when files pending -->
       <form>                                                 <!-- the submit form -->
-        <div class="relative overflow-hidden rounded-lg bg-[var(--secondary)] px-3 py-2">
+        <div class="relative overflow-hidden rounded-[var(--radius-lg)] bg-[var(--secondary)] px-3 py-2 transition-all">
                                                              <!-- the composer card; `relative` anchors the drag -->
                                                              <!-- overlay; card is the drop target -->
           <!-- DropZoneOverlay: absolute inset overlay, only while dragging files -->
@@ -112,7 +125,8 @@ Empty-thread variants of the transcript slot:
 
 <!-- resolved + empty — Chat.Empty (idle hero) -->
 <div class="flex flex-1 flex-col items-center justify-center gap-3.5 px-4"> <!-- centered both axes in the slot -->
-  …avatar (64px) · <h2> heading · description <p> · suggestions chip row…
+  …avatar (today: 48px AgentAvatar via ChatEmpty's icon slot; RFC: 64px ChatEmptyState.Avatar — see Chat.Empty)
+  · <h2> heading · description <p> · suggestions chip row…
 </div>
 ```
 
@@ -144,15 +158,36 @@ function ChatDefault({ agentId, api, uploadApi, tools, labels, chat: controlled,
             <ChatMessageList.ScrollButton />
           </ChatMessageList>
         </Chat.If>
-        <Chat.ErrorBanner />                                 {/* null-renders without a session error */}
-        <ChatInput upload={upload}>                          {/* session from ChatRoot context */}
-          <ChatInput.Field placeholder={labels?.placeholder} />
-          <ChatInput.Toolbar>
-            <ChatInput.Attach />
-            <ChatInput.Model />
-            <ChatInput.Submit />                             {/* Send↔Stop off data-status */}
-          </ChatInput.Toolbar>
-        </ChatInput>
+        <Chat.ErrorBanner />                                 {/* null-renders without a session error; its default
+                                                                 content carries the max-w-2xl mx-auto px-4 pb-3
+                                                                 centered wrapper around the Alert */}
+        <div className="flex-shrink-0 pb-6">                 {/* composer outer: pinned by flex order, never shrinks */}
+          <div className="mx-auto w-full max-w-[850px] px-4">{/* centered clamp — same width as the transcript */}
+            {upload.attachments.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pb-4">   {/* pending AttachmentPill row */}
+                {upload.attachments.map((a) => (
+                  <AttachmentPill key={a.id} attachment={a} upload={upload} />
+                ))}
+              </div>
+            )}
+            <ChatInput upload={upload}>                      {/* one <form>; session from ChatRoot context */}
+              <div className="relative rounded-[var(--radius-lg)] bg-[var(--secondary)] px-3 py-2 transition-all">
+                                                             {/* the composer card — also the file-drop target */}
+                <ChatInput.Field placeholder={labels?.placeholder} />
+                <div className="mt-2.5 flex min-h-[44px] items-center justify-between">
+                                                             {/* footer toolbar: space-between split */}
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <ChatInput.Attach />
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <ChatInput.Model />
+                    <ChatInput.Submit />                     {/* Send↔Stop off data-status */}
+                  </div>
+                </div>
+              </div>
+            </ChatInput>
+          </div>
+        </div>
         {children}
       </ChatThemeScope>
     </ChatRoot>
@@ -232,7 +267,7 @@ The transcript (= [`ChatMessageList`](./chat-message-list.md)). One scroll conta
 
 ### `Chat.Input` — `changed`
 
-The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped context — the current hidden `max-w-[850px]` centering div is deleted; in the pasted composition that layout div is yours. Default content: `.Field` textarea + toolbar with `.Attach` / `.Model` / `.Submit` (Send↔Stop morph; `.Stop`/`.Send`/`.Voice` self-gate to `null` by state today).
+The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped context — the current hidden `max-w-[850px]` centering div is deleted; in the pasted composition that layout div is yours. Default content: `.Field` textarea + toolbar with `.Attach` / `.Model` / `.Submit` (Send↔Stop morph; `.Stop`/`.Send`/`.Voice` self-gate to `null` by state today). L1 wires voice input by default when the browser supports it; `.Voice` null-renders otherwise.
 
 **Layout:** in-flow flex child, `shrink-0` (never collapses under a long transcript); the composer card is `relative` and doubles as the file-drop target.
 
@@ -247,7 +282,7 @@ The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped conte
 
 **Changed:** today's `icon` / `title` / `description` / `suggestions` / `onSuggestion*` / `quickActions` props give way to agent-derived defaults and `ChatEmptyState.*` composition.
 
-The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`. Default content: agent `Avatar` (64px, image or initial) → `<h2>` heading (agent name; today's fallback string `"What can I help with?"`) → optional description `<p>` → suggestion chip row (typed `{ label, prompt }[]` via `getAgentPromptSuggestionItems`, #2978 — selection hands back the *item*). **Renders only on an empty, resolved thread** (via `Chat.If` in the composition).
+The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`. Default content today: the agent avatar — the **48px `AgentAvatar`** (`size-12`, image or initial) passed through `ChatEmpty`'s `icon` slot in app mode — → `<h2>` heading (agent name; today's fallback string `"What can I help with?"`) → optional description `<p>` → suggestion chip row (typed `{ label, prompt }[]` via `getAgentPromptSuggestionItems`, #2978 — selection hands back the *item*). **DOM delta (proposed):** the hero avatar becomes the **64px `ChatEmptyState.Avatar`** — the `icon` slot falls to the icon-slot ban, so the hero standardizes on the composable `ChatEmptyState.*` avatar instead of a slotted `AgentAvatar`. **Renders only on an empty, resolved thread** (via `Chat.If` in the composition).
 
 **Layout:** fills the transcript slot (`flex-1`), centers its column of children on both axes.
 
@@ -290,7 +325,7 @@ One message row (= [`Message`](./message.md)). One **`<article>`** (today: a `<d
 
 | Prop | Type | Description |
 | --- | --- | --- |
-| `message` *(required)* | `ChatMessage<TMetadata, TDataParts, TTools>` | The turn to render |
+| `message` *(required)* | `ChatMessage<TMetadata, TDataParts, TTools>` | The turn to render — inside the preset's default map, `Chat.Message` resolves `message` from the iteration context, so the composition can print `<Chat.Message />` bare |
 | `asChild` + native + `ref` | | Own the `<article>` |
 
 **State attributes (proposed):** `data-role` · `data-agent-id` · `data-streaming` · `data-editing` · `data-error`.
@@ -299,7 +334,7 @@ One message row (= [`Message`](./message.md)). One **`<article>`** (today: a `<d
 
 **Changed:** `error` becomes optional (falling back to the session error from context); the `icon` and `retryLabel` props are removed.
 
-Session error display. Default content today: a centered wrapper (`max-w-2xl mx-auto`) holding a `ui` `Alert` (`variant="error"`, `role="alert"` per the a11y contract) with the error message and, when a retry handler exists, a link-style **Retry** button wired to `reload`. **Renders `null` while the session has no error** — safe to include unconditionally.
+Session error display. Default content today: a centered wrapper (`max-w-2xl mx-auto`) holding a `ui` `Alert` (`variant="error"`) with the error message and, when a retry handler exists, a link-style **Retry** button wired to `reload`. Today the `ui` `Alert` renders a plain `<div>` — `role="alert"` is a **proposed a11y addition** (streaming a11y contract), not today's DOM. **Renders `null` while the session has no error** — safe to include unconditionally.
 
 **Layout:** in-flow between the transcript and the composer (not an overlay); appears/disappears with the error.
 
@@ -318,7 +353,8 @@ Today's `icon` prop falls to the **icon-slot ban**; `retryLabel` becomes childre
 {
   ...UseChatResult,          // messages, status, error, streamingMessageId, sendMessage, stop, reload, …
   isEmpty: boolean           // derived — the selector field the RFC examples use
-  // exact derived-flag set beyond isEmpty: TBD in implementation
+  ready: boolean             // ChatRoot reads activeReady from the nearest ConversationsProvider; standalone: true
+  // exact derived-flag set beyond isEmpty/ready: TBD in implementation
 }
 ```
 
@@ -344,10 +380,11 @@ Batteries included — runs every hook internally:
 ### Per-piece customization — no ejection
 
 ```tsx
+{/* one tool renderer swapped (`tools`); rest untouched */}
 <Chat
   agentId="support-agent"
   api="/api/ag-ui"
-  tools={{ web_search: MyToolCard }}   {/* one tool renderer swapped; rest untouched */}
+  tools={{ web_search: MyToolCard }}
   labels={{ placeholder: 'Fragen Sie…' }}
 />
 ```

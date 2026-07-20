@@ -24,7 +24,19 @@ None.
 
 ## Returns
 
-The `AgentCard` compound's context — the card state that `AgentCard.Header` / `.Reasoning` / `.Tools` / `.Body` render from. (The RFC specifies this hook as the compound's reader; it lists no further return shape.)
+The `AgentCard` compound's context — the card state that `AgentCard.Header` / `.Reasoning` / `.Tools` / `.Body` render from:
+
+```ts
+{
+  name: string
+  avatarUrl?: string
+  status: AgentStatus
+  thinking?: string
+  messages?: AgentMessage[]
+  toolCalls: AgentToolCall[]
+  presentation: { color: StatusColor; label: string; pulse: boolean }
+}
+```
 
 ## Example
 
@@ -36,7 +48,7 @@ function MyCardExtras() {
   return <div className="anything">{/* your markup from the card context */}</div>
 }
 
-<AgentCard.Root>
+<AgentCard.Root status={agent.status} name={agent.name}>
   <AgentCard.Header />
   <MyCardExtras />
   <AgentCard.Body />

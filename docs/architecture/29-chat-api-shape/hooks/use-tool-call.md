@@ -14,7 +14,7 @@ import { useToolCall } from 'veryfront/chat'
 
 ```ts
 function useToolCall<TTools = DefaultTools>(
-  part?: ToolPart<TTools>
+  part?: ChatToolPart | ChatDynamicToolPart
 ): UseToolCallResult<TTools>
 
 type ToolCallState =
@@ -28,11 +28,11 @@ type ToolCallState =
 
 interface UseToolCallResult<TTools> {
   // State
-  part: ToolPart<TTools>
+  part: ChatToolPart | ChatDynamicToolPart   // narrowed per tool name via TTools
   state: ToolCallState
   input: Partial<ToolInput<TTools>>   // partial while streaming
   output: ToolOutput<TTools> | undefined
-  error: unknown
+  errorText: string | undefined
   isOpen: boolean
   // Actions
   toggle: () => void
@@ -46,7 +46,7 @@ interface UseToolCallResult<TTools> {
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `part` | `ToolPart<TTools>` | nearest `ToolCall` context | Explicit at L3; from context at L2. `TTools` narrows `input`/`output` per tool name (`part.type === 'tool-…'`) — a wrong renderer signature against the typed tools registry is a compile error. |
+| `part` | `ChatToolPart \| ChatDynamicToolPart` | nearest `ToolCall` context | Explicit at L3; from context at L2. `TTools` narrows `input`/`output` per tool name (`part.type === 'tool-…'`) — a wrong renderer signature against the typed tools registry is a compile error. |
 
 ## Returns
 
@@ -54,11 +54,11 @@ interface UseToolCallResult<TTools> {
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `part` | `ToolPart<TTools>` | The resolved tool part. |
+| `part` | `ChatToolPart \| ChatDynamicToolPart` | The resolved tool part (narrowed per tool name via `TTools`). |
 | `state` | `ToolCallState` | Full lifecycle, including human-in-the-loop approval states. Mirrored as `data-state` on `ToolCall.Root`. |
 | `input` | `Partial<ToolInput<TTools>>` | Tool arguments — **partial while streaming** (`input-streaming`). |
 | `output` | `ToolOutput<TTools> \| undefined` | Tool result once `output-available`. |
-| `error` | `unknown` | Error when `output-error`. |
+| `errorText` | `string \| undefined` | Error message when `output-error`. |
 | `isOpen` | `boolean` | Disclosure state (mirrored as `data-open`; auto-opens on completion). |
 
 ### Actions
@@ -77,7 +77,7 @@ interface UseToolCallResult<TTools> {
 ## Example
 
 ```tsx
-function MyToolCard({ part }: { part: ToolPart<MyTools> }) {
+function MyToolCard({ part }: { part: ChatToolPart }) {
   const tool = useToolCall<MyTools>(part)   // part explicit at L3
   return (
     <div className="my-tool" data-state={tool.state}>
@@ -93,7 +93,7 @@ function MyToolCard({ part }: { part: ToolPart<MyTools> }) {
         <div {...tool.getBodyProps({ className: 'my-body' })}>
           <pre>{JSON.stringify(tool.input, null, 2)}</pre>
           {tool.state === 'output-available' && <output>{String(tool.output)}</output>}
-          {tool.state === 'output-error' && <p role="alert">{String(tool.error)}</p>}
+          {tool.state === 'output-error' && <p role="alert">{tool.errorText}</p>}
         </div>
       )}
     </div>

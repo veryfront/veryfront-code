@@ -4,17 +4,19 @@ The citation list for a message, extracted from its source parts. Render it whol
 
 > **Status: proposed (RFC).** This page documents the *proposed* API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-`Sources` is the same component as `Message.Sources` — a namespace re-export for use outside a `Message`, never a parallel implementation. `Message.*` is canonical.
+`Sources` is the same component as `Message.Sources` — a namespace re-export for use outside a `Message`, never a parallel implementation. `Message.*` is canonical. The children contract is the same on both names: node children recompose via `Sources.List` / `Sources.Pill` (as documented here), and a **function child** — `(source, index) => ReactNode` — maps each source, as documented on [`Message.Sources`](./message.md).
 
 ## Import
 
 ```tsx
 import { Sources } from 'veryfront/chat'
+// every sub-part is also a flat named export (same function), with its props type:
+import { Sources, SourcesPill, type SourcesPillProps } from 'veryfront/chat'
 ```
 
 ## Parts index
 
-- [`.Root`](#sourcesroot--changed) — `changed`: `renderItem` deleted; null-when-empty vs `data-empty` TBD
+- [`.Root`](#sourcesroot--changed) — `changed`: `renderItem` deleted; no `data-open` (the row has no disclosure); null-when-empty vs `data-empty` TBD
 - [`.List`](#sourceslist--changed) — `changed`: `<div>` → `<ul>`; `renderItem` deleted
 - [`.Pill`](#sourcespill--changed) — `changed`: `<button>` → `<a>`
 
@@ -93,8 +95,9 @@ The container (one `<div>`) + the compound's scoped context. The source list ent
 
 | Attribute | Values | Meaning |
 | --- | --- | --- |
-| `data-open` | present | Expanded. **TBD:** what open/collapsed means here — today the row is always fully visible and has no disclosure; the attribute anticipates a collapsed "N sources" summary state. |
 | `data-empty` | present | Zero sources (see empty behavior above). |
+
+`Sources.Root` carries **no `data-open`** — the row is always fully visible and has no disclosure.
 
 ```css
 [data-empty] { display: none; }
@@ -117,6 +120,8 @@ The row itself. Today a `<div>`; **proposed `<ul>`**. Default content: one `Sour
 One source chip. Today a `<button>` inside a `relative` `<span>` wrapper; **proposed `<a>`** (a source with a `url` is a link — display-only leaf, no prop getter needed). Default content: a 16px numbered circle (`index + 1`) → the title truncated at 150px → a 6px score dot when `score` is present (emerald ≥ 0.7, amber ≥ 0.4, neutral below). Hovering reveals a preview card above the pill showing the snippet (3-line clamp) — **only when `snippet` exists**; no preview otherwise.
 
 **Layout:** in-flow inline-flex chip inside the wrapping row; its wrapper `span` is `relative` and is the positioning context for the absolute, hover-revealed preview (`bottom-full left-0`, 256px wide, `pointer-events-none`).
+
+**TBD:** the hover snippet preview's node story under the one-node contract — today it is a *second* rendered node (plus the `relative` wrapper span) inside the pill; whether the proposed `<a>` keeps it (as a sub-part, a popper, or not at all) is an explicit open question.
 
 | Prop | Type | Description |
 | --- | --- | --- |

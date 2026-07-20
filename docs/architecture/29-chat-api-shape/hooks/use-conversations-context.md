@@ -16,10 +16,10 @@ import { useConversationsContext, useConversationsContextOptional } from 'veryfr
 
 ```ts
 function useConversationsContext(): ConversationsContextValue
-function useConversationsContextOptional(): ConversationsContextValue | undefined
+function useConversationsContextOptional(): ConversationsContextValue | null
 ```
 
-Every `use*Context` hook in the library has an `Optional` variant: the strict variant requires a `ConversationsProvider` above it; the `Optional` variant may be used where a provider might not be present.
+Every `use*Context` hook in the library has an `Optional` variant: the strict variant requires a `ConversationsProvider` above it; the `Optional` variant may be used where a provider might not be present — it returns **`null`** (never `undefined`) outside a provider, per the library-wide convention ([providers](../providers.md)).
 
 ## Options
 

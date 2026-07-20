@@ -10,6 +10,9 @@ A compound component for browsing and managing durable uploaded files, with the 
 
 ```tsx
 import { AttachmentsPanel } from 'veryfront/chat'
+
+// Every sub-part is also a flat named export, with its props interface:
+import { AttachmentsPanel, AttachmentsPanelItemName, type AttachmentsPanelItemNameProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -54,7 +57,8 @@ import { AttachmentsPanel } from 'veryfront/chat'
 What `<AttachmentsPanel uploads={…} onRemoveUpload={…} onAttach={…} onClose={…} />` actually renders today (classes abbreviated to layout):
 
 ```html
-<div class="flex flex-col h-full">                                      <!-- .Root — vertical flex column, fills parent height -->
+<style>…</style>  <!-- <ChatTokens/> — the [data-vf-ui]-scoped token stylesheet, rendered as a sibling just before the root -->
+<div data-vf-ui data-vf-chat class="flex flex-col h-full">              <!-- .Root — vertical flex column, fills parent height; carries the token-scope attributes (canonical data-vf-ui + data-vf-chat compat alias) — load-bearing for portal anchoring: portalled content (the ⋯ menu popover) re-establishes the scope via closest('[data-vf-ui],[data-vf-chat]') -->
   <div class="flex shrink-0 items-center justify-between px-4 pt-4">    <!-- .Header — fixed row above the scroll area; only mounted when onClose is set -->
     <h2>Attachments</h2>
     <button aria-label="Close attachments">✕</button>                   <!-- in-flow; pushed right by justify-between, not absolute -->
@@ -63,7 +67,7 @@ What `<AttachmentsPanel uploads={…} onRemoveUpload={…} onAttach={…} onClos
     <div class="mx-auto flex max-w-2xl flex-col gap-2">                 <!-- .List — centered column, capped at max-w-2xl, 8px row gap -->
       <!-- one per upload: -->
       <div class="group relative flex items-center gap-3 w-full py-1 pl-1 pr-2 rounded">  <!-- .Item — in-flow horizontal flex row (an AttachmentPill root, borderless) -->
-        <div class="size-10 shrink-0 rounded">…</div>                   <!-- icon OR thumbnail square — fixed 40px, never shrinks; busy spinner overlays it absolute inset-0 while uploading/processing -->
+        <div class="relative size-10 shrink-0 rounded">…</div>          <!-- icon OR thumbnail square — fixed 40px, never shrinks; the square is its own relative box, and the busy spinner overlays it absolute inset-0 (within the square, not the row) while uploading/processing -->
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">              <!-- label column — takes remaining width; min-w-0 enables truncation -->
           <p class="truncate">report.pdf</p>                            <!-- name line, single-line ellipsis -->
           <p class="truncate">120 KB</p>                                <!-- size/state line, single-line ellipsis -->
@@ -82,7 +86,7 @@ What `<AttachmentsPanel uploads={…} onRemoveUpload={…} onAttach={…} onClos
 </div>
 ```
 
-Layout facts a reviewer should not have to open source for: the default row's trailing control is an **overflow `⋯` menu** (Open / Delete), not `.Remove` — `.Remove` appears when you compose the row; every row control is **in-flow** (nothing in the row is absolutely positioned except the transient busy spinner over the 40px media square); nothing is hover-revealed; today the **scroll region is an anonymous div** between `.Root` and `.List` — under the proposed one-node shape, TBD whether overflow moves onto `.List` or stays a Root-owned region.
+Layout facts a reviewer should not have to open source for: the default row's trailing control is an **overflow `⋯` menu** (Open / Delete), not `.Remove` — `.Remove` appears when you compose the row; every row control is **in-flow** (nothing in the row is absolutely positioned except the transient busy spinner, which overlays the 40px media square *within the square's own `relative` box*, not the row); nothing is hover-revealed; today the **scroll region is an anonymous div** between `.Root` and `.List` — under the proposed one-node shape, TBD whether overflow moves onto `.List` or stays a Root-owned region.
 
 ## Parts
 
@@ -137,7 +141,7 @@ One node — today a `<div>`, **proposed `<ul>`**. Default content: one `.Item` 
 
 One file row — today implemented as a borderless [`AttachmentPill`](#context-what-the-parts-read) root `<div>` stretched `w-full`; **proposed `<li>`**. **Render-or-compose:** childless, it renders the default row anatomy — media square (image `Thumbnail` when the file resolves to an image, file-type `Icon` otherwise) → name + size label column → trailing overflow `⋯` menu (**Open** when `file.url` exists, **Delete** when `onRemoveUpload` is set; the menu null-renders when neither applies). Any children replace that row entirely — there is no half-hidden row card.
 
-**Layout:** in-flow horizontal flex row (`flex items-center gap-3`), `relative` (positioning context for the media square's busy overlay); fixed 40px `shrink-0` media square, `min-w-0 flex-1` label column (enables truncation), `shrink-0` in-flow trailing control — nothing hover-revealed, nothing absolute except the transient busy spinner.
+**Layout:** in-flow horizontal flex row (`flex items-center gap-3`, `relative` on the row today via the pill root); fixed 40px `shrink-0` media square, `min-w-0 flex-1` label column (enables truncation), `shrink-0` in-flow trailing control — nothing hover-revealed, nothing absolute except the transient busy spinner, which positions against the media square's **own `relative` box**, not the row.
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -150,7 +154,7 @@ One file row — today implemented as a borderless [`AttachmentPill`](#context-w
 
 The file-type square shown when there is no image thumbnail — today delegates to `AttachmentPill.Icon`, a 40px `<div>` (**proposed `<span>`**) showing the state glyph (clock / spinner / check / alert) when an upload lifecycle state is set, otherwise the uppercase file-extension badge with a per-type color. Renders its default icon when childless; pass children to replace it (**no `icon` prop** — the icon-slot-prop pattern is banned RFC-wide).
 
-**Layout:** fixed `size-10 shrink-0` in-flow flex child; the legacy-uploading spinner overlays it `absolute inset-0`.
+**Layout:** fixed `size-10 shrink-0` in-flow flex child and its own `relative` box; the legacy-uploading spinner overlays it `absolute inset-0` within the square.
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -168,15 +172,23 @@ The image thumbnail — today delegates to `AttachmentPill.Thumbnail`: a 40px sq
 
 ### `AttachmentsPanel.Item.Name` *(proposed — #2975)* — `new`
 
-One `<span>`: the file's name, truncating. Does not exist today — today the source deliberately omits it (name is "plain text with no attachment-domain logic", read from the item context and rendered yourself, or via `AttachmentPill.Label` which renders a name + secondary line column). #2975 adds it so the default row is fully recomposable from leaves. Default content: `file.name`. Full prop set TBD beyond the shared node contract.
+One `<span>`: the file's name, truncating. Does not exist today — today the source deliberately omits it (name is "plain text with no attachment-domain logic", read from the item context and rendered yourself, or via `AttachmentPill.Label` which renders a name + secondary line column). #2975 adds it so the default row is fully recomposable from leaves. Default content: `file.name`.
 
 **Layout:** in-flow text span; place it in your own `min-w-0` column to get truncation (see the Composed example).
 
+| Prop | Type | Description |
+| --- | --- | --- |
+| `asChild` + native (`HTMLAttributes`, `ref`) | | Convention only — the shared node contract; no part-specific props are proposed |
+
 ### `AttachmentsPanel.Item.Size` *(proposed — #2975)* — `new`
 
-One `<span>`: the file's size formatted as `B` / `KB` / `MB` (the `formatSize` helper is already exported today). **Expected to render `null` when `file.size` is undefined** (TBD — fallback to type/extension label like today's secondary line is an open question). Full prop set TBD beyond the shared node contract.
+One `<span>`: the file's size formatted as `B` / `KB` / `MB` (the [`formatSize`](../helpers.md) helper, public). **Expected to render `null` when `file.size` is undefined** (TBD — fallback to type/extension label like today's secondary line is an open question).
 
 **Layout:** in-flow text span inside your label column.
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| `asChild` + native (`HTMLAttributes`, `ref`) | | Convention only — the shared node contract; no part-specific props are proposed |
 
 ### `AttachmentsPanel.Item.Remove` — `changed`
 

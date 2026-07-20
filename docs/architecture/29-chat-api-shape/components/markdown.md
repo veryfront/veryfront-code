@@ -53,14 +53,16 @@ With no `components` overrides, a typical assistant message renders this tree to
   <ul class="my-4 list-disc pl-6"><li class="my-1.5 pl-1">…</li></ul>  <!-- markers restored (preflight strips them) -->
 
   <!-- fenced code — the default `pre` interception → ui CodeBlock (= proposed RichCodeBlock): -->
-  <div class="my-4 overflow-hidden rounded-lg border">        <!-- code card; in-flow block -->
-    <div class="flex items-center justify-between px-4 py-2"> <!-- header row: language label left, copy right -->
-      <span class="font-mono">tsx</span>
-      <button class="inline-flex items-center gap-1.5">⧉ Copy</button>  <!-- flips to "✓ Copied" for ~2s -->
+  <div class="my-4 overflow-hidden rounded-md border bg-secondary">   <!-- code card; in-flow block -->
+    <div class="flex items-center justify-between py-1.5 pl-3 pr-1.5 text-xs">  <!-- header row: language label left, copy right -->
+      <span class="font-mono font-medium">tsx</span>
+      <button aria-label="Copy code">⧉</button>               <!-- icon-only IconButton; check icon for ~2s after copy; label lives in the hover tooltip -->
     </div>
-    <pre class="overflow-auto p-4">                           <!-- the ONLY horizontal scroller for code -->
-      <code class="language-tsx">…highlighted…</code>
-    </pre>
+    <div class="border-t">                                    <!-- body sits behind a border-t under the header -->
+      <pre class="overflow-x-auto p-3">                       <!-- the ONLY horizontal scroller for code -->
+        <code class="language-tsx">…highlighted…</code>
+      </pre>
+    </div>
   </div>
 
   <code class="rounded px-1 py-0.5 font-mono">inline code</code>  <!-- inline code never reaches the code block;
@@ -145,7 +147,7 @@ The **default `components.code` renderer** — an alias over the `veryfront/ui` 
 | `onCopy` | `(e, next) => void` | — | Intercept the header copy; call `next()` to actually copy |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` | | Onto the card (today: `className` + `ref`) |
 
-**Removed (proposed):** `copyIcon` / `collapseIcon` — icon-slot ban (breaking-changes ledger). The `ui` `CodeBlock`'s `renderHeader` render prop is not named in the ledger; whether it survives the render-prop ban is **TBD**.
+**Removed (proposed):** `copyIcon` / `collapseIcon` / `renderHeader` — the icon-slot and render-prop bans (breaking-changes ledger); `renderHeader` is deleted with the icon props. The replacements: copied feedback is `data-copied` on the copy button + CSS (no `copyIcon` swap needed), and header customization is a `components.code` swap — supply your own code renderer.
 
 **State attributes (proposed):** `data-copied` on the copy button (global vocabulary; today copied feedback is internal state swapping the icon/label).
 

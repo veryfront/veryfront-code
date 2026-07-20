@@ -32,7 +32,7 @@ function useChatInput(options?: {
   submit: () => void
   stop: () => void
   clear: () => void
-  attach: (files: File[]) => void
+  attach: (files: FileList | File[]) => void
   // Prop getters — all accept (overrides?)
   getFormProps: (overrides?) => FormProps
   getFieldProps: (overrides?) => TextareaProps
@@ -75,7 +75,7 @@ Options are the `ChatInput.Root` props minus the DOM props.
 | `submit` | `() => void` | Fold attachments → guard while uploading → send → clear. |
 | `stop` | `() => void` | Abort the in-flight response. |
 | `clear` | `() => void` | Clear the input value. |
-| `attach` | `(files: File[]) => void` | Add files to the pending attachments. |
+| `attach` | `(files: FileList | File[]) => void` | Add files to the pending attachments. |
 
 ### Prop getters
 

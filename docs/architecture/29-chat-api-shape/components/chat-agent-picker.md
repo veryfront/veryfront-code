@@ -8,6 +8,9 @@ The batteries-included preset over `AgentPicker`: fetches the project's agents i
 
 ```tsx
 import { ChatAgentPicker, agentsToPickerOptions } from 'veryfront/chat'
+
+// the props type is a flat named export too
+import { ChatAgentPicker, type ChatAgentPickerProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -121,6 +124,8 @@ function MyAgentPicker() {
 
 ### Headless
 
+`useAgentPicker()` throws outside `AgentPicker.Root`, so the headless list still sits inside the Root:
+
 ```tsx
 function MyPickerList() {
   const picker = useAgentPicker()
@@ -131,6 +136,10 @@ function MyPickerList() {
     </button>
   ))
 }
+
+<AgentPicker.Root agents={options} value={agentId} onValueChange={setAgentId}>
+  <MyPickerList />
+</AgentPicker.Root>
 ```
 
 ## Customization (eject path)

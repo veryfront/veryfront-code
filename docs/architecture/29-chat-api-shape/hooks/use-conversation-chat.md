@@ -16,6 +16,9 @@ import { useConversationChat } from 'veryfront/chat'
 function useConversationChat(options: {
   agentId?: string
   api?: string | { url, headers, credentials, fetch, body }
+  initialMessages?: ChatMessage[]
+  onError?: (error: Error) => void
+  onUpdate?: (messages: ChatMessage[]) => void
   // Further options: TBD in implementation (the RFC lists `{ agentId?, api?, … }`).
 }): {
   chat: UseChatResult
@@ -31,6 +34,9 @@ function useConversationChat(options: {
 | --- | --- | --- |
 | `agentId?` | `string` | Agent for the session |
 | `api?` | `string \| transport object` | Endpoint or transport (same shape as [`useChat`](./use-chat.md)) |
+| `initialMessages?` | `ChatMessage[]` | Seed messages when the active thread has no persisted history (absorbs today's `<Chat initialMessages>` prop) |
+| `onError?` | `(error: Error) => void` | Session error callback (absorbs today's `<Chat onError>` prop) |
+| `onUpdate?` | `(messages: ChatMessage[]) => void` | Fires as the message list changes/persists (absorbs today's `<Chat onUpdate>` prop) |
 
 Additional options exist in the RFC's `…` — TBD in implementation.
 

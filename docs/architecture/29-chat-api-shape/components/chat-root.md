@@ -8,6 +8,9 @@ The scoped chat session provider — shares one `useChat()` result with its subt
 
 ```tsx
 import { ChatRoot } from 'veryfront/chat'
+
+// Flat style (RFC decision: every part is a real named export with its Props type)
+import { ChatRoot, type ChatRootProps } from 'veryfront/chat'
 ```
 
 ## Parts index
@@ -66,7 +69,7 @@ The compound's context provider (`ChatContextProvider` internally). All session 
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `chat` *(required)* | `UseChatResult` | — | The session to share — `chat={useChat()}` is the single shared context (#2973) |
+| `chat?` | `UseChatResult` | preset-supplied in context | The session to share — `chat={useChat()}` is the single shared context (#2973). **Optional-with-context:** inside `<Chat>` the preset supplies it; required only when `ChatRoot` is used standalone |
 | `asChild` | `boolean` | `false` | Render a node by merging onto your element (zero nodes otherwise); the standard contract applies to it (native attrs spread, `className` merge, `ref` composes) |
 | `children` | `ReactNode` | — | The subtree that reads this context |
 
@@ -101,6 +104,8 @@ Today `ChatRootProps` threads **25 individual props** plus native div attributes
                         // sendMessage, stop, reload(messageId?), setModel,
                         // editMessage, getBranches, switchBranch, setMessages, …
   isEmpty: boolean      // derived; used by Chat.If selectors
+  ready: boolean        // ChatRoot reads activeReady from the nearest
+                        // ConversationsProvider; standalone: true
   // further derived flags: TBD in implementation
 }
 ```

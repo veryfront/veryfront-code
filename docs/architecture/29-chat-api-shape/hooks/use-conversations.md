@@ -8,6 +8,25 @@ Headless state and actions for the conversation list — select, create, rename,
 
 > **Removed:** the deprecated aliases `active` and `activeId` are **dropped** (breaking-changes ledger). Use `activeConversation` and `activeConversationId`.
 
+## The `Conversation` type
+
+One conversation type: **`Conversation`** — the separate `ConversationSummary` type is gone (resolved decision). The fields the reference pages rely on:
+
+```ts
+interface Conversation {
+  id: string
+  title: string
+  /** The conversation's active/primary agent — never the sole participant. */
+  agentId?: string
+  /** Last-activity timestamp — drives the sidebar's recency buckets. */
+  updatedAt: number
+  /** Message summary — lets a list row show empty/count without loading messages. */
+  messageCount: number
+}
+```
+
+The full field set (e.g. `createdAt`, how lazily-loaded `messages` attach) is TBD in implementation; the fields above are the documented contract that `ChatSidebar`, `useConversation`, and this hook's return shape are written against.
+
 ## Import
 
 ```tsx
@@ -21,7 +40,7 @@ function useConversations(options?: UseConversationsOptions): UseConversationsRe
 
 interface UseConversationsOptions {
   storageKey?: string
-  store?: ConversationsStore
+  store?: ConversationsStore  // shape TBD in implementation
 }
 
 interface UseConversationsResult {
@@ -38,17 +57,19 @@ interface UseConversationsResult {
   remove: (id: string) => void
   update: (id: string, patch: Partial<Conversation>) => void
   save: () => void
-  bind: (...args: unknown[]) => void
+  bind: (...args: unknown[]) => void  // params TBD in implementation
   selectAgent: (agentId: string, options?: { conversation?: 'new' | 'same' }) => void
 }
 ```
 
 ## Options
 
+**Resolution rule:** an argless `useConversations()` reads the nearest [`ConversationsProvider`](use-conversations-context.md) — same list, same active thread as every other consumer of that provider. Passing options (`storageKey` and/or `store`) creates **standalone state** owned by this hook call, independent of any provider.
+
 | Option | Type | Description |
 | --- | --- | --- |
-| `storageKey` | `string` | Persistence scope for the conversation list. |
-| `store` | object | Custom conversation store. |
+| `storageKey` | `string` | Persistence scope for the conversation list. Providing it opts out of the provider — standalone state. |
+| `store` | `ConversationsStore` | Custom conversation store (shape TBD in implementation). Providing it opts out of the provider — standalone state. |
 
 ## Returns
 
@@ -56,7 +77,7 @@ interface UseConversationsResult {
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `conversations` | `Conversation[]` | All conversations. |
+| `conversations` | `Conversation[]` | All conversations (see [the `Conversation` type](#the-conversation-type)). |
 | `activeConversation` | `Conversation \| undefined` | The active conversation (replaces the dropped `active` alias). |
 | `activeConversationId` | `string \| undefined` | Id of the active conversation (replaces the dropped `activeId` alias). |
 | `isLoading` | `boolean` | Fetch in flight (drives `data-loading` on `ChatSidebar.Root`). |
@@ -72,7 +93,7 @@ interface UseConversationsResult {
 | `remove` | Delete a conversation. |
 | `update` | Update a conversation. |
 | `save` | Persist conversation state. |
-| `bind` | Bind a chat session to the active thread (used by `useConversationChat`). |
+| `bind` | Bind a chat session to the active thread (used by `useConversationChat`). Params TBD in implementation. |
 | `selectAgent` | Switch agents — see below. |
 
 ### Prop getters

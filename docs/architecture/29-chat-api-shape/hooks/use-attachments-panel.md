@@ -18,7 +18,19 @@ import { useAttachmentsPanel } from 'veryfront/chat'
 function useAttachmentsPanel(): AttachmentsPanelContextValue
 ```
 
-Returns the panel's context value — the [`useAttachments`](use-attachments.md)-backed state (`items`, `isLoading`, and the actions) that `AttachmentsPanel.Root` provides to its children.
+Returns the panel's context value — the [`useAttachments`](use-attachments.md)-backed state (`items`, `isLoading`, and the actions) that `AttachmentsPanel.Root` provides to its children, plus the panel-composition surface (today's shape — it re-surfaces what Root was given, plus the picker trigger):
+
+```ts
+{
+  uploads: UploadedFile[]
+  loading?: boolean            // proposed: replaced by useAttachments().isLoading / data-loading
+  onRemoveUpload?: (id: string) => void
+  onAttach?: (files: FileList) => void
+  attachAccept?: string
+  onClose?: () => void
+  triggerAttach: () => void    // opens the hidden native picker
+}
+```
 
 ## Options
 
@@ -28,11 +40,11 @@ None. State configuration (`url | transport`, `storageKey`) belongs to `useAttac
 
 ### State
 
-The panel state provided by `AttachmentsPanel.Root` — the same surface as `useAttachments`: `items: UploadedFile[]` (with per-item error state) and `isLoading`.
+The panel state provided by `AttachmentsPanel.Root` — the same surface as `useAttachments`: `items: UploadedFile[]` (with per-item error state) and `isLoading` — plus the panel-only fields Root was configured with: `attachAccept` (the native picker's `accept`) and `onClose` (the panel's dismiss handler, which gates `.Header`'s close button).
 
 ### Actions
 
-The panel actions provided by `AttachmentsPanel.Root`: `upload`, `add`, `remove`, `clear`, `refresh`.
+The panel actions provided by `AttachmentsPanel.Root`: `upload`, `add`, `remove`, `clear`, `refresh` — plus `triggerAttach()`, which opens the hidden native file picker that `.Root` mounts (what `.Action` calls).
 
 ### Prop getters
 

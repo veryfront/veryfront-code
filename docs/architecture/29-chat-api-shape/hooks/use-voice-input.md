@@ -20,7 +20,9 @@ function useVoiceInput(options?: {
   continuous?: boolean
   interimResults?: boolean
   onTranscript?: (transcript: string) => void
-}): {
+}): UseVoiceInputResult
+
+interface UseVoiceInputResult {
   isSupported: boolean
   isListening: boolean
   transcript: string

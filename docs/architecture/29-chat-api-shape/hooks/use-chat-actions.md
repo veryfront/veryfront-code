@@ -32,7 +32,16 @@ None — state comes from the nearest `ChatActions.Root`.
 
 ## Returns
 
-The `ChatActions` compound's context — the menu state its parts render from (surfaced on the DOM as `data-open` on `.Trigger`).
+The `ChatActions` compound's context — **menu data only** (open state lives in the dropdown primitive, not this reader):
+
+```ts
+{
+  actions: ChatActionItem[]        // the data-driven rows ([] when composed without them)
+  onAttachFiles?: () => void
+  attachFilesLabel: string         // resolved (default applied)
+  settings?: ChatActionsSettings
+}
+```
 
 ## Example
 
@@ -40,14 +49,14 @@ Compose the actions from the helpers; use the reader when building a custom part
 
 ```tsx
 function MyActionItems() {
-  const actions = useChatActions()           // compound context (menu state)
+  const actions = useChatActions()           // compound context (menu data)
   const { messages, setMessages } = useChatContext()
   return (
     <>
-      <ChatActions.Item onClick={() => downloadMarkdown(messages)}>
+      <ChatActions.Item onSelect={() => downloadMarkdown(messages)}>
         Export as Markdown
       </ChatActions.Item>
-      <ChatActions.Item onClick={() => setMessages([])}>
+      <ChatActions.Item onSelect={() => setMessages([])}>
         Clear conversation
       </ChatActions.Item>
     </>

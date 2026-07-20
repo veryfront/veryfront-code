@@ -29,10 +29,14 @@ function useChatScroll(options?: {
   scrollToMessage(id: string): void
   scrollToStart(): void
   scrollToEnd(): void
+
+  // Attachment
+  viewportRef: React.Ref<HTMLElement>
+  getViewportProps(overrides?): …      // ref + scroll handlers merged; overrides folded in
 }
 ```
 
-`…` = named in the RFC without a pinned type; TBD in implementation. How the hook attaches to the scroll container element (ref vs. getter) is TBD in implementation.
+`…` = named in the RFC without a pinned type; TBD in implementation. The hook attaches to your scroll container via **`viewportRef` or `getViewportProps(overrides?)`** — attach either to your scroller (resolved; see *State ownership* in the RFC).
 
 ## Options
 
@@ -62,7 +66,9 @@ function useChatScroll(options?: {
 
 ### Prop getters
 
-None specified in the RFC.
+| Name | Description |
+| --- | --- |
+| `getViewportProps(overrides?)` | Attach the scroll subsystem to your scroller — merges the viewport ref and scroll handlers; consumer overrides fold in. `viewportRef` is the ref-only alternative when you don't need the merged props |
 
 ### Behavior (normative)
 
@@ -78,7 +84,7 @@ None specified in the RFC.
 function MyTranscript({ chat }) {
   const scroll = useChatScroll({ turnAnchor: 'bottom', preserveScrollOnPrepend: true })
   return (
-    <div className="my-scroller">
+    <div {...scroll.getViewportProps({ className: 'my-scroller' })}>
       <div role="log" aria-relevant="additions" aria-busy={chat.status === 'streaming'}>
         {chat.messages.map((m) => <MyRow key={m.id} message={m} />)}
       </div>

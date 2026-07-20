@@ -19,7 +19,9 @@ function useUpload(options: {
   accept?: string
   maxSize?: number
   maxFiles?: number
-}): {
+}): UseUploadResult
+
+interface UseUploadResult {
   attachments: AttachmentInfo[]
   upload: (files: File[]) => void
   remove: (id: string) => void

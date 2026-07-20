@@ -13,10 +13,11 @@ import { useReasoning } from 'veryfront/chat'
 ## Signature
 
 ```ts
-function useReasoning(): UseReasoningResult
+function useReasoning(input?: { text: string; isStreaming?: boolean }): UseReasoningResult
 
 interface UseReasoningResult {
   // State
+  text: string
   open: boolean
   isStreaming: boolean
   duration: number
@@ -30,7 +31,9 @@ interface UseReasoningResult {
 
 ## Options
 
-This hook takes no options; the reasoning part comes from the surrounding message context (`Message.Reasoning` / `Reasoning` at L2).
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `input` | `{ text: string; isStreaming?: boolean }` | nearest `Reasoning.Root` context | Explicit at L3 — the L3 eject works without a `Reasoning.Root` (mirrors `useToolCall(part?)` / `useSources(message?)`). Argless, the hook reads the surrounding `Reasoning` context (`Message.Reasoning` / `Reasoning` at L2). |
 
 ## Returns
 
@@ -38,9 +41,10 @@ This hook takes no options; the reasoning part comes from the surrounding messag
 
 | Name | Type | Description |
 | --- | --- | --- |
+| `text` | `string` | The reasoning text (from the explicit input at L3, or from context). |
 | `open` | `boolean` | Disclosure state (mirrored as `data-open` on `Reasoning.Root`). Auto-opens while the reasoning streams, auto-closes when done. |
 | `isStreaming` | `boolean` | Reasoning content is streaming now (mirrored as `data-streaming`). |
-| `duration` | `number` | How long the model reasoned. |
+| `duration` | `number` | How long the model reasoned. **TBD:** how `duration` is measured (first-token → last-token wall clock vs. provider-reported) — nothing tracks it in today's source. |
 
 ### Actions
 
@@ -58,8 +62,8 @@ This hook takes no options; the reasoning part comes from the surrounding messag
 ## Example
 
 ```tsx
-function MyReasoning() {
-  const reasoning = useReasoning()
+function MyReasoning({ part }: { part: ReasoningPart }) {
+  const reasoning = useReasoning({ text: part.text, isStreaming: part.state === 'streaming' })   // explicit at L3 — no Reasoning.Root needed
   return (
     <div className="my-reasoning" data-open={reasoning.open || undefined}>
       <button {...reasoning.getTriggerProps({ className: 'my-trigger' })}>
@@ -67,7 +71,7 @@ function MyReasoning() {
       </button>
       {reasoning.open && (
         <div {...reasoning.getContentProps({ className: 'my-content' })}>
-          {/* reasoning text */}
+          {reasoning.text}
         </div>
       )}
     </div>

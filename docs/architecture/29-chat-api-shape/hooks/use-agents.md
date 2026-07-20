@@ -16,7 +16,7 @@ The existing signature is kept as today:
 
 ```ts
 function useAgents(options?: { enabled?: boolean }): {
-  agents: Agent[]
+  agents: AgentMetadata[]
   isLoading: boolean
   error: Error | null
   refetch: () => void
@@ -33,7 +33,7 @@ function useAgents(options?: { enabled?: boolean }): {
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `agents` | `Agent[]` | The available agents (responses pass through the `normalizeAgentsListResponse` helper). |
+| `agents` | `AgentMetadata[]` | The available agents (responses pass through the `normalizeAgentsListResponse` helper). |
 | `isLoading` | `boolean` | Fetch in flight. |
 | `error` | `Error \| null` | Fetch error, if any. |
 | `refetch` | `() => void` | Re-run the fetch. |
