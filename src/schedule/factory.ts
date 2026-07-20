@@ -5,6 +5,7 @@ import type {
   ScheduleConcurrencyPolicy,
   ScheduleConfig,
   ScheduleDefinition,
+  ScheduleHealth,
   ScheduleIntegrationRequirement,
   ScheduleIntegrationResource,
   ScheduleIntegrationResourceIdentity,
@@ -23,9 +24,14 @@ function requireString(value: unknown, label: string): string {
 
 function validatePositiveInteger(value: unknown, label: string): void {
   if (value === undefined) return;
-  if (!Number.isInteger(value) || Number(value) <= 0) {
+  requirePositiveInteger(value, label);
+}
+
+function requirePositiveInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw SCHEDULE_CONFIG_INVALID.create({ detail: `${label} must be a positive integer.` });
   }
+  return value;
 }
 
 function requireContractString(value: unknown, label: string, maxLength: number): string {
@@ -62,6 +68,22 @@ function assertOnlyKeys(
   if (unknownKey) {
     throw new Error(`${label}.${unknownKey} is not supported.`);
   }
+}
+
+function normalizeScheduleHealth(value: unknown): ScheduleHealth | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw SCHEDULE_CONFIG_INVALID.create({ detail: "Schedule health must be an object." });
+  }
+
+  const record = value as Record<string, unknown>;
+  assertOnlyKeys(record, ["maxStalenessSeconds"], "Schedule health");
+  return {
+    maxStalenessSeconds: requirePositiveInteger(
+      record.maxStalenessSeconds,
+      "Schedule health.maxStalenessSeconds",
+    ),
+  };
 }
 
 function normalizeIntegrationRequirements(
@@ -224,6 +246,7 @@ export function schedule(config: ScheduleConfig): ScheduleDefinition {
   validatePositiveInteger(config.backoffLimit, "Schedule backoffLimit");
   validatePositiveInteger(config.maxRuns, "Schedule maxRuns");
   assertSerializable(config.input, "Schedule input");
+  const health = normalizeScheduleHealth(config.health);
   const integrationRequirements = normalizeIntegrationRequirements(config.integrationRequirements);
 
   return {
@@ -240,6 +263,7 @@ export function schedule(config: ScheduleConfig): ScheduleDefinition {
       ? {}
       : { concurrencyPolicy: config.concurrencyPolicy }),
     ...(config.maxRuns === undefined ? {} : { maxRuns: config.maxRuns }),
+    ...(health === undefined ? {} : { health }),
     ...(integrationRequirements === undefined ? {} : { integrationRequirements }),
   };
 }

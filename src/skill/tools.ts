@@ -19,7 +19,7 @@ import { skillRegistry } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
 import { listSkillSubdir, validateSkillPath } from "./path-safety.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
-import type { Skill, SkillContent } from "./types.ts";
+import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
 import {
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
@@ -255,7 +255,9 @@ export function createLoadSkillReferenceTool(): Tool {
  * Create the execute_skill_script tool.
  * Executes a script from a skill's scripts/ directory.
  */
-export function createExecuteSkillScriptTool(): Tool {
+export function createExecuteSkillScriptTool(
+  options: { executor?: SkillScriptExecutor } = {},
+): Tool {
   return tool({
     id: "execute_skill_script",
     description:
@@ -283,7 +285,7 @@ export function createExecuteSkillScriptTool(): Tool {
       );
 
       const scriptContent = await readSkillFile(skill, validatedPath);
-      const executor = getSkillScriptExecutor();
+      const executor = options.executor ?? getSkillScriptExecutor();
       return await executor.execute({
         scriptPath: validatedPath,
         scriptContent,
