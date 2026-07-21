@@ -278,6 +278,25 @@ export class StaticDataFetcher {
             `getStaticData revalidation for ${pathname}`,
           );
 
+          // A background revalidation refreshes a page that is already being
+          // served. A notFound or redirect is not a refreshed page, so keep
+          // the entry that is live and let the next revalidation try again.
+          // Storing it would serve a 404 for the previously healthy page, and
+          // a control result carries no revalidate interval, so the entry
+          // would never revalidate again either.
+          if (result.notFound || result.redirect) {
+            serverLogger.warn(
+              "DATA_REVALIDATION_CONTROL_RESULT background revalidation returned a control result, keeping the cached entry",
+              {
+                pathname,
+                durationMs: Math.round(performance.now() - start),
+                cacheKey,
+                control: result.notFound ? "notFound" : "redirect",
+              },
+            );
+            return;
+          }
+
           this.storeCacheEntry(cacheKey, result);
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);

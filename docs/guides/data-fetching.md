@@ -93,6 +93,27 @@ export async function getServerData({ params }: DataContext) {
 redirect("/new-url", true); // 301 permanent redirect
 ```
 
+Throwing works the same way. `throw notFound()` and `throw redirect(...)` behave exactly like returning them, which is useful inside a helper that has no clean way to return to the data function:
+
+```tsx
+import { type DataContext, notFound } from "veryfront";
+
+const posts = [{ slug: "hello", title: "Hello" }];
+
+function requirePost(slug: string) {
+  const post = posts.find((item) => item.slug === slug);
+  if (!post) throw notFound();
+
+  return post;
+}
+
+export function getServerData({ params }: DataContext) {
+  return { props: { post: requirePost(String(params.slug)) } };
+}
+```
+
+Only the objects `notFound()` and `redirect()` produce are read as control flow. Every other thrown value is an error, including an object that happens to carry a `notFound` property, such as a parsed error body from an upstream API.
+
 ## Client-side fetching
 
 For data that loads after the page renders, fetch in a client component:
