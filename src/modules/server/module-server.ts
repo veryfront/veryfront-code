@@ -121,8 +121,9 @@ export default {};
   ].join("\n") + "\n",
   "_dnt.polyfills": `export default {};\n`,
   // Deno import-map alias stub for browser/HTTP-served framework modules.
-  // Must be a JS module (not JSON) because esbuild strips `with { type: "json" }`
-  // at es2020 target, and browsers reject JSON MIME type without the assertion.
+  // Must be a JS module (not JSON): a browser refuses a JSON module unless the
+  // importer carries `with { type: "json" }`, so serving JS keeps the stub
+  // independent of how far import attribute support has reached the browser.
   "_veryfront/_deno-config": `export default ${JSON.stringify({ version: VERSION })};\n`,
   // dnt rewrites #deno-config to relative deno.js in npm framework modules.
   "deno": `export default ${JSON.stringify({ version: VERSION })};\n`,

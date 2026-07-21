@@ -49,7 +49,7 @@ describe("transforms/pipeline/stages/compile", () => {
   });
 
   describe("import attributes", () => {
-    // esbuild lowers to es2020, which pre-dates import attributes — without an
+    // esbuild lowers to es2020, which pre-dates import attributes. Without an
     // explicit `supported` override it silently drops `with { type: "json" }`,
     // and the runtime then refuses the module with "Attempted to load JSON
     // module without specifying \"type\": \"json\"".
@@ -71,6 +71,49 @@ describe("transforms/pipeline/stages/compile", () => {
       );
 
       assertStringIncludes(result, 'type: "json"');
+    });
+
+    // `assert { type: "json" }` is the withdrawn spelling of the same clause.
+    // esbuild treats it as its own feature and drops it even when import
+    // attributes are enabled, so the compiler upgrades it to `with` instead.
+    // Emitting `assert` verbatim is not an option: Node 22 and Deno 2 reject
+    // the keyword outright.
+    it("upgrades a legacy static assertion to an import attribute", async () => {
+      const result = await compilePlugin.transform(
+        createContext(
+          `import manifest from "./manifest.json" assert { type: "json" };\nexport const x = manifest;`,
+        ),
+      );
+
+      assertStringIncludes(result, 'with { type: "json" }');
+      assertEquals(result.includes("assert"), false);
+    });
+
+    it("upgrades a legacy assertion on a re-export", async () => {
+      const result = await compilePlugin.transform(
+        createContext(`export { name } from "./manifest.json" assert { type: "json" };`),
+      );
+
+      assertStringIncludes(result, 'with { type: "json" }');
+      assertEquals(result.includes("assert"), false);
+    });
+
+    it("upgrades a legacy assertion on a dynamic import", async () => {
+      const result = await compilePlugin.transform(
+        createContext(
+          `export async function load() { return await import("./manifest.json", { assert: { type: "json" } }); }`,
+        ),
+      );
+
+      assertStringIncludes(result, 'with: { type: "json" }');
+      assertEquals(result.includes("assert"), false);
+    });
+
+    it("leaves import-like text inside a string literal alone", async () => {
+      const source = 'export const TPL = `import d from "./a.json" assert { type: "json" };`;\n';
+      const result = await compilePlugin.transform(createContext(source));
+
+      assertStringIncludes(result, 'import d from "./a.json" assert { type: "json" };');
     });
   });
 });

@@ -5,6 +5,10 @@
  * resolves all imports (#veryfront/, relative, React).
  */
 
+import {
+  stripJsonImportAttributes,
+  upgradeImportAssertions,
+} from "#veryfront/transforms/esm/import-attributes.ts";
 import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
@@ -160,7 +164,7 @@ async function compileFallbackSource(
     target: "es2022",
     supported: ESBUILD_SUPPORTED_FEATURES,
   });
-  return result.code;
+  return await upgradeImportAssertions(result.code);
 }
 
 /**
@@ -443,7 +447,7 @@ async function transformFrameworkCodeUncoalesced(
       supported: ESBUILD_SUPPORTED_FEATURES,
     });
 
-    let transformed = result.code;
+    let transformed = await upgradeImportAssertions(result.code);
 
     // Collect and recursively resolve all #veryfront/ imports
     const veryfrontReplacements = new Map<string, string>();
@@ -610,7 +614,7 @@ async function transformFrameworkCodeUncoalesced(
       }),
     );
 
-    transformed = stripJsonAttributesFromModuleImports(transformed);
+    transformed = await stripJsonAttributesFromModuleImports(transformed);
 
     // Cache HTTP imports to local filesystem
     const importMap = await loadImportMap(ctx.projectDir);
@@ -688,10 +692,6 @@ export async function resolveAndTransformVeryfrontImport(
 }
 
 /**
- * Transform framework source code with React import rewriting.
- * Entry point for top-level framework modules (e.g., Head.tsx, Router.tsx).
- */
-/**
  * Drop `with { type: "json" }` from imports that now point at a JavaScript
  * module.
  *
@@ -700,14 +700,19 @@ export async function resolveAndTransformVeryfrontImport(
  * the data. The attribute on the importer describes the *original* target, so
  * leaving it in place makes the runtime reject the rewritten import with
  * "Expected a Json module, but identified a Mjs module".
+ *
+ * The rewrite runs through the module lexer, like every other specifier edit in
+ * this stage, so dynamic imports are covered and module source that this file
+ * embeds in string literals is not.
  */
-export function stripJsonAttributesFromModuleImports(code: string): string {
-  return code.replace(
-    /(from\s*["'](?:file:\/\/)?[^"']+\.mjs["'])\s*with\s*\{[^}]*\}/g,
-    "$1",
-  );
+export function stripJsonAttributesFromModuleImports(code: string): Promise<string> {
+  return stripJsonImportAttributes(code, (specifier) => specifier.endsWith(".mjs"));
 }
 
+/**
+ * Transform framework source code with React import rewriting.
+ * Entry point for top-level framework modules (e.g., Head.tsx, Router.tsx).
+ */
 export async function transformFrameworkSource(
   content: string,
   sourcePath: string,
