@@ -1,9 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotStrictEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
-import { isMissingModuleError, type ModuleLoaderConfig, transformModuleWithDeps } from "./index.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  isMissingModuleError,
+  loadModule,
+  type ModuleLoaderConfig,
+  transformModuleWithDeps,
+} from "./index.ts";
+import { getModuleCacheKey } from "./module-cache-lookup.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -103,6 +116,67 @@ describe("module-loader/transformModuleWithDeps", () => {
 
         assertStringIncludes(transformedPath, "/app/page.json");
         assertEquals((await Deno.stat(depPath)).isFile, true);
+      },
+    );
+  });
+});
+
+describe("module-loader/loadModule", () => {
+  it("reuses the content-addressed module identity across repeated loads", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const value = "stable";` },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.ts");
+        const productionConfig = { ...config, mode: "production" as const };
+        const artifactPath = join(tmpDir, "page.stable.mjs");
+        await Deno.writeTextFile(artifactPath, `export const value = "stable";`);
+        productionConfig.moduleCache.set(
+          getModuleCacheKey(filePath, undefined, projectDir, undefined, undefined, "production"),
+          artifactPath,
+        );
+
+        await runWithCacheDir(tmpDir, async () => {
+          const first = await loadModule(filePath, productionConfig);
+          const loadedAt = Date.now();
+          while (Date.now() === loadedAt) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+          const second = await loadModule(filePath, productionConfig);
+
+          assertStrictEquals(second, first);
+        });
+      },
+    );
+  });
+
+  it("loads a new module identity when the cached content artifact changes", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const value = "stable";` },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.ts");
+        const productionConfig = { ...config, mode: "production" as const };
+        const cacheKey = getModuleCacheKey(
+          filePath,
+          undefined,
+          projectDir,
+          undefined,
+          undefined,
+          "production",
+        );
+        const stablePath = join(tmpDir, "page.stable.mjs");
+        await Deno.writeTextFile(stablePath, `export const value = "stable";`);
+        productionConfig.moduleCache.set(cacheKey, stablePath);
+
+        await runWithCacheDir(tmpDir, async () => {
+          const first = await loadModule(filePath, productionConfig);
+          const changedPath = join(tmpDir, "page.changed.mjs");
+          await Deno.writeTextFile(changedPath, `export const value = "changed";`);
+          productionConfig.moduleCache.set(cacheKey, changedPath);
+          const changed = await loadModule(filePath, productionConfig);
+
+          assertNotStrictEquals(changed, first);
+          assertEquals(changed.value, "changed");
+        });
       },
     );
   });

@@ -206,7 +206,7 @@ export async function loadModule(
   const localAdapter = await getLocalAdapter();
 
   const tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
-  const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
+  const moduleUrl = `file://${tempFilePath}`;
 
   try {
     return await import(moduleUrl);
