@@ -15,6 +15,10 @@ import { rewriteBodyImports } from "../mdx/compiler/import-rewriter.ts";
  * for the target it was given. That rewrite is the whole point: at the "server"
  * target it turns `./Child.tsx` into an absolute `file://` URL, and a stub that
  * skipped it could not see what the parser does with the result.
+ *
+ * `compileMarkdown` mirrors the real extension too: Markdown becomes a fixed
+ * template whose only import is the bare JSX runtime, so a `.md` file can never
+ * contribute a dependency and must not be compiled to find that out.
  */
 function withStubContentProcessor(): { calls: string[]; restore: () => void } {
   const calls: string[] = [];
@@ -34,6 +38,17 @@ function withStubContentProcessor(): { calls: string[]; restore: () => void } {
 
       return Promise.resolve({
         compiledCode: `${body}\nexport default function MDXContent() { return null; }`,
+        frontmatter: undefined,
+      });
+    },
+    compileMarkdown: (opts: Record<string, unknown>) => {
+      calls.push(String(opts.filePath ?? ""));
+
+      return Promise.resolve({
+        compiledCode: [
+          `import { jsx as _jsx } from "react/jsx-runtime";`,
+          `export default function MDContent() { return _jsx("div", {}); }`,
+        ].join("\n"),
         frontmatter: undefined,
       });
     },
@@ -178,6 +193,71 @@ describe("transforms/esm/import-parser", () => {
     }
   });
 
+  // Regression: an extensionless specifier is the common shape in real MDX, and
+  // the rewritten absolute URL carries no extension either. Resolving it with a
+  // bare existence check reported a file that exists as a missing dependency.
+  it("resolves an extensionless sibling an .mdx file imports", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      await withProject(
+        {
+          "components/snippet.mdx": `import Card from "./Card";\n\n<Card />\n`,
+          "components/Card.tsx": `export default () => null;`,
+        },
+        async (projectDir) => {
+          const adapter = await getLocalAdapter();
+          const filePath = join(projectDir, "components/snippet.mdx");
+          const result = await parseLocalImports(
+            await Deno.readTextFile(filePath),
+            filePath,
+            projectDir,
+            adapter,
+          );
+
+          assertEquals(result.missing.length, 0, "an existing file must not be reported missing");
+          assertEquals(
+            result.imports.some((imp) => imp.absolutePath.endsWith("components/Card.tsx")),
+            true,
+            "the extension ladder must find the sibling",
+          );
+        },
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("resolves a directory-index sibling an .mdx file imports", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      await withProject(
+        {
+          "components/snippet.mdx": `import { Ui } from "./ui";\n\n<Ui />\n`,
+          "components/ui/index.tsx": `export const Ui = () => null;`,
+        },
+        async (projectDir) => {
+          const adapter = await getLocalAdapter();
+          const filePath = join(projectDir, "components/snippet.mdx");
+          const result = await parseLocalImports(
+            await Deno.readTextFile(filePath),
+            filePath,
+            projectDir,
+            adapter,
+          );
+
+          assertEquals(result.missing.length, 0, "an existing file must not be reported missing");
+          assertEquals(
+            result.imports.some((imp) => imp.absolutePath.endsWith("components/ui/index.tsx")),
+            true,
+            "the index ladder must find the directory entry point",
+          );
+        },
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
   it("tracks a stylesheet an .mdx file imports relatively", async () => {
     const stub = withStubContentProcessor();
     try {
@@ -227,7 +307,22 @@ describe("transforms/esm/import-parser", () => {
 
           assertEquals(result.imports.length, 0);
           assertEquals(result.missing.length, 1, "a dropped import must be reported, not silent");
-          assertEquals(result.missing[0]?.reason.includes("Missing.tsx"), true);
+
+          // The report reaches users verbatim in the "Component has missing
+          // dependencies" build error, so it names what the author wrote, not
+          // where the server happened to put the project.
+          const missing = result.missing[0];
+          assertEquals(missing?.specifier, "./Missing.tsx");
+          assertEquals(
+            `${missing?.specifier} ${missing?.reason}`.includes(projectDir),
+            false,
+            "a server path must not reach the user-facing report",
+          );
+          assertEquals(
+            `${missing?.specifier} ${missing?.reason}`.includes("file://"),
+            false,
+            "an internal file URL must not reach the user-facing report",
+          );
         },
       );
     } finally {
@@ -252,6 +347,75 @@ describe("transforms/esm/import-parser", () => {
 
           assertEquals(result.missing.length, 0);
           assertEquals(result.imports.length, 0);
+        },
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  // Dependency parsing runs on every render, including cache hits. Markdown
+  // compiles to a fixed template whose only import is the bare JSX runtime, so
+  // the answer is always "no dependencies" and the compile is pure cost.
+  it("answers for a .md file without invoking the compiler", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      await withProject(
+        { "content/post.md": `# Heading\n\nProse with a [link](https://example.com).\n` },
+        async (projectDir) => {
+          const adapter = await getLocalAdapter();
+          const filePath = join(projectDir, "content/post.md");
+          const result = await parseLocalImports(
+            await Deno.readTextFile(filePath),
+            filePath,
+            projectDir,
+            adapter,
+          );
+
+          assertEquals(result.imports.length, 0);
+          assertEquals(result.cssImports.length, 0);
+          assertEquals(result.missing.length, 0);
+          assertEquals(stub.calls.length, 0, "Markdown must not be compiled to parse its imports");
+        },
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  // Dependency parsing runs on every render, so an uncached compile per render
+  // per MDX file is paid on every cache hit, recursively.
+  it("compiles unchanged .mdx content once across repeated parses", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      await withProject(
+        {
+          "components/snippet.mdx": `import Card from "./Card.tsx";\n\n<Card />\n`,
+          "components/Card.tsx": `export default () => null;`,
+        },
+        async (projectDir) => {
+          const adapter = await getLocalAdapter();
+          const filePath = join(projectDir, "components/snippet.mdx");
+          const code = await Deno.readTextFile(filePath);
+
+          const first = await parseLocalImports(code, filePath, projectDir, adapter);
+          const second = await parseLocalImports(code, filePath, projectDir, adapter);
+
+          assertEquals(stub.calls.length, 1, "a repeat parse must reuse the compiled output");
+          assertEquals(first.imports.length, 1);
+          assertEquals(second.imports.length, 1);
+          assertEquals(second.imports[0]?.absolutePath, first.imports[0]?.absolutePath);
+
+          // Edited content must never be answered from the previous compile.
+          const edited = `import Other from "./Other.tsx";\n\n<Other />\n`;
+          await Deno.writeTextFile(join(projectDir, "components/Other.tsx"), `export default 1;`);
+          const third = await parseLocalImports(edited, filePath, projectDir, adapter);
+
+          assertEquals(stub.calls.length, 2, "changed content must be compiled again");
+          assertEquals(
+            third.imports.some((imp) => imp.absolutePath.endsWith("components/Other.tsx")),
+            true,
+          );
         },
       );
     } finally {

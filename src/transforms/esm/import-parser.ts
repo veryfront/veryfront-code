@@ -1,6 +1,8 @@
-import { compileContent } from "../mdx/compiler/index.ts";
+import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { join } from "#veryfront/compat/path";
+import { dirname, join, relative } from "#veryfront/compat/path";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   isFrameworkSourcePath,
@@ -39,32 +41,63 @@ interface ParseLocalImportsResult {
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
 
+/**
+ * Compiled MDX, keyed by project, file and content hash.
+ *
+ * Dependency parsing runs on every render, including every memory, Redis and
+ * MDX-ESM cache hit, and recurses through the dependency tree. Without this the
+ * full remark/rehype compile of every MDX file is paid again on each of them,
+ * for a result that cannot change while the content does not.
+ */
+const COMPILED_MDX_CACHE_MAX_ENTRIES = 200;
+const compiledMdxCache = new LRUCache<string, string>({
+  maxEntries: COMPILED_MDX_CACHE_MAX_ENTRIES,
+});
+
+async function compileMdxForParsing(
+  code: string,
+  filePath: string,
+  projectDir: string,
+): Promise<string> {
+  const cacheKey = `${projectDir}::${filePath}::${await computeHash(code)}`;
+  const cached = compiledMdxCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const compiled = await compileContent(
+    "development",
+    projectDir,
+    code,
+    undefined,
+    filePath,
+    "server",
+  );
+
+  compiledMdxCache.set(cacheKey, compiled.compiledCode);
+  return compiled.compiledCode;
+}
+
 export async function parseLocalImports(
   code: string,
   filePath: string,
   projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<ParseLocalImportsResult> {
-  if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
+  // Markdown compiles to a fixed template whose only import is the bare JSX
+  // runtime, which this parser discards, so the answer for a `.md` file is
+  // always "no dependencies". Compiling one to learn that is pure cost on a
+  // path that runs per render.
+  if (filePath.endsWith(".css") || filePath.endsWith(".json") || /\.md$/i.test(filePath)) {
     return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
   }
 
-  // MDX/Markdown is not JSX, so handing the raw source to esbuild under the
-  // `jsx` loader fails with "<stdin>:1:1: ERROR: Syntax error" — which surfaced
-  // to users as "Component has missing dependencies" for a file that exists.
-  // Compile content to JSX first, exactly as the transform pipeline's parse
-  // stage does, then read the imports out of that.
+  // MDX is not JSX, so handing the raw source to esbuild under the `jsx` loader
+  // fails with "<stdin>:1:1: ERROR: Syntax error", which surfaced to users as
+  // "Component has missing dependencies" for a file that exists. Compile
+  // content to JSX first, exactly as the transform pipeline's parse stage does,
+  // then read the imports out of that.
   let parseSource = code;
-  if (/\.mdx?$/i.test(filePath)) {
-    const compiled = await compileContent(
-      "development",
-      projectDir,
-      code,
-      undefined,
-      filePath,
-      "server",
-    );
-    parseSource = compiled.compiledCode;
+  if (/\.mdx$/i.test(filePath)) {
+    parseSource = await compileMdxForParsing(code, filePath, projectDir);
   }
 
   const esbuild = await getEsbuild();
@@ -96,19 +129,24 @@ export async function parseLocalImports(
     // below and are dropped without even being reported as missing, so an MDX
     // file's sibling components are never recursively transformed.
     if (specifier.startsWith("file://")) {
-      const absolutePath = fileUrlToPath(specifier);
+      const targetPath = fileUrlToPath(specifier);
+      // A rewritten specifier carries a server path the author never wrote, and
+      // this record is read back verbatim in the "Component has missing
+      // dependencies" build error. Report what the author wrote instead.
+      const authoredSpecifier = toAuthoredSpecifier(targetPath, specifier, filePath);
+      const resolved = targetPath ? await resolveExistingFilePath(targetPath, adapter) : null;
 
-      if (absolutePath && await checkFileExists(absolutePath, adapter)) {
-        const entry = { specifier, absolutePath };
-        if (absolutePath.endsWith(".css")) cssImports.push(entry);
+      if (resolved) {
+        const entry = { specifier: authoredSpecifier, absolutePath: resolved };
+        if (resolved.endsWith(".css")) cssImports.push(entry);
         else localImports.push(entry);
         continue;
       }
 
       missingImports.push({
-        specifier,
+        specifier: authoredSpecifier,
         fromFile: filePath,
-        reason: `File not found: ${absolutePath ?? specifier}`,
+        reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
       });
       continue;
     }
@@ -168,6 +206,22 @@ export async function parseLocalImports(
   return { imports: localImports, cssImports, crossProjectImports, missing: missingImports };
 }
 
+/**
+ * The specifier as the author most likely wrote it, reconstructed from the
+ * absolute path a compile step rewrote it to. Falls back to the file name when
+ * the URL cannot be read, so no server path escapes into a user-facing report.
+ */
+function toAuthoredSpecifier(
+  targetPath: string | null,
+  specifier: string,
+  fromFile: string,
+): string {
+  if (!targetPath) return `./${specifier.slice(specifier.lastIndexOf("/") + 1)}`;
+
+  const relativePath = relative(dirname(fromFile), targetPath);
+  return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+}
+
 /** Filesystem path behind a `file://` specifier, or null when it is not one. */
 function fileUrlToPath(specifier: string): string | null {
   try {
@@ -205,8 +259,19 @@ async function resolveLocalImportPath(
   }
 
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
-  const basePath = resolveRelative(fromDir, importSpecifier);
+  return await resolveExistingFilePath(resolveRelative(fromDir, importSpecifier), adapter);
+}
 
+/**
+ * Path of the file a local import points at: the adapter's own resolution
+ * first, then the extension and directory-index probes. Every local import
+ * shape resolves through here, so an extensionless or directory specifier
+ * behaves the same however it reached this module.
+ */
+async function resolveExistingFilePath(
+  basePath: string,
+  adapter?: RuntimeAdapter,
+): Promise<string | null> {
   if (adapter?.fs.resolveFile) {
     try {
       const normalizedPath = basePath.replace(/^\/+/, "");
@@ -218,7 +283,7 @@ async function resolveLocalImportPath(
     }
   }
 
-  if (HAS_EXTENSION_RE.test(importSpecifier)) {
+  if (HAS_EXTENSION_RE.test(basePath)) {
     return (await checkFileExists(basePath, adapter)) ? basePath : null;
   }
 
