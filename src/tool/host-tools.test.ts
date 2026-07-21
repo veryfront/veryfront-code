@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext, ToolSet } from "./types.ts";
@@ -78,6 +79,49 @@ describe("tool/host-tools", () => {
       title: "Search documentation",
       annotations: { readOnlyHint: true },
     });
+  });
+
+  it("materializes precomputed schemas from external host tool providers", async () => {
+    let executeCalls = 0;
+    const externalSchema = {
+      parse: (input: unknown) => {
+        if (
+          typeof input !== "object" || input === null ||
+          typeof (input as Record<string, unknown>).command !== "string"
+        ) {
+          throw new Error("command is required");
+        }
+        return input;
+      },
+      safeParse: (input: unknown) => ({ success: true, data: input }),
+    };
+    const inputSchemaJson: JsonSchema = {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: ["command"],
+    };
+
+    const tools = createToolsFromHostDefinitions({
+      bash: {
+        id: "provider-generated-id",
+        description: "Run a sandbox command",
+        inputSchema: externalSchema,
+        inputSchemaJson,
+        execute: (input: unknown) => {
+          executeCalls += 1;
+          return input;
+        },
+      },
+    });
+
+    const bash = tools.bash;
+    if (!bash) throw new Error("bash tool was not materialized");
+    assertEquals(Object.keys(tools), ["bash"]);
+    assertEquals(bash.id, "bash");
+    assertEquals(bash.inputSchemaJson, inputSchemaJson);
+    assertEquals(await bash.execute({ command: "true" }), { command: "true" });
+    await assertRejects(() => bash.execute({}), Error, "command is required");
+    assertEquals(executeCalls, 1);
   });
 
   it("skips non-runnable host definitions", () => {
