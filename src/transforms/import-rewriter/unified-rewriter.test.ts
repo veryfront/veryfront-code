@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { UnifiedImportRewriter } from "./unified-rewriter.ts";
+import { rewriteImports, UnifiedImportRewriter } from "./unified-rewriter.ts";
 import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
 
 function mockStrategy(
@@ -96,5 +96,54 @@ describe("UnifiedImportRewriter", () => {
       createCtx(),
     );
     assertEquals(result.includes("/high.js"), true);
+  });
+});
+
+describe("rewriteImports with the default strategies", () => {
+  function defaultCtx(overrides?: Partial<RewriteContext>): RewriteContext {
+    return createCtx({ filePath: "/test/pages/index.tsx", ...overrides });
+  }
+
+  it("rejects a static asset import", async () => {
+    const error = await assertRejects(
+      () =>
+        rewriteImports(
+          `import logo from "@/assets/logo.svg";\n`,
+          defaultCtx(),
+        ),
+      Error,
+    );
+
+    assertStringIncludes(error.message, "@/assets/logo.svg");
+    assertStringIncludes(error.message, "public/logo.svg");
+  });
+
+  it("still rewrites a code import through the alias strategy", async () => {
+    const result = await rewriteImports(
+      `import Button from "@/components/Button";\n`,
+      defaultCtx(),
+    );
+
+    assertStringIncludes(result, "../components/Button.js");
+  });
+
+  it("leaves an asset inside a dependency to the bare strategy", async () => {
+    // The extension alone must not claim the specifier: "move the file to
+    // public/" is not something you can do to a file inside node_modules.
+    const result = await rewriteImports(
+      `import markerIcon from "leaflet/dist/images/marker-icon.png";\n`,
+      defaultCtx(),
+    );
+
+    assertStringIncludes(result, "marker-icon.png");
+  });
+
+  it("leaves a remote asset URL to the url strategy", async () => {
+    const result = await rewriteImports(
+      `import logo from "https://cdn.example.com/icons/logo.svg";\n`,
+      defaultCtx(),
+    );
+
+    assertStringIncludes(result, "https://cdn.example.com/icons/logo.svg");
   });
 });

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
+import { markBuildFailure } from "./module-loader/build-failure.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -331,6 +332,54 @@ describe("RenderPipeline behavior", () => {
     ) {
       assert(phase in record.phases, `missing ${phase}`);
     }
+  });
+
+  describe("critical page module failures", () => {
+    // Downstream (the SSR handler) decides whether to show the project's own
+    // error page or the dev overlay, so the reason the module never loaded has
+    // to survive the trip.
+    type LoadModuleOverride = { loadModule: (path: string) => Promise<unknown> };
+
+    function pipelineWithFailingPageModule(fail: () => never): RenderPipeline {
+      const pipeline = createPipeline("/project/pages/behavior-load-failure.tsx");
+      (pipeline as unknown as LoadModuleOverride).loadModule = () => Promise.resolve(fail());
+      return pipeline;
+    }
+
+    function rejectLoad(pipeline: RenderPipeline): Promise<unknown> {
+      const slug = "/behavior-load-failure";
+      return assertRejects(
+        () =>
+          pipeline.resolvePageData(slug, {
+            projectId: "proj-load-failure",
+            request: new Request(`http://localhost${slug}`),
+            url: new URL(`http://localhost${slug}`),
+          }),
+        Error,
+        "Critical page module(s) failed to load",
+      );
+    }
+
+    function buildFailureFlag(error: unknown): unknown {
+      const context = (error as { context?: { buildFailure?: unknown } }).context;
+      return context?.buildFailure;
+    }
+
+    it("reports a build failure as one", async () => {
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw markBuildFailure(new Error("Cannot import the static asset"));
+      }));
+
+      assertEquals(buildFailureFlag(error), true);
+    });
+
+    it("does not report a module-scope runtime throw as a build failure", async () => {
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw new Error("Missing API key");
+      }));
+
+      assertEquals(buildFailureFlag(error), false);
+    });
   });
 
   it("resolvePageData surfaces notFound from data hooks", async () => {

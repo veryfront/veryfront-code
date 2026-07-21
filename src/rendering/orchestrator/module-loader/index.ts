@@ -22,6 +22,9 @@ import {
 import { persistTransformedModule } from "./module-persistence.ts";
 import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
 import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
+import { markBuildFailure } from "./build-failure.ts";
+
+export { isBuildFailure } from "./build-failure.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -238,7 +241,15 @@ export async function loadModule(
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
 
-  const tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+  // Everything up to here compiles and resolves source, so a failure is a build
+  // failure. Everything after it is the module running.
+  let tempFilePath: string;
+  try {
+    tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+  } catch (error) {
+    throw markBuildFailure(error);
+  }
+
   const moduleUrl = `file://${tempFilePath}`;
 
   try {
@@ -296,7 +307,13 @@ export async function loadModule(
       // project-scoped — see invalidateMdxEsmModule).
       invalidateMdxEsmModule(tmpDir, filePath, config.projectDir, config.reactVersion);
 
-      const rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+      let rebuiltPath: string;
+      try {
+        rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+      } catch (rebuildError) {
+        throw markBuildFailure(rebuildError);
+      }
+
       return await import(`file://${rebuiltPath}?t=${Date.now()}&rebuilt=1`);
     }
 

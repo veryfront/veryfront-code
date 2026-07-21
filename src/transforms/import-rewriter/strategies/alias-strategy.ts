@@ -5,6 +5,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { normalizeExtension } from "../url-builder.ts";
+import { getProjectRelativePath } from "../project-paths.ts";
 
 export class AliasStrategy implements ImportRewriteStrategy {
   readonly name = "alias";
@@ -41,7 +42,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
     // Fallback: Use relative paths when no module server is configured.
     // This is used for local development without a module server.
-    const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
+    const relativeFilePath = getProjectRelativePath(ctx.filePath, ctx.projectDir);
     const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
     const depth = fileDir.split("/").filter(Boolean).length;
 
@@ -53,27 +54,6 @@ export class AliasStrategy implements ImportRewriteStrategy {
     }
 
     return { specifier: relativePath };
-  }
-
-  private getRelativeFilePath(filePath: string, projectDir: string): string {
-    const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-
-    if (filePath.startsWith(normalizedProjectDir)) {
-      return filePath.substring(normalizedProjectDir.length + 1);
-    }
-
-    if (!filePath.startsWith("/")) return filePath;
-
-    const pathParts = filePath.split("/");
-    const projectParts = normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts.at(-1);
-    const projectIndex = lastProjectPart ? pathParts.indexOf(lastProjectPart) : -1;
-
-    if (projectIndex >= 0) {
-      return pathParts.slice(projectIndex + 1).join("/");
-    }
-
-    return filePath;
   }
 }
 

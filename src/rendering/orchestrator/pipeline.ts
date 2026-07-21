@@ -60,6 +60,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
+import { isBuildFailure } from "./module-loader/build-failure.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
   getCSSImports,
@@ -282,7 +283,7 @@ export class RenderPipeline {
     );
 
     const loaded: LoadedModule[] = [];
-    const criticalFailures: Array<{ path: string; error: string }> = [];
+    const criticalFailures: Array<{ path: string; error: string; buildFailure: boolean }> = [];
 
     for (const result of results) {
       if (result.mod && !result.error) {
@@ -295,7 +296,11 @@ export class RenderPipeline {
       const errorMessage = result.error.message;
 
       if (result.type === "page") {
-        criticalFailures.push({ path: result.path, error: errorMessage });
+        criticalFailures.push({
+          path: result.path,
+          error: errorMessage,
+          buildFailure: isBuildFailure(result.error),
+        });
         renderPageLog.error("Critical page module failed to load", {
           path: result.path,
           error: errorMessage,
@@ -317,6 +322,10 @@ export class RenderPipeline {
         detail: `Critical page module(s) failed to load:\n${failedDetails}`,
         context: {
           criticalFailures,
+          // A module that never compiled is a developer-facing build failure;
+          // one that compiled and threw at module scope is an application
+          // error the project's own error page should present.
+          buildFailure: criticalFailures.some((f) => f.buildFailure),
           loadedCount: loaded.length,
           totalModules: modules.length,
         },

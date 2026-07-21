@@ -689,7 +689,7 @@ describe("handle - build errors bypass the custom error page", () => {
   // A compile or import failure is a developer-facing bug, never something a
   // project's 500.tsx should present to a visitor. Masking one behind a
   // friendly page in dev hides the message that says how to fix it.
-  function buildFailureService() {
+  function moduleLoadFailureService(buildFailure: boolean) {
     return createMockSSRService({
       renderPage: () =>
         Promise.resolve({
@@ -701,11 +701,18 @@ describe("handle - build errors bypass the custom error page", () => {
           showDevOverlay: true,
           error: RENDER_ERROR.create({
             detail: "Critical page module(s) failed to load",
-            context: { criticalFailures: [{ path: "pages/test/y.tsx", error: "bad import" }] },
+            context: {
+              criticalFailures: [{ path: "pages/test/y.tsx", error: "bad import", buildFailure }],
+              buildFailure,
+            },
           }),
           slug: "page",
         }),
     });
+  }
+
+  function buildFailureService() {
+    return moduleLoadFailureService(true);
   }
 
   function ctxRecordingStats(): { ctx: ReturnType<typeof makeCtx>; statted: string[] } {
@@ -719,7 +726,7 @@ describe("handle - build errors bypass the custom error page", () => {
     return { ctx: makeCtx({ adapter }), statted };
   }
 
-  it("does not look for a custom error page when the module failed to load", async () => {
+  it("does not look for a custom error page when the module never compiled", async () => {
     const { ctx, statted } = ctxRecordingStats();
     const handler = new SSRHandler(buildFailureService());
 
@@ -727,6 +734,18 @@ describe("handle - build errors bypass the custom error page", () => {
 
     assertEquals(statted.some((path) => path.endsWith("/pages")), false);
     assertEquals(result.response!.status, 500);
+  });
+
+  it("still uses the custom error page when the module ran and threw", async () => {
+    // A page module that compiled and threw at module scope (a missing
+    // environment variable, say) also fails to load, but it is an application
+    // error, not a build failure, so pages/500.tsx must still present it.
+    const { ctx, statted } = ctxRecordingStats();
+    const handler = new SSRHandler(moduleLoadFailureService(false));
+
+    await handler.handle(new Request("http://localhost/page"), ctx);
+
+    assertEquals(statted.some((path) => path.endsWith("/pages")), true);
   });
 
   it("still uses the custom error page for an ordinary thrown Error", async () => {

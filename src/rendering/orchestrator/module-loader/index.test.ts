@@ -3,6 +3,7 @@ import {
   assert,
   assertEquals,
   assertNotStrictEquals,
+  assertRejects,
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -17,6 +18,7 @@ import {
   transformModuleWithDeps,
 } from "./index.ts";
 import { getModuleCacheKey } from "./module-cache-lookup.ts";
+import { isBuildFailure } from "./build-failure.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -161,6 +163,59 @@ describe("module-loader/transformModuleWithDeps", () => {
 
         assertStringIncludes(transformedPath, "/app/page.json");
         assertEquals((await Deno.stat(depPath)).isFile, true);
+      },
+    );
+  });
+});
+
+// sanitizeResources disabled: compiling a real page module starts esbuild's
+// long-lived child process, which outlives the test.
+describe("module-loader/loadModule build-failure tagging", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
+  // A page whose module ran and threw is an application bug the project's own
+  // error page should present. A page that never compiled is a developer-facing
+  // build failure. Only the loader can tell them apart, so it tags the error.
+  it("tags a failure from the transform step", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import logo from "@/assets/logo.svg";`,
+          `export default function Page() { return logo; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("does not tag a module that compiled and threw at module scope", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `throw new Error("Missing API key");`,
+          `export const value = "unreachable";`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.ts"), config),
+            Error,
+            "Missing API key",
+          );
+
+          assertEquals(isBuildFailure(error), false);
+        });
       },
     );
   });
