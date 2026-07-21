@@ -1,9 +1,7 @@
 /** Hosted Studio origins trusted for iframe messaging and embedding. */
 export const HOSTED_STUDIO_ORIGINS = [
   "https://veryfront.com",
-  "https://studio.veryfront.com",
   "https://veryfront.org",
-  "https://studio.veryfront.org",
 ] as const;
 
 const hostedStudioOrigins = new Set<string>(HOSTED_STUDIO_ORIGINS);

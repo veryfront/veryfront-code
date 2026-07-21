@@ -9,20 +9,15 @@ import {
 describe("security/http/studio-origin-policy", () => {
   it("accepts only the exact HTTPS hosted Studio origins", () => {
     assertEquals(resolveTrustedStudioOrigin("https://veryfront.com"), "https://veryfront.com");
-    assertEquals(
-      resolveTrustedStudioOrigin("https://studio.veryfront.com"),
-      "https://studio.veryfront.com",
-    );
     assertEquals(resolveTrustedStudioOrigin("https://veryfront.org"), "https://veryfront.org");
-    assertEquals(
-      resolveTrustedStudioOrigin("https://studio.veryfront.org"),
-      "https://studio.veryfront.org",
-    );
   });
 
   it("rejects tenant, insecure, and non-default-port hosted origins", () => {
     assertEquals(resolveTrustedStudioOrigin("https://project.preview.veryfront.com"), null);
     assertEquals(resolveTrustedStudioOrigin("https://project.production.veryfront.org"), null);
+    // studio.* subdomains are not deployed and are no longer trusted origins.
+    assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.com"), null);
+    assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.org"), null);
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.dev"), null);
     assertEquals(resolveTrustedStudioOrigin("http://studio.veryfront.com"), null);
     assertEquals(resolveTrustedStudioOrigin("https://studio.veryfront.com:8443"), null);
@@ -37,7 +32,8 @@ describe("security/http/studio-origin-policy", () => {
 
   it("generates a helper from the exact hosted-origin policy", () => {
     const source = studioTargetOriginHelperSource();
-    assertEquals(source.includes('"https://studio.veryfront.com"'), true);
+    assertEquals(source.includes('"https://veryfront.com"'), true);
+    assertEquals(source.includes('"https://studio.veryfront.com"'), false);
     assertEquals(source.includes("endsWith"), false);
     assertEquals(source.includes(".veryfront.dev"), false);
 
@@ -49,8 +45,8 @@ describe("security/http/studio-origin-policy", () => {
     const window = { location: { origin: "https://project.preview.veryfront.org" } };
 
     assertEquals(
-      resolveTarget({ referrer: "https://studio.veryfront.com/project" }, window),
-      "https://studio.veryfront.com",
+      resolveTarget({ referrer: "https://veryfront.com/project" }, window),
+      "https://veryfront.com",
     );
     assertEquals(
       resolveTarget({ referrer: "https://attacker.preview.veryfront.org/project" }, window),
