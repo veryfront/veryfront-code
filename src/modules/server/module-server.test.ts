@@ -20,7 +20,7 @@ import {
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { isModuleRequest } from "./module-server.ts";
+import { getDevModuleContentType, isModuleRequest } from "./module-server.ts";
 import { clearReleaseModuleResponseCache } from "./module-response-cache.ts";
 import { clearSourceMissCache } from "./module-source-resolution-cache.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -1066,5 +1066,28 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(cacheDir, { recursive: true });
     }
+  });
+});
+
+describe("getDevModuleContentType", () => {
+  // The module server compiles TS/JSX/MDX sources to JavaScript before serving
+  // them. Typing the response from the requested source extension yields
+  // `application/typescript`, which browsers refuse to execute as a module.
+  for (const path of ["lib/constants.ts", "components/Badge.tsx", "a.jsx", "post.mdx", "a.md"]) {
+    it(`serves ${path} as JavaScript`, () => {
+      assertEquals(getDevModuleContentType(path), "application/javascript; charset=utf-8");
+    });
+  }
+
+  it("still serves .css as CSS", () => {
+    assertEquals(getDevModuleContentType("styles/globals.css"), "text/css; charset=utf-8");
+  });
+
+  it("still serves source maps as JSON", () => {
+    assertEquals(getDevModuleContentType("pages/index.js.map"), "application/json; charset=utf-8");
+  });
+
+  it("serves extensionless paths as JavaScript", () => {
+    assertEquals(getDevModuleContentType("pages/index"), "application/javascript; charset=utf-8");
   });
 });
