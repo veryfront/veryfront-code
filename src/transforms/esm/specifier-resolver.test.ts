@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
@@ -160,12 +160,12 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.size, 0);
     });
 
-    it("skips specifiers whose cache lookup throws instead of aborting", async () => {
-      const code = `import foo from "https://esm.sh/foo";`;
-      // A failing cache lookup for one specifier should degrade gracefully:
-      // the specifier is left untouched in the emitted code so runtime module
-      // resolution can retry or the caller's try/catch can handle it. A single
-      // upstream failure must not abort the whole SSR transform.
+    it("skips a dynamic specifier whose cache lookup throws instead of aborting", async () => {
+      // The motivating case: a lazy `import(...)` that never runs at render
+      // time. Pre-fetching it is an optimisation, so the specifier is left in
+      // place for the runtime to resolve at call time, and one upstream 500
+      // does not abort the whole SSR transform.
+      const code = `export const load = () => import("https://esm.sh/foo");`;
       const result = await buildReplacements(
         code,
         undefined,
@@ -177,8 +177,37 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.size, 0);
     });
 
-    it("still resolves other specifiers when one throws", async () => {
-      const code = `import ok from "https://esm.sh/ok";\nimport bad from "https://esm.sh/broken";`;
+    it("aborts when a static specifier's cache lookup throws", async () => {
+      // A static import belongs to the emitted module's own import graph. The
+      // artifact contract is that every static dependency is local before the
+      // runtime loader sees it, so this failure stays fatal.
+      const code = `import foo from "https://esm.sh/foo";`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("aborts when a specifier is imported both statically and dynamically", async () => {
+      const code = `import foo from "https://esm.sh/foo";\nexport const again = () =>` +
+        ` import("https://esm.sh/foo");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("still resolves other specifiers when a dynamic one throws", async () => {
+      const code = `import ok from "https://esm.sh/ok";\n` +
+        `export const load = () => import("https://esm.sh/broken");`;
       const cache: CacheHttpModuleFn = async (url) => {
         if (url === "https://esm.sh/broken") throw new Error("upstream 500");
         return "/tmp/cache/http-ok.mjs";
@@ -204,10 +233,10 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.includes("https://esm.sh/react@18"), false);
     });
 
-    it("leaves specifiers untouched when their cache lookup throws", async () => {
-      // Same soft-fail contract as buildReplacements: a failing cache lookup
-      // for one specifier logs a warning and leaves the specifier in place.
-      const original = `import foo from "https://esm.sh/foo";`;
+    it("leaves a dynamic specifier untouched when its cache lookup throws", async () => {
+      // Same split contract as buildReplacements: a lazy import that fails to
+      // pre-fetch stays in the emitted code for the runtime to resolve.
+      const original = `export const load = () => import("https://esm.sh/foo");`;
       const result = await rewriteModuleImports(
         original,
         "https://esm.sh/parent",
@@ -217,6 +246,18 @@ describe("transforms/esm/specifier-resolver", () => {
         },
       );
       assertEquals(result, original);
+    });
+
+    it("aborts when a static specifier's cache lookup throws", async () => {
+      const original = `import foo from "https://esm.sh/foo";`;
+      await assertRejects(
+        () =>
+          rewriteModuleImports(original, "https://esm.sh/parent", defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
     });
   });
 });

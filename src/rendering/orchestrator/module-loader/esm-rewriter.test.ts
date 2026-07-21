@@ -134,6 +134,28 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       assertMatch(rootContent, /esm\.sh\/broken/);
     });
 
+    it("still throws when a nested URL is imported statically", async () => {
+      // The emitted module's own import graph must be local before the runtime
+      // loader is handed it. Leaving a static dependency remote would change
+      // that contract, so this failure stays fatal.
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(`import { b } from "https://esm.sh/broken";`));
+        }
+        if (url === "https://esm.sh/broken") {
+          return Promise.resolve(new Response("upstream broken", { status: 500 }));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+        Error,
+      );
+    });
+
     it("still throws when the top-level URL itself fails", async () => {
       const esmCache = new Map<string, string>();
       globalThis.fetch =
