@@ -2,7 +2,7 @@ import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability";
-import { getLoaderFromPath } from "../../esm/transform-utils.ts";
+import { ESBUILD_SUPPORTED_FEATURES, getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 const logger = rendererLogger.component("esm-transform");
@@ -20,6 +20,7 @@ export const compilePlugin: TransformPlugin = {
         loader,
         format: "esm",
         target: "es2020",
+        supported: ESBUILD_SUPPORTED_FEATURES,
         jsx: "automatic",
         jsxImportSource: ctx.jsxImportSource,
         minify: !ctx.dev,

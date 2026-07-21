@@ -5,6 +5,7 @@
  * resolves all imports (#veryfront/, relative, React).
  */
 
+import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import denoConfig from "#deno-config" with { type: "json" };
@@ -157,6 +158,7 @@ async function compileFallbackSource(
     jsxImportSource: "react",
     format: "esm",
     target: "es2022",
+    supported: ESBUILD_SUPPORTED_FEATURES,
   });
   return result.code;
 }
@@ -438,6 +440,7 @@ async function transformFrameworkCodeUncoalesced(
       jsxImportSource: "react",
       format: "esm",
       target: "es2022",
+      supported: ESBUILD_SUPPORTED_FEATURES,
     });
 
     let transformed = result.code;
@@ -607,6 +610,8 @@ async function transformFrameworkCodeUncoalesced(
       }),
     );
 
+    transformed = stripJsonAttributesFromModuleImports(transformed);
+
     // Cache HTTP imports to local filesystem
     const importMap = await loadImportMap(ctx.projectDir);
     const cacheResult = await cacheHttpImportsToLocal(transformed, {
@@ -686,6 +691,23 @@ export async function resolveAndTransformVeryfrontImport(
  * Transform framework source code with React import rewriting.
  * Entry point for top-level framework modules (e.g., Head.tsx, Router.tsx).
  */
+/**
+ * Drop `with { type: "json" }` from imports that now point at a JavaScript
+ * module.
+ *
+ * A framework import of a `.json` file (`#veryfront/server/dev-ui/manifest.json`)
+ * is resolved by transforming the JSON into a cached `.mjs` that default-exports
+ * the data. The attribute on the importer describes the *original* target, so
+ * leaving it in place makes the runtime reject the rewritten import with
+ * "Expected a Json module, but identified a Mjs module".
+ */
+export function stripJsonAttributesFromModuleImports(code: string): string {
+  return code.replace(
+    /(from\s*["'](?:file:\/\/)?[^"']+\.mjs["'])\s*with\s*\{[^}]*\}/g,
+    "$1",
+  );
+}
+
 export async function transformFrameworkSource(
   content: string,
   sourcePath: string,
