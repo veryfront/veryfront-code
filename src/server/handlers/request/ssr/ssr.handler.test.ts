@@ -433,7 +433,43 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - server error with dev overlay", () => {
-    it("skips custom error fallback when showDevOverlay is true", async () => {
+    function ctxWithRecordedStats(): { ctx: ReturnType<typeof makeCtx>; statted: string[] } {
+      const statted: string[] = [];
+      const adapter = createMockAdapter();
+      const inner = adapter.fs.stat;
+      adapter.fs.stat = (path: string) => {
+        statted.push(path);
+        return inner(path);
+      };
+      return { ctx: makeCtx({ adapter }), statted };
+    }
+
+    for (const errorType of ["server-error", "runtime"] as const) {
+      it(`looks for a custom error page for ${errorType} even with the dev overlay`, async () => {
+        const mockService = createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 500,
+              html: "<html>dev overlay</html>",
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              errorType,
+              showDevOverlay: true,
+              error: new Error("Oops"),
+              slug: "page",
+            }),
+        });
+        const { ctx, statted } = ctxWithRecordedStats();
+        const handler = new SSRHandler(mockService);
+
+        const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+        assertEquals(statted.some((path) => path.endsWith("/pages")), true);
+        assertEquals(result.response!.status, 500);
+      });
+    }
+
+    it("falls back to the dev overlay when no custom error page exists", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
           Promise.resolve({

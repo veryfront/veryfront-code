@@ -141,6 +141,24 @@ async function setCachedPath(cacheKey: string, path: string | null): Promise<voi
   errorPagePathCache.set(cacheKey, path);
 }
 
+/**
+ * Whether a "this project has no error page" answer may be cached.
+ *
+ * In dev it may not. Nothing invalidates this cache when the filesystem
+ * changes, so caching the miss means a project that adds `pages/500.tsx` while
+ * the server is running keeps getting the dev overlay until restart, with no
+ * indication why. A miss costs one file probe on an error render, which is not
+ * a path worth optimising in dev.
+ */
+function canCacheMiss(ctx: HandlerContext): boolean {
+  return !ctx.isLocalProject;
+}
+
+async function setCachedMiss(cacheKey: string, ctx: HandlerContext): Promise<void> {
+  if (!canCacheMiss(ctx)) return;
+  await setCachedPath(cacheKey, null);
+}
+
 async function deleteCachedPath(cacheKey: string): Promise<void> {
   if (injectedCacheRepo) {
     await injectedCacheRepo.delete(cacheKey);
@@ -175,7 +193,7 @@ async function tryLoadErrorPage(
     try {
       const resolvedPath = await ctx.adapter.fs.resolveFile(basePath);
       if (!resolvedPath) {
-        await setCachedPath(cacheKey, null);
+        await setCachedMiss(cacheKey, ctx);
         return null;
       }
 
@@ -189,7 +207,7 @@ async function tryLoadErrorPage(
       // expected: resolveFile may fail, fall through to extension probing
     }
 
-    await setCachedPath(cacheKey, null);
+    await setCachedMiss(cacheKey, ctx);
     return null;
   }
 
@@ -209,7 +227,7 @@ async function tryLoadErrorPage(
     }
   }
 
-  await setCachedPath(cacheKey, null);
+  await setCachedMiss(cacheKey, ctx);
   return null;
 }
 

@@ -235,7 +235,9 @@ export class SSRHandler extends BaseHandler {
           return this.handleNotFound(req, ctx, slug, nonce);
         }
 
-        if (result.errorType === "server-error" && !result.showDevOverlay) {
+        // Runtime errors use the dev overlay, but a project-owned error page
+        // should still take precedence when it exists.
+        if (result.errorType === "server-error" || result.errorType === "runtime") {
           const customResponse = await this.tryCustomErrorFallback(req, ctx, result, nonce);
           if (customResponse) return customResponse;
         }
