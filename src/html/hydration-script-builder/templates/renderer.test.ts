@@ -189,4 +189,89 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(getRendererScript(), "container.__reactRoot");
     });
   });
+
+  describe("isModuleNotFoundError", () => {
+    // Evaluate the helper out of the emitted browser script so the behaviour
+    // itself is under test, not just the presence of a substring. Only the
+    // helper is extracted — the rest of the script touches `window`.
+    function helperSource(): string {
+      const script = getRendererScript();
+      const start = script.indexOf("function isModuleNotFoundError(error) {");
+      assertEquals(start >= 0, true, "isModuleNotFoundError not found in renderer script");
+      const end = script.indexOf("\n    }", start);
+      assertEquals(end > start, true, "could not find end of isModuleNotFoundError");
+      return script.slice(start, end + "\n    }".length);
+    }
+
+    function isModuleNotFoundError(error: unknown): boolean {
+      return new Function(
+        "error",
+        `${helperSource()}\nreturn isModuleNotFoundError(error);`,
+      )(error) as boolean;
+    }
+
+    it("treats a failed fetch as module-not-found", () => {
+      assertEquals(
+        isModuleNotFoundError(
+          new TypeError(
+            "Failed to fetch dynamically imported module: http://x/_vf_modules/pages/a.js",
+          ),
+        ),
+        true,
+      );
+      assertEquals(
+        isModuleNotFoundError(new TypeError("error loading dynamically imported module")),
+        true,
+      );
+    });
+
+    it("does not treat a link error as module-not-found", () => {
+      // This is the case that used to be retried at <route>/index.js, replacing
+      // a precise link error with a misleading 404.
+      assertEquals(
+        isModuleNotFoundError(
+          new SyntaxError(
+            "The requested module '/_vf_modules/_veryfront/platform/polyfills/node-noop.js' " +
+              "does not provide an export named 'createHash'",
+          ),
+        ),
+        false,
+      );
+    });
+
+    it("does not treat a module evaluation error as module-not-found", () => {
+      assertEquals(isModuleNotFoundError(new Error("boom during module evaluation")), false);
+      assertEquals(isModuleNotFoundError(new ReferenceError("x is not defined")), false);
+    });
+
+    it("handles null and non-Error values", () => {
+      assertEquals(isModuleNotFoundError(null), false);
+      assertEquals(isModuleNotFoundError(undefined), false);
+      assertEquals(isModuleNotFoundError("Failed to fetch dynamically imported module"), true);
+    });
+  });
+
+  describe("page module fallback", () => {
+    it("only retries the /index.js path for module-not-found errors", () => {
+      const script = getRendererScript();
+      assertEquals(script.includes("isModuleNotFoundError(error)"), true);
+      assertEquals(script.includes("canRetryAsIndex"), true);
+    });
+
+    it("rethrows the original error rather than the fallback's", () => {
+      const script = getRendererScript();
+      assertEquals(script.includes("throw pageModuleError"), true);
+    });
+
+    it("prefers the retry's error when the retry reached a module", () => {
+      // A real <route>/index.tsx page 404s on <route>.js first, so the retry is
+      // the load that matters and its link error must not be replaced by the
+      // expected 404.
+      const script = getRendererScript();
+      assertEquals(
+        script.includes("throw isModuleNotFoundError(indexError) ? pageModuleError : indexError;"),
+        true,
+      );
+    });
+  });
 });
