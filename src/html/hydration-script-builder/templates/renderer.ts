@@ -1,6 +1,19 @@
 export const getRendererScript = () => `
     // Note: DEBUG, log, logError are defined in router.ts which loads first
 
+    // True when a dynamic import failed because the module could not be
+    // fetched (404 / network), as opposed to being fetched and then failing to
+    // link or evaluate. Browsers report the former as a TypeError with a
+    // "dynamically imported module" message; link failures are SyntaxErrors and
+    // evaluation failures are whatever the module threw.
+    function isModuleNotFoundError(error) {
+      if (!error) return false;
+      if (error instanceof SyntaxError) return false;
+      const message = String((error && error.message) || error);
+      return /(?:Failed to fetch|error loading|Importing a module script failed|Failed to load)/i
+        .test(message);
+    }
+
     async function renderPage(pathname) {
       const resolvedPathname = (() => {
         const input = typeof pathname === 'string' ? pathname : window.location.pathname;
@@ -92,6 +105,8 @@ export const getRendererScript = () => `
           };
         }
 
+        let pageModuleError = null;
+
         if (data.pagePath) {
           const moduleUrl = shouldRenderRscClientPage
             ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
@@ -101,6 +116,7 @@ export const getRendererScript = () => `
           try {
             pageModule = await import(moduleUrl);
           } catch (error) {
+            pageModuleError = error;
             logError('Failed to load page from hydration data:', error);
           }
         }
@@ -115,8 +131,26 @@ export const getRendererScript = () => `
           try {
             pageModule = await import(basePath + '.js');
           } catch (error) {
-            if (pageSlug === 'index' || pageSlug.endsWith('/index')) throw error;
-            pageModule = await import(basePath + '/index.js');
+            pageModuleError = pageModuleError || error;
+
+            // Only retry at <route>/index.js when the module genuinely could not
+            // be found. If it was found but failed to link or evaluate, retrying
+            // a path that does not exist replaces a precise error ("does not
+            // provide an export named 'createHash'") with a misleading 404.
+            const canRetryAsIndex = isModuleNotFoundError(error) &&
+              pageSlug !== 'index' && !pageSlug.endsWith('/index');
+
+            if (!canRetryAsIndex) throw pageModuleError;
+
+            try {
+              pageModule = await import(basePath + '/index.js');
+            } catch (indexError) {
+              // For a real <route>/index.tsx page, the first 404 was expected
+              // and this retry is the path that matters: if it reached a module
+              // and failed to link or evaluate, its error is the real one. Only
+              // when the retry 404s as well does the original describe more.
+              throw isModuleNotFoundError(indexError) ? pageModuleError : indexError;
+            }
           }
         }
 
