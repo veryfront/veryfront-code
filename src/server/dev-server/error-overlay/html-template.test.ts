@@ -53,8 +53,9 @@ describe("server/dev-server/error-overlay/html-template", () => {
     it("embeds the exact hosted Studio origin policy", () => {
       const script = generateRuntimeScript();
       assertEquals(script.includes("function vfStudioTargetOrigin()"), true);
-      assertEquals(script.includes('"https://studio.veryfront.com"'), true);
-      assertEquals(script.includes('"https://studio.veryfront.org"'), true);
+      assertEquals(script.includes('"https://veryfront.com"'), true);
+      assertEquals(script.includes('"https://veryfront.org"'), true);
+      assertEquals(script.includes('"https://studio.veryfront.com"'), false);
       assertEquals(script.includes("endsWith"), false);
       assertEquals(script.includes(".veryfront.dev"), false);
       assertEquals(script.includes("return window.location.origin"), true);
@@ -166,13 +167,13 @@ describe("server/dev-server/error-overlay/html-template", () => {
 
       new Function("window", "document", "WebSocket", script)(
         fakeWindow,
-        { referrer: "https://studio.veryfront.com/project" },
+        { referrer: "https://veryfront.com/project" },
         class FakeWebSocket {},
       );
 
       assertEquals(calls.length, 1);
       assertEquals((calls[0]?.message as { action?: unknown })?.action, "appUpdated");
-      assertEquals(calls[0]?.targetOrigin, "https://studio.veryfront.com");
+      assertEquals(calls[0]?.targetOrigin, "https://veryfront.com");
     });
 
     it("should use undefined for missing file/line/column in postMessage errors[]", () => {
@@ -233,8 +234,9 @@ describe("server/dev-server/error-overlay/html-template", () => {
         "my-project",
       );
       assertEquals(html.includes("function vfStudioTargetOrigin()"), true);
-      assertEquals(html.includes('"https://studio.veryfront.com"'), true);
-      assertEquals(html.includes('"https://studio.veryfront.org"'), true);
+      assertEquals(html.includes('"https://veryfront.com"'), true);
+      assertEquals(html.includes('"https://veryfront.org"'), true);
+      assertEquals(html.includes('"https://studio.veryfront.com"'), false);
       assertEquals(html.includes("endsWith"), false);
       assertEquals(html.includes(".veryfront.dev"), false);
       assertEquals(html.includes("return window.location.origin"), true);

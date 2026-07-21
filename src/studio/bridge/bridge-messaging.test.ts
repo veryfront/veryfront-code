@@ -79,13 +79,13 @@ Deno.test("isFromStudio: captures origin and flushes pending buffer", () => {
 
 Deno.test("postToStudio: after handshake uses captured origin (never '*')", () => {
   resetAll();
-  isFromStudio(makeEvent("https://studio.veryfront.com"));
+  isFromStudio(makeEvent("https://veryfront.com"));
   postToStudio({ action: "appLoaded" });
 
   assertEquals((fakeParentWindow as any).calls.length, 1);
   assertEquals(
     (fakeParentWindow as any).calls[0].targetOrigin,
-    "https://studio.veryfront.com",
+    "https://veryfront.com",
   );
 });
 
@@ -110,7 +110,7 @@ Deno.test("isFromStudio: accepts exact hosted Studio origins", () => {
   assertEquals(isFromStudio(makeEvent("https://veryfront.org")), true);
 
   resetAll();
-  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.org")), true);
+  assertEquals(isFromStudio(makeEvent("https://veryfront.com")), true);
 });
 
 Deno.test("isFromStudio: rejects tenant and hosted development subdomains", () => {
@@ -118,6 +118,9 @@ Deno.test("isFromStudio: rejects tenant and hosted development subdomains", () =
   assertEquals(isFromStudio(makeEvent("https://project.preview.veryfront.org")), false);
   assertEquals(isFromStudio(makeEvent("https://project.production.veryfront.com")), false);
   assertEquals(isFromStudio(makeEvent("https://studio.veryfront.dev")), false);
+  // studio.* subdomains are not deployed and are no longer trusted.
+  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.com")), false);
+  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.org")), false);
 });
 
 Deno.test("isFromStudio: rejects messages not sent by the parent window", () => {
@@ -146,11 +149,11 @@ Deno.test("postToStudio: pending buffer caps at MAX_PENDING_MESSAGES (100); olde
 
 Deno.test("isFromStudio: rejects a different trusted origin after the handshake", () => {
   resetAll();
-  assertEquals(isFromStudio(makeEvent("https://studio.veryfront.com")), true);
+  assertEquals(isFromStudio(makeEvent("https://veryfront.com")), true);
   assertEquals(isFromStudio(makeEvent("https://veryfront.org")), false);
   postToStudio({ action: "ping" });
   assertEquals(
     (fakeParentWindow as any).calls[0].targetOrigin,
-    "https://studio.veryfront.com",
+    "https://veryfront.com",
   );
 });

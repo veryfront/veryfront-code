@@ -108,7 +108,8 @@ describe("server/utils/error-html", () => {
       const html = ErrorPages.serverError();
 
       assertIncludes(html, "vfStudioTargetOrigin()");
-      assertIncludes(html, '"https://studio.veryfront.com"');
+      assertIncludes(html, '"https://veryfront.com"');
+      assertNotIncludes(html, "studio.veryfront.com");
       assertNotIncludes(html, "endsWith");
       assertNotIncludes(html, ".veryfront.dev");
       assertNotIncludes(html, "}, '*'");
