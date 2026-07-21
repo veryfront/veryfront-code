@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
@@ -101,11 +101,11 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       assertEquals(result.startsWith(tmpDir), true);
-      // The root's reference to "https://esm.sh/a" should have been rewritten
-      // to the cached file path.
+      // The root's reference to the nested URL should have been rewritten to
+      // the cached file path.
       const rootContent = files.get(result) ?? "";
-      assertEquals(rootContent.includes("file://"), true);
-      assertEquals(rootContent.includes("https://esm.sh/a"), false);
+      assertMatch(rootContent, /file:\/\//);
+      assertEquals(/esm\.sh\/a/.test(rootContent), false);
     });
 
     it("does not abort the render when a nested URL fetch fails", async () => {
@@ -130,8 +130,8 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const rootContent = files.get(result) ?? "";
       // Successful URL replaced with file://; failed URL preserved for runtime
       // resolution instead of aborting the whole render.
-      assertEquals(rootContent.includes("file://"), true);
-      assertEquals(rootContent.includes("https://esm.sh/broken"), true);
+      assertMatch(rootContent, /file:\/\//);
+      assertMatch(rootContent, /esm\.sh\/broken/);
     });
 
     it("still throws when the top-level URL itself fails", async () => {
