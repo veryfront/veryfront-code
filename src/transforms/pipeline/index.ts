@@ -21,6 +21,7 @@ import type {
   TransformResult,
 } from "./types.ts";
 import {
+  browserServerExportsStripPlugin,
   compilePlugin,
   cssStripPlugin,
   finalizePlugin,
@@ -50,6 +51,7 @@ const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
   cssStripPlugin, // Strip CSS imports before they hit import resolution
+  browserServerExportsStripPlugin, // Drop server-only hooks + their now-unused imports
   resolveImportsPlugin, // Unified import resolution
   finalizePlugin,
 ];
