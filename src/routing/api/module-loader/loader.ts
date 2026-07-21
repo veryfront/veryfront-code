@@ -8,7 +8,7 @@ import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
@@ -309,6 +309,62 @@ function createAdapterResolvePlugin(
   };
 }
 
+/**
+ * Refuse to load any file the bundle resolved outside the project.
+ *
+ * The resolver plugins above validate the specifiers they claim, but esbuild
+ * applies the project's own tsconfig `paths` itself, before any `onResolve`
+ * callback runs. A templated project maps `@/*` to `./*`, so `@/../secrets.ts`
+ * is resolved by esbuild straight to a path above the project root and loaded
+ * in the default namespace, where none of those guards ever see it.
+ *
+ * This runs at load time instead, which is the one point every resolution
+ * strategy converges on. Returning `undefined` defers to normal loading, so the
+ * plugin only ever subtracts. Package code is exempt: `node_modules` is
+ * resolved by esbuild's own node resolution rather than by a project alias, and
+ * is legitimately hoisted above the project root in a monorepo.
+ *
+ * `roots` carries both the project path as configured and its symlink-resolved
+ * form, because esbuild reports the real path of a file it loaded. A project
+ * reached through a symlink (`/var` -> `/private/var` on macOS, and any deploy
+ * layout that symlinks a release directory) would otherwise fail every import.
+ */
+/**
+ * The project path as configured, plus its symlink-resolved form when they
+ * differ. `realPath` throws if the directory is missing, in which case the
+ * configured path is all there is to compare against.
+ */
+async function resolveProjectRoots(projectDir: string): Promise<string[]> {
+  const configured = pathHelper.resolve(projectDir);
+
+  try {
+    const real = await realPath(configured);
+    return real === configured ? [configured] : [configured, real];
+  } catch {
+    return [configured];
+  }
+}
+
+function createProjectBoundaryPlugin(roots: string[]): Plugin {
+  return {
+    name: "vf-project-boundary",
+    setup(build) {
+      build.onLoad({ filter: /.*/ }, (args) => {
+        if (roots.some((root) => isWithinDirectory(root, args.path))) return undefined;
+        if (args.path.split(/[\\/]/).includes("node_modules")) return undefined;
+
+        logger.error(`[API] Resolved import escapes project: ${args.path}`);
+        return {
+          errors: [{
+            text: `Import escapes the project directory: ${args.path}. ` +
+              `API routes may only import files inside the project.`,
+          }],
+        };
+      });
+    },
+  };
+}
+
 function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
@@ -409,6 +465,7 @@ function loadAndTranspileModule(
           createImportMapPlugin(projectDir, adapter, config),
           createAdapterResolvePlugin(adapter, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
+          createProjectBoundaryPlugin(await resolveProjectRoots(projectDir)),
         ],
       });
 
