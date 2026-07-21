@@ -1,3 +1,4 @@
+import { compileContent } from "../mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { join } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -48,8 +49,26 @@ export async function parseLocalImports(
     return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
   }
 
+  // MDX/Markdown is not JSX, so handing the raw source to esbuild under the
+  // `jsx` loader fails with "<stdin>:1:1: ERROR: Syntax error" — which surfaced
+  // to users as "Component has missing dependencies" for a file that exists.
+  // Compile content to JSX first, exactly as the transform pipeline's parse
+  // stage does, then read the imports out of that.
+  let parseSource = code;
+  if (/\.mdx?$/i.test(filePath)) {
+    const compiled = await compileContent(
+      "development",
+      projectDir,
+      code,
+      undefined,
+      filePath,
+      "server",
+    );
+    parseSource = compiled.compiledCode;
+  }
+
   const esbuild = await getEsbuild();
-  const result = await esbuild.transform(code, {
+  const result = await esbuild.transform(parseSource, {
     loader: getLoaderFromPath(filePath),
     format: "esm",
     target: "esnext",
@@ -70,6 +89,29 @@ export async function parseLocalImports(
   for (const imp of imports) {
     const specifier = imp.n;
     if (!specifier) continue;
+
+    // The content compile above runs with the "server" target, which rewrites a
+    // relative specifier to an absolute `file://` URL before the lexer ever
+    // sees it. Without this branch those dependencies match none of the shapes
+    // below and are dropped without even being reported as missing, so an MDX
+    // file's sibling components are never recursively transformed.
+    if (specifier.startsWith("file://")) {
+      const absolutePath = fileUrlToPath(specifier);
+
+      if (absolutePath && await checkFileExists(absolutePath, adapter)) {
+        const entry = { specifier, absolutePath };
+        if (absolutePath.endsWith(".css")) cssImports.push(entry);
+        else localImports.push(entry);
+        continue;
+      }
+
+      missingImports.push({
+        specifier,
+        fromFile: filePath,
+        reason: `File not found: ${absolutePath ?? specifier}`,
+      });
+      continue;
+    }
 
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
@@ -124,6 +166,18 @@ export async function parseLocalImports(
   }
 
   return { imports: localImports, cssImports, crossProjectImports, missing: missingImports };
+}
+
+/** Filesystem path behind a `file://` specifier, or null when it is not one. */
+function fileUrlToPath(specifier: string): string | null {
+  try {
+    const url = new URL(specifier);
+    if (url.protocol !== "file:") return null;
+    return decodeURIComponent(url.pathname);
+  } catch (_) {
+    /* expected: not a well-formed URL */
+    return null;
+  }
 }
 
 async function checkFileExists(path: string, adapter?: RuntimeAdapter): Promise<boolean> {
