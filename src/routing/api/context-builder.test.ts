@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
+import {
+  type APIContext,
+  createContext,
+  createJsonHelper,
+  normalizeParams,
+  parseCookies,
+} from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -380,5 +386,96 @@ describe("API Context Builder", () => {
       assertEquals(body.name, "Test User");
       assertEquals(body.email, "test@example.com");
     });
+  });
+});
+
+describe("createContext: ctx.json arity", () => {
+  function ctxFor(request: Request): APIContext {
+    return createContext(request, { params: {} } as RouteMatch, mockFs);
+  }
+
+  it("parses the request body when called with no arguments", async () => {
+    // `await ctx.json()` used to stringify `undefined` into a Response, so the
+    // handler received an object that serialised back out as `{}`.
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x: 1, nested: { y: "z" } }),
+      }),
+    );
+
+    assertEquals(await ctx.json(), { x: 1, nested: { y: "z" } });
+  });
+
+  it("still builds a JSON response when called with data", async () => {
+    const ctx = ctxFor(new Request("http://localhost/api/echo"));
+    const response = ctx.json({ received: true });
+
+    assertEquals(response instanceof Response, true);
+    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(await response.json(), { received: true });
+  });
+
+  it("honours a ResponseInit when building a response", async () => {
+    const ctx = ctxFor(new Request("http://localhost/api/echo"));
+    const response = ctx.json({ error: "nope" }, { status: 422 });
+
+    assertEquals(response.status, 422);
+    assertEquals(await response.json(), { error: "nope" });
+  });
+
+  // Regression: worker isolation built its own `ctx.json` as a response helper
+  // only, so `await ctx.json()` still returned a Response under
+  // WORKER_ISOLATION_API=1. Both contexts now build it from this one function,
+  // so a handler behaves the same whether or not isolation is enabled.
+  describe("createJsonHelper", () => {
+    it("reads the request body with no arguments", async () => {
+      const json = createJsonHelper(
+        new Request("http://localhost/api/echo", {
+          method: "POST",
+          body: JSON.stringify({ isolated: true }),
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      assertEquals(await json(), { isolated: true });
+    });
+
+    it("builds a response when given data", async () => {
+      const json = createJsonHelper(new Request("http://localhost/api/echo"));
+      const response = json({ ok: true }, { status: 201 });
+
+      assertEquals(response instanceof Response, true);
+      assertEquals(response.status, 201);
+      assertEquals(response.headers.get("Content-Type"), "application/json");
+      assertEquals(await response.json(), { ok: true });
+    });
+
+    it("is the same helper the request context exposes", async () => {
+      const request = new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ shared: true }),
+      });
+
+      const viaHelper = await createJsonHelper(request.clone())();
+      const viaContext = await ctxFor(request).json();
+
+      assertEquals(viaContext, viaHelper);
+    });
+  });
+
+  it("rejects when the body is not valid JSON", async () => {
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", { method: "POST", body: "not json" }),
+    );
+
+    let threw = false;
+    try {
+      await ctx.json();
+    } catch (_) {
+      threw = true;
+    }
+    assertEquals(threw, true);
   });
 });
