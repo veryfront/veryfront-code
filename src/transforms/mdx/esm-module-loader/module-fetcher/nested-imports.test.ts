@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findNestedImports,
   hasUnresolvedImports,
+  resolveNestedImportBase,
   resolveNestedModuleImports,
 } from "./nested-imports.ts";
 
@@ -157,5 +158,58 @@ import { bar } from "./local.js";
         ].join("\n"),
       );
     });
+  });
+});
+
+describe("resolveNestedImportBase", () => {
+  // A barrel lives at lib/index.ts but is addressed as _vf_modules/lib.
+  // Resolving its children against "_vf_modules/lib.js" drops the "lib"
+  // segment, so ./constants.js resolved to _vf_modules/constants.js — one
+  // directory too high. The file was then stubbed and the barrel silently
+  // stopped re-exporting: "does not provide an export named 'COLORS'".
+  it("keeps the directory segment for an index module", () => {
+    assertEquals(
+      resolveNestedImportBase("_vf_modules/lib.js", "/project/lib/index.ts"),
+      "_vf_modules/lib/index.js",
+    );
+    assertEquals(
+      resolveNestedImportBase("_vf_modules/components.js", "/project/components/index.tsx"),
+      "_vf_modules/components/index.js",
+    );
+  });
+
+  it("leaves a plain module untouched", () => {
+    assertEquals(
+      resolveNestedImportBase("_vf_modules/lib/constants.js", "/project/lib/constants.ts"),
+      "_vf_modules/lib/constants.js",
+    );
+  });
+
+  it("does not double up when the path already names index", () => {
+    assertEquals(
+      resolveNestedImportBase("_vf_modules/lib/index.js", "/project/lib/index.ts"),
+      "_vf_modules/lib/index.js",
+    );
+  });
+
+  it("is a no-op without a resolved file path", () => {
+    assertEquals(resolveNestedImportBase("_vf_modules/lib.js"), "_vf_modules/lib.js");
+  });
+
+  it("does not treat a file merely named index-something as an index module", () => {
+    assertEquals(
+      resolveNestedImportBase("_vf_modules/lib.js", "/project/lib/indexer.ts"),
+      "_vf_modules/lib.js",
+    );
+  });
+
+  it("recognises every index extension the resolver accepts", () => {
+    for (const ext of ["ts", "tsx", "js", "jsx", "mdx", "md"]) {
+      assertEquals(
+        resolveNestedImportBase("_vf_modules/lib.js", `/project/lib/index.${ext}`),
+        "_vf_modules/lib/index.js",
+        ext,
+      );
+    }
   });
 });
