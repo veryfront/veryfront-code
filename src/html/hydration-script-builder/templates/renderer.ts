@@ -3,15 +3,57 @@ export const getRendererScript = () => `
 
     // True when a dynamic import failed because the module could not be
     // fetched (404 / network), as opposed to being fetched and then failing to
-    // link or evaluate. Browsers report the former as a TypeError with a
-    // "dynamically imported module" message; link failures are SyntaxErrors and
-    // evaluation failures are whatever the module threw.
+    // link or evaluate. Browsers word this as a TypeError naming the dynamic
+    // import itself; link failures are SyntaxErrors and evaluation failures are
+    // whatever the module threw. The wording is matched against the dynamic
+    // import phrases only, so app code throwing "Failed to load user profile"
+    // at module scope is not mistaken for a missing module.
     function isModuleNotFoundError(error) {
       if (!error) return false;
       if (error instanceof SyntaxError) return false;
       const message = String((error && error.message) || error);
-      return /(?:Failed to fetch|error loading|Importing a module script failed|Failed to load)/i
+      return /(?:dynamically imported module|Importing a module script failed|Failed to load module script)/i
         .test(message);
+    }
+
+    // Picks the error that describes the failure best. An error that proves a
+    // module was reached (link or evaluation) always beats one that only proves
+    // a URL could not be fetched, because a 404 on a path that was never
+    // expected to exist explains nothing. Otherwise the earlier error wins: it
+    // names the module the router actually intended to load.
+    function preferReachedModuleError(earlier, later) {
+      if (!earlier) return later;
+      if (!later) return earlier;
+      if (isModuleNotFoundError(earlier) && !isModuleNotFoundError(later)) return later;
+      return earlier;
+    }
+
+    // Loads a Pages Router page, retrying at <route>/index.js because both
+    // pages/about.tsx and pages/about/index.tsx are valid sources for the same
+    // route. The retry is unconditional: gating it on the wording of the
+    // first rejection turned any unrecognized wording into a blank page. Error
+    // selection, not the retry, is what must stay precise.
+    async function loadPageModuleWithIndexFallback(
+      basePath,
+      pageSlug,
+      pageModuleError,
+      importModule,
+    ) {
+      try {
+        return await importModule(basePath + '.js');
+      } catch (error) {
+        const routeError = preferReachedModuleError(pageModuleError, error);
+
+        // An index slug already resolves to <route>/index.js, so the retry
+        // would ask for <route>/index/index.js.
+        if (pageSlug === 'index' || pageSlug.endsWith('/index')) throw routeError;
+
+        try {
+          return await importModule(basePath + '/index.js');
+        } catch (indexError) {
+          throw preferReachedModuleError(routeError, indexError);
+        }
+      }
     }
 
     async function renderPage(pathname) {
@@ -128,30 +170,12 @@ export const getRendererScript = () => `
           const prefix = pageSlug.startsWith('@/') ? '' : '/pages';
           const basePath = MODULE_SERVER_URL + prefix + '/' + pageSlug;
 
-          try {
-            pageModule = await import(basePath + '.js');
-          } catch (error) {
-            pageModuleError = pageModuleError || error;
-
-            // Only retry at <route>/index.js when the module genuinely could not
-            // be found. If it was found but failed to link or evaluate, retrying
-            // a path that does not exist replaces a precise error ("does not
-            // provide an export named 'createHash'") with a misleading 404.
-            const canRetryAsIndex = isModuleNotFoundError(error) &&
-              pageSlug !== 'index' && !pageSlug.endsWith('/index');
-
-            if (!canRetryAsIndex) throw pageModuleError;
-
-            try {
-              pageModule = await import(basePath + '/index.js');
-            } catch (indexError) {
-              // For a real <route>/index.tsx page, the first 404 was expected
-              // and this retry is the path that matters: if it reached a module
-              // and failed to link or evaluate, its error is the real one. Only
-              // when the retry 404s as well does the original describe more.
-              throw isModuleNotFoundError(indexError) ? pageModuleError : indexError;
-            }
-          }
+          pageModule = await loadPageModuleWithIndexFallback(
+            basePath,
+            pageSlug,
+            pageModuleError,
+            (moduleUrl) => import(moduleUrl),
+          );
         }
 
         if (!pageModule) {
