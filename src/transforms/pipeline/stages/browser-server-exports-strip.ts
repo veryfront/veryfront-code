@@ -32,12 +32,26 @@
  *   side effect to keep. This matches what esbuild does with an external
  *   import whose bindings go unused.
  *
- * Anything that cannot be parsed leaves the module exactly as it was.
+ * Hooks are matched on the name they are *exported* under, not the name they
+ * are declared with, because that is what the runtime looks up: the data
+ * fetcher and the isolation worker both read `mod.getServerData`. A module
+ * writing `export { loadIt as getServerData }` has a server loader whatever it
+ * calls the function locally.
+ *
+ * A module that names a server-only export and cannot be analysed fails the
+ * build. This is a server/client boundary: emitting the module unchanged would
+ * put the loader, its imports and any credential it closes over into the
+ * browser bundle, and a silent leak is worse than a stopped build.
+ *
+ * What this pass does NOT do: it empties hook bodies and prunes the imports
+ * they were the last user of. It does not remove module-scope declarations the
+ * hook was the only reader of, and an import reduced to a side-effect import
+ * still fetches that module in the browser. Do not read it as a guarantee that
+ * a secret written at module scope stays on the server.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 
@@ -108,43 +122,96 @@ async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node 
   return { body, init };
 }
 
-/** Names this module exports from its own local declarations. */
-function exportedLocalNames(body: Node[]): Set<string> {
-  const names = new Set<string>();
+/** Every binding name a destructuring pattern introduces. */
+function patternBoundNames(pattern: Node): string[] {
+  const names: string[] = [];
+
+  walk(pattern, (node) => {
+    // A key is a fixed name, not a binding: `{ getServerData: local }` binds
+    // `local`. Descend into the value only.
+    if (node.type === "ObjectProperty" && node.computed !== true) {
+      const value = node.value;
+      if (isNode(value)) names.push(...patternBoundNames(value));
+      return false;
+    }
+
+    if (node.type === "Identifier") {
+      const name = nodeName(node);
+      if (name) names.push(name);
+    }
+
+    return true;
+  });
+
+  return names;
+}
+
+/**
+ * The local declarations this module exports under a server-only name, plus the
+ * export forms that carry a server-only name but have no local declaration to
+ * empty.
+ *
+ * Keyed on the *exported* name, because that is what the runtime looks up:
+ * `mod.getServerData` in the data fetcher and the isolation worker. A module
+ * writing `export { loadIt as getServerData }` really does have a server
+ * loader, and the fact that it is called `loadIt` locally is invisible to
+ * everything downstream.
+ */
+function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: string[] } {
+  const locals = new Set<string>();
+  const unhandled: string[] = [];
+  const isHook = (name: string | null | undefined): name is string =>
+    name != null && SERVER_ONLY_EXPORTS.includes(name);
 
   for (const statement of body) {
     if (statement.type !== "ExportNamedDeclaration") continue;
     if (statement.exportKind === "type") continue;
 
-    // `export { getServerData }` and `export { getServerData as data }`: the
-    // local name is what a declaration in this module is called. The reverse,
-    // `export { other as getServerData }`, exports `other` and must not touch
-    // a same-named local.
     for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
       if (!isNode(specifier)) continue;
       if (specifier.exportKind === "type") continue;
-      // A re-export (`export { x } from "./y"`) has no local declaration to
-      // empty, so recording the name is harmless.
+      if (!isHook(nodeName(specifier.exported))) continue;
+
+      // `export { x as getServerData } from "./loader"` never binds `x` here,
+      // so there is no body to empty and the module it points at is still
+      // pulled into the graph.
+      if (isNode(statement.source)) {
+        unhandled.push(`export { … as ${nodeName(specifier.exported)} } from …`);
+        continue;
+      }
+
       const local = nodeName(specifier.local);
-      if (local) names.add(local);
+      if (local) locals.add(local);
     }
 
     const declaration = statement.declaration;
     if (!isNode(declaration)) continue;
 
     const direct = nodeName(declaration.id);
-    if (direct) names.add(direct);
+    if (isHook(direct)) locals.add(direct);
 
     for (
       const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
     ) {
       if (!isNode(declarator)) continue;
-      const name = nodeName(declarator.id);
-      if (name) names.add(name);
+      const id = declarator.id;
+      if (!isNode(id)) continue;
+
+      const name = nodeName(id);
+      if (name) {
+        if (isHook(name)) locals.add(name);
+        continue;
+      }
+
+      // `export const { getServerData } = loaders`: the initialiser is a value
+      // this pass cannot take apart.
+      if (patternBoundNames(id).some(isHook)) {
+        unhandled.push("export const { … } = …");
+      }
     }
   }
 
-  return names;
+  return { locals, unhandled };
 }
 
 /**
@@ -153,11 +220,10 @@ function exportedLocalNames(body: Node[]): Set<string> {
  */
 function emptyServerOnlyHooks(
   body: Node[],
-  exported: Set<string>,
+  targets: Set<string>,
   stubs: { body: Node; init: Node },
 ): boolean {
-  const targets = SERVER_ONLY_EXPORTS.filter((name) => exported.has(name));
-  if (targets.length === 0) return false;
+  if (targets.size === 0) return false;
 
   let changed = false;
 
@@ -172,7 +238,7 @@ function emptyServerOnlyHooks(
     for (const declaration of declarationsIn(statement)) {
       if (declaration.type === "FunctionDeclaration") {
         const name = nodeName(declaration.id);
-        if (!name || !targets.includes(name)) continue;
+        if (!name || !targets.has(name)) continue;
         declaration.body = structuredClone(stubs.body);
         changed = true;
         continue;
@@ -185,7 +251,7 @@ function emptyServerOnlyHooks(
       ) {
         if (!isNode(declarator)) continue;
         const name = nodeName(declarator.id);
-        if (!name || !targets.includes(name)) continue;
+        if (!name || !targets.has(name)) continue;
         declarator.init = structuredClone(stubs.init);
         changed = true;
       }
@@ -283,37 +349,69 @@ function setBody(ast: ASTNode, body: Node[]): void {
 }
 
 /**
+ * Raised when a module names a server-only export that this pass cannot remove.
+ * Emitting the module anyway would put the loader, its imports and anything it
+ * closes over into the browser bundle, so the build stops instead.
+ */
+class ServerExportStripError extends Error {
+  constructor(filePath: string | undefined, reason: string) {
+    super(
+      `Cannot remove the server-only export from ${filePath ?? "this module"} ` +
+        `before it is sent to the browser: ${reason}. ` +
+        `Declare the hook directly (\`export async function getServerData() {…}\`) ` +
+        `so the framework can strip it from the client build.`,
+    );
+    this.name = "ServerExportStripError";
+  }
+}
+
+/**
  * Empty the server-only hooks in `code` and drop the import bindings they were
- * the last user of. Returns `code` unchanged when there is nothing to do, when
- * no parser is registered, or when the module does not parse.
+ * the last user of. Returns `code` unchanged when there is nothing to strip.
+ *
+ * Throws when the module names a server-only export and this pass cannot act on
+ * it: no parser registered, the module does not parse, or the hook is exported
+ * in a form with no local declaration to empty. Failing the build is the only
+ * safe outcome — the alternative is shipping the loader to the browser.
  */
 export async function stripServerOnlyExports(code: string, filePath?: string): Promise<string> {
   // Cheap pre-check: no mention of a hook means no parse.
   if (!SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return code;
 
   const parser = tryResolve<CodeParser>("CodeParser");
-  if (!parser) return code;
+  if (!parser) {
+    throw new ServerExportStripError(filePath, "no CodeParser extension is registered");
+  }
+
+  let body: Node[];
+  let ast: ASTNode;
+  let stubs: { body: Node; init: Node };
 
   try {
-    const stubs = await parseStubs(parser);
-    if (!stubs) return code;
+    const parsedStubs = await parseStubs(parser);
+    if (!parsedStubs) throw new Error("the stub source did not parse");
+    stubs = parsedStubs;
 
-    const ast = await parser.parse({ code, filePath: filePath ?? "module.tsx" });
-    const body = bodyOf(ast);
-
-    if (!emptyServerOnlyHooks(body, exportedLocalNames(body), stubs)) return code;
-
-    setBody(ast, dropUnusedImportBindings(body));
-
-    const generated = await parser.generate(ast);
-    return generated.code;
+    ast = await parser.parse({ code, filePath: filePath ?? "module.tsx" });
+    body = bodyOf(ast);
   } catch (error) {
-    logger.debug("Left the module unchanged", {
+    throw new ServerExportStripError(
       filePath,
-      reason: error instanceof Error ? error.message : String(error),
-    });
-    return code;
+      error instanceof Error ? error.message : String(error),
+    );
   }
+
+  const { locals, unhandled } = exportedHookBindings(body);
+  if (unhandled.length > 0) {
+    throw new ServerExportStripError(filePath, `it is exported as \`${unhandled[0]}\``);
+  }
+
+  if (!emptyServerOnlyHooks(body, locals, stubs)) return code;
+
+  setBody(ast, dropUnusedImportBindings(body));
+
+  const generated = await parser.generate(ast);
+  return generated.code;
 }
 
 export const browserServerExportsStripPlugin: TransformPlugin = {

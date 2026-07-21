@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   browserServerExportsStripPlugin,
@@ -87,15 +87,23 @@ describe("browser-server-exports-strip", () => {
       assertEquals(await stripServerOnlyExports(code), code);
     });
 
-    it("leaves a local declaration that is only aliased to a hook name alone", async () => {
-      // `other` is the local declaration; `getServerData` is only its public
-      // name, so the client-side body of `other` must survive.
+    // The runtime reads `mod.getServerData`, so this module has a real server
+    // loader no matter what the function is called locally. Keying on the local
+    // name shipped the body, its imports and anything it closed over.
+    it("empties a hook exported under an alias", async () => {
       const code = [
-        `function other() { return computeOnClient(); }`,
-        `export { other as getServerData };`,
+        `import { hashOf } from "../lib/uses-crypto.js";`,
+        `const API_KEY = "sk-live-example";`,
+        `function loadIt() { return hashOf(API_KEY); }`,
+        `export { loadIt as getServerData };`,
       ].join("\n");
 
-      assertEquals(await stripServerOnlyExports(code), code);
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "hashOf");
+      assertStringIncludes(result, "getServerData");
+      // Reduced to a side-effect import, as for any other emptied hook.
+      assertStringIncludes(result, `import "../lib/uses-crypto.js"`);
     });
 
     it("empties a hook declared before a separate export clause", async () => {
@@ -184,8 +192,38 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "hashed");
     });
 
-    it("leaves a module that does not parse unchanged", async () => {
+    // Emitting a module this pass could not analyse would put the loader and
+    // everything it closes over into the browser bundle. Stopping the build is
+    // the only safe outcome.
+    it("fails the build when a module naming a hook does not parse", async () => {
       const code = `export function getServerData( { this is not javascript`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "pages/x.tsx");
+    });
+
+    it("fails the build when a hook is re-exported from another module", async () => {
+      const code = `export { loadIt as getServerData } from "./loader.ts";`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
+    it("fails the build when a hook is exported from a destructuring pattern", async () => {
+      const code = [
+        `import { loaders } from "./loaders.ts";`,
+        `export const { getServerData } = loaders;`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+    });
+
+    // The pre-check runs before anything else, so a module with no hook at all
+    // is never parsed and can never fail the build.
+    it("leaves a module that does not parse alone when it names no hook", async () => {
+      const code = `export function somethingElse( { this is not javascript`;
       assertEquals(await stripServerOnlyExports(code), code);
     });
   });
@@ -417,17 +455,28 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "computeOnClient");
     });
 
-    it("leaves a local aliased to a hook name alone beside a real hook", async () => {
+    it("empties both an aliased hook and a directly declared one", async () => {
       const code = [
-        `function other() { return computeOnClient(); }`,
-        `export { other as getServerData };`,
+        `function loadIt() { return readAliasedSecret(); }`,
+        `export { loadIt as getServerData };`,
         `export function getStaticData() { return readSecret(); }`,
       ].join("\n");
 
       const result = await stripServerOnlyExports(code);
 
-      assertNotIncludes(result, "readSecret");
-      assertStringIncludes(result, "computeOnClient");
+      assertNotIncludes(result, "readSecret()");
+      assertNotIncludes(result, "readAliasedSecret");
+    });
+
+    // A local that merely shares a hook's name is ordinary client code: it is
+    // the exported name that makes something server-only.
+    it("leaves a local named like a hook but exported as something else alone", async () => {
+      const code = [
+        `function getServerData() { return computeOnClient(); }`,
+        `export { getServerData as loadData };`,
+      ].join("\n");
+
+      assertEquals(await stripServerOnlyExports(code), code);
     });
 
     it("empties a hook declared as an exported function expression", async () => {
