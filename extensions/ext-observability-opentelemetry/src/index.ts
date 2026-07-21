@@ -936,12 +936,12 @@ class OtlpTracingExporter implements TracingExporter {
       this.logProvider = new otel.sdkLogs.LoggerProvider({
         resource,
         processors: [
-          new otel.sdkLogs.BatchLogRecordProcessor(
-            new otel.logsExporter.OTLPLogExporter({
+          new otel.sdkLogs.BatchLogRecordProcessor({
+            exporter: new otel.logsExporter.OTLPLogExporter({
               url: cfg.logsUrl,
               headers: cfg.logsHeaders,
             }),
-          ),
+          }),
         ],
       });
       otel.apiLogs.logs.setGlobalLoggerProvider(this.logProvider);
@@ -1100,12 +1100,12 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
 
     const logRecordProcessors = logsEnabled
       ? [
-        new otel.sdkLogs.BatchLogRecordProcessor(
-          new otel.logsExporter.OTLPLogExporter({
+        new otel.sdkLogs.BatchLogRecordProcessor({
+          exporter: new otel.logsExporter.OTLPLogExporter({
             url: options.logsEndpoint,
             headers: headersOrDefault(options.logsHeaders, options.exporterHeaders),
           }),
-        ),
+        }),
       ]
       : [];
 
