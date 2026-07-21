@@ -1,4 +1,5 @@
 import type { CacheManager } from "./data-fetching-cache.ts";
+import { isDataControlResult, toDataControlResult } from "./helpers.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
@@ -113,17 +114,27 @@ export class StaticDataFetcher {
     return { params: context.params, url: context.url };
   }
 
-  private executeStaticData(
+  private async executeStaticData(
     getStaticData: StaticDataHandler,
     context: DataContext,
     timeoutMs: number,
     label: string,
   ): Promise<DataResult> {
-    return withTimeoutThrow(
-      Promise.resolve(getStaticData(this.createStaticDataContext(context))),
-      timeoutMs,
-      label,
-    );
+    try {
+      return await withTimeoutThrow(
+        Promise.resolve(getStaticData(this.createStaticDataContext(context))),
+        timeoutMs,
+        label,
+      );
+    } catch (error) {
+      // `throw notFound()` / `throw redirect(...)`: treat a thrown control
+      // result exactly like a returned one. Normalising at the one place every
+      // path runs the handler covers the cached path as well as the preview
+      // one, and keeps a 404 from counting against the caller's circuit
+      // breaker.
+      if (isDataControlResult(error)) return toDataControlResult(error);
+      throw error;
+    }
   }
 
   private storeCacheEntry(cacheKey: string, result: DataResult): void {

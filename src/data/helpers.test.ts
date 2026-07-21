@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { notFound, redirect } from "./helpers.ts";
+import { isDataControlResult, notFound, redirect } from "./helpers.ts";
 
 describe("helpers.ts", () => {
   describe("redirect", () => {
@@ -76,6 +76,45 @@ describe("helpers.ts", () => {
       const result2 = notFound();
 
       assertEquals(result1.notFound, result2.notFound);
+    });
+  });
+
+  describe("isDataControlResult", () => {
+    it("recognises a thrown notFound()", () => {
+      assertEquals(isDataControlResult(notFound()), true);
+    });
+
+    it("recognises a thrown redirect()", () => {
+      assertEquals(isDataControlResult(redirect("/login")), true);
+      assertEquals(isDataControlResult(redirect("/login", true)), true);
+    });
+
+    it("does not treat an Error as a control result", () => {
+      // A real failure must keep flowing to the error handler.
+      assertEquals(isDataControlResult(new Error("boom")), false);
+      const tagged = new Error("boom") as Error & { notFound?: boolean };
+      tagged.notFound = true;
+      assertEquals(isDataControlResult(tagged), false);
+    });
+
+    it("rejects primitives and null", () => {
+      assertEquals(isDataControlResult(null), false);
+      assertEquals(isDataControlResult(undefined), false);
+      assertEquals(isDataControlResult("notFound"), false);
+      assertEquals(isDataControlResult(404), false);
+    });
+
+    it("rejects a props-only result", () => {
+      assertEquals(isDataControlResult({ props: { a: 1 } }), false);
+    });
+
+    it("rejects a malformed redirect", () => {
+      assertEquals(isDataControlResult({ redirect: {} }), false);
+      assertEquals(isDataControlResult({ redirect: { destination: 42 } }), false);
+    });
+
+    it("rejects notFound: false", () => {
+      assertEquals(isDataControlResult({ notFound: false }), false);
     });
   });
 });
