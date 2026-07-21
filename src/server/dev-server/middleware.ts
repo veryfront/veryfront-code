@@ -116,12 +116,17 @@ export async function loadMiddlewareFile(
           middlewarePath,
           adapter,
           options.throwOnError === true,
+          middlewareFile,
         );
       }
 
       const middlewareUrl = `file://${middlewarePath}?t=${Date.now()}-${crypto.randomUUID()}`;
       const middlewareModule = await import(middlewareUrl);
-      return normalizeMiddlewareExport(middlewareModule, options.throwOnError === true);
+      return normalizeMiddlewareExport(
+        middlewareModule,
+        options.throwOnError === true,
+        middlewareFile,
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn(`Failed to load ${middlewareFile}: ${errorMessage}`);
@@ -136,6 +141,7 @@ async function loadMiddlewareFromVirtualFS(
   middlewarePath: string,
   adapter: RuntimeAdapter,
   strictExport: boolean,
+  sourceFile = "middleware.ts",
 ): Promise<MiddlewareFunction[]> {
   const fs = createFileSystem();
 
@@ -171,15 +177,53 @@ async function loadMiddlewareFromVirtualFS(
   try {
     await fs.writeTextFile(tempFile, js);
     const middlewareModule = await import(`file://${tempFile}?v=${Date.now()}`);
-    return normalizeMiddlewareExport(middlewareModule, strictExport);
+    return normalizeMiddlewareExport(middlewareModule, strictExport, sourceFile);
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
 }
 
+/**
+ * Explain what a root middleware file must export. When the module looks like it
+ * was written for Next.js, say so, because that is overwhelmingly why this
+ * fails. A bad root middleware takes down every route, so the message has
+ * to be enough to fix the file without reading the source.
+ */
+function invalidMiddlewareExport(
+  middlewareModule: unknown,
+  sourceFile: string,
+): TypeError {
+  const named = middlewareModule && typeof middlewareModule === "object"
+    ? Object.keys(middlewareModule as Record<string, unknown>)
+    : [];
+
+  const looksLikeNext = named.includes("middleware") &&
+    typeof (middlewareModule as { middleware?: unknown }).middleware === "function";
+
+  const detail = looksLikeNext
+    ? `Found a named "middleware" export, which is the Next.js convention. ` +
+      `Veryfront expects a default export, and its middleware receives ` +
+      `(c, next), where c is a context carrying c.req, not the Request itself.`
+    : named.length > 0
+    ? `Found export(s): ${named.join(", ")}.`
+    : `The module has no usable export.`;
+
+  return new TypeError(
+    `Invalid middleware export in ${sourceFile}. ${detail}\n` +
+      `Expected a default export that is a middleware function, or a non-empty ` +
+      `array of them:\n\n` +
+      `  export default async function middleware(c, next) {\n` +
+      `    const response = await next();\n` +
+      `    return response;\n` +
+      `  }\n\n` +
+      `See docs/guides/middleware.md.`,
+  );
+}
+
 function normalizeMiddlewareExport(
   middlewareModule: unknown,
   strict = false,
+  sourceFile = "middleware.ts",
 ): MiddlewareFunction[] {
   const exported = middlewareModule && typeof middlewareModule === "object" &&
       "default" in middlewareModule
@@ -190,9 +234,7 @@ function normalizeMiddlewareExport(
     if (
       strict && (exported.length === 0 || exported.some((value) => typeof value !== "function"))
     ) {
-      throw new TypeError(
-        "Invalid middleware export: expected a function or non-empty array of functions",
-      );
+      throw invalidMiddlewareExport(middlewareModule, sourceFile);
     }
     return exported.filter((middleware): middleware is MiddlewareFunction =>
       typeof middleware === "function"
@@ -204,9 +246,7 @@ function normalizeMiddlewareExport(
   }
 
   if (strict) {
-    throw new TypeError(
-      "Invalid middleware export: expected a function or non-empty array of functions",
-    );
+    throw invalidMiddlewareExport(middlewareModule, sourceFile);
   }
 
   return [];
