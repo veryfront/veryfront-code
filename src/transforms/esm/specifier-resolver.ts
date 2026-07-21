@@ -9,7 +9,10 @@
 
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
-import { parseImports, replaceSpecifiers } from "./lexer.ts";
+import { rendererLogger } from "#veryfront/utils";
+import { type ImportSpecifier, parseImports, replaceSpecifiers } from "./lexer.ts";
+
+const logger = rendererLogger.component("specifier-resolver");
 import {
   type CacheOptions,
   isCanonicalReactEsmUrl,
@@ -103,7 +106,38 @@ async function resolveSpecifier(
 }
 
 /**
+ * Specifiers this module only ever reaches through `import(...)`.
+ *
+ * The distinction decides what a resolution failure means. A static import is
+ * part of the emitted module's own import graph, so the artifact contract holds
+ * for it: every static dependency resolves to a local path before the module is
+ * handed to the runtime loader, and a failure to do that is fatal, exactly as
+ * it was before graceful degradation existed.
+ *
+ * A dynamic specifier is resolved by the runtime at call time and is routinely
+ * guarded by the caller (`platform/adapters/redis/modules.js` only calls
+ * `await import("redis")` when the redis adapter is actually used). Pre-fetching
+ * it is an optimisation, so failing to pre-fetch it leaves the specifier in
+ * place rather than taking down a render that would never have imported it.
+ */
+function isDynamicOnly(imports: readonly ImportSpecifier[]): Set<string> {
+  const dynamic = new Set<string>();
+  const staticSpecifiers = new Set<string>();
+
+  for (const imp of imports) {
+    if (!imp.n) continue;
+    (imp.d > -1 ? dynamic : staticSpecifiers).add(imp.n);
+  }
+
+  for (const specifier of staticSpecifiers) dynamic.delete(specifier);
+  return dynamic;
+}
+
+/**
  * Build a map of specifier replacements by resolving all imports in the code.
+ *
+ * Resolution failure is fatal for a static import and best-effort for a
+ * specifier only ever used in `import(...)`. See {@link isDynamicOnly}.
  */
 export async function buildReplacements(
   code: string,
@@ -113,8 +147,9 @@ export async function buildReplacements(
 ): Promise<Map<string, string>> {
   const imports = await parseImports(code);
   const uniqueSpecifiers = [...new Set(imports.map((imp) => imp.n).filter(Boolean))] as string[];
+  const dynamicOnly = isDynamicOnly(imports);
 
-  const results = await Promise.all(
+  const settled = await Promise.allSettled(
     uniqueSpecifiers.map(async (specifier) => ({
       specifier,
       resolved: await resolveSpecifier(specifier, baseUrl, options, cacheHttpModule),
@@ -122,8 +157,26 @@ export async function buildReplacements(
   );
 
   const replacements = new Map<string, string>();
-  for (const { specifier, resolved } of results) {
-    if (resolved && resolved !== specifier) replacements.set(specifier, resolved);
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    const specifier = uniqueSpecifiers[i];
+    if (!outcome || specifier === undefined) continue;
+
+    if (outcome.status === "fulfilled") {
+      const { specifier: resolvedFor, resolved } = outcome.value;
+      if (resolved && resolved !== resolvedFor) replacements.set(resolvedFor, resolved);
+      continue;
+    }
+
+    // A static import must resolve. Leaving one unresolved would emit a module
+    // whose own import graph reaches outside the local cache, which is not what
+    // the runtime loader is handed anywhere else.
+    if (!dynamicOnly.has(specifier)) throw outcome.reason;
+
+    logger.warn("Leaving an unresolvable dynamic specifier for runtime resolution", {
+      specifier,
+      error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+    });
   }
 
   return replacements;

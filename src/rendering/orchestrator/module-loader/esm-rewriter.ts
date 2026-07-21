@@ -2,10 +2,33 @@ import { rendererLogger } from "#veryfront/utils";
 import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { generateHash } from "./cache.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 
 const logger = rendererLogger.component("module-loader");
 
 type PathResolver = (path: string) => string;
+
+/**
+ * Specifiers `code` imports statically, as opposed to through `import(...)` or
+ * merely mentioning in a string.
+ *
+ * A lex failure returns every discovered specifier as static, so an unparseable
+ * bundle keeps the pre-graceful-degradation behaviour of failing loudly rather
+ * than quietly shipping a remote dependency.
+ */
+async function staticImportSpecifiers(code: string): Promise<Set<string>> {
+  try {
+    const imports = await parseImports(code);
+    return new Set(
+      imports.filter((imp) => imp.d === -1 && imp.n).map((imp) => imp.n as string),
+    );
+  } catch (error) {
+    logger.debug("Could not lex a fetched module; treating its imports as static", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return new Set(code.match(/https:\/\/esm\.sh\/[^"']+/g) ?? []);
+  }
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -77,7 +100,15 @@ export async function fetchEsmModule(
   }
 
   const urlArray = Array.from(allEsmUrls);
-  const cachedPaths = await Promise.all(
+  const staticUrls = await staticImportSpecifiers(code);
+  // Nested pre-fetches of a URL this module only reaches lazily are
+  // best-effort: a broken esm.sh build for one package logs a warning and the
+  // URL stays in the emitted code for the runtime to resolve at call time. A
+  // URL the module imports statically is part of its own import graph and must
+  // still resolve here, so the emitted artifact's static dependencies stay
+  // local. See `transforms/esm/specifier-resolver.ts` for the same rule on the
+  // SSR transform path.
+  const settledPaths = await Promise.allSettled(
     urlArray.map((esmUrl) => fetchEsmModule(esmUrl, tmpDir, localAdapter, esmCache)),
   );
 
@@ -85,12 +116,30 @@ export async function fetchEsmModule(
     const replacementMap = new Map<string, string>();
     for (let i = 0; i < urlArray.length; i++) {
       const url = urlArray[i];
-      const cached = cachedPaths[i];
-      if (url && cached) replacementMap.set(url, `file://${cached}`);
+      const result = settledPaths[i];
+      if (!url || !result) continue;
+      if (result.status === "fulfilled") {
+        replacementMap.set(url, `file://${result.value}`);
+        continue;
+      }
+
+      // A statically imported dependency must be local before this module is
+      // handed to the runtime loader, so its failure stays fatal.
+      if (staticUrls.has(url)) throw result.reason;
+
+      logger.warn("Leaving an unfetchable lazy esm.sh module for runtime resolution", {
+        url,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      });
     }
 
-    const combinedPattern = new RegExp(urlArray.map(escapeRegExp).join("|"), "g");
-    code = code.replace(combinedPattern, (m) => replacementMap.get(m) ?? m);
+    if (replacementMap.size) {
+      const combinedPattern = new RegExp(
+        Array.from(replacementMap.keys()).map(escapeRegExp).join("|"),
+        "g",
+      );
+      code = code.replace(combinedPattern, (m) => replacementMap.get(m) ?? m);
+    }
   }
 
   const hash = await generateHash(url);
