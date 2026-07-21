@@ -5,6 +5,7 @@ import { join } from "#veryfront/compat/path";
 import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
+  isSpecifierResolutionError,
   loadHandlerModule,
   resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
@@ -143,6 +144,75 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  // Deno resolves the direct import itself and knows nothing about `@/`, so the
+  // route only loads if the failed direct import falls back to bundling, where
+  // the import map plugin resolves the alias.
+  it("loads a local route that imports through the project's @/ alias", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "lib"), { recursive: true });
+    await fs.mkdir(join(tmpDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "greeting.ts"),
+      `export const greeting = "aliased";`,
+    );
+
+    const modulePath = join(tmpDir, "pages", "api", "aliased.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { greeting } from "@/lib/greeting.ts";`,
+        `export function GET() { return new Response(greeting); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+
+    const route = await loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  // Bundling reads the route through the adapter; a direct import does not. A
+  // module that threw while evaluating must surface its own error rather than
+  // be evaluated a second time under bundling semantics.
+  it("does not retry a module whose own error quotes a resolver phrase", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `throw new Error("Cannot find module 'config'");`,
+        `export function GET() { return new Response("ok"); }`,
+      ].join("\n"),
+    );
+
+    let readCount = 0;
+    const countingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => {
+          readCount++;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    let caught = "";
+    try {
+      await loadHandlerModule({ projectDir: tmpDir, modulePath, adapter: countingAdapter });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(caught, /Cannot find module 'config'/);
+    assertEquals(readCount, 0, "the broken module was re-read for bundling");
   });
 
   it("throws on missing file", async () => {
@@ -1036,5 +1106,56 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
     try {
       await fs.remove(realProject, { recursive: true });
     } catch (_) { /* best effort */ }
+  });
+});
+
+describe("isSpecifierResolutionError", () => {
+  // Direct import leaves specifier resolution to the runtime, which knows
+  // nothing about the project's `@/` alias — those routes used to 500 with a
+  // flat "Handler not found". Only resolution failures may fall back to
+  // bundling; a genuinely broken module must still surface its own error.
+  it("recognises an unresolved bare or aliased specifier", () => {
+    for (
+      const message of [
+        // Deno appends a hint on later lines; the specifier opens the message.
+        `Import "@/lib/uses-crypto" not a dependency\n  hint: try running \`deno add\``,
+        `Module not found "file:///p/lib/x.js".`,
+        `Relative import path "lib/x.ts" not prefixed with / or ./ or ../`,
+      ]
+    ) {
+      assertEquals(isSpecifierResolutionError(new TypeError(message)), true, message);
+    }
+  });
+
+  it("does not treat a genuine module error as a resolution failure", () => {
+    assertEquals(isSpecifierResolutionError(new SyntaxError("Unexpected token }")), false);
+    assertEquals(isSpecifierResolutionError(new TypeError("x is not a function")), false);
+    assertEquals(isSpecifierResolutionError(new Error("boom")), false);
+  });
+
+  // A route is free to throw whatever it likes. Matching those phrases anywhere
+  // in the message used to hand a broken module to the bundling loader, which
+  // evaluates it a second time under different semantics.
+  it("does not match a module's own error that quotes a resolver phrase", () => {
+    for (
+      const message of [
+        `Cannot find module 'config'`,
+        `Setup failed: Module not found "config"`,
+        `Import "x" not a dependency, said the module`,
+      ]
+    ) {
+      assertEquals(isSpecifierResolutionError(new Error(message)), false, message);
+    }
+
+    // Not even when the module throws the type Deno's resolver uses.
+    assertEquals(
+      isSpecifierResolutionError(new TypeError(`config error: Module not found "db"`)),
+      false,
+    );
+  });
+
+  it("ignores non-Error values", () => {
+    assertEquals(isSpecifierResolutionError(null), false);
+    assertEquals(isSpecifierResolutionError("not a dependency"), false);
   });
 });
