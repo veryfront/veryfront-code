@@ -1067,6 +1067,49 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       await Deno.remove(cacheDir, { recursive: true });
     }
   });
+
+  it("serves a TypeScript source request as JavaScript", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-ts-content-type-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/lib`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/lib/constants.ts`,
+        `export const SITE_NAME: string = "veryfront";\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/lib/constants.ts"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type"), "application/javascript; charset=utf-8");
+      assertStringIncludes(await response.text(), "SITE_NAME");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("serves a JSON module requested with a .js suffix as JSON", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-json-content-type-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/lib`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/lib/data.json`, `{"a":1}\n`);
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/lib/data.json.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type"), "application/json; charset=utf-8");
+      assertEquals(JSON.parse(await response.text()), { a: 1 });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
 });
 
 describe("getDevModuleContentType", () => {
@@ -1089,5 +1132,21 @@ describe("getDevModuleContentType", () => {
 
   it("serves extensionless paths as JavaScript", () => {
     assertEquals(getDevModuleContentType("pages/index"), "application/javascript; charset=utf-8");
+  });
+
+  // The import rewriter appends `.js` to any specifier whose extension it does
+  // not recognise, so `@/lib/data.json` reaches the server as `lib/data.json.js`
+  // while the body stays raw JSON. Typing that as JavaScript makes the browser
+  // throw a syntax error on the first `:` in the object.
+  it("serves a JSON module requested with a .js suffix as JSON", () => {
+    assertEquals(getDevModuleContentType("lib/data.json.js"), "application/json; charset=utf-8");
+  });
+
+  it("serves a CSS module requested with a .js suffix as CSS", () => {
+    assertEquals(getDevModuleContentType("styles/globals.css.js"), "text/css; charset=utf-8");
+  });
+
+  it("still serves plain .js as JavaScript", () => {
+    assertEquals(getDevModuleContentType("lib/legacy.js"), "application/javascript; charset=utf-8");
   });
 });
