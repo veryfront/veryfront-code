@@ -39,7 +39,8 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     const script = getHMRScript(3000);
     assertStringIncludes(script, "function vfStudioTargetOrigin()");
     assertStringIncludes(script, "vfStudioTargetOrigin(),");
-    assertStringIncludes(script, '"https://studio.veryfront.com"');
+    assertStringIncludes(script, '"https://veryfront.com"');
+    assertEquals(script.includes('"https://studio.veryfront.com"'), false);
     assertEquals(script.includes("endsWith('.veryfront"), false);
     assertEquals(script.includes(".veryfront.dev"), false);
     assertEquals(script.includes("}, '*')"), false);
