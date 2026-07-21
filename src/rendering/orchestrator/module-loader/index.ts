@@ -17,6 +17,7 @@ import { invalidateMdxEsmModule } from "#veryfront/transforms/mdx/esm-module-loa
 import {
   resolveModuleDependencies,
   rewriteResolvedDependencyImports,
+  type TransformedModuleDependency,
 } from "./dependency-resolver.ts";
 import { persistTransformedModule } from "./module-persistence.ts";
 import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
@@ -49,6 +50,7 @@ export async function transformModuleWithDeps(
   localAdapter: RuntimeAdapter,
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
+  lineage: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(
@@ -83,25 +85,56 @@ export async function transformModuleWithDeps(
     projectDir,
   });
 
-  const transformedDeps = await Promise.all(
+  // The module cache is only written once a transform completes, so it cannot
+  // break a cycle that is still in progress. Carry the chain instead.
+  const nextLineage = new Set(lineage).add(filePath);
+
+  const transformedDeps = (await Promise.all(
     resolvedDeps.filter((d) => d.depFilePath).map(async (dep) => {
+      // `await import()` is how a module graph legitimately breaks an import
+      // cycle, so following one eagerly can lead straight back to a module
+      // further up this chain and recurse until the worker dies. Leave the
+      // specifier as authored; the runtime resolves it when the branch runs.
+      if (nextLineage.has(dep.depFilePath!)) {
+        logger.debug("Skipping dependency already in the transform chain:", {
+          path: dep.path,
+          depFilePath: dep.depFilePath,
+        });
+        return null;
+      }
+
       logger.debug("Found dependency:", {
         path: dep.path,
         depFilePath: dep.depFilePath,
         isLocalLib: dep.isLocalLib,
       });
 
-      const depTempPath = await transformModuleWithDeps(
-        dep.depFilePath!,
-        tmpDir,
-        localAdapter,
-        config,
-        dep.isLocalLib,
-      );
+      try {
+        const depTempPath = await transformModuleWithDeps(
+          dep.depFilePath!,
+          tmpDir,
+          localAdapter,
+          config,
+          dep.isLocalLib,
+          nextLineage,
+        );
 
-      return { ...dep, depTempPath };
+        return { ...dep, depTempPath };
+      } catch (error) {
+        // A static import has to resolve for the importer to run at all. A
+        // dynamic one may never be evaluated, so a module behind an untaken
+        // branch must not fail the page that merely mentions it.
+        if (!dep.isDynamic) throw error;
+
+        logger.warn("Leaving an unresolvable dynamic dependency as authored:", {
+          path: dep.path,
+          depFilePath: dep.depFilePath,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
     }),
-  );
+  )).filter((dep): dep is TransformedModuleDependency => dep !== null);
 
   fileContent = rewriteResolvedDependencyImports(fileContent, transformedDeps);
   for (const dep of transformedDeps) {

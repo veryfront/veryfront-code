@@ -95,6 +95,51 @@ describe("module-loader/transformModuleWithDeps", () => {
     );
   });
 
+  // A dynamic import is how a module graph legitimately breaks a cycle. Before
+  // dynamic specifiers were followed, this shape terminated because the cycle
+  // edge was invisible; following it eagerly recurses until the worker dies.
+  // The race turns a regression into a failure rather than a hung suite.
+  it("does not recurse forever when a dynamic import closes a cycle", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": [
+          `import { a } from "../lib/a.json";`,
+          `export const pageValue = a;`,
+        ].join("\n"),
+        "lib/a.json": [
+          `export const a = "cycle";`,
+          `export async function later() { return await import("../app/page.json"); }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let timer = 0;
+        const transformed = await Promise.race([
+          transformModuleWithDeps(
+            join(projectDir, "app/page.json"),
+            tmpDir,
+            config.adapter,
+            config,
+          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("transform did not terminate")), 10_000);
+          }),
+        ]).finally(() => clearTimeout(timer));
+
+        assertStringIncludes(transformed, "/app/page.json");
+
+        // The cycle edge is left as the author wrote it, so the runtime
+        // resolves it if that branch is ever taken.
+        const depCode = await Deno.readTextFile(
+          assertTransformedImportPath(
+            await Deno.readTextFile(transformed),
+            "/lib/a.json",
+          ),
+        );
+        assertStringIncludes(depCode, `import("../app/page.json")`);
+      },
+    );
+  });
+
   it("resolves relative imports before rewriting them to file URLs", async () => {
     await withModuleLoaderFixture(
       {
