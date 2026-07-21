@@ -47,4 +47,95 @@ describe("module-loader/module-persistence", () => {
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
+
+  it("recreates the output directory when it disappears after being cached", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "lib/uses-crypto.ts");
+    const moduleCache = new Map<string, string>();
+
+    try {
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+
+      const first = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const a = 1;",
+        localAdapter,
+        moduleCache,
+        cacheKey: "first",
+      });
+      assertEquals(await Deno.readTextFile(first), "export const a = 1;");
+
+      // Something outside the loader wipes the cache dir (manual `rm -rf .cache`,
+      // a cache sweep, a container restart). The mkdir memo still claims it exists.
+      await Deno.remove(join(tmpDir, "lib"), { recursive: true });
+
+      const second = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const a = 2;",
+        localAdapter,
+        moduleCache,
+        cacheKey: "second",
+      });
+      assertEquals(await Deno.readTextFile(second), "export const a = 2;");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not cache a failed mkdir as a created directory", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "lib/transient.ts");
+    const moduleCache = new Map<string, string>();
+
+    // A transient mkdir failure (EMFILE under concurrent compilation) must not
+    // poison the memo — otherwise every later write to that directory ENOENTs.
+    let failNextMkdir = true;
+    const stubFs = Object.create(localAdapter.fs) as typeof localAdapter.fs;
+    stubFs.mkdir = (path: string, options?: { recursive?: boolean }) => {
+      if (failNextMkdir) {
+        failNextMkdir = false;
+        return Promise.reject(new Error("EMFILE: too many open files, mkdir"));
+      }
+      return localAdapter.fs.mkdir(path, options);
+    };
+    const stubAdapter = Object.create(localAdapter) as typeof localAdapter;
+    Object.defineProperty(stubAdapter, "fs", { value: stubFs });
+
+    try {
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+
+      await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const b = 1;",
+        localAdapter: stubAdapter,
+        moduleCache,
+        cacheKey: "transient",
+      }).catch(() => undefined);
+
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const b = 2;",
+        localAdapter: stubAdapter,
+        moduleCache,
+        cacheKey: "transient-retry",
+      });
+      assertEquals(await Deno.readTextFile(result), "export const b = 2;");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
 });
