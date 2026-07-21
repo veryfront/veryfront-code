@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { rewriteEsmPaths } from "./esm-rewriter.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
   describe("rewriteEsmPaths", () => {
@@ -53,6 +54,95 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const result = rewriteEsmPaths(code, urlBase);
       // Bare specifiers should be untouched
       assertEquals(result.includes('"react"'), true);
+    });
+  });
+
+  describe("fetchEsmModule", () => {
+    const tmpDir = "/tmp/esm-rewriter-test";
+    const files = new Map<string, string>();
+    const localAdapter = {
+      fs: {
+        writeFile(path: string, content: string) {
+          files.set(path, content);
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    let originalFetch: typeof fetch;
+
+    beforeEach(() => {
+      files.clear();
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    function jsonResponse(body: string, status = 200): Response {
+      return new Response(body, {
+        status,
+        headers: { "Content-Type": "application/javascript" },
+      });
+    }
+
+    it("resolves the top-level URL when all nested URLs succeed", async () => {
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(
+            jsonResponse(`import { a } from "https://esm.sh/a";`),
+          );
+        }
+        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse(`export const a = 1;`));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+      assertEquals(result.startsWith(tmpDir), true);
+      // The root's reference to "https://esm.sh/a" should have been rewritten
+      // to the cached file path.
+      const rootContent = files.get(result) ?? "";
+      assertEquals(rootContent.includes("file://"), true);
+      assertEquals(rootContent.includes("https://esm.sh/a"), false);
+    });
+
+    it("does not abort the render when a nested URL fetch fails", async () => {
+      const esmCache = new Map<string, string>();
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(
+            jsonResponse(
+              `import { a } from "https://esm.sh/a";\nimport("https://esm.sh/broken");`,
+            ),
+          );
+        }
+        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse(`export const a = 1;`));
+        if (url === "https://esm.sh/broken") {
+          return Promise.resolve(new Response("upstream broken", { status: 500 }));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+      const rootContent = files.get(result) ?? "";
+      // Successful URL replaced with file://; failed URL preserved for runtime
+      // resolution instead of aborting the whole render.
+      assertEquals(rootContent.includes("file://"), true);
+      assertEquals(rootContent.includes("https://esm.sh/broken"), true);
+    });
+
+    it("still throws when the top-level URL itself fails", async () => {
+      const esmCache = new Map<string, string>();
+      globalThis.fetch =
+        (() => Promise.resolve(new Response("upstream broken", { status: 500 }))) as typeof fetch;
+
+      await assertRejects(
+        () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+        Error,
+      );
     });
   });
 });

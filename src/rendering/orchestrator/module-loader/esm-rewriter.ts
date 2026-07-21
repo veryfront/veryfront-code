@@ -77,7 +77,12 @@ export async function fetchEsmModule(
   }
 
   const urlArray = Array.from(allEsmUrls);
-  const cachedPaths = await Promise.all(
+  // Nested pre-fetches are best-effort. If a single upstream URL is unavailable
+  // (e.g. a broken esm.sh build for one package), we log a warning and leave
+  // the URL untouched in the emitted code so the runtime module loader — and
+  // any surrounding try/catch — can handle it. A single failed nested fetch
+  // must not abort the whole render.
+  const settledPaths = await Promise.allSettled(
     urlArray.map((esmUrl) => fetchEsmModule(esmUrl, tmpDir, localAdapter, esmCache)),
   );
 
@@ -85,12 +90,25 @@ export async function fetchEsmModule(
     const replacementMap = new Map<string, string>();
     for (let i = 0; i < urlArray.length; i++) {
       const url = urlArray[i];
-      const cached = cachedPaths[i];
-      if (url && cached) replacementMap.set(url, `file://${cached}`);
+      const result = settledPaths[i];
+      if (!url || !result) continue;
+      if (result.status === "fulfilled") {
+        replacementMap.set(url, `file://${result.value}`);
+      } else {
+        logger.warn("Skipping nested esm.sh module; leaving URL for runtime resolution", {
+          url,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
     }
 
-    const combinedPattern = new RegExp(urlArray.map(escapeRegExp).join("|"), "g");
-    code = code.replace(combinedPattern, (m) => replacementMap.get(m) ?? m);
+    if (replacementMap.size) {
+      const combinedPattern = new RegExp(
+        Array.from(replacementMap.keys()).map(escapeRegExp).join("|"),
+        "g",
+      );
+      code = code.replace(combinedPattern, (m) => replacementMap.get(m) ?? m);
+    }
   }
 
   const hash = await generateHash(url);
