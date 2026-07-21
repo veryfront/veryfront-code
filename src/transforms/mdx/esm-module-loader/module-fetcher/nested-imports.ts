@@ -140,30 +140,46 @@ export interface ResolveNestedModuleImportsInput {
 }
 
 /**
+ * Whether a path names the index module of its directory.
+ *
+ * The check is on the file name rather than on an extension list: which
+ * extensions reach here depends on the resolver in play (the project adapter
+ * resolves `.md` as well), and a path can arrive either rewritten to `.js` or
+ * still carrying its source extension. A file named `index` is the directory's
+ * module however it is spelled.
+ */
+function namesIndexModule(path: string): boolean {
+  const fileName = path.split("/").pop() ?? "";
+  return stripFileExtension(fileName) === "index";
+}
+
+function stripFileExtension(path: string): string {
+  return path.replace(/\.[^./]+$/, "");
+}
+
+/**
  * The path a module's own relative imports should resolve against.
  *
  * A directory barrel lives at `lib/index.ts` but is addressed as
  * `_vf_modules/lib`. Resolving its children against `_vf_modules/lib.js` drops
  * the trailing segment as if it were a filename, so `./constants.js` becomes
- * `_vf_modules/constants.js` — one directory too high. The file is then not
+ * `_vf_modules/constants.js`, one directory too high. The file is then not
  * found and gets replaced by a stub, and the barrel silently stops re-exporting
  * anything: `does not provide an export named 'COLORS'`.
  *
  * When the module actually resolved to an index file, keep the directory
- * segment by addressing it as `<dir>/index.js`.
+ * segment by addressing it as `<dir>/index.js`. A path that already names its
+ * own index file is left alone, whichever extension it carries: appending a
+ * second `/index.js` would invent a directory that holds no files at all.
  */
 export function resolveNestedImportBase(
   normalizedPath: string,
   actualFilePath?: string,
 ): string {
-  if (!actualFilePath || !/(?:^|\/)index\.(?:tsx?|jsx?|mdx|md)$/.test(actualFilePath)) {
-    return normalizedPath;
-  }
+  if (!actualFilePath || !namesIndexModule(actualFilePath)) return normalizedPath;
+  if (namesIndexModule(normalizedPath)) return normalizedPath;
 
-  const withoutExt = normalizedPath.replace(/\.(?:js|mjs)$/, "");
-  if (withoutExt.endsWith("/index")) return normalizedPath;
-
-  return `${withoutExt}/index.js`;
+  return `${stripFileExtension(normalizedPath)}/index.js`;
 }
 
 /**
