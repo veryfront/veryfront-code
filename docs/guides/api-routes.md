@@ -25,9 +25,7 @@ export function GET() {
 }
 ```
 
-Use `pages/api/**` in the pages router. Export named HTTP method handlers or a `default` fallback handler. Each handler receives an `APIContext` as `ctx`; use `ctx.request` for the raw request, `ctx.params` for route params, and `ctx.query` for query parameters.
-
-The `ctx.json` helper is intentionally overloaded by arity: `ctx.json()` reads the request body as JSON, while `ctx.json(data, init?)` returns a JSON `Response`. Use `ctx.request` directly when you need lower-level request APIs such as streaming, form data, or text parsing.
+Use `pages/api/**` in the pages router. Export named HTTP method handlers or a `default` fallback handler. Each handler receives an `APIContext` as `ctx`; use `ctx.request` for the raw request, `ctx.params` for route params, `ctx.query` for query parameters, and `ctx.json(data)` or `Response.json(data)` to return JSON. To read a posted JSON body, use `ctx.body()`, which parses it once and answers a 400 if it is malformed.
 
 ```ts
 // pages/api/hello.ts
@@ -35,6 +33,11 @@ import type { APIContext } from "veryfront";
 
 export function GET(ctx: APIContext) {
   return ctx.json({ message: "Hello, world!" });
+}
+
+export async function POST(ctx: APIContext) {
+  const { name } = await ctx.body<{ name: string }>();
+  return ctx.json({ message: `Hello, ${name}!` });
 }
 ```
 

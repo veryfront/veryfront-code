@@ -34,7 +34,7 @@ import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "n
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { isDataControlResult, toDataControlResult } from "#veryfront/data/helpers.ts";
 import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import { createJsonHelper } from "#veryfront/routing/api/context-builder.ts";
+import { createBodyReader, createJsonHelper } from "#veryfront/routing/api/context-builder.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
@@ -478,10 +478,10 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
           cookies,
           headers: request.headers,
           url,
-          // The same helper the in-process context uses, so `await ctx.json()`
-          // reads the request body here too. A handler must behave the same
-          // whether or not isolation is enabled.
+          // The same helpers the in-process context uses, so a handler behaves
+          // the same whether or not isolation is enabled.
           json: createJsonHelper(request),
+          body: createBodyReader(request),
           text: (data: string, init?: ResponseInit): Response =>
             new Response(data, {
               ...init,

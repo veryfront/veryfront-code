@@ -1010,7 +1010,7 @@ import type { APIContext } from "veryfront";
 import { createRedisBackend } from "veryfront/workflow/backends/redis";
 
 export async function POST(ctx: APIContext) {
-  const { task, mode, maxIterations } = await ctx.json();
+  const { task, mode, maxIterations } = await ctx.body();
 
   const backend = createRedisBackend({
     url: Deno.env.get("REDIS_URL")!,
