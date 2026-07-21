@@ -196,3 +196,28 @@ describe("browser-node-builtin-imports", () => {
     assertEquals(browserNodeBuiltinImportsPlugin.condition?.(ctx("browser")), true);
   });
 });
+
+describe("browser-node-builtin-imports/real polyfills", () => {
+  // node:async_hooks resolves to a polyfill that really does export
+  // AsyncLocalStorage, so the named import links. Rewriting it to a destructure
+  // moves the binding out of link position, and a cyclic graph that reads it at
+  // evaluation time then throws "Cannot access before initialization".
+  it("leaves a builtin backed by a real polyfill untouched", async () => {
+    const code = [
+      `import { AsyncLocalStorage } from "node:async_hooks";`,
+      `export const store = new AsyncLocalStorage();`,
+    ].join("\n");
+
+    assertEquals(await rewriteNodeBuiltinNamedImports(code), code);
+  });
+
+  it("still rewrites a builtin that falls back to the noop", async () => {
+    const code =
+      `import { createHash } from "node:crypto";\nexport const h = () => createHash("sha256");`;
+
+    const result = await rewriteNodeBuiltinNamedImports(code);
+
+    assertStringIncludes(result, `import * as`);
+    assertStringIncludes(result, `const { createHash }`);
+  });
+});
