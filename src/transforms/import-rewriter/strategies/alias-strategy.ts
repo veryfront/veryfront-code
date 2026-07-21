@@ -45,9 +45,10 @@ export class AliasStrategy implements ImportRewriteStrategy {
     const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
     const depth = fileDir.split("/").filter(Boolean).length;
 
-    let relativePath = depth === 0 ? `./${path}` : `${"../".repeat(depth)}${path}`;
+    const prefix = depth === 0 ? "./" : "../".repeat(depth);
+    let relativePath = normalizeExtension(`${prefix}${path}`);
 
-    if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(relativePath)) {
+    if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(relativePath)) {
       relativePath = `${relativePath}.js`;
     }
 

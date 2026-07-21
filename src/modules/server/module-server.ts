@@ -1064,7 +1064,15 @@ function getModuleHeaders(
   };
 }
 
-function getDevModuleContentType(modulePath: string): string {
+/** Source extensions the module server compiles to JavaScript before serving. */
+const COMPILED_TO_JS_EXTENSIONS = /\.(?:tsx?|jsx|mdx|md)$/;
+
+/**
+ * Content type for a dev module response.
+ *
+ * Exported for testing.
+ */
+export function getDevModuleContentType(modulePath: string): string {
   const normalizedPath = modulePath.toLowerCase();
 
   if (normalizedPath.endsWith(".map") || normalizedPath.endsWith(".json")) {
@@ -1073,6 +1081,14 @@ function getDevModuleContentType(modulePath: string): string {
 
   if (normalizedPath.endsWith(".css")) {
     return "text/css; charset=utf-8";
+  }
+
+  // The request path carries the *source* extension, but the body we serve is
+  // always the compiled JavaScript. Typing the response from the source
+  // extension yields `application/typescript`, which browsers refuse to execute
+  // as a module under strict MIME checking.
+  if (COMPILED_TO_JS_EXTENSIONS.test(normalizedPath)) {
+    return "application/javascript; charset=utf-8";
   }
 
   const detected = getContentTypeForPath(normalizedPath);
