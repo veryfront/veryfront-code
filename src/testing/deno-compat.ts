@@ -17,6 +17,7 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { scaleMs } from "./timing.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { isAlreadyExistsError, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 export {
   chmod,
@@ -44,7 +45,7 @@ export {
   setEnv,
 } from "#veryfront/platform/compat/process.ts";
 
-/** Create temp file. */
+/** Atomically create a uniquely named temporary file. */
 export async function makeTempFile(
   options?: { prefix?: string; suffix?: string },
 ): Promise<string> {
@@ -53,23 +54,48 @@ export async function makeTempFile(
     return await Deno.makeTempFile(options);
   }
 
-  const [{ default: os }, { default: fs }, { default: path }] = await Promise.all([
+  const [{ default: os }, { default: fs }, { default: path }, { randomUUID }] = await Promise.all([
     import("node:os"),
     import("node:fs/promises"),
     import("node:path"),
+    import("node:crypto"),
   ]);
 
   const prefix = options?.prefix ?? "tmp-";
   const suffix = options?.suffix ?? "";
-  const randomPart = Math.random().toString(36).substring(2, 10);
-  const filename = `${prefix}${randomPart}${suffix}`;
-  const tempPath = path.join(os.tmpdir(), filename);
+  validateTempAffix(prefix);
+  validateTempAffix(suffix);
 
-  await fs.writeFile(tempPath, "");
-  return tempPath;
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const tempPath = path.join(os.tmpdir(), `${prefix}${randomUUID()}${suffix}`);
+    let handle: Awaited<ReturnType<typeof fs.open>>;
+    try {
+      handle = await fs.open(tempPath, "wx", 0o600);
+    } catch (error) {
+      if (isAlreadyExistsError(error)) continue;
+      throw error;
+    }
+
+    try {
+      await handle.close();
+      return tempPath;
+    } catch (error) {
+      try {
+        await fs.rm(tempPath, { force: true });
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Temporary file handle close and cleanup both failed",
+        );
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("Unable to allocate a unique temporary file after 16 attempts");
 }
 
-/** Options accepted by make temp dir with. */
+/** Atomically create a uniquely named temporary directory. */
 export async function makeTempDirWithOptions(options?: {
   prefix?: string;
   dir?: string;
@@ -87,12 +113,15 @@ export async function makeTempDirWithOptions(options?: {
 
   const baseDir = options?.dir ?? os.tmpdir();
   const prefix = options?.prefix ?? "tmp-";
-  const randomPart = Math.random().toString(36).substring(2, 10);
-  const dirname = `${prefix}${randomPart}`;
-  const tempPath = path.join(baseDir, dirname);
+  validateTempAffix(prefix);
 
-  await fs.mkdir(tempPath, { recursive: true });
-  return tempPath;
+  return await fs.mkdtemp(path.join(baseDir, prefix));
+}
+
+function validateTempAffix(value: string): void {
+  if (/[\\/\0]/.test(value)) {
+    throw new Error('Invalid character in prefix or suffix: "/"');
+  }
 }
 
 /** Wait until a condition succeeds. */
@@ -134,16 +163,13 @@ export function exit(code: number): never {
   process.exit(code);
 }
 
-/** Applies temp dir. */
+/** Run a callback with a temporary directory and reliably remove it afterward. */
 export async function withTempDir<T>(
   fn: (tempDir: string) => Promise<T>,
   options?: { prefix?: string },
 ): Promise<T> {
   const tempDir = await makeTempDirWithOptions({ prefix: options?.prefix ?? "test-" });
-
-  try {
-    return await fn(tempDir);
-  } finally {
+  return await runWithCleanup("temporary directory", tempDir, fn, async () => {
     try {
       if (isDeno) {
         // @ts-ignore - Deno global
@@ -152,22 +178,19 @@ export async function withTempDir<T>(
         const { default: fs } = await import("node:fs/promises");
         await fs.rm(tempDir, { recursive: true, force: true });
       }
-    } catch (_) {
-      /* expected: temp dir may already be removed or inaccessible */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
-  }
+  });
 }
 
-/** Applies temp file. */
+/** Run a callback with a temporary file and reliably remove it afterward. */
 export async function withTempFile<T>(
   fn: (tempFile: string) => Promise<T>,
   options?: { prefix?: string; suffix?: string },
 ): Promise<T> {
   const tempFile = await makeTempFile({ prefix: options?.prefix, suffix: options?.suffix });
-
-  try {
-    return await fn(tempFile);
-  } finally {
+  return await runWithCleanup("temporary file", tempFile, fn, async () => {
     try {
       if (isDeno) {
         // @ts-ignore - Deno global
@@ -176,18 +199,67 @@ export async function withTempFile<T>(
         const { default: fs } = await import("node:fs/promises");
         await fs.rm(tempFile, { force: true });
       }
-    } catch (_) {
-      /* expected: temp file may already be removed or inaccessible */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
-  }
+  });
 }
 
-/** Applies env. */
+async function runWithCleanup<T>(
+  label: string,
+  path: string,
+  fn: (path: string) => Promise<T>,
+  cleanup: () => Promise<void>,
+): Promise<T> {
+  let operationFailed = false;
+  let operationError: unknown;
+  let result: T | undefined;
+
+  try {
+    result = await fn(path);
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+
+  let cleanupFailure: Error | undefined;
+  try {
+    await cleanup();
+  } catch (error) {
+    cleanupFailure = new Error(`${label} cleanup failed`, { cause: error });
+  }
+
+  if (cleanupFailure) {
+    if (operationFailed) {
+      throw new AggregateError(
+        [operationError, cleanupFailure],
+        `${label} callback and cleanup both failed`,
+      );
+    }
+    throw cleanupFailure;
+  }
+  if (operationFailed) throw operationError;
+  return result as T;
+}
+
+/** Run a callback with an async-context-isolated environment overlay. */
 export async function withEnv<T>(
   vars: Record<string, string>,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const { getEnv, setEnv, deleteEnv } = await import("../platform/compat/process.ts");
+  const { deleteEnv, getEnv, getEnvOverlayStorage, setEnv } = await import(
+    "../platform/compat/process.ts"
+  );
+
+  const storage = getEnvOverlayStorage();
+  if (storage?.run) {
+    const active = storage.getStore();
+    const scoped = active instanceof Map
+      ? new Map<string, string | null>(active as Map<string, string | null>)
+      : new Map<string, string | null>();
+    for (const [key, value] of Object.entries(vars)) scoped.set(key, value);
+    return await storage.run(scoped, fn);
+  }
 
   const original: Record<string, string | undefined> = {};
   for (const key of Object.keys(vars)) {

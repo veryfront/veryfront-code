@@ -1,5 +1,4 @@
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { assertEquals } from "./assert.ts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "./bdd.ts";
 
@@ -9,8 +8,13 @@ const BEFORE_EACH_ENV_KEY = "VF_TEST_BEFORE_EACH_ENV_OVERLAY";
 const originalBeforeEachValue = getEnv(BEFORE_EACH_ENV_KEY);
 const SUITE_ENV_KEY = "VF_TEST_SUITE_ENV_OVERLAY";
 const originalSuiteValue = getEnv(SUITE_ENV_KEY);
+const DIRECT_ENV_KEY = "VF_TEST_DIRECT_PROCESS_ENV_OVERLAY";
+const runtimeProcess = (globalThis as Record<string, unknown>)["process"] as
+  | { env?: Record<string, string | undefined> }
+  | undefined;
+const originalDirectValue = runtimeProcess?.env?.[DIRECT_ENV_KEY];
 
-describe("BDD environment overlay", { ignore: !isDeno }, () => {
+describe("BDD environment overlay", () => {
   afterEach(() => {
     setEnv(TEST_ENV_KEY, "after-each-value");
   });
@@ -33,7 +37,27 @@ describe("BDD environment overlay", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD beforeEach environment overlay", { ignore: !isDeno }, () => {
+describe("BDD direct process environment overlay", { ignore: !runtimeProcess?.env }, () => {
+  afterAll(() => {
+    if (!runtimeProcess?.env) return;
+    if (originalDirectValue === undefined) {
+      delete runtimeProcess.env[DIRECT_ENV_KEY];
+    } else {
+      runtimeProcess.env[DIRECT_ENV_KEY] = originalDirectValue;
+    }
+  });
+
+  it("isolates direct process.env changes made by a test", () => {
+    runtimeProcess!.env![DIRECT_ENV_KEY] = "test-value";
+    assertEquals(runtimeProcess!.env![DIRECT_ENV_KEY], "test-value");
+  });
+
+  it("does not expose direct process.env changes from the previous test", () => {
+    assertEquals(runtimeProcess!.env![DIRECT_ENV_KEY], originalDirectValue);
+  });
+});
+
+describe("BDD beforeEach environment overlay", () => {
   beforeEach(() => {
     setEnv(BEFORE_EACH_ENV_KEY, "before-each-value");
   });
@@ -43,7 +67,7 @@ describe("BDD beforeEach environment overlay", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD suite environment isolation", { ignore: !isDeno }, () => {
+describe("BDD suite environment isolation", () => {
   afterAll(() => {
     if (originalBeforeEachValue === undefined) {
       deleteEnv(BEFORE_EACH_ENV_KEY);
@@ -57,7 +81,7 @@ describe("BDD suite environment isolation", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD suite-wide environment", { ignore: !isDeno }, () => {
+describe("BDD suite-wide environment", () => {
   beforeAll(() => {
     setEnv(SUITE_ENV_KEY, "suite-value");
   });
@@ -75,7 +99,7 @@ describe("BDD suite-wide environment", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD suite-wide environment cleanup", { ignore: !isDeno }, () => {
+describe("BDD suite-wide environment cleanup", () => {
   afterAll(() => {
     if (originalSuiteValue === undefined) {
       deleteEnv(SUITE_ENV_KEY);
