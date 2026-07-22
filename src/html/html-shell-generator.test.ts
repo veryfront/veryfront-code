@@ -196,58 +196,39 @@ describe("html-generation/html-shell-generator", () => {
       }
     });
 
-    it("should use projectSlug for manifest-based module preloads", async () => {
+    it("does not emit SSR-derived legacy route manifest modules as HTML preloads", async () => {
       clearAllManifests();
-      recordSSRModules("project-slug", "test-page", [
-        "_veryfront/react/components/BenchInteractiveButton.js",
+      recordSSRModules("project-slug", "dashboard", [
+        "lib/api.js",
+        "lib/files.js",
+        "lib/fs-files.js",
       ]);
 
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions({
-          mode: "production",
-          environment: "production",
-          isLocalProject: false,
-          pagePath: "pages/test-page.tsx",
-          projectId: "default",
-          projectSlug: "project-slug",
-        }),
-      );
-      clearAllManifests();
+      try {
+        const result = await wrapInHTMLShell(
+          "<div>Content</div>",
+          createMeta(),
+          createOptions({
+            projectDir: "/project",
+            pagePath: "/project/pages/dashboard.tsx",
+            mode: "production",
+            environment: "production",
+            isLocalProject: false,
+            projectId: "default",
+            projectSlug: "project-slug",
+          }),
+        );
 
-      assertStringIncludes(
-        result,
-        '<link rel="modulepreload" href="/_vf_modules/_veryfront/react/components/BenchInteractiveButton.js">',
-      );
-    });
-
-    it("escapes legacy route-manifest URLs in modulepreload attributes", async () => {
-      clearAllManifests();
-      recordSSRModules("hostile-project", "test-page", [
-        'modules/evil"><script>alert(1)</script>.js',
-      ]);
-
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions({
-          pagePath: "pages/test-page.tsx",
-          projectSlug: "hostile-project",
-        }),
-      );
-      clearAllManifests();
-
-      assertStringIncludes(
-        result,
-        'href="/_vf_modules/modules/evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
-      );
-      assertEquals(
-        result.includes(
-          'href="/_vf_modules/modules/evil"><script>alert(1)</script>.js"',
-        ),
-        false,
-      );
+        assertStringIncludes(
+          result,
+          '<link rel="modulepreload" href="/_vf_modules/pages/dashboard.js">',
+        );
+        assertEquals(result.includes("/_vf_modules/lib/api.js"), false);
+        assertEquals(result.includes("/_vf_modules/lib/files.js"), false);
+        assertEquals(result.includes("/_vf_modules/lib/fs-files.js"), false);
+      } finally {
+        clearAllManifests();
+      }
     });
 
     it("omits page and layout preloads outside the project directory", async () => {
