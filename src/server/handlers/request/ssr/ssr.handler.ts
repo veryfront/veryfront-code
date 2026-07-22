@@ -30,6 +30,7 @@ import {
   type SSRServiceLike,
 } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 
 const logger = serverLogger.component("ssr");
@@ -57,6 +58,24 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
  *
  * Business logic is delegated to SSRService.
  */
+
+/**
+ * True for errors raised while compiling or resolving project source, as
+ * opposed to errors thrown by the running application.
+ *
+ * Module-load failures arrive wrapped in a RUNTIME-category `render-error`,
+ * which loses the original category, so they are identified by their
+ * `criticalFailures` context instead: a page module that could not be *loaded*
+ * always failed to compile or resolve.
+ */
+function isBuildError(error: unknown): boolean {
+  if (!(error instanceof VeryfrontError)) return false;
+  if (error.category === "BUILD" || error.category === "MODULE") return true;
+
+  const context = error.context as { criticalFailures?: unknown } | undefined;
+  return Array.isArray(context?.criticalFailures) && context.criticalFailures.length > 0;
+}
+
 export class SSRHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "SSRHandler",
@@ -235,9 +254,11 @@ export class SSRHandler extends BaseHandler {
           return this.handleNotFound(req, ctx, slug, nonce);
         }
 
-        // Runtime errors use the dev overlay, but a project-owned error page
-        // should still take precedence when it exists.
-        if (result.errorType === "server-error" || result.errorType === "runtime") {
+        const isServerError = result.errorType === "server-error" ||
+          result.errorType === "runtime";
+        // Project error pages should beat the dev overlay for runtime errors.
+        // Build/import errors stay visible because their overlay is actionable.
+        if (isServerError && !(result.showDevOverlay && isBuildError(result.error))) {
           const customResponse = await this.tryCustomErrorFallback(req, ctx, result, nonce);
           if (customResponse) return customResponse;
         }
