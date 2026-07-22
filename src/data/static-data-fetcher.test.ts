@@ -5,6 +5,7 @@ import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
+import { notFound, redirect } from "./helpers.ts";
 
 function withProductionContext<T>(fn: () => T): T {
   return runWithCacheKeyContext(
@@ -337,6 +338,86 @@ describe("StaticDataFetcher", () => {
         assertExists(refreshedEntry);
         assertEquals((refreshedEntry.data.props as { version: number }).version, 2);
       });
+    });
+  });
+
+  describe("thrown control results", () => {
+    function throwing(error: unknown): PageWithData {
+      return {
+        default: () => null,
+        getStaticData: () => {
+          throw error;
+        },
+      };
+    }
+
+    it("treats a thrown notFound() as a 404 result without a cache context", async () => {
+      const { fetcher } = createFetcher();
+      const result = await fetcher.fetch(throwing(notFound()), createContext());
+
+      assertEquals(result.notFound, true);
+    });
+
+    // Regression: only the no-cache path handled this, so `throw notFound()`
+    // still returned a 500 in production, where a cache key always exists.
+    it("treats a thrown notFound() as a 404 result with a production cache context", async () => {
+      const { fetcher } = createFetcher();
+
+      const result = await withProductionContext(() =>
+        fetcher.fetch(throwing(notFound()), createContext())
+      );
+
+      assertEquals(result.notFound, true);
+    });
+
+    it("treats a thrown redirect() as a redirect with a production cache context", async () => {
+      const { fetcher } = createFetcher();
+
+      const result = await withProductionContext(() =>
+        fetcher.fetch(throwing(redirect("/login", true)), createContext())
+      );
+
+      assertEquals(result.redirect?.destination, "/login");
+      assertEquals(result.redirect?.permanent, true);
+    });
+
+    it("still propagates a genuine Error", async () => {
+      const { fetcher } = createFetcher();
+
+      await assertRejects(
+        () =>
+          withProductionContext(() =>
+            fetcher.fetch(
+              throwing(new Error("intentional test error from getStaticData")),
+              createContext(),
+            )
+          ),
+        Error,
+        "intentional test error from getStaticData",
+      );
+    });
+
+    // The cached path runs inside a circuit breaker, so a 404 that counted as a
+    // failure would take the whole project's static data down after five.
+    it("does not open the circuit breaker on repeated 404s", async () => {
+      const { fetcher } = createFetcher();
+
+      for (let i = 0; i < 6; i++) {
+        // A distinct path each time, so every call is a cache miss and runs
+        // the handler rather than replaying a cached 404.
+        const context = createContext({
+          url: new URL(`http://localhost/missing-${i}`),
+          request: new Request(`http://localhost/missing-${i}`, {
+            headers: { "x-project-id": "static-repeated-not-found" },
+          }),
+        });
+
+        const result = await withProductionContext(() =>
+          fetcher.fetch(throwing(notFound()), context)
+        );
+
+        assertEquals(result.notFound, true, `call ${i + 1} should still reach getStaticData`);
+      }
     });
   });
 });

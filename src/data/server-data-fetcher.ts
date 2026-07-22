@@ -1,4 +1,5 @@
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
+import { isDataControlResult, toDataControlResult } from "./helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
@@ -51,15 +52,24 @@ export class ServerDataFetcher {
         const start = performance.now();
 
         try {
-          const result = await circuitBreaker.execute(() =>
-            withTimeoutThrow(
-              useIsolation
-                ? this.fetchIsolated(options!.modulePath!, options!.projectDir!, context)
-                : Promise.resolve(pageModule.getServerData!(context)),
-              DATA_FETCH_TIMEOUT_MS,
-              `getServerData for ${pathname}`,
-            )
-          );
+          const result = await circuitBreaker.execute(async () => {
+            try {
+              return await withTimeoutThrow(
+                useIsolation
+                  ? this.fetchIsolated(options!.modulePath!, options!.projectDir!, context)
+                  : Promise.resolve(pageModule.getServerData!(context)),
+                DATA_FETCH_TIMEOUT_MS,
+                `getServerData for ${pathname}`,
+              );
+            } catch (error) {
+              // `throw notFound()` / `throw redirect(...)`: treat a thrown
+              // control result exactly like a returned one. This has to happen
+              // inside the breaker, or five legitimate 404s on the same project
+              // open it and every data route after that fails fast for 30s.
+              if (isDataControlResult(error)) return toDataControlResult(error);
+              throw error;
+            }
+          });
 
           if (result.redirect) return { redirect: result.redirect };
           if (result.notFound) return { notFound: true };
