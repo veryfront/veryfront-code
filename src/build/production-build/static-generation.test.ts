@@ -546,22 +546,29 @@ describe(
         );
       });
 
-      it("passes a synthetic request context when rendering Pages Router routes", async () => {
+      it("renders Pages Router routes with static-only data context", async () => {
         const calls: Array<{
           slug: string;
           request?: Request;
           url?: URL;
+          staticDataOnly?: boolean;
           contentSourceId?: string;
         }> = [];
         const renderer = {
           renderPage: (
             slug: string,
-            options?: { request?: Request; url?: URL; contentSourceId?: string },
+            options?: {
+              request?: Request;
+              url?: URL;
+              staticDataOnly?: boolean;
+              contentSourceId?: string;
+            },
           ) => {
             calls.push({
               slug,
               request: options?.request,
               url: options?.url,
+              staticDataOnly: options?.staticDataOnly,
               contentSourceId: options?.contentSourceId,
             });
             return Promise.resolve({
@@ -598,13 +605,14 @@ describe(
         assertExists(rootCall);
         assertExists(searchCall);
         assertEquals(rootCall.slug, "index");
-        assertEquals(rootCall.request?.method, "GET");
-        assertEquals(rootCall.request?.url, "https://example.test/");
+        assertEquals(rootCall.request, undefined);
         assertEquals(rootCall.url?.href, "https://example.test/");
+        assertEquals(rootCall.staticDataOnly, true);
         assertEquals(rootCall.contentSourceId, "release-test");
         assertEquals(searchCall.slug, "search");
-        assertEquals(searchCall.request?.url, "https://example.test/search?q=jobs");
+        assertEquals(searchCall.request, undefined);
         assertEquals(searchCall.url?.href, "https://example.test/search?q=jobs");
+        assertEquals(searchCall.staticDataOnly, true);
         assertEquals(searchCall.url?.searchParams.get("q"), "jobs");
       });
 

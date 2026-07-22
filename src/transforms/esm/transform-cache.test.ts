@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import {
   __injectCachesForTests,
   destroyTransformCache,
@@ -453,6 +454,68 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(followerResult.code, "shared-after-abort");
       assertEquals(abortedCallerPhases.includes("leader:finished"), false);
       assertEquals(followerPhases.includes("leader:finished"), true);
+    });
+
+    it("does not retain an abort listener when the caller signal is aborted before registration", async () => {
+      const controller = new AbortController();
+
+      let addAbortListenerCalls = 0;
+      let removeAbortListenerCalls = 0;
+      const originalAddEventListener = controller.signal.addEventListener.bind(controller.signal);
+      const originalRemoveEventListener = controller.signal.removeEventListener.bind(
+        controller.signal,
+      );
+
+      controller.signal.addEventListener = function addEventListener(
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | AddEventListenerOptions,
+      ): void {
+        if (type === "abort") addAbortListenerCalls++;
+        return originalAddEventListener(type, listener, options);
+      };
+
+      controller.signal.removeEventListener = function removeEventListener(
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: boolean | EventListenerOptions,
+      ): void {
+        if (type === "abort") removeAbortListenerCalls++;
+        return originalRemoveEventListener(type, listener, options);
+      };
+
+      let resolveCacheGet!: (value: string | null) => void;
+      const cacheGet = new Promise<string | null>((resolve) => {
+        resolveCacheGet = resolve;
+      });
+
+      const abortingCacheBackend: CacheBackend = {
+        type: "memory",
+        get() {
+          controller.abort(new Error("caller already timed out"));
+          return cacheGet;
+        },
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+
+      __injectCachesForTests({ cacheBackend: abortingCacheBackend });
+      const alreadyAbortedCaller = getOrComputeTransform(
+        "already-aborted-key",
+        async () => "shared-after-already-aborted",
+        300,
+        undefined,
+        controller.signal,
+      );
+
+      await assertRejects(() => alreadyAbortedCaller, Error, "caller already timed out");
+      assertEquals(addAbortListenerCalls, 0);
+      assertEquals(removeAbortListenerCalls, 0);
+
+      resolveCacheGet(null);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(addAbortListenerCalls, 0);
+      assertEquals(removeAbortListenerCalls, 0);
     });
 
     it("cleans up a failed cold-miss flight so a later call can recompute", async () => {

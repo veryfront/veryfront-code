@@ -426,8 +426,11 @@ export async function getOrComputeTransform(
     // same cold transform, and completing it warms the cache for later work.
     return await new Promise<TransformCacheResult>((resolve, reject) => {
       const onAbort = (): void => reject(signal.reason);
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
       signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
       flight.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
     });
   } finally {

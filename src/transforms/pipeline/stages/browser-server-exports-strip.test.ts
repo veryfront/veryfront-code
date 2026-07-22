@@ -744,6 +744,20 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "a, b");
     });
 
+    it("keeps side effects for ordinary imports with mixed hook-only bindings", async () => {
+      const code = [
+        `import { initClient, loadSecret } from "./client-setup.ts";`,
+        `export async function getServerData() { return { props: { token: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import "./client-setup.ts"`);
+      assertEquals(occurrences(result, "initClient"), 0);
+      assertEquals(occurrences(result, "loadSecret"), 0);
+    });
+
     it("keeps a bare side-effect import untouched", async () => {
       const code = [
         `import "../lib/polyfill.js";`,

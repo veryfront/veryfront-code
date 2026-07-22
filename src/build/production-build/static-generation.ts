@@ -79,13 +79,13 @@ function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-function createStaticRouteRequest(
+function createStaticRouteContext(
   path: string,
   baseUrl: string,
-): { request: Request; url: URL } {
+): { staticDataOnly: true; url: URL } {
   const url = new URL(path, baseUrl || "http://localhost");
   return {
-    request: new Request(url, { method: "GET" }),
+    staticDataOnly: true,
     url,
   };
 }
@@ -227,13 +227,13 @@ export async function buildPagesRoutes(
 
   for (const route of routes) {
     try {
-      const requestContext = createStaticRouteRequest(route.path, baseUrl);
+      const staticRouteContext = createStaticRouteContext(route.path, baseUrl);
       const result = await traceStep(
         `page:${route.slug}`,
         () =>
           renderer.renderPage(route.slug, {
             contentSourceId,
-            ...requestContext,
+            ...staticRouteContext,
             releaseAssetManifest: options.releaseAssetManifest,
           }),
       );

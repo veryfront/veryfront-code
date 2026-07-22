@@ -255,6 +255,42 @@ describe("RenderPipeline behavior", () => {
     });
   });
 
+  it("staticDataOnly skips request-only data hooks during static rendering", async () => {
+    const pagePath = "/project/pages/static-only.tsx";
+    let serverCalls = 0;
+    let staticCalls = 0;
+    let staticContext: Record<string, unknown> | undefined;
+    const pipeline = createPipeline(pagePath);
+
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => {
+        serverCalls++;
+        return { props: { source: "server" } };
+      },
+      getStaticData: (ctx: Record<string, unknown>) => {
+        staticCalls++;
+        staticContext = ctx;
+        return { props: { source: "static" } };
+      },
+    });
+
+    const result = await (pipeline as any).resolveDataFetching(
+      "/static-only",
+      pagePath,
+      [],
+      {
+        url: new URL("https://example.test/static-only"),
+        staticDataOnly: true,
+      },
+    );
+
+    assertEquals(serverCalls, 0);
+    assertEquals(staticCalls, 1);
+    assertEquals("request" in (staticContext ?? {}), false);
+    assertEquals("query" in (staticContext ?? {}), false);
+    assertEquals(result.pageProps, { source: "static" });
+  });
+
   it("renderPage refreshes preview caches and retries stale MDX ESM export mismatches", async () => {
     const slug = "/behavior-stale-mdx";
     let renderAttempts = 0;

@@ -34,6 +34,8 @@ export interface RenderOptions {
   delivery?: "string" | "stream";
   request?: Request;
   url?: URL;
+  /** Restrict data fetching to static hooks, even when a request context exists. */
+  staticDataOnly?: boolean;
   /** Optional cache key override; defaults to slug + normalized query params (without page/theme prefix) */
   cacheKey?: string;
   nonce?: string;

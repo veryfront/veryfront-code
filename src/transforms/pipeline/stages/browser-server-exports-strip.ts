@@ -845,7 +845,7 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
       (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
-    if (isKnownDroppableSource || bindings.some((binding) => hookClosure.has(binding))) {
+    if (isKnownDroppableSource || bindings.every((binding) => hookClosure.has(binding))) {
       return false;
     }
 

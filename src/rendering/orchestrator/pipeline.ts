@@ -363,7 +363,7 @@ export class RenderPipeline {
     const pageProps: Record<string, unknown> = {};
     const layoutProps = new Map<string, Record<string, unknown>>();
 
-    if (!options?.request || !options?.url) {
+    if (!options?.url || (!options.staticDataOnly && !options.request)) {
       return { params, pageProps, layoutProps };
     }
 
@@ -382,8 +382,8 @@ export class RenderPipeline {
 
     const dataContext: DataContext = {
       params,
-      query: options.url.searchParams,
-      request: options.request,
+      query: options.staticDataOnly ? new URLSearchParams() : options.url.searchParams,
+      request: options.request ?? new Request(options.url, { method: "GET" }),
       url: options.url,
     };
 
@@ -420,7 +420,11 @@ export class RenderPipeline {
         ),
     );
 
-    const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
+    const dataJobs = loadedModules.filter((m) =>
+      options?.staticDataOnly
+        ? typeof (m.mod as PageWithData).getStaticData === "function"
+        : hasDataFetchingFunction(m.mod)
+    );
     if (dataJobs.length === 0) {
       return { params, pageProps, layoutProps };
     }
@@ -576,7 +580,7 @@ export class RenderPipeline {
               let layoutDataMap = new Map<string, Record<string, unknown>>();
 
               const dataFetchStart = performance.now();
-              if (options?.request && options?.url) {
+              if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
                   () =>
