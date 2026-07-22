@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  composeErrorRegistry,
   getRegistryEntriesByCategory,
   getRegistryEntry,
   getRegistrySlugs,
@@ -40,5 +41,39 @@ describe("error-registry-helpers", () => {
 
   it("returns registry slugs with preserved order", () => {
     assertEquals(getRegistrySlugs(TEST_REGISTRY), ["config-problem", "server-problem"]);
+  });
+
+  it("rejects duplicate slugs while composing registry fragments", () => {
+    const duplicateRegistry = {
+      "config-problem": defineError({
+        slug: "config-problem",
+        category: "CONFIG",
+        status: 422,
+        title: "Conflicting config problem",
+      }),
+    } as const;
+
+    assertThrows(
+      () => composeErrorRegistry(TEST_REGISTRY, duplicateRegistry),
+      Error,
+      'Duplicate error registry slug "config-problem"',
+    );
+  });
+
+  it("rejects registry keys that do not match the definition slug", () => {
+    const mismatchedRegistry = {
+      "registry-key": defineError({
+        slug: "definition-slug",
+        category: "GENERAL",
+        status: 500,
+        title: "Mismatched registry entry",
+      }),
+    } as const;
+
+    assertThrows(
+      () => composeErrorRegistry(mismatchedRegistry),
+      Error,
+      'Error registry key "registry-key" does not match entry slug "definition-slug"',
+    );
   });
 });

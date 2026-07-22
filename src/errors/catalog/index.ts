@@ -5,6 +5,7 @@
  */
 
 import type { ErrorSlug } from "../error-registry.ts";
+import { composeSluggedMaps } from "../error-registry-helpers.ts";
 import type { ErrorSolution, PartialErrorCatalog } from "./types.ts";
 
 import { BUILD_ERROR_CATALOG } from "./build-errors.ts";
@@ -18,18 +19,24 @@ import { RSC_ERROR_CATALOG } from "./rsc-errors.ts";
 import { RUNTIME_ERROR_CATALOG } from "./runtime-errors.ts";
 import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 
-export const ERROR_CATALOG: PartialErrorCatalog = {
-  ...CONFIG_ERROR_CATALOG,
-  ...BUILD_ERROR_CATALOG,
-  ...RUNTIME_ERROR_CATALOG,
-  ...ROUTE_ERROR_CATALOG,
-  ...MODULE_ERROR_CATALOG,
-  ...SERVER_ERROR_CATALOG,
-  ...RSC_ERROR_CATALOG,
-  ...DEV_ERROR_CATALOG,
-  ...DEPLOYMENT_ERROR_CATALOG,
-  ...GENERAL_ERROR_CATALOG,
-};
+export function composeErrorCatalog(
+  ...catalogs: ReadonlyArray<PartialErrorCatalog>
+): PartialErrorCatalog {
+  return composeSluggedMaps("error catalog", ...catalogs) as PartialErrorCatalog;
+}
+
+export const ERROR_CATALOG: PartialErrorCatalog = composeErrorCatalog(
+  CONFIG_ERROR_CATALOG,
+  BUILD_ERROR_CATALOG,
+  RUNTIME_ERROR_CATALOG,
+  ROUTE_ERROR_CATALOG,
+  MODULE_ERROR_CATALOG,
+  SERVER_ERROR_CATALOG,
+  RSC_ERROR_CATALOG,
+  DEV_ERROR_CATALOG,
+  DEPLOYMENT_ERROR_CATALOG,
+  GENERAL_ERROR_CATALOG,
+);
 
 export function getErrorSolution(slug: ErrorSlug): ErrorSolution | null {
   return ERROR_CATALOG[slug] ?? null;
@@ -37,8 +44,13 @@ export function getErrorSolution(slug: ErrorSlug): ErrorSolution | null {
 
 export function searchErrors(query: string): ErrorSolution[] {
   const lowerQuery = query.toLowerCase();
+  const normalizedSlugQuery = query.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(
+    /-+/g,
+    "-",
+  );
 
   return Object.values(ERROR_CATALOG).filter((error) => {
+    if (normalizedSlugQuery && error.slug.includes(normalizedSlugQuery)) return true;
     if (error.title.toLowerCase().includes(lowerQuery)) return true;
     if (error.message.toLowerCase().includes(lowerQuery)) return true;
 

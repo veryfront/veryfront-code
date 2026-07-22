@@ -42,7 +42,19 @@ describe("errors/catalog/rsc-errors", () => {
     it("client-boundary-violation should have an example", () => {
       const solution = RSC_ERROR_CATALOG["client-boundary-violation"]!;
       assertEquals(typeof solution.example, "string");
-      assertEquals(solution.example?.includes("use client") ?? false, true);
+      const example = solution.example!;
+      assertEquals(example.includes("// ServerComponent.tsx"), true);
+      assertEquals(example.includes("// ClientComponent.tsx"), true);
+      assertEquals(
+        example.indexOf("// ClientComponent.tsx") < example.indexOf("'use client'"),
+        true,
+        "the client directive should be shown in the client module",
+      );
+      assertEquals(
+        example.indexOf("'use client'") < example.indexOf("import type"),
+        true,
+        "the client directive should precede client-module imports",
+      );
     });
 
     it("invalid-use-client should have an example", () => {
