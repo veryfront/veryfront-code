@@ -44,7 +44,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function getStudioContextData(item: unknown): Record<string, unknown> | undefined {

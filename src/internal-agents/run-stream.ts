@@ -682,7 +682,7 @@ export async function createRuntimeAgentStreamResponse(
       ...(mergedTools && mergedTools !== true ? Object.keys(mergedTools) : []),
       ...effectiveProviderToolNames,
     ]),
-  ];
+  ].sort();
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
