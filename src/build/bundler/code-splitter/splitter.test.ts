@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
   makeTempDir,
   mkdir,
@@ -139,6 +139,8 @@ describe("build/bundler/code-splitter/splitter", () => {
     it("strips server-only page dependencies before building production browser chunks", async () => {
       const projectDir = await makeTempDir({ prefix: "vf-splitter-project-" });
       const outDir = await makeTempDir({ prefix: "vf-splitter-out-" });
+      const previousCodeParser = tryResolve<unknown>("CodeParser");
+      unregister("CodeParser");
 
       try {
         await mkdir(join(projectDir, "app"), { recursive: true });
@@ -174,6 +176,7 @@ describe("build/bundler/code-splitter/splitter", () => {
         });
 
         await splitter.split();
+        assertEquals(tryResolve("CodeParser") !== undefined, true);
         const browserOutputs = await readJsOutputs(outDir);
 
         assertEquals(browserOutputs.includes("browser page"), true);
@@ -183,6 +186,8 @@ describe("build/bundler/code-splitter/splitter", () => {
         assertEquals(browserOutputs.includes("notFound"), false);
       } finally {
         await stop();
+        if (previousCodeParser) register("CodeParser", previousCodeParser);
+        else unregister("CodeParser");
         await remove(projectDir, { recursive: true });
         await remove(outDir, { recursive: true });
       }
