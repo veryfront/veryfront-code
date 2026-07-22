@@ -84,6 +84,27 @@ describe("VeryfrontStrategy", () => {
       );
     });
 
+    it("should redirect the root veryfront barrel to the client-safe barrel for browser", () => {
+      // Regression: the full root barrel re-exports `#veryfront/server`, which
+      // pulls `server/production-server.ts` (module top-level await) into client
+      // chunks — it 500s on the es2020 browser target and aborts hydration. A
+      // *used* value import (`import { getEnv } from "veryfront"`) is not
+      // dead-stripped, so the barrel must resolve to the server-free mirror.
+      const result = strategy.rewrite(
+        makeInfo("veryfront"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier, "/_vf_modules/_veryfront/index.client.js");
+    });
+
+    it("should redirect the root veryfront barrel to the client-safe barrel for SSR", () => {
+      const result = strategy.rewrite(
+        makeInfo("veryfront"),
+        makeCtx({ target: "ssr" }),
+      );
+      assertEquals(result.specifier, "/_vf_modules/_veryfront/index.client.js?ssr=true");
+    });
+
     it("should not apply SSR override to non-overridden modules", () => {
       const result = strategy.rewrite(
         makeInfo("veryfront/head"),

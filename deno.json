@@ -71,6 +71,7 @@
   ],
   "exports": {
     ".": "./src/index.ts",
+    "./index.client": "./src/index.client.ts",
     "./head": "./src/react/components/Head.tsx",
     "./router": "./src/react/router/index.tsx",
     "./context": "./src/react/context/index.tsx",
@@ -144,6 +145,7 @@
     "./server": "./src/server/index.ts"
   },
   "imports": {
+    "veryfront/index.client": "./src/index.client.ts",
     "veryfront/head": "./src/react/runtime/core.ts",
     "veryfront/router": "./src/react/runtime/core.ts",
     "veryfront/context": "./src/react/runtime/core.ts",
