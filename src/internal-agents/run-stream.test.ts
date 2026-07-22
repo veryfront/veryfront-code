@@ -166,6 +166,67 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedMaxOutputTokens, 1200);
   });
 
+  it("composes the runtime system prompt with project, environment, and tool context", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAgent: Agent | undefined;
+    const agent = {
+      id: "custom",
+      config: {
+        id: "custom",
+        model: "openai/gpt-5.4-nano",
+        system: "You are Custom Agent.",
+        tools: { create_file: { id: "create_file", type: "function", execute: () => "" } },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "custom",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [
+        {
+          type: "json",
+          title: "studio_context",
+          data: {
+            projectId: "ignored-when-sandbox-set",
+            branchId: null,
+            environmentContext: "<layout_context>\nVisible panels: [chat]\n</layout_context>",
+          },
+        },
+      ],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      projectAgentSandbox: { projectId: "project-1" },
+      createRuntime: (runtimeAgent) => {
+        capturedAgent = runtimeAgent;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const system = capturedAgent?.config.system;
+    assertEquals(typeof system, "function");
+    const prompt = await (system as () => Promise<string>)();
+    assertStringIncludes(prompt, "You are Custom Agent.");
+    assertStringIncludes(prompt, 'project_reference: "project-1"');
+    assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
+    assertStringIncludes(prompt, "<environment_context>");
+    assertStringIncludes(prompt, "Visible panels: [chat]");
+    assertStringIncludes(prompt, '<runtime_info>\nmodel: "openai/gpt-5.4-nano"\n</runtime_info>');
+    assertStringIncludes(prompt, "Current run tool inventory:");
+    assertStringIncludes(prompt, "- create_file");
+  });
+
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];

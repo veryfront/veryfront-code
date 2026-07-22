@@ -50,6 +50,7 @@ import {
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
+import { createInternalAgentRunSystemPromptResolver } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -670,10 +671,28 @@ export async function createRuntimeAgentStreamResponse(
         (toolName) => typeof toolName === "string" && runtimeToolAllowlist.has(toolName),
       )
       : undefined;
+  const effectiveProviderToolNames = cappedProviderTools ??
+    (Array.isArray(agent.config.providerTools)
+      ? agent.config.providerTools.filter((toolName): toolName is string =>
+        typeof toolName === "string"
+      )
+      : []);
+  const runtimeToolNames = [
+    ...new Set([
+      ...(mergedTools && mergedTools !== true ? Object.keys(mergedTools) : []),
+      ...effectiveProviderToolNames,
+    ]),
+  ];
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
       ...agent.config,
+      system: createInternalAgentRunSystemPromptResolver({
+        agent,
+        runInput: input,
+        projectId: deps.projectAgentSandbox?.projectId ?? null,
+        toolNames: runtimeToolNames,
+      }),
       tools: mergedTools,
       ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
       ...(allowedRemoteToolNames !== undefined

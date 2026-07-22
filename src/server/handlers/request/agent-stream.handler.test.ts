@@ -706,7 +706,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
-      assertEquals(capturedSystem, "Use project-scoped instructions.");
+      const resolvedSystem = typeof capturedSystem === "function"
+        ? await (capturedSystem as () => Promise<string>)()
+        : capturedSystem;
+      assertStringIncludes(String(resolvedSystem), "Use project-scoped instructions.");
       assertEquals(capturedSkills, ["support-triage"]);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
@@ -1604,7 +1607,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
       OTEL_RESOURCE_ATTRIBUTES: undefined,
     });
-    assertEquals(capturedSystem, "project_reference=support-agent-fork");
+    assertStringIncludes(capturedSystem ?? "", "project_reference=support-agent-fork");
+    assertStringIncludes(capturedSystem ?? "", '<project_context>\nproject_reference: "proj-1"');
     assertEquals(capturedMcpRequest, {
       url: "https://api.veryfront.org/mcp",
       authorization: "Bearer request-scoped-user-token",
@@ -1770,7 +1774,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       VERYFRONT_PROJECT_SLUG: "base-url-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value-from-base-url",
     });
-    assertEquals(capturedSystem, `api=${apiBaseUrl}`);
+    assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
       `${apiBaseUrl}/mcp`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
