@@ -444,7 +444,7 @@ function getRuntimeToolAllowlist(
 /**
  * Intersects the merged run tool set with the restrictive tool allowlist.
  * Skill runtime tools are preserved for every agent. Delegation tools are
- * preserved only when the agent advertises delegate-backed skills, mirroring
+ * preserved only when the agent has at least one visible skill, mirroring
  * the hosted chat runtime's allowlist semantics.
  *
  * The allowlist bounds this run's direct tool surface only: preserved skill
