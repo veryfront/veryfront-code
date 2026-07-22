@@ -18,7 +18,6 @@
   "src/agent/conversation/root-run-context.test.ts",
   "src/agent/conversation/run-context.test.ts",
   "src/agent/conversation/run-mirror.test.ts",
-  "src/agent/hosted/chat-preparation.test.ts",
   "src/agent/hosted/child-fork-step-message-preparation.test.ts",
   "src/agent/hosted/child-stream-watchdog.test.ts",
   "src/agent/hosted/cloud-runtime-system-messages.test.ts",
