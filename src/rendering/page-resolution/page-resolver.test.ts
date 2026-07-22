@@ -11,6 +11,10 @@ interface DirEntry {
   isDirectory: boolean;
 }
 
+function fileNotFoundError(): Error {
+  return Object.assign(new Error("File not found"), { code: "ENOENT" });
+}
+
 function createMockAdapter(
   dirEntries: Record<string, DirEntry[]> = {},
   existingDirs: string[] = [],
@@ -74,7 +78,7 @@ describe("rendering/page-resolution/page-resolver", () => {
         fs: {
           readFile: async (path: string) => {
             const source = files.get(path);
-            if (source === undefined) throw new Error("File not found");
+            if (source === undefined) throw fileNotFoundError();
             return source;
           },
           resolveFile: async (path: string) => {
@@ -90,7 +94,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/src/content") {
               return { isFile: false, isDirectory: true, isSymlink: false };
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           exists: async (path: string) => path === "/project/src/content",
           readDir: async function* (path: string) {

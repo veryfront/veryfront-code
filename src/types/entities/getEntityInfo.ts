@@ -1,16 +1,20 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  isNotFoundError as isPlatformNotFoundError,
+} from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isExtendedFSAdapter, NotSupportedError } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { detectEntityType } from "../entities.ts";
 import { createErrorScope } from "#veryfront/errors/error-context.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils";
+import { getSpecificityScore, parseRoute } from "#veryfront/routing/matchers/route-parser.ts";
+import { matchRoute } from "#veryfront/routing/matchers/route-matcher.ts";
 
 const logger = baseLogger.component("get-entity-by-slug");
 
@@ -20,9 +24,54 @@ const PAGE_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const DIRECT_ROUTE_EXTENSIONS = PAGE_FILE_EXTENSIONS;
 const LAYOUT_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const DYNAMIC_PAGE_ENTRY_PATTERN = /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/;
-const OPTIONAL_CATCH_ALL_ENTRY_PATTERN = /\[\[\.\.\..+\]\]\.(mdx|md|tsx|jsx|ts|js)$/;
 
 type DirectoryEntry = { name: string; isFile: boolean; isDirectory: boolean };
+
+const UNSUPPORTED_OPERATION_CODES = new Set(["ENOSYS", "ENOTSUP", "EOPNOTSUPP"]);
+
+function errorRecord(error: unknown): Record<string, unknown> | null {
+  return typeof error === "object" && error !== null ? error as Record<string, unknown> : null;
+}
+
+function isUnsupportedFileSystemOperation(error: unknown): boolean {
+  if (error instanceof NotSupportedError) return true;
+
+  const record = errorRecord(error);
+  if (
+    record?.name === "NotSupportedError" ||
+    record?.name === "NotSupported" ||
+    record?.slug === "not-supported" ||
+    (typeof record?.code === "string" && UNSUPPORTED_OPERATION_CODES.has(record.code))
+  ) {
+    return true;
+  }
+
+  return fromError(error)?.type === "not_supported";
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  if (isPlatformNotFoundError(error)) return true;
+
+  const record = errorRecord(error);
+  if (record?.name === "NotFound" || record?.slug === "file-not-found") {
+    return true;
+  }
+
+  const errorData = fromError(error);
+  return errorData?.type === "file" && /^(File|Path) not found:/.test(errorData.message);
+}
+
+async function withUnsupportedOperationFallback<T>(
+  adapterOperation: () => Promise<T>,
+  localOperation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await adapterOperation();
+  } catch (error) {
+    if (!isUnsupportedFileSystemOperation(error)) throw error;
+    return await localOperation();
+  }
+}
 
 export async function getEntityInfo(
   filePath: string,
@@ -57,46 +106,21 @@ export async function getEntityInfo(
         let content: string;
         if (adapter) {
           if (!shouldReadDirectly) {
-            try {
-              const stat = await withFallback(
-                () => adapter.fs.stat(normalizedPath),
-                async () => {
-                  const exists = await fs.exists(filePath);
-                  if (!exists) {
-                    throw toError(
-                      createError({
-                        type: "file",
-                        message: "File not found",
-                        context: { path: filePath, operation: "read" },
-                      }),
-                    );
-                  }
-                  return await fs.stat(filePath);
-                },
-                { operationName: "stat:getEntityInfo", logError: false },
-              );
+            const stat = await withUnsupportedOperationFallback(
+              () => adapter.fs.stat(normalizedPath),
+              () => fs.stat(filePath),
+            );
 
-              if (!stat.isFile) return null;
-            } catch (error) {
-              entityInfoScope.runSync(
-                () => {
-                  throw error;
-                },
-                { path: filePath, details: { reason: "stat-failed" } },
-                undefined,
-              );
-              return null;
-            }
+            if (!stat.isFile) return null;
           }
 
-          content = await withFallback(
+          content = await withUnsupportedOperationFallback(
             () => adapter.fs.readFile(normalizedPath),
             () => fs.readTextFile(filePath),
-            { operationName: "readFile:getEntityInfo", logError: false },
           );
         } else {
-          const exists = await fs.exists(filePath);
-          if (!exists) return null;
+          const stat = await fs.stat(filePath);
+          if (!stat.isFile) return null;
           content = await fs.readTextFile(filePath);
         }
 
@@ -162,6 +186,8 @@ export async function getEntityInfo(
 
         return { entity };
       } catch (error) {
+        if (isFileNotFoundError(error)) return null;
+
         entityInfoScope.runSync(
           () => {
             throw error;
@@ -169,7 +195,7 @@ export async function getEntityInfo(
           { path: filePath, details: { reason: "entity-info-failed" } },
           undefined,
         );
-        return null;
+        throw error;
       }
     },
     { "entity.path": filePath },
@@ -393,43 +419,69 @@ async function findDynamicPageEntity(
   pagesDirectory = "pages",
 ): Promise<EntityInfo | null> {
   const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
-  // Begin one level deeper than the slug so an optional catch-all in the slug's
-  // own directory can match with zero remaining segments — e.g. `/optional`
-  // resolving `pages/optional/[[...slug]].tsx`. At that top depth only optional
-  // catch-alls may match, since any other dynamic segment needs a real value.
+  const candidates: Array<{ path: string; pattern: string; specificity: number }> = [];
+
+  // Begin at the slug's own directory so an optional catch-all can match zero
+  // remaining segments, e.g. `/optional` resolving
+  // `pages/optional/[[...slug]].tsx`. Canonical route matching below rejects
+  // non-optional patterns that do not actually match the slug.
   for (let depth = slugParts.length; depth >= 0; depth--) {
-    const optionalCatchAllOnly = depth === slugParts.length;
     const parentPath = slugParts.slice(0, depth).join("/");
     const pagesDir = parentPath
       ? pathHelper.join(projectDir, pagesDirectory, parentPath)
       : pathHelper.join(projectDir, pagesDirectory);
 
-    try {
-      const canReadDirectory = await pagesDirectoryExists(pagesDir, adapter);
-      if (!canReadDirectory) continue;
+    const canReadDirectory = await pagesDirectoryExists(pagesDir, adapter);
+    if (!canReadDirectory) continue;
 
+    try {
       const entries = await readDirectoryEntries(pagesDir, adapter);
       const dynamicEntries = entries.filter(
-        (entry) =>
-          entry.isFile &&
-          DYNAMIC_PAGE_ENTRY_PATTERN.test(entry.name) &&
-          (!optionalCatchAllOnly || OPTIONAL_CATCH_ALL_ENTRY_PATTERN.test(entry.name)),
+        (entry) => entry.isFile && DYNAMIC_PAGE_ENTRY_PATTERN.test(entry.name),
       );
 
-      const candidateResults = await parallelMap(dynamicEntries, async (entry) => {
+      for (const entry of dynamicEntries) {
         const candidatePath = pathHelper.join(pagesDir, entry.name);
-        return await getEntityInfo(candidatePath, adapter);
-      });
+        const routeStem = entry.name.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
+        const routePattern = parentPath ? `${parentPath}/${routeStem}` : routeStem;
+        const route = parseRoute(routePattern, candidatePath);
+        if (!matchRoute(normalizedSlug, route)) continue;
 
-      for (const info of candidateResults) {
-        if (info?.entity.isPage) return info;
+        candidates.push({
+          path: candidatePath,
+          pattern: routePattern,
+          specificity: getSpecificityScore(route),
+        });
       }
-    } catch (_) {
-      /* expected: directory may not exist or readDir may fail */
+    } catch (error) {
+      if (isFileNotFoundError(error)) continue;
+      throw error;
     }
   }
 
-  return null;
+  if (candidates.length === 0) return null;
+
+  const bestSpecificity = candidates.reduce(
+    (highest, candidate) => Math.max(highest, candidate.specificity),
+    Number.NEGATIVE_INFINITY,
+  );
+  const bestCandidates = candidates.filter(
+    (candidate) => candidate.specificity === bestSpecificity,
+  );
+
+  if (bestCandidates.length !== 1) {
+    logger.warn("Ambiguous dynamic page routes", {
+      slug: normalizedSlug,
+      candidates: bestCandidates.map((candidate) => candidate.pattern).sort(),
+    });
+    return null;
+  }
+
+  const winner = bestCandidates[0];
+  if (!winner) return null;
+
+  const info = await getEntityInfo(winner.path, adapter);
+  return info?.entity.isPage ? info : null;
 }
 
 function withResolvedSlug(info: EntityInfo, normalizedSlug: string): EntityInfo {
@@ -445,18 +497,17 @@ async function pagesDirectoryExists(
   pagesDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<boolean> {
-  if (!adapter) return await fs.exists(pagesDir);
-
   try {
-    const stat = await withFallback(
-      () => adapter.fs.stat(pagesDir),
-      () => fs.stat(pagesDir),
-      { operationName: "stat:getEntityBySlug", logError: false },
-    );
+    const stat = adapter
+      ? await withUnsupportedOperationFallback(
+        () => adapter.fs.stat(pagesDir),
+        () => fs.stat(pagesDir),
+      )
+      : await fs.stat(pagesDir);
     return stat.isDirectory;
-  } catch (_) {
-    /* expected: stat may fail for non-existent directories */
-    return false;
+  } catch (error) {
+    if (isFileNotFoundError(error)) return false;
+    throw error;
   }
 }
 
@@ -464,14 +515,20 @@ async function readDirectoryEntries(
   pagesDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<DirectoryEntry[]> {
-  const entries: DirectoryEntry[] = [];
-  const iterator = adapter?.fs.readDir ? adapter.fs.readDir(pagesDir) : fs.readDir(pagesDir);
+  const collectEntries = async (iterator: AsyncIterable<DirectoryEntry>) => {
+    const entries: DirectoryEntry[] = [];
+    for await (const entry of iterator) entries.push(entry);
+    return entries;
+  };
 
-  for await (const entry of iterator) {
-    entries.push(entry);
+  if (!adapter) return await collectEntries(fs.readDir(pagesDir));
+
+  try {
+    return await collectEntries(adapter.fs.readDir(pagesDir));
+  } catch (error) {
+    if (!isUnsupportedFileSystemOperation(error)) throw error;
+    return await collectEntries(fs.readDir(pagesDir));
   }
-
-  return entries;
 }
 
 function getSlugFromPath(filePath: string): string {
