@@ -108,5 +108,23 @@ describe("BareStrategy", () => {
       );
       assertEquals(result.specifier?.includes("esm.sh/lodash@4.17.21"), true);
     });
+
+    // R1 regression: a known server-only driver (`redis`) and its explicit Deno
+    // `npm:` form only run server-side. They must be left external (specifier:
+    // null) for the runtime to resolve natively — never routed through esm.sh,
+    // which 500s building `redis` under `external=react` and otherwise ships a
+    // client that can never connect. This is the v0.1.1101 cold-cache regression.
+    it("leaves a server-only package (redis) external for the browser", () => {
+      const result = bareStrategy.rewrite(makeInfo("redis"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier, null);
+    });
+
+    it("leaves an explicit npm: server-only specifier external for the browser", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("npm:redis@5.11.0"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier, null);
+    });
   });
 });

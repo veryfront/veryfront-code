@@ -53,7 +53,7 @@ const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
  * anything it misses simply won't appear on the stub, which degrades to a
  * "symbol unavailable" error at use time rather than a load failure.
  */
-function extractExportNames(source: string): { named: string[]; hasDefault: boolean } {
+export function extractExportNames(source: string): { named: string[]; hasDefault: boolean } {
   const named = new Set<string>();
   let hasDefault = false;
   for (
@@ -89,14 +89,20 @@ function extractExportNames(source: string): { named: string[]; hasDefault: bool
  * from aborting the whole framework module — which would otherwise 500 every
  * route that transitively imports it.
  */
-function buildDegradedModuleStub(source: string, modulePath: string, reason: string): string {
+export function buildDegradedModuleStub(
+  source: string,
+  modulePath: string,
+  reason: string,
+): string {
   const { named, hasDefault } = extractExportNames(source);
   const label = modulePath.replace(/\\/g, "/").split("/").slice(-3).join("/");
   const message = `[veryfront] Optional framework module "${label}" could not be transformed ` +
     `for SSR (${reason}) and has been stubbed. This symbol is unavailable; if you depend on it, ` +
     `ensure its package is installed and reachable.`;
   const lines = [
-    `function __vfDegraded(name){throw new Error(${JSON.stringify(message)} + " Symbol: " + name);}`,
+    `function __vfDegraded(name){throw new Error(${
+      JSON.stringify(message)
+    } + " Symbol: " + name);}`,
   ];
   for (const name of named) {
     lines.push(`export function ${name}(){return __vfDegraded(${JSON.stringify(name)});}`);

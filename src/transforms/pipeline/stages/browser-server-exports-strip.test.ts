@@ -259,6 +259,56 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "createHash"), 0);
     });
 
+    // Client-leak fix: an unused `veryfront` framework-barrel import must be
+    // dropped entirely, not reduced to a bare `import "veryfront"`. Keeping it
+    // as a side-effect import pulls the server runtime into the client bundle
+    // and breaks hydration, so a page that used a framework export only inside a
+    // server-only hook must not ship the barrel to the browser at all.
+    it("removes an unreferenced bare veryfront import outright", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export function getServerData() { return { props: { v: getEnv("X") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // The barrel is gone completely — not even a side-effect import survives.
+      assertNotIncludes(result, `"veryfront"`);
+      assertNotIncludes(result, `'veryfront'`);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("removes an unreferenced veryfront subpath import outright", async () => {
+      const code = [
+        `import { getEnv } from "veryfront/server";`,
+        `export function getServerData() { return { props: { v: getEnv("X") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "veryfront/server");
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // Contrast pin: a NON-veryfront (project) import in the exact same shape is
+    // reduced to a side-effect import, because this pass knows nothing about the
+    // top-level side effects of the module it points at.
+    it("reduces a non-veryfront import in the same shape to a side-effect import", async () => {
+      const code = [
+        `import { thing } from "./local";`,
+        `export function getServerData() { return { props: { v: thing("X") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // The module is still fetched for its side effects, but the binding is gone.
+      assertStringIncludes(result, `import "./local"`);
+      assertEquals(occurrences(result, "thing"), 0);
+    });
+
     it("keeps an import that the client still references", async () => {
       const code = [
         `import { formatDate } from "../lib/dates.js";`,
