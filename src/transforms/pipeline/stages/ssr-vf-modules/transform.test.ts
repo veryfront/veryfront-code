@@ -4,7 +4,12 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
-import { isCyclePlaceholder, reactReExportToEsmUrl, transformFrameworkCode } from "./transform.ts";
+import {
+  isCyclePlaceholder,
+  reactReExportToEsmUrl,
+  stripJsonAttributesFromModuleImports,
+  transformFrameworkCode,
+} from "./transform.ts";
 import {
   buildFrameworkTransformCacheKey,
   FRAMEWORK_ROOT,
@@ -605,5 +610,34 @@ describe("transformFrameworkCode depth-limit fallback", {
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
+  });
+});
+
+describe("stripJsonAttributesFromModuleImports", () => {
+  // A framework `.json` import is resolved by compiling the JSON into a cached
+  // `.mjs` that default-exports the data. The attribute describes the original
+  // target, so leaving it makes the runtime reject the rewritten import with
+  // "Expected a Json module, but identified a Mjs module".
+  it("drops the attribute when the target is now an .mjs", () => {
+    const code = `import m from "file:///cache/framework/vfmod-abc.mjs" with { type: "json" };`;
+    assertEquals(
+      stripJsonAttributesFromModuleImports(code),
+      `import m from "file:///cache/framework/vfmod-abc.mjs";`,
+    );
+  });
+
+  it("keeps the attribute on a genuine .json target", () => {
+    const code = `import m from "./manifest.json" with { type: "json" };`;
+    assertEquals(stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  it("handles single quotes and extra whitespace", () => {
+    const code = `import m from 'file:///cache/a.mjs'  with  { type: 'json' };`;
+    assertStringIncludes(stripJsonAttributesFromModuleImports(code), `from 'file:///cache/a.mjs';`);
+  });
+
+  it("leaves plain module imports untouched", () => {
+    const code = `import { a } from "file:///cache/a.mjs";`;
+    assertEquals(stripJsonAttributesFromModuleImports(code), code);
   });
 });
