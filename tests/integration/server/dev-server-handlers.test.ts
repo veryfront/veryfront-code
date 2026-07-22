@@ -106,8 +106,9 @@ const BROWSER_CSP_SAFE_MODULE_PATHS = [
 async function fetchServedFrameworkModule(
   port: number,
   modulePath: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<{ body: string; specifiers: string[] }> {
-  const response = await fetch(`http://127.0.0.1:${port}${modulePath}`);
+  const response = await fetchImpl(`http://127.0.0.1:${port}${modulePath}`);
   assertEquals(response.status, 200, `Expected ${modulePath} to be served`);
 
   const body = await response.text();
@@ -148,7 +149,11 @@ function assertBrowserSafeFrameworkModule(
   );
 }
 
-async function assertBrowserSafeFrameworkGraph(port: number, entryPath: string): Promise<void> {
+async function assertBrowserSafeFrameworkGraph(
+  port: number,
+  entryPath: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<void> {
   const pending = [entryPath];
   const visited = new Set<string>();
   let nextIndex = 0;
@@ -158,7 +163,7 @@ async function assertBrowserSafeFrameworkGraph(port: number, entryPath: string):
     if (!modulePath || visited.has(modulePath)) continue;
     visited.add(modulePath);
 
-    const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath);
+    const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath, fetchImpl);
     assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
 
     for (const specifier of specifiers) {
@@ -486,9 +491,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
     it("preserves query strings while walking browser framework module variants", async () => {
       const requestedPaths: string[] = [];
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = (async (input: string | URL | Request) => {
+      const fetchModule = (async (input: string | URL | Request) => {
         const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
         const modulePath = `${url.pathname}${url.search}`;
         requestedPaths.push(modulePath);
@@ -499,14 +502,11 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         return new Response(body, { status: 200 });
       }) as typeof fetch;
 
-      try {
-        await assertBrowserSafeFrameworkGraph(
-          4173,
-          "/_vf_modules/_veryfront/entry.js",
-        );
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+      await assertBrowserSafeFrameworkGraph(
+        4173,
+        "/_vf_modules/_veryfront/entry.js",
+        fetchModule,
+      );
 
       assertEquals(requestedPaths, [
         "/_vf_modules/_veryfront/entry.js",
