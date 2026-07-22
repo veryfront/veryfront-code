@@ -29,6 +29,7 @@ import {
 import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import {
+  createToolsFromHostDefinitions,
   isToolVisibleTo,
   type Tool,
   type ToolExecutionContext,
@@ -363,16 +364,20 @@ async function buildProjectAgentSandboxTools(input: {
     getProjectId: () => sandboxConfig.projectId ?? input.deps.projectAgentSandbox?.projectId,
   });
 
-  const bash = sandboxResult.tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME];
-  if (!bash) {
+  const declaredTools = input.agent.config.tools;
+  const materializedTools = createToolsFromHostDefinitions(sandboxResult.tools);
+  const configuredTools = isRecord(declaredTools)
+    ? Object.fromEntries(
+      Object.entries(materializedTools).filter(([toolName]) => declaredTools[toolName] === true),
+    )
+    : {};
+  if (!configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]) {
     await sandboxResult.closeSandbox();
     return {};
   }
 
   return {
-    tools: {
-      [PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]: bash as Tool,
-    },
+    tools: configuredTools,
     closeSandbox: sandboxResult.closeSandbox,
   };
 }
