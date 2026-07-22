@@ -73,6 +73,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => isWithinJsonSizeLimit(value, 65_536),
       { message: "context must be less than 64 KB total" },
     ),
+    runtimeTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),

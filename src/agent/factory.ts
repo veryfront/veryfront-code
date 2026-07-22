@@ -28,6 +28,7 @@ import { createError, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
+import { setEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getMessageSchema } from "./schemas/agent.schema.ts";
 import {
@@ -305,6 +306,7 @@ export function agent(config: AgentConfig): Agent {
     },
   };
 
+  setEffectiveAgentSystem(agentInstance, augmentedSystem);
   agentRegistry.register(id, agentInstance);
 
   return agentInstance;

@@ -11,6 +11,8 @@ import {
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -50,6 +52,7 @@ import {
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
+import { createInternalAgentRunSystemPromptResolver } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -94,6 +97,7 @@ export interface RuntimeAgentStreamExecutionDeps {
   projectAgentSandbox?: {
     apiUrl?: string;
     authToken?: string;
+    branchId?: string | null;
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
@@ -482,6 +486,29 @@ function applyRuntimeToolAllowlist(
   );
 }
 
+function getRequiredLocalToolNames(input: {
+  mergedTools: Agent["config"]["tools"];
+  availableLocalTools: Record<string, Tool | boolean>;
+  agent: Agent;
+}): string[] {
+  if (!input.mergedTools || input.mergedTools === true) {
+    return [];
+  }
+
+  return Object.entries(input.mergedTools)
+    .filter(([toolName, entry]) => {
+      if (entry && typeof entry === "object") {
+        return true;
+      }
+      if (Object.hasOwn(input.availableLocalTools, toolName)) {
+        return true;
+      }
+      const registryTool = toolRegistry.get(toolName);
+      return Boolean(registryTool && isToolVisibleTo(registryTool, { agentId: input.agent.id }));
+    })
+    .map(([toolName]) => toolName);
+}
+
 function getServerResolvedProjectToolNames(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): Set<string> {
@@ -670,10 +697,52 @@ export async function createRuntimeAgentStreamResponse(
         (toolName) => typeof toolName === "string" && runtimeToolAllowlist.has(toolName),
       )
       : undefined;
+  const effectiveProviderToolNames = cappedProviderTools ??
+    (Array.isArray(agent.config.providerTools)
+      ? agent.config.providerTools.filter((toolName): toolName is string =>
+        typeof toolName === "string"
+      )
+      : []);
+  const modelSupportedProviderToolNames = new Set(
+    getProviderNativeToolNames({ model: agent.config.model }),
+  );
+  const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
+    modelSupportedProviderToolNames.has(toolName)
+  );
+  const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
+  const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
+  const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
+    .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
+  const localToolNames = getRequiredLocalToolNames({
+    mergedTools,
+    availableLocalTools,
+    agent,
+  });
+  const runtimeToolNames = selectProviderCompatibleToolNames(
+    [
+      ...new Set([
+        ...mergedToolNames,
+        ...providerToolNames,
+        ...(allowedRemoteToolNames ?? []),
+        ...forwardedToolNames,
+      ]),
+    ].sort(),
+    {
+      model: agent.config.model,
+      requiredToolNames: localToolNames,
+    },
+  );
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
       ...agent.config,
+      system: createInternalAgentRunSystemPromptResolver({
+        agent,
+        runInput: input,
+        projectId: deps.projectAgentSandbox?.projectId ?? null,
+        branchId: deps.projectAgentSandbox?.branchId,
+        toolNames: runtimeToolNames,
+      }),
       tools: mergedTools,
       ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
       ...(allowedRemoteToolNames !== undefined
