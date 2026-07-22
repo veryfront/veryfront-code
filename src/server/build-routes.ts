@@ -22,6 +22,10 @@ function convertToSlug(relativePath: string): string {
   );
 }
 
+function isPagesApiDirectoryDescendant(relativePath: string): boolean {
+  return relativePath.replace(/\\/g, "/").startsWith("api/");
+}
+
 function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]): boolean {
   if (include?.length && !include.some((p) => path.startsWith(p))) return false;
   if (exclude?.length && exclude.some((p) => path.startsWith(p))) return false;
@@ -49,6 +53,8 @@ export async function collectPagesRoutes(
     const file of discoverFiles({ baseDir: pagesDir, extensions: PAGE_EXTENSIONS, adapter })
   ) {
     const relativePath = relative(pagesDir, file.path);
+    if (isPagesApiDirectoryDescendant(relativePath)) continue;
+
     const slug = convertToSlug(relativePath);
     const pathForRoute = `/${slug === "index" ? "" : slug}`;
 

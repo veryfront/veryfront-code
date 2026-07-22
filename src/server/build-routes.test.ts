@@ -191,6 +191,18 @@ describe("server/build-routes", () => {
       assertEquals(routes[0]!.slug, "api");
     });
 
+    it("excludes api directory descendants while preserving root /api pages", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/api.tsx": "export default () => <div />",
+        "/project/pages/api/user.ts": "export default function handler() {}",
+        "/project/pages/api/admin/index.ts": "export default function handler() {}",
+        "/project/pages/about.tsx": "export default () => <div />",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      const paths = routes.map((r) => r.path).sort();
+      assertEquals(paths, ["/about", "/api"]);
+    });
+
     it("converts file paths to slugs by stripping extensions", async () => {
       const adapter = createMockAdapter({
         "/project/pages/docs/guide.mdx": "# Guide",
