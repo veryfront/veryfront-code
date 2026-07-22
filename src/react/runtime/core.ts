@@ -180,7 +180,9 @@ interface NavigationStore {
   getHref(): string;
   notify(): void;
   navigate(href: string, options?: NavigateOptions): Promise<void>;
-  setNavigator(navigator: (href: string, options?: NavigateOptions) => Promise<void>): void;
+  setNavigator(
+    navigator: (href: string, options?: NavigateOptions) => Promise<void>,
+  ): void | (() => void);
 }
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
@@ -191,7 +193,9 @@ function getNavigationStore(): NavigationStore {
   if (existing) return existing;
 
   const listeners = new Set<() => void>();
-  let navigator: ((href: string, options?: NavigateOptions) => Promise<void>) | null = null;
+  const navigatorRegistrations: Array<{
+    navigate: (href: string, options?: NavigateOptions) => Promise<void>;
+  }> = [];
 
   const store: NavigationStore = {
     subscribe(listener) {
@@ -214,12 +218,26 @@ function getNavigationStore(): NavigationStore {
       }
     },
     navigate(href, options) {
-      if (navigator) return navigator(href, options);
-      globalThis.location?.assign(href);
+      const registration = navigatorRegistrations.at(-1);
+      if (registration) return registration.navigate(href, options);
+      const location = globalThis.location;
+      if (location && options?.history !== "none") {
+        if (options?.history === "replace") location.replace(href);
+        else location.assign(href);
+      }
       return Promise.resolve();
     },
     setNavigator(next) {
-      navigator = next;
+      const registration = { navigate: next };
+      navigatorRegistrations.push(registration);
+      let active = true;
+
+      return () => {
+        if (!active) return;
+        active = false;
+        const index = navigatorRegistrations.indexOf(registration);
+        if (index !== -1) navigatorRegistrations.splice(index, 1);
+      };
     },
   };
 
