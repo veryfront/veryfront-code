@@ -132,6 +132,13 @@ describe("CommonSchemas", () => {
     it("should reject invalid order values", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ order: "random" }));
     });
+
+    it("should reject non-string and non-number pagination values", () => {
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: true }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: ["3"] }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: true }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: ["20"] }));
+    });
   });
 
   describe("dateRange", () => {

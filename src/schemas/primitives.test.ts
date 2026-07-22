@@ -127,16 +127,31 @@ describe("primitive schemas", () => {
     it("rejects empty file paths", () => {
       assertParseFailure(getFilePathSchema().safeParse(""));
     });
+
+    it("rejects file paths containing null bytes", () => {
+      assertParseFailure(getFilePathSchema().safeParse("src/main\0.ts"));
+    });
   });
 
   describe("absolutePath", () => {
     it("accepts unix and windows absolute paths", () => {
       assertParseSuccess(getAbsolutePathSchema().safeParse("/usr/local/bin"));
       assertParseSuccess(getAbsolutePathSchema().safeParse(String.raw`C:\Projects\veryfront`));
+      assertParseSuccess(getAbsolutePathSchema().safeParse("C:/Projects/veryfront"));
+      assertParseSuccess(getAbsolutePathSchema().safeParse(String.raw`\Projects\veryfront`));
+      assertParseSuccess(
+        getAbsolutePathSchema().safeParse(String.raw`\\server\share\veryfront`),
+      );
     });
 
     it("rejects relative paths", () => {
       assertParseFailure(getAbsolutePathSchema().safeParse("relative/path"));
+      assertParseFailure(getAbsolutePathSchema().safeParse("C:relative\\path"));
+      assertParseFailure(getAbsolutePathSchema().safeParse(String.raw`\\server`));
+    });
+
+    it("rejects absolute paths containing null bytes", () => {
+      assertParseFailure(getAbsolutePathSchema().safeParse("/tmp/main\0.ts"));
     });
   });
 });
