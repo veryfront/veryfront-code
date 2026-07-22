@@ -62,17 +62,24 @@ export function createJsonHelper(_request: Request): APIContext["json"] {
  * Build the `ctx.body` request-body reader.
  *
  * The parse is memoised on the first call, so a validation helper and a handler
- * that both read the body do not fight over a single-use stream. The read is
- * taken from a clone, so `ctx.request` is left intact for a handler that still
- * wants the raw stream. A malformed body is turned into a catalogued 400 rather
- * than escaping as a 500.
+ * that both read the body do not fight over a single-use stream. The clone is
+ * taken up front, while the context is built, so `ctx.request` is left intact
+ * for a handler that still wants the raw stream — and, crucially, so a handler
+ * that reads `ctx.request` raw *before* calling `ctx.body()` cannot make the
+ * clone throw `Body already consumed` (`request.clone()` throws synchronously
+ * once the original stream is disturbed). A malformed body is turned into a
+ * catalogued 400 rather than escaping as a 500.
  */
 export function createBodyReader(request: Request): APIContext["body"] {
+  // Clone eagerly: at construction time the original body is guaranteed
+  // untouched, so the read is order-independent with any raw `ctx.request`
+  // access a handler performs later.
+  const source = request.clone();
   let parsed: Promise<unknown> | undefined;
 
   const read = (): Promise<unknown> => {
     if (!parsed) {
-      parsed = request.clone().json().catch(() => {
+      parsed = source.json().catch(() => {
         throw INVALID_ARGUMENT.create({ detail: "Request body is not valid JSON" });
       });
     }

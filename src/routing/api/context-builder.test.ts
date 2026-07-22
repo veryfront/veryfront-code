@@ -450,6 +450,21 @@ describe("createContext: ctx.json writes, ctx.body reads", () => {
     assertEquals(await ctx.request.json(), { shared: true });
   });
 
+  it("reads via ctx.body() even after ctx.request was consumed raw first", async () => {
+    // The reverse order: a handler reads the raw stream, *then* reaches for
+    // ctx.body(). The clone is taken at construction time, so it does not throw
+    // `Body already consumed` no matter which one runs first.
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ shared: true }),
+      }),
+    );
+
+    assertEquals(await ctx.request.json(), { shared: true });
+    assertEquals(await ctx.body(), { shared: true });
+  });
+
   it("throws a 400 when the body is not valid JSON", async () => {
     const ctx = ctxFor(
       new Request("http://localhost/api/echo", { method: "POST", body: "not json" }),
