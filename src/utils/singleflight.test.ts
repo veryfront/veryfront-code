@@ -158,4 +158,27 @@ describe("Singleflight", () => {
     assertEquals(await replacement, 2);
     assertEquals(sf.has("key"), false);
   });
+
+  it("isolates errors thrown by stale-eviction observers", async () => {
+    using time = new FakeTime();
+    const sf = new Singleflight<number>();
+    let resolveOperation!: (value: number) => void;
+
+    const operation = sf.do(
+      "key",
+      () => new Promise<number>((resolve) => resolveOperation = resolve),
+      {
+        staleAfterMs: 1_000,
+        onStaleEvicted: () => {
+          throw new Error("observer failed");
+        },
+      },
+    );
+
+    await time.tickAsync(1_000);
+    assertEquals(sf.has("key"), false);
+
+    resolveOperation(1);
+    assertEquals(await operation, 1);
+  });
 });

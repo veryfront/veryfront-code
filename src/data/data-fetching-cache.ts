@@ -51,7 +51,8 @@ export class CacheManager {
   createCacheKey(context: DataContext, modulePath?: string): string | null {
     const params = JSON.stringify(context.params);
     const moduleKey = modulePath?.trim() || "page";
-    const resourceKey = `${moduleKey}::${context.url.pathname}::${params}`;
+    const pathAndQuery = `${context.url.pathname}${context.url.search}`;
+    const resourceKey = `${moduleKey}::${pathAndQuery}::${params}`;
     return getProjectScopedKey("veryfront:data", resourceKey);
   }
 }

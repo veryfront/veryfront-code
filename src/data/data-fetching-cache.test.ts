@@ -266,6 +266,55 @@ describe("CacheManager", () => {
       assertEquals(key1 !== key2, true);
     });
 
+    it("should create unique keys for reordered query params", () => {
+      const cache = new CacheManager();
+      const context1 = createContext("http://localhost/search?b=2&a=1");
+      const context2 = createContext("http://localhost/search?a=1&b=2");
+
+      const key1 = withProductionContext(() => cache.createCacheKey(context1));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+
+      assertExists(key1);
+      assertExists(key2);
+      assertEquals(key1 !== key2, true);
+    });
+
+    it("should preserve duplicate query value order in cache keys", () => {
+      const cache = new CacheManager();
+      const context1 = createContext("http://localhost/search?tag=a&tag=b");
+      const context2 = createContext("http://localhost/search?tag=b&tag=a");
+
+      const key1 = withProductionContext(() => cache.createCacheKey(context1));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+
+      assertExists(key1);
+      assertExists(key2);
+      assertEquals(key1 !== key2, true);
+    });
+
+    it("should create unique keys for distinct query values", () => {
+      const cache = new CacheManager();
+      const context1 = createContext("http://localhost/search?q=alpha");
+      const context2 = createContext("http://localhost/search?q=beta");
+
+      const key1 = withProductionContext(() => cache.createCacheKey(context1));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+
+      assertExists(key1);
+      assertExists(key2);
+      assertEquals(key1 !== key2, true);
+    });
+
+    it("should include the URL search string in production cache keys", () => {
+      const cache = new CacheManager();
+      const context = createContext("http://localhost/search?b=2&a=1&a=3");
+
+      const key = withProductionContext(() => cache.createCacheKey(context));
+
+      assertExists(key);
+      assertEquals(key.includes("/search?b=2&a=1&a=3::{}"), true);
+    });
+
     it("should handle array params (catch-all routes)", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/docs/getting-started", {

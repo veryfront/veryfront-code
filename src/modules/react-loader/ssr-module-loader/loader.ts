@@ -71,6 +71,7 @@ import {
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
+const MAX_REJECTED_IN_PROGRESS_RETRIES = 1;
 
 class InProgressTransformWaitTimeoutError extends Error {
   constructor(filePath: string) {
@@ -89,6 +90,10 @@ function deleteInProgressTransformIfCurrent(
 ): boolean {
   if (globalInProgress.get(key) !== transformPromise) return false;
   return globalInProgress.delete(key);
+}
+
+function shouldRetryRejectedInProgressTransform(rejectedLeaderCount: number): boolean {
+  return rejectedLeaderCount <= MAX_REJECTED_IN_PROGRESS_RETRIES;
 }
 
 function scheduleStaleInProgressTransformEviction(
@@ -135,6 +140,7 @@ export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
   publishTransformCacheIfCurrent,
   scheduleStaleInProgressTransformEviction,
+  shouldRetryRejectedInProgressTransform,
   waitForInProgressTransform,
 };
 
@@ -631,6 +637,7 @@ export class SSRModuleLoader {
       }
     }
 
+    let rejectedInProgressLeaders = 0;
     while (true) {
       const existingTransform = globalInProgress.get(inProgressKey);
       if (!existingTransform) break;
@@ -653,11 +660,20 @@ export class SSRModuleLoader {
           // not multiplied into competing retries.
           throw error;
         }
+
         // Retry only after the leader actually rejects. A time-based retry can
         // delete live singleflight state and multiply one slow cold transform
         // into many competing transforms; the outer render deadline already
         // bounds how long an individual request waits.
         deleteInProgressTransformIfCurrent(inProgressKey, existingTransform);
+        rejectedInProgressLeaders += 1;
+        if (!shouldRetryRejectedInProgressTransform(rejectedInProgressLeaders)) {
+          logger.warn("In-progress transform failed after retry, propagating", {
+            file: filePath.slice(-40),
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
         logger.warn("In-progress transform failed, retrying", {
           file: filePath.slice(-40),
           error: error instanceof Error ? error.message : String(error),

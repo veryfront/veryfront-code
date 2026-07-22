@@ -450,7 +450,7 @@ export async function getOrComputeTransform(
   try {
     const flight = flightRegistry.do(
       key,
-      async (flight) => {
+      async (control) => {
         const progressFlight = beginTransformProgressFlight(key);
         const reportProgress: TransformProgressListener = (event) =>
           publishTransformProgress(key, progressFlight.state, event);
@@ -483,7 +483,7 @@ export async function getOrComputeTransform(
           const code = await computeFn(reportProgress);
           reportProgress({ phase: "transform-cache:computed" });
 
-          if (transformFlight === flightRegistry && flight.isCurrent()) {
+          if (transformFlight === flightRegistry && control.isCurrent()) {
             // Serialize publications for one key. If this generation is reset
             // after this synchronous identity check, a replacement publication
             // queues behind it and therefore commits last.

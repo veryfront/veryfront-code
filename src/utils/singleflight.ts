@@ -54,7 +54,12 @@ export class Singleflight<T> {
       entry.staleTimer = setTimeout(() => {
         if (this.inflight.get(key) !== entry) return;
         this.inflight.delete(key);
-        options.onStaleEvicted?.();
+        try {
+          options.onStaleEvicted?.();
+        } catch {
+          // Observers are diagnostic only; an observer failure must not escape
+          // the timer task or interfere with singleflight state cleanup.
+        }
       }, options.staleAfterMs);
       unrefTimer(entry.staleTimer);
     }

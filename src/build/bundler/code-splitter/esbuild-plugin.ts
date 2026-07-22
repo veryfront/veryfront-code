@@ -44,19 +44,19 @@ async function canonicalPath(path: string): Promise<string> {
   }
 }
 
-async function isInsideProject(path: string, projectDir: string): Promise<boolean> {
-  const relativePath = relative(await canonicalPath(projectDir), await canonicalPath(path));
+async function isInsideProject(path: string, canonicalProjectDir: string): Promise<boolean> {
+  const relativePath = relative(canonicalProjectDir, await canonicalPath(path));
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 async function loadStrippedProjectModule(
   args: OnLoadArgs,
-  projectDir: string,
+  canonicalProjectDir: string,
 ): Promise<OnLoadResult | null> {
   const loader = loaderForPath(args.path);
   if (!loader) return null;
   if (isNodeModulesPath(args.path)) return null;
-  if (!(await isInsideProject(args.path, projectDir))) return null;
+  if (!(await isInsideProject(args.path, canonicalProjectDir))) return null;
 
   const contents = await readTextFile(args.path);
   return {
@@ -67,6 +67,8 @@ async function loadStrippedProjectModule(
 }
 
 export function createSplitterPlugin(projectDir: string): Plugin {
+  const canonicalProjectDir = canonicalPath(projectDir);
+
   return {
     name: "veryfront-splitter",
     setup(build: PluginBuild): void {
@@ -92,7 +94,7 @@ export function createSplitterPlugin(projectDir: string): Plugin {
 
       build.onLoad(
         { filter: /\.[jt]sx?$/ },
-        (args: OnLoadArgs) => loadStrippedProjectModule(args, projectDir),
+        async (args: OnLoadArgs) => loadStrippedProjectModule(args, await canonicalProjectDir),
       );
 
       build.onDispose((): void => {

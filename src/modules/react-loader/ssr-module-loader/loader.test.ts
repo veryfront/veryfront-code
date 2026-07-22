@@ -982,6 +982,17 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("allows one rejected shared transform retry per caller", () => {
+    assertEquals(
+      __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(1),
+      true,
+    );
+    assertEquals(
+      __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(2),
+      false,
+    );
+  });
+
   it("bounds a caller wait without evicting the shared transform", async () => {
     using time = new FakeTime();
     const key = "test:shared-transform-wait";

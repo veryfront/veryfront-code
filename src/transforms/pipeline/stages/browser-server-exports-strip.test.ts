@@ -447,7 +447,7 @@ describe("browser-server-exports-strip", () => {
     it("keeps an unrelated import when a hook parameter default shadows its name", async () => {
       const code = [
         `import { ctx } from "./client-init.ts";`,
-        `export async function getServerData(ctx = ctx) {`,
+        `export async function getServerData({ ctx = "shadow" } = {}) {`,
         `  return { props: { ok: Boolean(ctx) } };`,
         `}`,
         `export default function Page() { return null; }`,

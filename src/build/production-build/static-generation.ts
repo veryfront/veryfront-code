@@ -83,6 +83,7 @@ function createStaticRouteContext(
   path: string,
   baseUrl: string,
 ): { staticDataOnly: true; url: URL } {
+  // Static route paths are root-relative; baseUrl supplies only the URL origin.
   const url = new URL(path, baseUrl || "http://localhost");
   return {
     staticDataOnly: true,
