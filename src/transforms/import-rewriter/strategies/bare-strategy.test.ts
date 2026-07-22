@@ -126,5 +126,25 @@ describe("BareStrategy", () => {
       );
       assertEquals(result.specifier, null);
     });
+
+    // The `npm:` scheme alone does not mean server-only. A browser-safe package
+    // imported Deno-style (`npm:zod@4.0.0`) must still flow through esm.sh — the
+    // `npm:` prefix is stripped and the package rewritten like a bare import, so
+    // the browser can load it. Only server-only `npm:` packages stay external.
+    it("rewrites a browser-safe npm: specifier through esm.sh", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("npm:zod@4.0.0"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/zod@4.0.0?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("rewrites a version-less npm: specifier through esm.sh", () => {
+      const result = bareStrategy.rewrite(makeInfo("npm:zod"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier, "https://esm.sh/zod?external=react,react-dom&target=es2022");
+    });
   });
 });
