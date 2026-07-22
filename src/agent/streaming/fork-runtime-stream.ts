@@ -118,6 +118,7 @@ export type StartAgentRuntimeForkInput = {
   authToken: string;
   projectId: string | null;
   model: string;
+  temperature?: number;
   maxSteps: number;
   prompt?: string;
   maxContinuationSteps?: number;
@@ -192,6 +193,7 @@ export function startAgentRuntimeForkWithHostTools<
       authToken: input.authToken,
       projectId: input.projectId,
       model: input.forkModel,
+      temperature: input.temperature,
       maxSteps: input.maxSteps,
       prompt: input.prompt,
       maxContinuationSteps: input.maxContinuationSteps,
@@ -259,6 +261,7 @@ export type RunAgentRuntimeForkStepInput = {
   authToken: string;
   projectId: string | null;
   model: string;
+  temperature?: number;
   messages: AgentMessage[];
   system: string;
   abortSignal?: AbortSignal;
@@ -303,6 +306,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
 
   const runtimeConfig = {
     model: input.model,
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
     system: input.system,
     tools: input.runtimeTools,
     providerTools: input.providerToolNames ?? [],
@@ -506,6 +510,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             authToken: input.authToken,
             projectId: input.projectId,
             model: input.model,
+            ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
             messages: prepared.messages,
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),

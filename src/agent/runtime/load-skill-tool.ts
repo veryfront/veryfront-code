@@ -9,7 +9,6 @@ import {
   LOAD_SKILL_OVERRIDE_FORWARDING,
   LOAD_SKILL_ROOT_OWNERSHIP,
   LOAD_SKILL_TOOL_INTERSECTION,
-  LOAD_SKILL_USE_ALLOWED_TOOLS,
 } from "../conversation/delegation-policy.ts";
 import {
   listRuntimeBuiltinSkillReferences,
@@ -32,11 +31,11 @@ import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
 /** Shared runtime load skill continuation note value. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
-  `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_USE_ALLOWED_TOOLS} ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING} ${LOAD_SKILL_TOOL_INTERSECTION}`;
+  `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING} ${LOAD_SKILL_TOOL_INTERSECTION}`;
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. If the skill specifies allowed-tools, you MUST only use those tools while following this skill. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_USE_ALLOWED_TOOLS} ${LOAD_SKILL_DELEGATION_THRESHOLD} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. If the skill specifies allowed-tools, you MUST only use those tools while following this skill. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_DELEGATION_THRESHOLD} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
 
 const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMessages = {
   allowedToolsNote:
@@ -44,14 +43,71 @@ const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMe
   noCurrentRunToolsNote:
     "IMPORTANT: While following this skill, no direct-execution tools from this skill are available in the current run. allowedTools is intentionally empty; do not attempt direct tool execution in this run.",
   unavailableCurrentRunToolsDelegationNote:
-    "IMPORTANT: Some tools required by this skill are not available in the current run. Use invoke_agent for the isolated work and pass delegationTools as the child tools allowlist.",
+    "IMPORTANT: Some tools required by this skill are not available in the current run. Use an available scoped agent_<id> delegation tool for the isolated work, or invoke_agent only when that exact legacy tool is present.",
   overrideNote: LOAD_SKILL_OVERRIDE_FORWARDING,
   referenceNote:
     "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
 };
 
+function getAvailableScopedDelegateToolNames(availableToolNames?: readonly string[]): string[] {
+  return (availableToolNames ?? [])
+    .filter((toolName) => toolName.startsWith("agent_"))
+    .sort();
+}
+
+function buildRuntimeLoadSkillDelegationAdvice(availableToolNames?: readonly string[]): string {
+  if (availableToolNames === undefined) {
+    return `For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING}`;
+  }
+
+  const scopedDelegateToolNames = getAvailableScopedDelegateToolNames(availableToolNames);
+  if (scopedDelegateToolNames.length > 0) {
+    const tools = scopedDelegateToolNames.map((toolName) => `\`${toolName}\``).join(", ");
+    return `For multi-step or isolated work, use only these available scoped delegation tools: ${tools}; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD}`;
+  }
+
+  if (availableToolNames.includes("invoke_agent")) {
+    return `For multi-step or isolated work, call the available legacy invoke_agent tool; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING}`;
+  }
+
+  return "";
+}
+
+function buildRuntimeLoadSkillContinuationNote(availableToolNames?: readonly string[]): string {
+  const delegationAdvice = buildRuntimeLoadSkillDelegationAdvice(availableToolNames);
+  return [
+    "IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn.",
+    LOAD_SKILL_CONTINUE_SAME_TURN,
+    LOAD_SKILL_ROOT_OWNERSHIP,
+    delegationAdvice,
+    LOAD_SKILL_TOOL_INTERSECTION,
+  ].filter((part) => part.length > 0).join(" ");
+}
+
+function buildUnavailableCurrentRunToolsDelegationNote(
+  availableToolNames?: readonly string[],
+): string {
+  if (availableToolNames === undefined) {
+    return DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.unavailableCurrentRunToolsDelegationNote;
+  }
+
+  const scopedDelegateToolNames = getAvailableScopedDelegateToolNames(availableToolNames);
+  if (scopedDelegateToolNames.length > 0) {
+    const tools = scopedDelegateToolNames.map((toolName) => `\`${toolName}\``).join(", ");
+    return `IMPORTANT: Some tools required by this skill are not available in the current run. Use only these available scoped delegation tools for isolated work: ${tools}.`;
+  }
+
+  if (availableToolNames.includes("invoke_agent")) {
+    return "IMPORTANT: Some tools required by this skill are not available in the current run. Use the available legacy invoke_agent tool for isolated work.";
+  }
+
+  return "";
+}
+
 /** Context for runtime load skill tool. */
 export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
+  /** Agent identity used to enforce owner-scoped skill visibility. */
+  agentId?: string;
   availableSkillIds?: readonly string[];
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
@@ -137,7 +193,7 @@ function getResponseMessages(
       DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.noCurrentRunToolsNote,
     unavailableCurrentRunToolsDelegationNote:
       options.messages?.unavailableCurrentRunToolsDelegationNote ??
-        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.unavailableCurrentRunToolsDelegationNote,
+        buildUnavailableCurrentRunToolsDelegationNote(options.context.availableToolNames),
     overrideNote: options.messages?.overrideNote ??
       DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.overrideNote,
     referenceNote: options.messages?.referenceNote ??
@@ -154,7 +210,8 @@ function buildLoadedSkillResponse(input: {
   return buildRuntimeLoadedSkillResponse({
     skillId: input.skillId,
     instructions: input.instructions,
-    nextStep: input.options.nextStep ?? RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
+    nextStep: input.options.nextStep ??
+      buildRuntimeLoadSkillContinuationNote(input.options.context.availableToolNames),
     messages: getResponseMessages(input.options),
     references: input.references,
     availableToolNames: input.options.context.availableToolNames,

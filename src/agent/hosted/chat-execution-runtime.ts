@@ -57,6 +57,7 @@ import {
 } from "../../chat/stream-watchdog.ts";
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -230,7 +231,10 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
 const HOSTED_LONG_RUNNING_TOOL_NAMES = ["invoke_agent"] as const;
 
 function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
-  return createChatStreamWatchdog({ longRunningToolNames: HOSTED_LONG_RUNNING_TOOL_NAMES });
+  return createChatStreamWatchdog({
+    longRunningToolNames: HOSTED_LONG_RUNNING_TOOL_NAMES,
+    longRunningToolPrefixes: [AGENT_DELEGATE_TOOL_PREFIX],
+  });
 }
 
 function resolveStreamBootstrapKeepaliveIntervalMs(intervalMs: number | undefined): number {

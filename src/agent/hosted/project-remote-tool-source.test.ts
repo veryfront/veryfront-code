@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -143,6 +143,30 @@ Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates
   ]);
 });
 
+Deno.test("createHostedProjectRemoteToolSource replaces model-supplied project references", async () => {
+  let executedArgs: unknown;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [projectFileTool("update_file")],
+      execute: (_toolName, args) => {
+        executedArgs = args;
+        return { ok: true };
+      },
+    }),
+    defaultProjectId: "trusted-project",
+  });
+
+  await source.executeTool("update_file", {
+    path: "AGENTS.md",
+    project_reference: "attacker-project",
+  }, { projectId: "trusted-project" });
+
+  assertEquals(executedArgs, {
+    path: "AGENTS.md",
+    project_reference: "trusted-project",
+  });
+});
+
 Deno.test("createHostedProjectRemoteToolSource hydrates optional declared project references", async () => {
   const executeCalls: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> =
     [];
@@ -224,6 +248,49 @@ Deno.test("createHostedProjectRemoteToolSource retries configured write collisio
 
   assertEquals(await source.executeTool("create_file", { path: "report.md" }), { ok: true });
   assertEquals(executeCalls, ["create_file", "update_file"]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource does not retry with an unadvertised tool", async () => {
+  const executeCalls: string[] = [];
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [projectFileTool("create_file")],
+      execute: (toolName) => {
+        executeCalls.push(toolName);
+        return { isError: true, message: "file already exists" };
+      },
+    }),
+    defaultProjectId: "project-1",
+    shouldRetryWithTool: () => true,
+  });
+
+  await assertRejects(
+    () => source.executeTool("create_file", { path: "report.md" }),
+    Error,
+  );
+  assertEquals(executeCalls, ["create_file"]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource does not retry outside the tool allowlist", async () => {
+  const executeCalls: string[] = [];
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [projectFileTool("create_file"), projectFileTool("update_file")],
+      execute: (toolName) => {
+        executeCalls.push(toolName);
+        return { isError: true, message: "file already exists" };
+      },
+    }),
+    defaultProjectId: "project-1",
+    allowedToolNames: new Set(["create_file"]),
+    shouldRetryWithTool: () => true,
+  });
+
+  await assertRejects(
+    () => source.executeTool("create_file", { path: "report.md" }),
+    Error,
+  );
+  assertEquals(executeCalls, ["create_file"]);
 });
 
 Deno.test("createHostedProjectRemoteToolSource retries thrown errors and rethrows non-retry errors", async () => {
@@ -471,24 +538,51 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
     "x-conversation-id": "conversation-1",
     "x-project-id": "project-2",
   });
+});
 
-  const blockedSources = createHostedProjectRemoteToolSources({
-    authToken: "token-1",
-    apiMcpUrl: "https://api.example/mcp",
-    studioMcpUrl: "https://studio.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
-    clientProfile: {
-      id: "veryfront-cli",
-      type: "cli",
-      trusted: true,
-      capabilities: [],
-    },
-    getProjectId: () => "project-1",
-    createRemoteToolSource: (config) =>
-      createRemoteSource({ id: config.id, tools: [projectFileTool(config.id ?? "tool")] }),
-  });
+Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP without hosted URL", () => {
+  assertThrows(
+    () =>
+      createHostedProjectRemoteToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        clientProfile: {
+          id: "veryfront-studio",
+          type: "web",
+          trusted: true,
+          capabilities: ["ui_panels"],
+        },
+        getProjectId: () => "project-1",
+        createRemoteToolSource: (config) =>
+          createRemoteSource({ id: config.id, tools: [simpleTool("studio_todo_write")] }),
+      }),
+    Error,
+    "studioMcpUrl was not provided",
+  );
+});
 
-  assertEquals(blockedSources.map((source) => source.id), ["veryfront-mcp"]);
+Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP from disallowed client", () => {
+  assertThrows(
+    () =>
+      createHostedProjectRemoteToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        studioMcpUrl: "https://studio.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        clientProfile: {
+          id: "veryfront-cli",
+          type: "cli",
+          trusted: true,
+          capabilities: [],
+        },
+        getProjectId: () => "project-1",
+        createRemoteToolSource: (config) =>
+          createRemoteSource({ id: config.id, tools: [simpleTool("studio_todo_write")] }),
+      }),
+    Error,
+    'client "veryfront-cli" is not allowed to use Studio MCP',
+  );
 });
 
 Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed Studio tools", async () => {
@@ -497,7 +591,6 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }],
     clientProfile: {
       id: "veryfront-studio",
       type: "web",
@@ -526,6 +619,107 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   assertEquals(
     (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
     ["studio_todo_write"],
+  );
+});
+
+Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    allowedToolNames: new Set(["studio_todo_write"]),
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({
+        id: config.id,
+        tools: [projectFileTool("update_file"), simpleTool("studio_todo_write")],
+      });
+    },
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
+  assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
+});
+
+Deno.test("createHostedProjectRemoteToolSources preserves an explicit MCP opt-out", () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    allowedToolNames: new Set(["studio_todo_write"]),
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({ id: config.id, tools: [] });
+    },
+  });
+
+  assertEquals(sources, []);
+  assertEquals(configs, []);
+});
+
+Deno.test("createHostedProjectRemoteToolSources applies API and Studio policies without cross-granting tools", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [
+      { kind: "veryfront-api", toolPolicy: { allow: ["update_file"] } },
+      { kind: "veryfront-studio", toolPolicy: { allow: ["studio_open_project"] } },
+    ],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          projectFileTool("update_file"),
+          navigationTool("studio_open_project"),
+          simpleTool("delete_project"),
+        ],
+      }),
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(
+    (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["update_file"],
+  );
+  assertEquals(
+    (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["studio_open_project"],
+  );
+  await assertRejects(
+    () => sources[0]!.executeTool("studio_open_project", { project_id: "project-2" }),
+    Error,
+    'Tool "studio_open_project" is not advertised by remote source "veryfront-mcp"',
+  );
+  await assertRejects(
+    () => sources[1]!.executeTool("delete_project", {}),
+    Error,
+    'Tool "delete_project" is not advertised by remote source "studio-mcp"',
   );
 });
 
@@ -617,12 +811,12 @@ Deno.test("createHostedProjectRemoteToolSources applies custom MCP server tool p
   await assertRejects(
     () => source.executeTool("delete_docs", {}),
     Error,
-    'Tool "delete_docs" is not allowed for this MCP server',
+    'Tool "delete_docs" is not advertised by remote source "docs"',
   );
   await assertRejects(
     () => source.executeTool("archive_docs", {}),
     Error,
-    'Tool "archive_docs" is not allowed for this MCP server',
+    'Tool "archive_docs" is not advertised by remote source "docs"',
   );
 });
 

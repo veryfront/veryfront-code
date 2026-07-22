@@ -155,6 +155,7 @@ Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools"
     request: {},
     agentConfig: createAgentConfig({
       tools: ["get_agent", "get_agent_source", "update_agent"],
+      delegates: ["writer"],
       providerTools: ["web_search"],
     }),
     resolveModelId: (model) => model,
@@ -164,12 +165,13 @@ Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools"
     "get_agent",
     "get_agent_source",
     "update_agent",
+    "agent_writer",
   ]);
   assertEquals(result.requestedAllowedProviderTools, ["web_search"]);
   assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, true);
 });
 
-Deno.test("resolveHostedRuntimeRequestConfig keeps explicit tool overrides ahead of configured tools", () => {
+Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides narrow configured tools", () => {
   const resolve = (allowedTools: string[]) => {
     const result = resolveHostedRuntimeRequestConfig({
       request: { runtimeOverrides: { allowedTools } },
@@ -179,15 +181,16 @@ Deno.test("resolveHostedRuntimeRequestConfig keeps explicit tool overrides ahead
       }),
       resolveModelId: (model) => model,
     });
-    assertEquals(result.requestedAllowedProviderTools, allowedTools);
+    assertEquals(
+      result.requestedAllowedProviderTools,
+      allowedTools.includes("web_search") ? ["web_search"] : [],
+    );
     assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, false);
     return result.requestedAllowedTools;
   };
 
   assertEquals(resolve(["unbound_tool", "update_agent", "web_search"]), [
-    "unbound_tool",
     "update_agent",
-    "web_search",
   ]);
   assertEquals(resolve([]), []);
 });

@@ -102,12 +102,41 @@ export function createHostedProjectRemoteToolSource(
   });
   const retryToolName = input.retryToolName ?? "update_file";
 
+  function normalizeProjectToolInput(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (isProjectNavigationRemoteTool(toolName, input.projectScopedRemoteToolOptions)) {
+      return toolInput;
+    }
+
+    const { project_reference: _untrustedProjectReference, ...trustedInput } = toolInput;
+    return trustedInput;
+  }
+
+  async function executeRetryTool(inputExecution: {
+    toolInput: Record<string, unknown>;
+    context?: ToolExecutionContext;
+  }): Promise<unknown> {
+    const retryExecution = await toolCatalog.prepareExecution({
+      toolName: retryToolName,
+      toolInput: normalizeProjectToolInput(retryToolName, inputExecution.toolInput),
+      context: inputExecution.context,
+    });
+    return await input.source.executeTool(
+      retryToolName,
+      retryExecution.toolInput,
+      retryExecution.executeContext,
+    );
+  }
+
   async function executeWithRetry(inputExecution: {
     toolName: string;
     toolInput: Record<string, unknown>;
     executeContext?: ToolExecutionContext;
     activeProjectId: string | null;
     activeBranchId: string | null;
+    context?: ToolExecutionContext;
   }): Promise<unknown> {
     try {
       return await input.source.executeTool(
@@ -125,11 +154,7 @@ export function createHostedProjectRemoteToolSource(
           error,
         })
       ) {
-        return input.source.executeTool(
-          retryToolName,
-          inputExecution.toolInput,
-          inputExecution.executeContext,
-        );
+        return await executeRetryTool(inputExecution);
       }
 
       throw error;
@@ -145,13 +170,14 @@ export function createHostedProjectRemoteToolSource(
         toolInput: toChildRunToolInputRecord(args),
         context,
       }) ?? toChildRunToolInputRecord(args);
+      const trustedToolInput = normalizeProjectToolInput(toolName, normalizedToolInput);
       const {
         activeProjectId,
         toolInput: hydratedToolInput,
         executeContext,
       } = await toolCatalog.prepareExecution({
         toolName,
-        toolInput: normalizedToolInput,
+        toolInput: trustedToolInput,
         context,
       });
       const activeBranchId = resolveActiveBranchId(input.getActiveBranchId);
@@ -161,6 +187,7 @@ export function createHostedProjectRemoteToolSource(
         executeContext,
         activeProjectId,
         activeBranchId,
+        context,
       });
 
       if (
@@ -172,7 +199,10 @@ export function createHostedProjectRemoteToolSource(
           error: result,
         })
       ) {
-        result = await input.source.executeTool(retryToolName, hydratedToolInput, executeContext);
+        result = await executeRetryTool({
+          toolInput: trustedToolInput,
+          context,
+        });
       }
 
       if (!isSuccessfulProjectSteeringMutationResult(result)) {
@@ -180,7 +210,7 @@ export function createHostedProjectRemoteToolSource(
       }
 
       if (isProjectNavigationRemoteTool(toolName, input.projectScopedRemoteToolOptions)) {
-        const requestedProjectId = normalizedToolInput.project_id;
+        const requestedProjectId = trustedToolInput.project_id;
         const confirmedProjectId = typeof requestedProjectId === "string"
           ? getConfirmedProjectContextSwitchId(result, requestedProjectId)
           : null;
@@ -241,12 +271,27 @@ function resolveHostedProjectMcpServers(
 ): readonly AgentServiceMcpServerConfig[] {
   const servers = [...(input.mcpServers ?? defaultAgentServiceMcpServers())];
   if (
+    input.mcpServers === undefined &&
     needsStudioMcpSource(input) &&
     !servers.some((server) => server.kind === "veryfront-studio")
   ) {
     servers.push({ kind: "veryfront-studio" });
   }
   return servers;
+}
+
+function throwExplicitStudioMcpUnavailable(
+  input: CreateHostedProjectRemoteToolSourcesInput,
+): never {
+  const missingUrl = !input.studioMcpUrl;
+  const clientId = input.clientProfile?.id ?? "unknown";
+  const reason = missingUrl
+    ? "studioMcpUrl was not provided"
+    : `client "${clientId}" is not allowed to use Studio MCP`;
+  throw new Error(
+    `Explicit Veryfront Studio MCP server requires a hosted Studio MCP transport, but ${reason}. ` +
+      'Provide studioMcpUrl with a trusted Veryfront Studio client profile, or remove { kind: "veryfront-studio" } from mcpServers.',
+  );
 }
 
 function createHostedProjectRemoteToolSourceFromConfig(
@@ -305,7 +350,7 @@ function isHostedMcpToolAllowed(
   return policy?.allow ? policy.allow.includes(toolName) : true;
 }
 
-function createHostedMcpToolPolicySource(
+export function createHostedMcpToolPolicySource(
   source: RemoteToolSource,
   policy: AgentMcpToolPolicy | undefined,
 ): RemoteToolSource {
@@ -339,6 +384,7 @@ export function createHostedProjectRemoteToolSources(
   const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
   const sources: RemoteToolSource[] = [];
   const mcpServers = resolveHostedProjectMcpServers(input);
+  const hasExplicitMcpServers = input.mcpServers !== undefined;
 
   for (const server of mcpServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
@@ -351,6 +397,9 @@ export function createHostedProjectRemoteToolSources(
       conversationId: input.conversationId,
     });
     if (!remoteConfig) {
+      if (hasExplicitMcpServers && server.kind === "veryfront-studio") {
+        throwExplicitStudioMcpUnavailable(input);
+      }
       continue;
     }
 

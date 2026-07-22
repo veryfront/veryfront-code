@@ -3,8 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
   hostedChildForkToolInputSchema,
+  MAX_HOSTED_CHILD_DELEGATION_DEPTH,
   resolveHostedChildForkRuntimeConfig,
   resolveHostedChildForkThinkingOverride,
+  withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 
 Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields", () => {
@@ -152,6 +154,122 @@ Deno.test("resolveHostedChildForkThinkingOverride maps child fork thinking value
     enabled: true,
     budgetTokens: 2048,
   });
+});
+
+Deno.test("withHostedChildInvocationContext starts trusted root lineage and ignores model-supplied root resets", () => {
+  const result = withHostedChildInvocationContext(
+    {
+      description: "review child task",
+      prompt: "Review the delegated task.",
+      context: {
+        veryfront_invocation_context: {
+          root_conversation_id: "model-root-conversation",
+          root_run_id: "model-root-run",
+          root_message_id: "model-root-message",
+          delegation_depth: 99,
+        },
+      },
+    },
+    {
+      parentConversationId: "root-conversation",
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+      toolCallId: "tool-call-1",
+    },
+  );
+
+  assertEquals(result.context?.veryfront_invocation_context, {
+    root_conversation_id: "root-conversation",
+    parent_conversation_id: "root-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_run_id: "root-run",
+    parent_message_id: "root-message",
+    tool_call_id: "tool-call-1",
+    delegation_depth: 1,
+  });
+});
+
+Deno.test("withHostedChildInvocationContext preserves root lineage and advances immediate parent for grandchildren", () => {
+  const child = withHostedChildInvocationContext(
+    {
+      description: "child task",
+      prompt: "Handle child work.",
+      context: {},
+    },
+    {
+      parentConversationId: "root-conversation",
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+      toolCallId: "tool-call-child",
+    },
+  );
+
+  const grandchild = withHostedChildInvocationContext(
+    {
+      description: "grandchild task",
+      prompt: "Handle grandchild work.",
+      context: {},
+    },
+    {
+      parentConversationId: "child-conversation",
+      conversationId: "legacy-conversation-value",
+      parentRunId: "child-run",
+      parentMessageId: "child-message",
+      toolCallId: "tool-call-grandchild",
+      trustedInvocationContext: child.context?.veryfront_invocation_context as never,
+    },
+  );
+
+  assertEquals(grandchild.context?.veryfront_invocation_context, {
+    root_conversation_id: "root-conversation",
+    parent_conversation_id: "child-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_run_id: "child-run",
+    parent_message_id: "child-message",
+    tool_call_id: "tool-call-grandchild",
+    delegation_depth: 2,
+  });
+});
+
+Deno.test("withHostedChildInvocationContext enforces the delegation depth cap", () => {
+  let message = "";
+
+  try {
+    withHostedChildInvocationContext(
+      {
+        description: "too deep",
+        prompt: "This should not run.",
+        context: {},
+      },
+      {
+        conversationId: "child-conversation",
+        parentRunId: "child-run",
+        parentMessageId: "child-message",
+        toolCallId: "tool-call-deep",
+        trustedInvocationContext: {
+          root_conversation_id: "root-conversation",
+          root_run_id: "root-run",
+          root_message_id: "root-message",
+          parent_conversation_id: "parent-conversation",
+          parent_run_id: "parent-run",
+          parent_message_id: "parent-message",
+          tool_call_id: "tool-call-parent",
+          delegation_depth: MAX_HOSTED_CHILD_DELEGATION_DEPTH,
+        },
+      },
+    );
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+
+  assertEquals(
+    message,
+    `invoke_agent delegation depth limit exceeded: maximum depth is ${MAX_HOSTED_CHILD_DELEGATION_DEPTH}.`,
+  );
 });
 
 Deno.test("resolveHostedChildForkRuntimeConfig resolves reusable child fork runtime options", () => {

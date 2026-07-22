@@ -49,6 +49,7 @@ import { throwIfChildRunAborted } from "../child-run/execution-support.ts";
 import {
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
+  type HostedChildInvocationContext,
   resolveHostedChildForkRuntimeConfig,
   type ResolveHostedChildForkRuntimeConfigInput,
   withHostedChildInvocationContext,
@@ -108,14 +109,18 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   kind: string;
   provider: string;
   forkModel: string;
+  temperature?: number;
   maxSteps: number;
   effectivePrompt: string;
   forkContext?: HostedChildForkInstructionsContext;
   toolAssembly: DefaultHostedChildForkToolAssemblyResult;
   abortSignal?: AbortSignal;
   durableChildRun?: HostedChildRunIdentifiers;
+  parentConversationId?: string;
   conversationId?: string;
   parentRunId?: string;
+  parentMessageId?: string;
+  trustedInvocationContext?: HostedChildInvocationContext;
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
   logger?: HostedChildForkStreamLogger;
   instrumentation?: HostedChildForkExecutionInstrumentation<TAttributes>;
@@ -233,6 +238,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     ) => RuntimeReasoningOption | undefined;
     resolveModelThinking?: ResolveHostedChildForkRuntimeConfigInput["resolveModelThinking"];
     onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
+    inputAlreadyHasInvocationContext?: boolean;
   };
 
 /** Input payload for execute hosted child fork tool. */
@@ -245,11 +251,16 @@ export async function executeHostedChildForkToolInput<
     await input.onRequestedProjectId?.(input.forkInput.project_id);
   }
 
-  const forkInput = withHostedChildInvocationContext(input.forkInput, {
-    conversationId: input.conversationId,
-    parentRunId: input.parentRunId,
-    toolCallId: input.toolCallId,
-  });
+  const forkInput = input.inputAlreadyHasInvocationContext
+    ? input.forkInput
+    : withHostedChildInvocationContext(input.forkInput, {
+      parentConversationId: input.parentConversationId,
+      conversationId: input.conversationId,
+      parentRunId: input.parentRunId,
+      parentMessageId: input.parentMessageId,
+      toolCallId: input.toolCallId,
+      trustedInvocationContext: input.trustedInvocationContext,
+    });
   const runtimeConfig = resolveHostedChildForkRuntimeConfig({
     forkInput,
     contextModel: input.contextModel,
@@ -274,6 +285,7 @@ export async function executeHostedChildForkToolInput<
     description: runtimeConfig.description,
     provider: runtimeConfig.provider,
     forkModel: runtimeConfig.forkModel,
+    temperature: runtimeConfig.temperature,
     maxSteps: runtimeConfig.maxSteps,
     effectivePrompt: runtimeConfig.effectivePrompt,
     toolAssembly,
@@ -349,6 +361,7 @@ export async function executeHostedChildForkWithPreparedTools<
       projectId: input.projectId ?? null,
       provider: input.provider,
       forkModel: input.forkModel,
+      temperature: input.temperature,
       maxSteps: input.maxSteps,
       prompt: input.effectivePrompt,
       maxContinuationSteps: input.maxContinuationSteps ?? 0,

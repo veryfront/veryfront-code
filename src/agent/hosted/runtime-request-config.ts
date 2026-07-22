@@ -8,6 +8,7 @@ import {
   resolveRuntimeClientProfile,
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -18,7 +19,13 @@ export type HostedRuntimeRequestConfigRequest = Pick<
 /** Public API contract for hosted runtime request config agent. */
 export type HostedRuntimeRequestConfigAgent = Pick<
   RuntimeAgentMarkdownDefinition,
-  "model" | "thinking" | "temperature" | "maxSteps" | "tools" | "providerTools"
+  | "model"
+  | "thinking"
+  | "temperature"
+  | "maxSteps"
+  | "tools"
+  | "providerTools"
+  | "delegates"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -109,17 +116,22 @@ export function resolveHostedRuntimeThinkingOverride(input: {
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
+  configuredDelegates: RuntimeAgentMarkdownDefinition["delegates"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
-  if (input.requestedTools !== undefined) {
-    return [...new Set(input.requestedTools)];
-  }
-
   if (input.configuredTools === true) {
-    return undefined;
+    return input.requestedTools === undefined ? undefined : [...new Set(input.requestedTools)];
   }
 
-  return [...new Set(input.configuredTools ?? [])];
+  const configuredToolNames = new Set([
+    ...(input.configuredTools ?? []),
+    ...(input.configuredDelegates ?? []).map((id) => `${AGENT_DELEGATE_TOOL_PREFIX}${id}`),
+  ]);
+  if (input.requestedTools === undefined) {
+    return [...configuredToolNames];
+  }
+
+  return [...new Set(input.requestedTools)].filter((toolName) => configuredToolNames.has(toolName));
 }
 
 /** Resolve provider-native tool bindings without widening direct tool access. */
@@ -127,9 +139,12 @@ export function resolveHostedRuntimeAllowedProviderTools(input: {
   configuredProviderTools: RuntimeAgentMarkdownDefinition["providerTools"];
   requestedTools: string[] | undefined;
 }): string[] {
-  return [
-    ...new Set(input.requestedTools ?? input.configuredProviderTools ?? []),
-  ];
+  const configuredToolNames = new Set(input.configuredProviderTools ?? []);
+  if (input.requestedTools === undefined) {
+    return [...configuredToolNames];
+  }
+
+  return [...new Set(input.requestedTools)].filter((toolName) => configuredToolNames.has(toolName));
 }
 
 /** Configuration used by resolve hosted runtime request. */
@@ -158,6 +173,7 @@ export function resolveHostedRuntimeRequestConfig(
     requestedMaxOutputTokens: effectiveRuntimeOverrides?.maxOutputTokens,
     requestedAllowedTools: resolveHostedRuntimeAllowedTools({
       configuredTools: input.agentConfig.tools,
+      configuredDelegates: input.agentConfig.delegates,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
     requestedAllowedProviderTools: resolveHostedRuntimeAllowedProviderTools({

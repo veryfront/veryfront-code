@@ -259,7 +259,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     maxSteps: 7,
     maxOutputTokens: 1200,
     allowedTools: ["load_skill"],
-    allowedProviderTools: ["load_skill"],
+    allowedProviderTools: [],
     includeRuntimeEssentialToolsWhenEmpty: false,
     allowDelegation: false,
     conversationId: "conversation-1",
@@ -381,7 +381,7 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
   ]);
 });
 
-Deno.test("prepareHostedChatExecution strips provider history enabled by a runtime override", async () => {
+Deno.test("prepareHostedChatExecution strips configured provider history selected by a runtime override", async () => {
   const messages: ChatUiMessage[] = [
     {
       id: "user-1",
@@ -438,6 +438,7 @@ Deno.test("prepareHostedChatExecution strips provider history enabled by a runti
     agentConfig: {
       id: "agent-1",
       model: "anthropic/claude-sonnet-4-6",
+      providerTools: ["web_search"],
     },
     apiUrl: "https://api.example.com",
     abortSignal: new AbortController().signal,

@@ -25,6 +25,7 @@ export type ChatStreamWatchdogOptions = {
   idleTimeoutMs?: number;
   toolRunningTimeoutMs?: number;
   longRunningToolNames?: Iterable<string>;
+  longRunningToolPrefixes?: Iterable<string>;
   setTimeoutFn?: typeof globalThis.setTimeout;
   clearTimeoutFn?: typeof globalThis.clearTimeout;
 };
@@ -69,11 +70,13 @@ export function createChatStreamWatchdogState(
 export function isLongRunningToolRunning(
   current: ChatStreamWatchdogState,
   longRunningToolNames: ReadonlySet<string>,
+  longRunningToolPrefixes: readonly string[] = [],
 ): boolean {
   return (
     current.phase === "tool_running" &&
     typeof current.toolName === "string" &&
-    longRunningToolNames.has(current.toolName)
+    (longRunningToolNames.has(current.toolName) ||
+      longRunningToolPrefixes.some((prefix) => current.toolName?.startsWith(prefix)))
   );
 }
 
@@ -133,7 +136,11 @@ export function getNextChatStreamWatchdogState(
       );
 
     case "message-metadata":
-      return isLongRunningToolRunning(currentState, resolvedOptions.longRunningToolNames)
+      return isLongRunningToolRunning(
+          currentState,
+          resolvedOptions.longRunningToolNames,
+          resolvedOptions.longRunningToolPrefixes,
+        )
         ? currentState
         : createChatStreamWatchdogState("response_pending", undefined, resolvedOptions);
 
@@ -141,7 +148,11 @@ export function getNextChatStreamWatchdogState(
       return createChatStreamWatchdogState("response_pending", undefined, resolvedOptions);
 
     default:
-      return isLongRunningToolRunning(currentState, resolvedOptions.longRunningToolNames)
+      return isLongRunningToolRunning(
+          currentState,
+          resolvedOptions.longRunningToolNames,
+          resolvedOptions.longRunningToolPrefixes,
+        )
         ? currentState
         : createChatStreamWatchdogState("response_pending", undefined, resolvedOptions);
   }
@@ -174,7 +185,13 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
 
     clearTimer();
 
-    if (isLongRunningToolRunning(state, resolvedOptions.longRunningToolNames)) {
+    if (
+      isLongRunningToolRunning(
+        state,
+        resolvedOptions.longRunningToolNames,
+        resolvedOptions.longRunningToolPrefixes,
+      )
+    ) {
       return;
     }
 
@@ -195,7 +212,13 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       return lastTimeoutState;
     },
     keepAlive() {
-      if (isLongRunningToolRunning(state, resolvedOptions.longRunningToolNames)) {
+      if (
+        isLongRunningToolRunning(
+          state,
+          resolvedOptions.longRunningToolNames,
+          resolvedOptions.longRunningToolPrefixes,
+        )
+      ) {
         return;
       }
 
@@ -232,6 +255,7 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
     // from the idle timeout. Embedding product-specific names here as a default
     // couples this shared utility to application concerns.
     longRunningToolNames: new Set(options?.longRunningToolNames ?? []),
+    longRunningToolPrefixes: [...(options?.longRunningToolPrefixes ?? [])],
     setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
     clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
   };
