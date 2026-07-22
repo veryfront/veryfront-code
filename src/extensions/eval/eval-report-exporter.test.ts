@@ -151,6 +151,47 @@ describe("EvalReportExporterRegistry", () => {
     });
   });
 
+  it("uses call-time exporter membership throughout an in-flight export", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const calls: string[] = [];
+
+    registry.register({
+      id: "blocking",
+      async export() {
+        calls.push("blocking");
+        started.resolve();
+        await release.promise;
+      },
+    });
+    registry.register({
+      id: "registered-at-start",
+      export() {
+        calls.push("registered-at-start");
+      },
+    });
+
+    const inFlight = registry.export(createReport());
+    await started.promise;
+
+    registry.unregister("registered-at-start");
+    registry.register({
+      id: "registered-late",
+      export() {
+        calls.push("registered-late");
+      },
+    });
+    release.resolve();
+
+    const results = await inFlight;
+    assertEquals(calls, ["blocking", "registered-at-start"]);
+    assertEquals(results.map((result) => result.exporterId), [
+      "blocking",
+      "registered-at-start",
+    ]);
+  });
+
   it("continues exporting when one exporter fails", async () => {
     const registry = createEvalReportExporterRegistry();
     let secondExporterCalled = false;
