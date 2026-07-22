@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteImports, UnifiedImportRewriter } from "./unified-rewriter.ts";
 import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
@@ -114,6 +119,7 @@ describe("rewriteImports with the default strategies", () => {
       Error,
     );
 
+    assertInstanceOf(error, Error);
     assertStringIncludes(error.message, "@/assets/logo.svg");
     assertStringIncludes(error.message, "public/logo.svg");
   });
