@@ -1,5 +1,5 @@
 {
-  "lock": "../deno.lock",
+  "lock": "./deno.lock",
   "minimumDependencyAge": "P2D",
   "imports": {
     "#dnt": "jsr:@deno/dnt@0.42.3",

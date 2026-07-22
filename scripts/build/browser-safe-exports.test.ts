@@ -1,9 +1,36 @@
-import { assert } from "#std/assert";
+import { assert, assertThrows } from "#std/assert";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
+	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+	createDntEntryPoints,
 } from "./browser-safe-exports.mjs";
+
+Deno.test("ships the client root barrel without exposing it as a public package subpath", async () => {
+	const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
+	const exports = denoJson.exports as Record<string, string>;
+	const imports = denoJson.imports as Record<string, string>;
+
+	assert(exports["./index.client"] === undefined);
+	assert(imports["veryfront/index.client"] === "./src/index.client.ts");
+	assert(
+		BROWSER_SAFE_INTERNAL_ENTRY_POINTS["./index.client"] ===
+			"./src/index.client.ts",
+	);
+});
+
+Deno.test("rejects overlap between public and build-only entry points", () => {
+	assertThrows(
+		() =>
+			createDntEntryPoints(
+				{ "./index.client": "./src/public-client.ts" },
+				BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+			),
+		Error,
+		"both public and internal",
+	);
+});
 
 // build-npm-dnt.ts postBuild throws "Missing browser-safe export source" when
 // an entry here no longer exists in deno.json exports — but only at release
