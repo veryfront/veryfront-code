@@ -31,6 +31,7 @@ import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
+import { isDegradedArtifact, markDegradedArtifact } from "./degraded-artifact.ts";
 import {
   buildHttpCacheIdentity,
   buildHttpCacheIdentityMetadata,
@@ -112,16 +113,39 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   if (await exists(cachePath)) {
     const code = await fs.readTextFile(cachePath);
-    const deps = extractBundleDeps(code);
 
-    if (deps.length > 0) {
-      const depsValid = await validateBundleDepsExist(deps, cacheDir);
-      if (!depsValid) {
-        httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
-          url: normalizedUrl,
-          hash,
-          missingDeps: deps.length,
-        });
+    if (isDegradedArtifact(code)) {
+      // The artifact on disk is the fallback a previous render wrote when a
+      // dependency could not be prefetched. Retry the prefetch instead of
+      // handing the degradation on.
+      httpCacheLog.debug("Local cache holds a degraded artifact, will re-fetch", {
+        url: normalizedUrl,
+        hash,
+      });
+    } else {
+      const deps = extractBundleDeps(code);
+
+      if (deps.length > 0) {
+        const depsValid = await validateBundleDepsExist(deps, cacheDir);
+        if (!depsValid) {
+          httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
+            url: normalizedUrl,
+            hash,
+            missingDeps: deps.length,
+          });
+        } else {
+          getCachedPaths().set(cacheKey, cachePath);
+          refreshDistributedCacheAsync(
+            hash,
+            code,
+            cacheDir,
+            normalizedUrl,
+            identityMetadata,
+            getLastDistributedRefresh,
+          );
+          trackBundleAccumulator(hash, normalizedUrl, cachePath);
+          return cachePath;
+        }
       } else {
         getCachedPaths().set(cacheKey, cachePath);
         refreshDistributedCacheAsync(
@@ -135,18 +159,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         trackBundleAccumulator(hash, normalizedUrl, cachePath);
         return cachePath;
       }
-    } else {
-      getCachedPaths().set(cacheKey, cachePath);
-      refreshDistributedCacheAsync(
-        hash,
-        code,
-        cacheDir,
-        normalizedUrl,
-        identityMetadata,
-        getLastDistributedRefresh,
-      );
-      trackBundleAccumulator(hash, normalizedUrl, cachePath);
-      return cachePath;
     }
   }
 
@@ -299,13 +311,22 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     processingStack.add(cacheIdentity);
+    let degraded: readonly string[] = [];
     try {
-      code = await rewriteModuleImports(code, normalizedUrl, options, cacheHttpModule);
+      const rewritten = await rewriteModuleImports(
+        code,
+        normalizedUrl,
+        options,
+        cacheHttpModule,
+      );
+      code = rewritten.code;
+      degraded = rewritten.degraded;
     } finally {
       processingStack.delete(cacheIdentity);
     }
 
     code = embedSourceUrl(code, normalizedUrl);
+    if (degraded.length > 0) code = markDegradedArtifact(code);
 
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
@@ -315,6 +336,20 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         detail:
           `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
       });
+    }
+
+    if (degraded.length > 0) {
+      // The file on disk carries this render through, but the artifact is not
+      // the one this URL is supposed to produce. Keeping it out of the
+      // distributed cache and the in-memory path map means the next render
+      // retries the prefetch instead of inheriting one upstream blip for the
+      // lifetime of the distributed entry.
+      httpCacheLog.warn("Not caching a module with unresolved dynamic imports", {
+        url: normalizedUrl,
+        hash,
+        degraded,
+      });
+      return cachePath;
     }
 
     try {
@@ -385,7 +420,7 @@ export function cacheHttpImportsToLocal(
 ): Promise<CacheHttpImportsResult> {
   const requestOptions = prepareHttpCacheRequestOptions(options);
   return bundleAccumulatorStorage.run([], async () => {
-    const replacements = await buildReplacements(
+    const { replacements } = await buildReplacements(
       code,
       undefined,
       requestOptions,
