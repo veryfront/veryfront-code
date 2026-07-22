@@ -142,6 +142,34 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
+    it("honors build.ssg from veryfront.config.ts when the caller omits ssg", async () => {
+      await withTestContext("build-config-ssg-off", async (context) => {
+        const outputDir = join(context.projectDir, "dist");
+
+        await removeAppDir(context.projectDir);
+
+        const pagesDir = await ensurePagesDir(context.projectDir);
+        await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
+        await writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { build: { ssg: false } };`,
+        );
+
+        await assertRejects(
+          () =>
+            buildProduction({
+              projectDir: context.projectDir,
+              outputDir,
+              enableSplitting: false,
+              enableCompression: false,
+              enablePrefetch: false,
+            }),
+          Error,
+          "static site generation is disabled",
+        );
+      });
+    });
+
     it("fails for an empty project instead of emitting nothing", async () => {
       await withTestContext("build-empty", async (context) => {
         const outputDir = join(context.projectDir, "dist");

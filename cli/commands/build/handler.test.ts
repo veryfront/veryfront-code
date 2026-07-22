@@ -62,8 +62,17 @@ describe("commands/build/handler", () => {
         assertEquals(result.data.split, true);
         assertEquals(result.data.compress, true);
         assertEquals(result.data.prefetch, true);
-        assertEquals(result.data.ssg, false);
+        assertEquals(result.data.ssg, undefined);
       }
+    });
+
+    it("keeps an explicit --ssg=false distinct from an omitted flag", () => {
+      const result = parseBuildArgs({
+        _: ["build"],
+        ssg: false,
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.ssg, false);
     });
 
     it("parses ssg flag for static generation", () => {

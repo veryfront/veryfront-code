@@ -38,9 +38,9 @@ describe("build/production-build/build/build-initializer", () => {
       assertEquals(result.enablePrefetch, true);
     });
 
-    it("should default ssg to true", () => {
+    it("should leave an omitted ssg undefined for config resolution", () => {
       const result = normalizeBuildOptions({ projectDir: "/project" });
-      assertEquals(result.ssg, true);
+      assertEquals(result.ssg, undefined);
     });
 
     it("should respect explicitly disabled ssg", () => {

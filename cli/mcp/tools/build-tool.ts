@@ -33,9 +33,9 @@ const getBuildInput = defineSchema((v) =>
     ssg: v
       .boolean()
       .optional()
-      .default(true)
       .describe(
-        "Enable static site generation. Defaults to true; disabling it produces no pages.",
+        "Enable static site generation. Defaults to build.ssg from veryfront.config.ts, " +
+          "then true; disabling it produces no pages.",
       ),
     dryRun: v
       .boolean()

@@ -52,9 +52,12 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         const enableSplitting = normalizedOptions.enableSplitting ?? true;
         const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
         const enableCompression = normalizedOptions.enableCompression ?? true;
-        // Default to SSG: a non-SSG build collects no routes and therefore
-        // emits no pages, which is never a servable artifact.
-        const ssg = normalizedOptions.ssg ?? true;
+        // Explicit caller option > build.ssg in veryfront.config.ts > enabled.
+        // Resolved here (after initializeBuildContext loads the config) so
+        // every entry point — CLI, MCP tool, direct API — honors the config.
+        // Default to SSG because a non-SSG build collects no routes and
+        // therefore emits no pages, which is never a servable artifact.
+        const ssg = normalizedOptions.ssg ?? context.config.build?.ssg ?? true;
 
         await withSpan(
           "build.setupDirectories",
