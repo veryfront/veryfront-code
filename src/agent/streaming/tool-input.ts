@@ -1,4 +1,4 @@
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = serverLogger.component("agent-tool-input");
 

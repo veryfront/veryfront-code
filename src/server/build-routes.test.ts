@@ -203,6 +203,21 @@ describe("server/build-routes", () => {
       assertEquals(paths, ["/about", "/api"]);
     });
 
+    it("excludes Pages Router layout files from static page routes", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/index.tsx": "export default () => <div />",
+        "/project/pages/layout.tsx": "export default ({ children }) => children",
+        "/project/pages/chat/index.tsx": "export default () => <div />",
+        "/project/pages/chat/layout.tsx": "export default ({ children }) => children",
+        "/project/pages/docs/index.mdx": "# Docs",
+        "/project/pages/docs/layout.mdx": "# Docs layout",
+      });
+
+      const routes = await collectPagesRoutes(adapter, "/project");
+
+      assertEquals(routes.map((route) => route.path).sort(), ["/", "/chat", "/docs"]);
+    });
+
     it("excludes dynamic Pages Router routes from static generation", async () => {
       const adapter = createMockAdapter({
         "/project/pages/index.tsx": "export default () => <div />",

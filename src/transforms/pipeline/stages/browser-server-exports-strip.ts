@@ -728,6 +728,139 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
   return referenced;
 }
 
+function literalText(node: Node | undefined): string | null {
+  if (!node) return null;
+  return typeof node.value === "string" ? node.value : nodeName(node);
+}
+
+function stringLiteralText(node: Node | undefined): string | null {
+  return node && typeof node.value === "string" ? node.value : null;
+}
+
+function isObjectDefineProperty(node: Node | undefined): boolean {
+  if (!node || node.type !== "MemberExpression") return false;
+  return nodeName(node.object) === "Object" &&
+    literalText(isNode(node.property) ? node.property : undefined) === "defineProperty";
+}
+
+function returnedCall(node: Node): Node | null {
+  const body = node.body;
+  if (!isNode(body)) return null;
+  if (body.type === "CallExpression") return body;
+  if (body.type !== "BlockStatement" || !Array.isArray(body.body) || body.body.length !== 1) {
+    return null;
+  }
+
+  const statement = body.body[0];
+  if (!isNode(statement) || statement.type !== "ReturnStatement" || !isNode(statement.argument)) {
+    return null;
+  }
+  return statement.argument.type === "CallExpression" ? statement.argument : null;
+}
+
+function isTrueExpression(node: Node | undefined): boolean {
+  if (!node) return false;
+  if (node.value === true) return true;
+  return node.type === "UnaryExpression" && node.operator === "!" &&
+    isNode(node.argument) && node.argument.value === 0;
+}
+
+function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
+  if (!node || node.type !== "ObjectExpression") return false;
+
+  let hasValue = false;
+  let configurable = false;
+  for (const property of Array.isArray(node.properties) ? node.properties : []) {
+    if (!isNode(property) || property.type !== "ObjectProperty") continue;
+    const key = literalText(isNode(property.key) ? property.key : undefined);
+    const value = isNode(property.value) ? property.value : undefined;
+    if (key === "value" && nodeName(value) === valueParam) hasValue = true;
+    if (key === "configurable" && isTrueExpression(value)) configurable = true;
+  }
+
+  return hasValue && configurable;
+}
+
+/**
+ * Bindings for esbuild's `keepNames` helper. Release modules are compiled
+ * before the browser transform, so their declarations are followed by calls
+ * like `__name(loadPage, "loadPage")`. Recognise the helper by its exact
+ * `Object.defineProperty(target, "name", …)` semantics rather than by its
+ * minified binding name.
+ */
+function compilerNameHelperBindings(body: Node[]): Set<string> {
+  const initializers = new Map<string, Node>();
+  for (const statement of body) {
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
+      if (!isNode(declarator) || !isNode(declarator.init)) continue;
+      const name = nodeName(declarator.id);
+      if (name) initializers.set(name, declarator.init);
+    }
+  }
+
+  const definePropertyBindings = new Set<string>();
+  for (const [name, init] of initializers) {
+    if (isObjectDefineProperty(init)) definePropertyBindings.add(name);
+  }
+
+  const helpers = new Set<string>();
+  for (const [name, init] of initializers) {
+    if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
+    const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
+    if (params.length !== 2) continue;
+    const targetParam = nodeName(params[0]);
+    const valueParam = nodeName(params[1]);
+    if (!targetParam || !valueParam) continue;
+
+    const call = returnedCall(init);
+    if (!call) continue;
+    const callee = isNode(call.callee) ? call.callee : undefined;
+    const callsDefineProperty = isObjectDefineProperty(callee) ||
+      (callee?.type === "Identifier" && definePropertyBindings.has(nodeName(callee) ?? ""));
+    if (!callsDefineProperty) continue;
+
+    const args = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];
+    if (
+      args.length === 3 && nodeName(args[0]) === targetParam &&
+      stringLiteralText(args[1]) === "name" && isNameDescriptor(args[2], valueParam)
+    ) {
+      helpers.add(name);
+    }
+  }
+
+  return helpers;
+}
+
+interface CompilerNameRegistration {
+  statement: Node;
+  target: Node;
+  targetName: string;
+}
+
+function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
+  const helpers = compilerNameHelperBindings(body);
+  if (helpers.size === 0) return [];
+
+  const registrations: CompilerNameRegistration[] = [];
+  for (const statement of body) {
+    if (statement.type !== "ExpressionStatement" || !isNode(statement.expression)) continue;
+    const expression = statement.expression;
+    if (expression.type !== "CallExpression" || !isNode(expression.callee)) continue;
+    if (!helpers.has(nodeName(expression.callee) ?? "")) continue;
+
+    const args = Array.isArray(expression.arguments) ? expression.arguments.filter(isNode) : [];
+    const target = args[0];
+    const targetName = nodeName(target);
+    if (!target || args.length !== 2 || !targetName || stringLiteralText(args[1]) === null) {
+      continue;
+    }
+    registrations.push({ statement, target, targetName });
+  }
+
+  return registrations;
+}
+
 /**
  * Drop the top-level declarations the emptied server-only hooks closed over.
  *
@@ -752,6 +885,13 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
     const excluded = new WeakSet<Node>();
     for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
 
+    // Esbuild's generated name-registration call is metadata for a declaration,
+    // not an independent browser consumer of it. Ignore that target reference
+    // when deciding liveness, and remove the call together with a declaration
+    // that proves hook-only.
+    const nameRegistrations = compilerNameRegistrations(current);
+    for (const registration of nameRegistrations) excluded.add(registration.target);
+
     const referenced = referencedIdentifiers(current, excluded);
 
     const removableStatements = new Set<Node>();
@@ -763,6 +903,11 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
       if (!inClosure || !unused) continue;
 
       removedDecls.push(decl);
+      for (const registration of nameRegistrations) {
+        if (decl.names.includes(registration.targetName)) {
+          removableStatements.add(registration.statement);
+        }
+      }
       if (!decl.declarator) {
         removableStatements.add(decl.statement);
         continue;

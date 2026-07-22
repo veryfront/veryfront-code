@@ -12,6 +12,7 @@ import { isDynamicRoute, isDynamicSegment } from "#veryfront/utils/route-path-ut
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
+const PAGES_LAYOUT_CANDIDATES = new Set(PAGE_EXTENSIONS.map((extension) => `layout${extension}`));
 
 function convertToSlug(relativePath: string): string {
   return (
@@ -24,6 +25,11 @@ function convertToSlug(relativePath: string): string {
 
 function isPagesApiDirectoryDescendant(relativePath: string): boolean {
   return relativePath.replace(/\\/g, "/").startsWith("api/");
+}
+
+function isPagesLayoutFile(relativePath: string): boolean {
+  const fileName = relativePath.replace(/\\/g, "/").split("/").pop();
+  return fileName !== undefined && PAGES_LAYOUT_CANDIDATES.has(fileName);
 }
 
 function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]): boolean {
@@ -53,7 +59,7 @@ export async function collectPagesRoutes(
     const file of discoverFiles({ baseDir: pagesDir, extensions: PAGE_EXTENSIONS, adapter })
   ) {
     const relativePath = relative(pagesDir, file.path);
-    if (isPagesApiDirectoryDescendant(relativePath)) continue;
+    if (isPagesApiDirectoryDescendant(relativePath) || isPagesLayoutFile(relativePath)) continue;
 
     const slug = convertToSlug(relativePath);
     const pathForRoute = `/${slug === "index" ? "" : slug}`;

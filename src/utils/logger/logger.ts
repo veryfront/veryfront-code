@@ -1,4 +1,5 @@
-import { getEnv, getHostEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import { isStdoutTTY } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
