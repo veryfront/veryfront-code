@@ -528,6 +528,40 @@ describe("APIRouteHandler", () => {
       assertEquals(await empty?.text(), "Handler not found");
     });
 
+    // The load error names files, specifiers and build internals. It is a
+    // development aid, and the only thing keeping it out of a deployed response
+    // body is this flag.
+    it("withholds the load error from a response when the project is not local", async () => {
+      const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) {
+          throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
+        }
+        return Promise.resolve({});
+      });
+
+      const hosted = await handler.handle(
+        new Request("http://localhost/api/broken"),
+        { ...localCtx, isLocalProject: false },
+      );
+
+      assertEquals(hosted?.status, 500);
+      assertEquals(await hosted?.text(), "Handler not found");
+    });
+
+    it("withholds the load error from a response when there is no context", async () => {
+      const { handler } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) {
+          throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
+        }
+        return Promise.resolve({});
+      });
+
+      const anonymous = await handler.handle(new Request("http://localhost/api/broken"));
+
+      assertEquals(anonymous?.status, 500);
+      assertEquals(await anonymous?.text(), "Handler not found");
+    });
+
     it("classifies the allow-list block against the current attempt only", async () => {
       const { handler } = await handlerWithTwoRoutes((modulePath) => {
         if (modulePath.includes("broken")) {

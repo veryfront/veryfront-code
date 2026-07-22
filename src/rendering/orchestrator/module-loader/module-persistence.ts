@@ -69,6 +69,63 @@ export interface PersistTransformedModuleInput {
   cacheKey: string;
   contentSourceId?: string;
   reactVersion?: string;
+  /**
+   * True when a dynamic import elsewhere closes a cycle back onto this module.
+   * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
+   * stable, non-hashed alias next to the content-hashed artifact to resolve to.
+   */
+  isCycleTarget?: boolean;
+}
+
+/**
+ * Whether transformed output exposes a default export, so a cycle alias knows
+ * to re-export it. Covers esbuild's `export default …`, `… as default`, and
+ * `export { default } from …` forms.
+ */
+function hasDefaultExport(code: string): boolean {
+  return /\bexport\s+default\b/.test(code) ||
+    /\bas\s+default\b/.test(code) ||
+    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(code);
+}
+
+/**
+ * Write a stable, non-hashed alias next to a cycle target's hashed artifact.
+ *
+ * A dynamic import that closes an import cycle is left as the author wrote it
+ * (see the module loader), so esbuild normalises it to a relative `.js` path
+ * (`../app/page.js`) that does not match the content-hashed artifact
+ * (`../app/page.<hash>.js`). The alias sits at that relative path and re-exports
+ * the real artifact, so the edge resolves if the branch runs. Best-effort: a
+ * failed alias just leaves the pre-existing (unresolved) cycle edge in place.
+ */
+async function writeCycleTargetAlias(
+  input: PersistTransformedModuleInput,
+  relativePath: string,
+  hashedFileName: string,
+): Promise<void> {
+  const aliasRelativePath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+  // Same extension in and out means nothing was renamed (already `.js`): the
+  // authored edge already points at the real artifact, so no alias is needed.
+  if (aliasRelativePath === relativePath) return;
+
+  const aliasPath = join(input.tmpDir, aliasRelativePath);
+  const lines = [`export * from "./${hashedFileName}";`];
+  if (hasDefaultExport(input.transformedCode)) {
+    lines.push(`export { default } from "./${hashedFileName}";`);
+  }
+
+  try {
+    await input.localAdapter.fs.writeFile(aliasPath, lines.join("\n"));
+    logger.debug("Wrote cycle-target alias", {
+      alias: aliasRelativePath,
+      target: hashedFileName,
+    });
+  } catch (error) {
+    logger.warn("Failed to write cycle-target alias", {
+      filePath: input.filePath.slice(-40),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** Write a transformed module artifact and register cache pointers. */
@@ -136,5 +193,11 @@ export async function persistTransformedModule(
   }
 
   input.moduleCache.set(input.cacheKey, tempFilePath);
+
+  if (input.isCycleTarget) {
+    const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
+    await writeCycleTargetAlias(input, relativePath, hashedFileName);
+  }
+
   return tempFilePath;
 }

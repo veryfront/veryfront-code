@@ -45,9 +45,10 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const specifier = info.specifier;
 
-    // Handle #deno-config — Deno import-map alias that doesn't exist in browsers.
-    // Rewrite to a JS module (not JSON) because esbuild strips `with { type: "json" }`
-    // at es2020 target and browsers reject JSON MIME without the assertion.
+    // Handle #deno-config, a Deno import-map alias that doesn't exist in
+    // browsers. Rewrite to a JS module (not JSON): a browser refuses a JSON
+    // module unless the importer carries `with { type: "json" }`, so serving JS
+    // keeps the rewrite independent of import attribute support in the browser.
     if (specifier === "#deno-config") {
       return { specifier: "/_vf_modules/_veryfront/_deno-config.js" };
     }

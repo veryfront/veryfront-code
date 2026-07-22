@@ -177,6 +177,76 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  // Every template ships `paths: { "@/*": ["./*"] }` and no import map entry, so
+  // the alias a real project uses is resolved by esbuild itself, not by the
+  // import map plugin. That lane has to work.
+  it("loads an @/ alias resolved through the project's tsconfig paths", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "greeting.ts"),
+      `export const greeting = "tsconfig";`,
+    );
+    await fs.writeTextFile(
+      join(projectDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
+    );
+
+    const modulePath = join(projectDir, "pages", "api", "aliased.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { greeting } from "@/lib/greeting.ts";`,
+        `export function GET() { return new Response(greeting); }`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  // esbuild applies tsconfig `paths` before any plugin's onResolve runs, so a
+  // boundary check that lives in a resolver plugin never sees the result. An
+  // alias that climbs out of the project must not load.
+  it("rejects an @/ alias that escapes the project root", async () => {
+    const rootDir = await makeTempDir();
+    const projectDir = join(rootDir, "project");
+    const outsideDir = join(rootDir, "outside");
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+    await fs.mkdir(outsideDir, { recursive: true });
+
+    await fs.writeTextFile(
+      join(outsideDir, "secret.ts"),
+      `export const secret = "TOP-SECRET-OUTSIDE-PROJECT";`,
+    );
+    await fs.writeTextFile(
+      join(projectDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
+    );
+
+    const modulePath = join(projectDir, "pages", "api", "leak.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { secret } from "@/../outside/secret.ts";`,
+        `export function GET() { return new Response(secret); }`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir, modulePath, adapter, config: undefined }),
+      Error,
+    );
+  });
+
   // Bundling reads the route through the adapter; a direct import does not. A
   // module that threw while evaluating must surface its own error rather than
   // be evaluated a second time under bundling semantics.

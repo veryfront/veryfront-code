@@ -59,6 +59,47 @@ describe("AssetStrategy", () => {
       assertEquals(assetStrategy.matches("@/assets/logo.svg?raw", makeCtx()), true);
     });
 
+    it("matches the non-code file types a project is most likely to import", () => {
+      for (
+        const specifier of [
+          "@/wasm/mod.wasm",
+          "@/native/addon.node",
+          "@/media/clip.mov",
+          "@/content/notes.txt",
+          "@/config/settings.yaml",
+          "@/config/settings.yml",
+          "@/data/rows.csv",
+        ]
+      ) {
+        assertEquals(assetStrategy.matches(specifier, makeCtx()), true, specifier);
+      }
+    });
+
+    it("leaves JSON alone, which is importable with an import attribute", () => {
+      // `import manifest from "./manifest.json" with { type: "json" }` is
+      // supported and the compile stage preserves the attribute. matches()
+      // sees only the specifier, so it cannot tell the two apart.
+      assertEquals(assetStrategy.matches("@/data/config.json", makeCtx()), false);
+      assertEquals(assetStrategy.matches("./manifest.json", makeCtx()), false);
+    });
+
+    it("only claims specifiers the alias and relative strategies would resolve", () => {
+      // Any other strategy owning the specifier knows where the file lives.
+      // "Move it to public/" is not actionable for a file inside a dependency
+      // or on another host, and the URL strategy already handles remote assets.
+      for (
+        const specifier of [
+          "leaflet/dist/images/marker-icon.png",
+          "https://cdn.example.com/icons/logo.svg",
+          "http://cdn.example.com/icons/logo.svg",
+          "veryfront/assets/logo.svg",
+          "otherproject@1.0.0/@/assets/logo.svg",
+        ]
+      ) {
+        assertEquals(assetStrategy.matches(specifier, makeCtx()), false, specifier);
+      }
+    });
+
     it("does not match code modules", () => {
       for (
         const specifier of ["@/lib/constants", "./Button.tsx", "react", "@/lib/svg-utils.ts"]
@@ -86,13 +127,45 @@ describe("AssetStrategy", () => {
       assertStringIncludes(message, "docs/guides/project-structure.md");
     });
 
-    it("drops query strings from the suggested public filename", () => {
+    it("keeps the directories under the alias root so two logos stay distinct", () => {
+      const message = messageFromRewrite("@/assets/icons/logo.svg", makeCtx());
+      assertStringIncludes(message, "public/icons/logo.svg");
+      assertStringIncludes(message, '<img src="/icons/logo.svg" />');
+    });
+
+    it("keeps the directories a relative specifier walks into", () => {
+      const message = messageFromRewrite("../images/photo.jpeg", makeCtx());
+      assertStringIncludes(message, "public/images/photo.jpeg");
+    });
+
+    it("drops a query suffix from the suggested destination", () => {
+      // Otherwise the advice reads "move the file to public/logo.svg?raw",
+      // which names a file nobody can create.
       const message = messageFromRewrite("@/assets/logo.svg?raw", makeCtx());
-      assertStringIncludes(message, "@/assets/logo.svg?raw");
       assertStringIncludes(message, "public/logo.svg");
-      assertStringIncludes(message, '<img src="/logo.svg" />');
-      assertEquals(message.includes("public/logo.svg?raw"), false);
+      assertEquals(message.includes("logo.svg?raw and"), false);
       assertEquals(message.includes('src="/logo.svg?raw"'), false);
+    });
+
+    it("suggests a stylesheet rule for a font, not an image tag", () => {
+      const message = messageFromRewrite("@/fonts/Inter.woff2", makeCtx());
+      assertStringIncludes(message, "public/Inter.woff2");
+      assertStringIncludes(message, "@font-face");
+      assertStringIncludes(message, 'url("/Inter.woff2")');
+      assertEquals(message.includes("<img"), false);
+    });
+
+    it("suggests a video tag for a video", () => {
+      const message = messageFromRewrite("@/media/clip.mp4", makeCtx());
+      assertStringIncludes(message, '<video src="/clip.mp4"');
+      assertEquals(message.includes("<img"), false);
+    });
+
+    it("suggests the URL itself for a file with no element to render it", () => {
+      const message = messageFromRewrite("@/docs/manual.pdf", makeCtx());
+      assertStringIncludes(message, "public/manual.pdf");
+      assertStringIncludes(message, "/manual.pdf");
+      assertEquals(message.includes("<img"), false);
     });
 
     it("names the importer relative to the project root", () => {
@@ -112,6 +185,16 @@ describe("AssetStrategy", () => {
 
       assertStringIncludes(message, "Header.tsx");
       assertEquals(message.includes("/var/folders/"), false);
+    });
+
+    it("does not treat a sibling directory with the same prefix as the project", () => {
+      const message = messageFromRewrite(
+        "./logo.png",
+        makeCtx({ filePath: "/projectile/src/Header.tsx" }),
+      );
+
+      assertStringIncludes(message, "Header.tsx");
+      assertEquals(message.includes("ile/src/Header.tsx"), false);
     });
 
     it("uses no dash characters that the copy rules forbid", () => {

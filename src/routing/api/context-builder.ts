@@ -1,6 +1,7 @@
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { flattenRouteParams } from "../flatten-route-params.ts";
 
 export { parseCookies };
@@ -15,15 +16,19 @@ export interface APIContext {
   headers: Headers;
   url: URL;
   /**
-   * Read the request body as JSON, or build a JSON response.
+   * Build a JSON `Response`. `ctx.json(data, init?)` mirrors `Response.json`.
    *
-   * `ctx.json()` with no arguments parses and returns the request body.
-   * `ctx.json(data, init?)` returns a JSON `Response`.
+   * To read the request body, use `ctx.body()` or the raw `ctx.request.json()`.
    */
-  json: {
-    (): Promise<unknown>;
-    (data: unknown, init?: ResponseInit): Response;
-  };
+  json: (data: unknown, init?: ResponseInit) => Response;
+  /**
+   * Read and parse the request body as JSON.
+   *
+   * The result is cached, so calling it more than once (or alongside a manual
+   * `ctx.request.json()`) does not throw `Body already consumed`. A body that
+   * is not valid JSON becomes a 400, not an unhandled 500.
+   */
+  body: <T = unknown>() => Promise<T>;
   text: (data: string, init?: ResponseInit) => Response;
   fs: FileSystemAdapter;
 }
@@ -43,27 +48,45 @@ function createResponse(
 }
 
 /**
- * Build the `ctx.json` helper for a request.
- *
- * Overloaded on arity. `ctx.json(data)` builds a response; `ctx.json()` reads
- * the request body, which is what handlers reach for, and what the zero-arg
- * form was previously misread as. It used to stringify `undefined` into a
- * Response, so `await ctx.json()` yielded a Response object that serialised
- * back out as `{}` and silently dropped every posted payload.
+ * Build the `ctx.json` response helper. Writes only; mirrors `Response.json`.
  *
  * Exported because the isolation Worker builds its own context and has to
  * behave identically. Handlers must not care which one ran them.
  */
-export function createJsonHelper(request: Request): APIContext["json"] {
-  function json(): Promise<unknown>;
-  function json(data: unknown, init?: ResponseInit): Response;
-  function json(...args: [] | [unknown, ResponseInit?]): Response | Promise<unknown> {
-    if (args.length === 0) return request.json();
-    const [data, init] = args;
-    return createResponse(JSON.stringify(data), "application/json", init);
-  }
+export function createJsonHelper(_request: Request): APIContext["json"] {
+  return (data: unknown, init?: ResponseInit): Response =>
+    createResponse(JSON.stringify(data), "application/json", init);
+}
 
-  return json;
+/**
+ * Build the `ctx.body` request-body reader.
+ *
+ * The parse is memoised on the first call, so a validation helper and a handler
+ * that both read the body do not fight over a single-use stream. The clone is
+ * taken up front, while the context is built, so `ctx.request` is left intact
+ * for a handler that still wants the raw stream — and, crucially, so a handler
+ * that reads `ctx.request` raw *before* calling `ctx.body()` cannot make the
+ * clone throw `Body already consumed` (`request.clone()` throws synchronously
+ * once the original stream is disturbed). A malformed body is turned into a
+ * catalogued 400 rather than escaping as a 500.
+ */
+export function createBodyReader(request: Request): APIContext["body"] {
+  // Clone eagerly: at construction time the original body is guaranteed
+  // untouched, so the read is order-independent with any raw `ctx.request`
+  // access a handler performs later.
+  const source = request.clone();
+  let parsed: Promise<unknown> | undefined;
+
+  const read = (): Promise<unknown> => {
+    if (!parsed) {
+      parsed = source.json().catch(() => {
+        throw INVALID_ARGUMENT.create({ detail: "Request body is not valid JSON" });
+      });
+    }
+    return parsed;
+  };
+
+  return <T = unknown>(): Promise<T> => read() as Promise<T>;
 }
 
 export function createContext(
@@ -73,6 +96,7 @@ export function createContext(
 ): APIContext {
   const url = new URL(request.url);
   const json = createJsonHelper(request);
+  const body = createBodyReader(request);
 
   const text = (data: string, init?: ResponseInit): Response =>
     createResponse(data, "text/plain", init);
@@ -86,6 +110,7 @@ export function createContext(
     headers: request.headers,
     url,
     json,
+    body,
     text,
     fs,
   };

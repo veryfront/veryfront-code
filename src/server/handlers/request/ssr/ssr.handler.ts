@@ -64,16 +64,18 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
  * opposed to errors thrown by the running application.
  *
  * Module-load failures arrive wrapped in a RUNTIME-category `render-error`,
- * which loses the original category, so they are identified by their
- * `criticalFailures` context instead: a page module that could not be *loaded*
- * always failed to compile or resolve.
+ * which loses the original category, so they carry a `buildFailure` flag that
+ * the module loader sets at the point of failure. Failing to load is not
+ * evidence on its own: a module that compiled fine and threw at module scope
+ * also fails to load, and that is an application error the project's own error
+ * page should present.
  */
 function isBuildError(error: unknown): boolean {
   if (!(error instanceof VeryfrontError)) return false;
   if (error.category === "BUILD" || error.category === "MODULE") return true;
 
-  const context = error.context as { criticalFailures?: unknown } | undefined;
-  return Array.isArray(context?.criticalFailures) && context.criticalFailures.length > 0;
+  const context = error.context as { buildFailure?: unknown } | undefined;
+  return context?.buildFailure === true;
 }
 
 export class SSRHandler extends BaseHandler {

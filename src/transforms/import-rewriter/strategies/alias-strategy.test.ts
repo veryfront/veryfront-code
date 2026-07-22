@@ -209,7 +209,10 @@ describe("AliasStrategy", () => {
         assertEquals(result.specifier, "../../components/Badge.js");
       });
 
-      it("should not double-append .js to an explicit .js extension", () => {
+      // Guard, not a regression: `jsx?` in the extension guard has always
+      // matched a bare `.js`, so this has never produced `.js.js`. The test
+      // holds that behaviour in place.
+      it("should leave an explicit .js extension alone", () => {
         const result = aliasStrategy.rewrite(
           makeInfo("@/lib/legacy.js"),
           makeCtx({ filePath: "/project/pages/index.tsx" }),

@@ -121,8 +121,9 @@ export default {};
   ].join("\n") + "\n",
   "_dnt.polyfills": `export default {};\n`,
   // Deno import-map alias stub for browser/HTTP-served framework modules.
-  // Must be a JS module (not JSON) because esbuild strips `with { type: "json" }`
-  // at es2020 target, and browsers reject JSON MIME type without the assertion.
+  // Must be a JS module (not JSON): a browser refuses a JSON module unless the
+  // importer carries `with { type: "json" }`, so serving JS keeps the stub
+  // independent of how far import attribute support has reached the browser.
   "_veryfront/_deno-config": `export default ${JSON.stringify({ version: VERSION })};\n`,
   // dnt rewrites #deno-config to relative deno.js in npm framework modules.
   "deno": `export default ${JSON.stringify({ version: VERSION })};\n`,
@@ -1074,20 +1075,25 @@ const COMPILED_TO_JS_EXTENSIONS = /\.(?:tsx?|jsx|mdx|md)$/;
  */
 export function getDevModuleContentType(modulePath: string): string {
   const normalizedPath = modulePath.toLowerCase();
+  // The import rewriter appends `.js` to any specifier whose extension it does
+  // not recognise, so `@/lib/data.json` arrives here as `lib/data.json.js`
+  // while the source file, and therefore the body, is still raw JSON. Resolve
+  // the source extension the same way the module lookup does before deciding.
+  const sourcePath = normalizedPath.replace(/\.(?:mjs|js)$/, "");
 
-  if (normalizedPath.endsWith(".map") || normalizedPath.endsWith(".json")) {
+  if (sourcePath.endsWith(".map") || sourcePath.endsWith(".json")) {
     return "application/json; charset=utf-8";
   }
 
-  if (normalizedPath.endsWith(".css")) {
+  if (sourcePath.endsWith(".css")) {
     return "text/css; charset=utf-8";
   }
 
-  // The request path carries the *source* extension, but the body we serve is
-  // always the compiled JavaScript. Typing the response from the source
-  // extension yields `application/typescript`, which browsers refuse to execute
-  // as a module under strict MIME checking.
-  if (COMPILED_TO_JS_EXTENSIONS.test(normalizedPath)) {
+  // The request path can carry a source extension, but the body served for one
+  // is the compiled JavaScript. Typing the response from the source extension
+  // yields `application/typescript`, which browsers refuse to execute as a
+  // module under strict MIME checking.
+  if (COMPILED_TO_JS_EXTENSIONS.test(sourcePath)) {
     return "application/javascript; charset=utf-8";
   }
 

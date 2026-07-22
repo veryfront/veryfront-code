@@ -248,7 +248,7 @@ describe("transforms/esm/specifier-resolver", () => {
     });
 
     it("aborts when a dynamic npm: specifier fails to resolve", async () => {
-      const code = `export const load = () => import("npm:redis");`;
+      const code = `export const load = () => import("npm:some-package");`;
       await assertRejects(
         () =>
           buildReplacements(code, "https://esm.sh/parent@1/index.js", defaultOptions, async () => {
@@ -257,6 +257,29 @@ describe("transforms/esm/specifier-resolver", () => {
         Error,
         "cache failed",
       );
+    });
+
+    it("leaves a server-only package external instead of routing it to esm.sh", async () => {
+      // `redis` and its explicit npm: form only run server-side. They must be
+      // left in place for the runtime to resolve (node_modules / npm:), never
+      // fetched from esm.sh — so the cache function is never called and nothing
+      // is degraded or aborted.
+      for (const specifier of ["redis", "npm:redis", "npm:redis@5.11.0"]) {
+        const code = `export const load = () => import(${JSON.stringify(specifier)});`;
+        let cacheCalls = 0;
+        const result = await buildReplacements(
+          code,
+          "https://esm.sh/parent@1/index.js",
+          defaultOptions,
+          async () => {
+            cacheCalls++;
+            return null;
+          },
+        );
+        assertEquals(cacheCalls, 0, `${specifier} must not hit esm.sh`);
+        assertEquals(result.replacements.size, 0, `${specifier} must be left in place`);
+        assertEquals(result.degraded, []);
+      }
     });
 
     it("aborts when a dynamic bare specifier fails to resolve", async () => {

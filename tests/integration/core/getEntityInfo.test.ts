@@ -439,4 +439,25 @@ Default nested layout`,
       assertEquals(layout.entity.content.includes("Default nested layout"), true);
     });
   });
+
+  it("resolves an optional catch-all at its own root (/optional and deeper)", async () => {
+    await withTestContext("entity-optional-catch-all-root", async (context) => {
+      await createTestFile(
+        join(context.projectDir, "pages", "optional", "[[...slug]].tsx"),
+        `export default function Optional() { return null; }`,
+      );
+
+      // Regression: the bare parent path must resolve the optional catch-all
+      // matching zero remaining segments, not 404. Before the fix the dynamic
+      // resolver never looked inside pages/optional/ for /optional, so only
+      // /optional/a/b worked.
+      const root = await getEntityBySlug(context.projectDir, "optional");
+      assertExists(root);
+      assertEquals(root.entity.isPage, true);
+
+      const deep = await getEntityBySlug(context.projectDir, "optional/a/b");
+      assertExists(deep);
+      assertEquals(deep.entity.isPage, true);
+    });
+  });
 });

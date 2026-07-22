@@ -341,6 +341,118 @@ describe("StaticDataFetcher", () => {
     });
   });
 
+  describe("background revalidation", () => {
+    async function settleRevalidation(): Promise<void> {
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+    }
+
+    // A background revalidation must never replace a live page with a control
+    // result. The entry would be stored with `revalidate: undefined`, which
+    // never qualifies for revalidation again, so every request served a 404
+    // until the entry aged out of the cache.
+    it("keeps the cached page when a revalidation throws notFound()", async () => {
+      await withProductionContext(async () => {
+        const { cache, fetcher } = createFetcher();
+
+        const pageModule: PageWithData<{ version: number }> = {
+          default: () => null,
+          getStaticData: () => {
+            throw notFound();
+          },
+        };
+
+        const context = createContext({ url: new URL("http://localhost/isr-not-found") });
+        const cacheKey = cache.createCacheKey(context);
+        assertExists(cacheKey);
+
+        cache.set(cacheKey, {
+          data: { props: { version: 1 }, revalidate: 0 },
+          timestamp: Date.now() - 10_000,
+          revalidate: 0,
+        });
+
+        const served = await fetcher.fetch(pageModule, context);
+        assertEquals((served.props as { version: number }).version, 1);
+
+        await settleRevalidation();
+
+        const entry = cache.get(cacheKey);
+        assertExists(entry);
+        assertEquals((entry.data.props as { version: number }).version, 1);
+        assertEquals(entry.data.notFound, undefined);
+        // Still a number, so the entry stays eligible for the next revalidation.
+        assertEquals(entry.revalidate, 0);
+
+        const next = await fetcher.fetch(pageModule, context);
+        assertEquals((next.props as { version: number }).version, 1);
+        assertEquals(next.notFound, undefined);
+      });
+    });
+
+    it("keeps the cached page when a revalidation throws redirect()", async () => {
+      await withProductionContext(async () => {
+        const { cache, fetcher } = createFetcher();
+
+        const pageModule: PageWithData<{ version: number }> = {
+          default: () => null,
+          getStaticData: () => {
+            throw redirect("/login");
+          },
+        };
+
+        const context = createContext({ url: new URL("http://localhost/isr-redirect") });
+        const cacheKey = cache.createCacheKey(context);
+        assertExists(cacheKey);
+
+        cache.set(cacheKey, {
+          data: { props: { version: 1 }, revalidate: 0 },
+          timestamp: Date.now() - 10_000,
+          revalidate: 0,
+        });
+
+        await fetcher.fetch(pageModule, context);
+        await settleRevalidation();
+
+        const entry = cache.get(cacheKey);
+        assertExists(entry);
+        assertEquals((entry.data.props as { version: number }).version, 1);
+        assertEquals(entry.data.redirect, undefined);
+        assertEquals(entry.revalidate, 0);
+      });
+    });
+
+    it("still replaces the cached page on a successful revalidation", async () => {
+      await withProductionContext(async () => {
+        const { cache, fetcher } = createFetcher();
+
+        const pageModule: PageWithData<{ version: number }> = {
+          default: () => null,
+          getStaticData: () => ({ props: { version: 2 }, revalidate: 60 }),
+        };
+
+        const context = createContext({ url: new URL("http://localhost/isr-success") });
+        const cacheKey = cache.createCacheKey(context);
+        assertExists(cacheKey);
+
+        cache.set(cacheKey, {
+          data: { props: { version: 1 }, revalidate: 0 },
+          timestamp: Date.now() - 10_000,
+          revalidate: 0,
+        });
+
+        await fetcher.fetch(pageModule, context);
+        await settleRevalidation();
+
+        const entry = cache.get(cacheKey);
+        assertExists(entry);
+        assertEquals((entry.data.props as { version: number }).version, 2);
+        assertEquals(entry.revalidate, 60);
+      });
+    });
+  });
+
   describe("thrown control results", () => {
     function throwing(error: unknown): PageWithData {
       return {
@@ -368,6 +480,15 @@ describe("StaticDataFetcher", () => {
       );
 
       assertEquals(result.notFound, true);
+    });
+
+    it("treats a thrown redirect() as a redirect without a cache context", async () => {
+      const { fetcher } = createFetcher();
+
+      const result = await fetcher.fetch(throwing(redirect("/login")), createContext());
+
+      assertEquals(result.redirect?.destination, "/login");
+      assertEquals(result.redirect?.permanent, false);
     });
 
     it("treats a thrown redirect() as a redirect with a production cache context", async () => {

@@ -618,26 +618,51 @@ describe("stripJsonAttributesFromModuleImports", () => {
   // `.mjs` that default-exports the data. The attribute describes the original
   // target, so leaving it makes the runtime reject the rewritten import with
   // "Expected a Json module, but identified a Mjs module".
-  it("drops the attribute when the target is now an .mjs", () => {
+  it("drops the attribute when the target is now an .mjs", async () => {
     const code = `import m from "file:///cache/framework/vfmod-abc.mjs" with { type: "json" };`;
     assertEquals(
-      stripJsonAttributesFromModuleImports(code),
+      await stripJsonAttributesFromModuleImports(code),
       `import m from "file:///cache/framework/vfmod-abc.mjs";`,
     );
   });
 
-  it("keeps the attribute on a genuine .json target", () => {
+  it("drops the attribute from a dynamic import of a rewritten module", async () => {
+    const code =
+      `export async function load() { return import("file:///cache/a.mjs", { with: { type: "json" } }); }`;
+    assertEquals(
+      await stripJsonAttributesFromModuleImports(code),
+      `export async function load() { return import("file:///cache/a.mjs"); }`,
+    );
+  });
+
+  it("keeps the attribute on a genuine .json target", async () => {
     const code = `import m from "./manifest.json" with { type: "json" };`;
-    assertEquals(stripJsonAttributesFromModuleImports(code), code);
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
   });
 
-  it("handles single quotes and extra whitespace", () => {
+  it("handles single quotes and extra whitespace", async () => {
     const code = `import m from 'file:///cache/a.mjs'  with  { type: 'json' };`;
-    assertStringIncludes(stripJsonAttributesFromModuleImports(code), `from 'file:///cache/a.mjs';`);
+    assertStringIncludes(
+      await stripJsonAttributesFromModuleImports(code),
+      `from 'file:///cache/a.mjs';`,
+    );
   });
 
-  it("leaves plain module imports untouched", () => {
+  it("leaves plain module imports untouched", async () => {
     const code = `import { a } from "file:///cache/a.mjs";`;
-    assertEquals(stripJsonAttributesFromModuleImports(code), code);
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  // The framework embeds module source in string literals (the `#deno-config`
+  // stub, the generated RSC bundles). Rewriting those corrupts the payload and
+  // the corruption is content-hashed straight into the cache.
+  it("leaves import-like text inside a string literal alone", async () => {
+    const code = 'export const TPL = `import d from "file:///cache/a.mjs" with { type: "json" };`;';
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  it("keeps an attribute clause that is not a json type", async () => {
+    const code = `import m from "file:///cache/a.mjs" with { type: "css" };`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
   });
 });

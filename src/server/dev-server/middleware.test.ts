@@ -121,6 +121,51 @@ describe("dev-server/middleware: actionable rejection", () => {
     assertStringIncludes(error.message, "other");
   });
 
+  it("describes a default export array with a non-function entry", async () => {
+    // Every wrong shape with a default export used to collapse to the useless
+    // "Found export(s): default." because the message read the namespace keys,
+    // not the resolved default.
+    const adapter = createVirtualAdapter(
+      "export default [async (c, next) => await next(), 'audit'];",
+    );
+
+    const error = await assertRejects(
+      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "non-function at index 1");
+    assertStringIncludes(error.message, "(string)");
+  });
+
+  it("describes an empty default export array", async () => {
+    const adapter = createVirtualAdapter("export default [];");
+
+    const error = await assertRejects(
+      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "empty default export array");
+  });
+
+  it("describes a default export object that is not middleware", async () => {
+    const adapter = createVirtualAdapter(
+      "export default { handler: async (c, next) => await next() };",
+    );
+
+    const error = await assertRejects(
+      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "default export of type object");
+    assertStringIncludes(error.message, "handler");
+  });
+
   it("still accepts a valid default export", async () => {
     const adapter = createVirtualAdapter(
       "export default async function (c, next) { return await next(); }",

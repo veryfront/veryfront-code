@@ -114,6 +114,40 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
   });
 }
 
+/** A parse whose positions index into a masked copy of the source. */
+export interface MaskedParse {
+  /** The source with HTTP URLs replaced by fixed-width placeholders. */
+  masked: string;
+  /** Specifiers whose every positional field indexes into {@link masked}. */
+  imports: readonly ImportSpecifier[];
+  /** Restore the masked HTTP URLs in a string derived from {@link masked}. */
+  unmask: (text: string) => string;
+}
+
+/**
+ * Parse imports and hand back the masked source the positions belong to.
+ *
+ * Masking changes offsets, so `imp.s`, `imp.a` and friends are meaningless
+ * against the original text. Callers that splice by position must edit
+ * `masked` and run the result through `unmask`; callers that only need
+ * specifier names should use {@link parseImports} instead.
+ */
+export async function parseMaskedImports(code: string): Promise<MaskedParse> {
+  await initLexer();
+
+  const { masked, urlMap } = maskHttpUrls(code);
+
+  let imports: readonly ImportSpecifier[];
+  try {
+    imports = getLexer().parse(masked);
+  } catch (error) {
+    logParseError(error, masked);
+    throw error;
+  }
+
+  return { masked, imports, unmask: (text) => unmaskHttpUrls(text, urlMap) };
+}
+
 /**
  * Replace import specifiers (the path string) in the code.
  * Safe for simple re-mappings like aliases or rewriting URLs.
