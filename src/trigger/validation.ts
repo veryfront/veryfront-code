@@ -52,6 +52,16 @@ function assertSerializableValue(
     throwNotSerializable(path);
   }
 
+  let toJSON: unknown;
+  try {
+    toJSON = (value as { toJSON?: unknown }).toJSON;
+  } catch {
+    throwNotSerializable(path);
+  }
+  if (typeof toJSON === "function") {
+    throwNotSerializable(path);
+  }
+
   const objectValue = value as object;
   if (ancestors.has(objectValue)) throwNotSerializable(path);
   ancestors.add(objectValue);

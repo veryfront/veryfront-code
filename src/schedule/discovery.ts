@@ -15,6 +15,7 @@ export interface ScheduleDiscoveryOptions {
 
 export type ScheduleDiscoveryResult = SourceTriggerDiscoveryResult<ScheduleDefinition>;
 
+/** Discover and validate canonical schedule definitions from a project directory. */
 export async function discoverSchedules(
   options: ScheduleDiscoveryOptions,
 ): Promise<ScheduleDiscoveryResult> {

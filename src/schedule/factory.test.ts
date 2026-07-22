@@ -56,6 +56,20 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("preserves optional execution controls", () => {
+    const definition = schedule({
+      id: "bounded-sweep",
+      description: "Stop after three runs.",
+      schedule: "0 */6 * * *",
+      target: { kind: "task", id: "run-bounded-sweep" },
+      maxRuns: 3,
+    });
+
+    assertEquals(definition.description, "Stop after three runs.");
+    assertEquals(definition.maxRuns, 3);
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
   it("normalizes schedule health configuration", () => {
     const definition = schedule({
       id: "triage-sweep",
@@ -329,6 +343,40 @@ describe("schedule/factory", () => {
     );
   });
 
+  it("enforces bounded integration declarations", () => {
+    const base = {
+      id: "bounded-integrations",
+      schedule: "0 9 * * 1-5",
+      target: { kind: "workflow", id: "post-digest" } as const,
+    };
+
+    for (
+      const [integrationRequirements, message] of [
+        [
+          Array.from({ length: 21 }, (_, index) => ({ integration: `provider-${index}` })),
+          "Schedule integrationRequirements must contain at most 20 entries.",
+        ],
+        [
+          [{ integration: "slack", requiredScopes: Array(51).fill("chat:write") }],
+          "Schedule integrationRequirements[0].requiredScopes must contain at most 50 entries.",
+        ],
+        [
+          [{
+            integration: "slack",
+            resources: Array(51).fill({ kind: "channel", id: "C012345" }),
+          }],
+          "Schedule integrationRequirements[0].resources must contain at most 50 entries.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => schedule({ ...base, integrationRequirements } as never),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
   it("rejects unknown integration requirement fields", () => {
     assertThrows(
       () =>
@@ -395,5 +443,238 @@ describe("schedule/factory", () => {
       }),
       false,
     );
+  });
+
+  it("rejects malformed public inputs with a structured schedule error", () => {
+    const forgedRequirements = [{
+      integration: 42,
+      requiredScopes: [],
+      resources: [],
+    }];
+    Object.defineProperty(forgedRequirements, "map", {
+      value: () => [],
+    });
+    const hostileConfig = new Proxy({}, {
+      getOwnPropertyDescriptor(): PropertyDescriptor {
+        throw new Error("hostile descriptor");
+      },
+    });
+    const customSerializationInput = Object.defineProperty({}, "toJSON", {
+      value: () => 1n,
+    });
+
+    for (
+      const [config, message] of [
+        [null, "Schedule configuration must be an object."],
+        [
+          {
+            id: "daily-triage",
+            target: { kind: "workflow", id: "escalate-ticket" },
+          },
+          "Schedule schedule or cron is required.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            cron: "0 9 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+          },
+          "Schedule schedule and cron must match when both are provided.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            name: 42,
+            target: { kind: "workflow", id: "escalate-ticket" },
+          },
+          "Schedule name must be a string.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            timezone: "",
+            target: { kind: "workflow", id: "escalate-ticket" },
+          },
+          "Schedule timezone is required.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            input: [],
+          },
+          "Schedule input must be an object.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            input: customSerializationInput,
+          },
+          "Schedule input must be JSON-serializable.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            timeoutSeconds: Number.MAX_SAFE_INTEGER + 1,
+          },
+          "Schedule timeoutSeconds must be a positive integer within the safe integer range.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            integrationRequirements: [{ integration: "slack", requiredScopes: null }],
+          },
+          "Schedule integrationRequirements[0].requiredScopes must be an array.",
+        ],
+        [
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            integrationRequirements: forgedRequirements,
+          },
+          "Schedule integrationRequirements[0].integration is required.",
+        ],
+        [hostileConfig, "Schedule configuration is invalid."],
+      ] as const
+    ) {
+      const error = assertThrows(
+        () => schedule(config as never),
+        VeryfrontError,
+        message,
+      );
+      assertEquals(error.slug, "schedule-config-invalid");
+    }
+  });
+
+  it("validates the complete discovery boundary without throwing", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const inheritedRequiredFields = new Proxy({}, {
+      get(_target, property): unknown {
+        if (property === "id") return "daily-triage";
+        if (property === "schedule") return "0 8 * * 1-5";
+        if (property === "target") {
+          return { kind: "workflow", id: "escalate-ticket" };
+        }
+        return undefined;
+      },
+    });
+    const inheritedOptionalField = Object.assign(
+      Object.create({ maxRuns: 0 }) as Record<string, unknown>,
+      {
+        id: "daily-triage",
+        schedule: "0 8 * * 1-5",
+        target: { kind: "workflow", id: "escalate-ticket" },
+      },
+    );
+    const requirementsWithCustomProperty = [{
+      integration: "slack",
+      requiredScopes: [],
+      resources: [],
+    }];
+    Object.defineProperty(requirementsWithCustomProperty, "map", {
+      value: Array.prototype.map,
+    });
+    const requirementWithMissingResources = [{
+      integration: "slack",
+      requiredScopes: [],
+    }];
+
+    for (
+      const value of [
+        null,
+        [],
+        inheritedRequiredFields,
+        inheritedOptionalField,
+        {
+          id: "Daily Triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: {},
+        },
+        {
+          id: "daily-triage",
+          cron: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          timeoutSeconds: 0,
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          concurrencyPolicy: "Queue",
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          input: { value: cyclic },
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          integrationRequirements: [{ integration: "slack" }],
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          integrationRequirements: requirementWithMissingResources,
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          integrationRequirements: requirementsWithCustomProperty,
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          integrationRequirements: [{
+            integration: " slack",
+            requiredScopes: [],
+            resources: [],
+          }],
+        },
+        Object.defineProperties({}, {
+          id: { value: "daily-triage", enumerable: true },
+          schedule: { get: () => "0 8 * * 1-5", enumerable: true },
+          target: {
+            value: { kind: "workflow", id: "escalate-ticket" },
+            enumerable: true,
+          },
+        }),
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          health: { maxStalenessSeconds: Number.MAX_SAFE_INTEGER + 1 },
+        },
+      ]
+    ) {
+      assertEquals(isScheduleDefinition(value), false);
+    }
   });
 });
