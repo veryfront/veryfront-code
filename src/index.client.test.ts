@@ -5,6 +5,49 @@ interface DenoDocNode {
   readonly name: string;
 }
 
+const expectedRootExports = [
+  "function:apiNotFound",
+  "function:apiRedirect",
+  "function:badRequest",
+  "function:createHandler",
+  "function:createValidatedHandler",
+  "function:createValidationError",
+  "function:defineConfig",
+  "function:defineConfigWithEnv",
+  "function:forbidden",
+  "function:getEnv",
+  "function:json",
+  "function:mergeConfigs",
+  "function:notFound",
+  "function:parseFormData",
+  "function:parseJsonBody",
+  "function:parseQueryParams",
+  "function:redirect",
+  "function:sanitizeData",
+  "function:serverError",
+  "function:startServer",
+  "function:toNodeHandler",
+  "function:unauthorized",
+  "interface:APIContext",
+  "interface:APIResponse",
+  "interface:MDXFrontmatter",
+  "interface:PageContext",
+  "interface:PageWithData",
+  "interface:ValidatedHandlerConfig",
+  "interface:VeryfrontServer",
+  "typeAlias:APIHandler",
+  "typeAlias:APIRoute",
+  "typeAlias:DataContext",
+  "typeAlias:InferGetServerDataProps",
+  "typeAlias:StartServerOptions",
+  "typeAlias:StaticPathsResult",
+  "typeAlias:ValidatedHandlerFunction",
+  "typeAlias:VeryfrontConfig",
+  "typeAlias:VeryfrontHandler",
+  "variable:CommonSchemas",
+  "variable:INPUT_VALIDATION_FAILED",
+] as const;
+
 async function documentedExports(path: string): Promise<readonly string[]> {
   const output = await new Deno.Command(Deno.execPath(), {
     args: ["doc", "--json", "--frozen", "--lock=deno.lock", path],
@@ -19,11 +62,18 @@ async function documentedExports(path: string): Promise<readonly string[]> {
   const parsed = JSON.parse(new TextDecoder().decode(output.stdout)) as {
     readonly nodes: readonly DenoDocNode[];
   };
-  return parsed.nodes
-    .filter((node) => node.kind !== "moduleDoc")
-    .map((node) => `${node.kind}:${node.name}`)
-    .sort();
+  return [
+    ...new Set(
+      parsed.nodes
+        .filter((node) => node.kind !== "moduleDoc")
+        .map((node) => `${node.kind}:${node.name}`),
+    ),
+  ].sort();
 }
+
+Deno.test("public root barrel preserves its supported export surface", async () => {
+  assertEquals(await documentedExports("src/index.ts"), expectedRootExports);
+});
 
 Deno.test("client root barrel stays aligned with the public root contract", async () => {
   const root = await documentedExports("src/index.ts");
