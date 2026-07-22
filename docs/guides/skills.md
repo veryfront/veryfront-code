@@ -103,7 +103,7 @@ supporting skill tools:
 Hosted chat reads an advertised reference through
 `load_skill({ skillId, file })`. It does not execute skill scripts directly.
 
-Discovered skills are advertised to every agent by default:
+Discovered skills visible to the agent are advertised by default:
 
 ```ts
 // agents/assistant.ts
