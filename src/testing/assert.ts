@@ -4,7 +4,7 @@ import { deepEquals, safeStringify } from "./utils.ts";
 
 // deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
 /** Public API contract for error class. */
-type ErrorClass = new (...args: any[]) => Error;
+type ErrorClass<E extends Error = Error> = abstract new (...args: any[]) => E;
 
 interface AssertImpl {
   assertEquals<T>(actual: T, expected: T, msg?: string): void;
@@ -17,7 +17,7 @@ interface AssertImpl {
     errorClassOrMsg?: ErrorClass | string,
     msgIncludesOrMsg?: string,
     msg?: string,
-  ): void;
+  ): unknown;
   assertRejects(
     fn: () => Promise<unknown>,
     errorClassOrMsg?: ErrorClass | string,
@@ -46,12 +46,25 @@ interface AssertImpl {
 }
 
 function createNodeAssertImpl(): AssertImpl {
-  function assertErrorMessageIncludes(error: unknown, includes?: string): void {
+  function withAssertionMessage(message: string, assertionMessage?: string): string {
+    return assertionMessage ? `${message}: ${assertionMessage}` : message;
+  }
+
+  function assertErrorMessageIncludes(
+    error: unknown,
+    includes?: string,
+    assertionMessage?: string,
+  ): void {
     if (!includes) return;
     if (!(error instanceof Error)) return;
 
     if (error.message.includes(includes)) return;
-    throw new Error(`Expected error message to include "${includes}", got "${error.message}"`);
+    throw new Error(
+      withAssertionMessage(
+        `Expected error message to include "${includes}", got "${error.message}"`,
+        assertionMessage,
+      ),
+    );
   }
 
   function assertThrowsOrRejects(
@@ -60,22 +73,26 @@ function createNodeAssertImpl(): AssertImpl {
     errorClassOrMsg?: ErrorClass | string,
     msgIncludesOrMsg?: string,
     defaultMsg?: string,
+    assertionMessage?: string,
   ): void {
     if (!threw) {
-      throw new Error(typeof errorClassOrMsg === "string" ? errorClassOrMsg : defaultMsg);
+      throw new Error(withAssertionMessage(defaultMsg ?? "Assertion failed", assertionMessage));
     }
 
     if (typeof errorClassOrMsg !== "function") return;
 
     if (!(error instanceof errorClassOrMsg)) {
       throw new Error(
-        `Expected error to be instance of ${errorClassOrMsg.name}, got ${
-          (error as Error | undefined)?.name ?? typeof error
-        }`,
+        withAssertionMessage(
+          `Expected error to be instance of ${errorClassOrMsg.name}, got ${
+            (error as Error | undefined)?.name ?? typeof error
+          }`,
+          assertionMessage,
+        ),
       );
     }
 
-    assertErrorMessageIncludes(error, msgIncludesOrMsg);
+    assertErrorMessageIncludes(error, msgIncludesOrMsg, assertionMessage);
   }
 
   function assertObjectMatch(
@@ -140,7 +157,7 @@ function createNodeAssertImpl(): AssertImpl {
       errorClassOrMsg?: ErrorClass | string,
       msgIncludesOrMsg?: string,
       _msg?: string,
-    ): void {
+    ): unknown {
       let threw = false;
       let error: unknown;
 
@@ -157,7 +174,9 @@ function createNodeAssertImpl(): AssertImpl {
         errorClassOrMsg,
         msgIncludesOrMsg,
         "Expected function to throw",
+        typeof errorClassOrMsg === "string" ? errorClassOrMsg : _msg,
       );
+      return error;
     },
 
     async assertRejects(
@@ -165,7 +184,7 @@ function createNodeAssertImpl(): AssertImpl {
       errorClassOrMsg?: ErrorClass | string,
       msgIncludesOrMsg?: string,
       _msg?: string,
-    ): Promise<void> {
+    ): Promise<unknown> {
       let threw = false;
       let error: unknown;
 
@@ -182,7 +201,9 @@ function createNodeAssertImpl(): AssertImpl {
         errorClassOrMsg,
         msgIncludesOrMsg,
         "Expected function to reject",
+        typeof errorClassOrMsg === "string" ? errorClassOrMsg : _msg,
       );
+      return error;
     },
 
     assertStringIncludes(actual: string, expected: string, msg?: string): void {
@@ -289,14 +310,21 @@ export function assertExists<T>(actual: T, msg?: string): asserts actual is NonN
   impl.assertExists(actual, msg);
 }
 
-/** Assert that a synchronous function throws. */
+/** Assert that a synchronous function throws and return its captured value. */
+export function assertThrows(fn: () => unknown, msg?: string): unknown;
+export function assertThrows<E extends Error>(
+  fn: () => unknown,
+  errorClass: ErrorClass<E>,
+  msgIncludes?: string,
+  msg?: string,
+): E;
 export function assertThrows(
   fn: () => unknown,
   errorClassOrMsg?: ErrorClass | string,
   msgIncludesOrMsg?: string,
   msg?: string,
-): void {
-  impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
+): unknown {
+  return impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 
 /** Assert that an async function rejects. */

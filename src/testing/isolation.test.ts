@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerTestCleanup, resetAllTestState } from "./isolation.ts";
 
@@ -26,10 +26,21 @@ describe("isolation", () => {
         calls.push("after-throw");
       });
 
-      await resetAllTestState();
+      const repeatedCleanup = () => {
+        calls.push("repeated");
+      };
+      registerTestCleanup(repeatedCleanup);
+      registerTestCleanup(repeatedCleanup);
+
+      const error = await assertRejects(
+        () => resetAllTestState(),
+        AggregateError,
+        "test state cleanup failed",
+      ) as AggregateError;
+      assertEquals(error.errors.length, 1);
       await resetAllTestState();
 
-      assertEquals(calls, ["sync", "async", "throws", "after-throw"]);
+      assertEquals(calls, ["sync", "async", "throws", "after-throw", "repeated", "repeated"]);
     });
   });
 });
