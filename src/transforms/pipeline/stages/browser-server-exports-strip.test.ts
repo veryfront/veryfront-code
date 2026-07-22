@@ -345,6 +345,30 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "REGION") > 0, true);
     });
 
+    // Over-pruning guard: pruning is scoped to the stripped hook's closure, so
+    // unrelated module-scope initialization with side effects (client analytics,
+    // custom-element registration, instrumentation) sitting next to a server-only
+    // hook must survive — only the hook's own closure is removed.
+    it("keeps unrelated top-level side-effect declarations while dropping the hook's closure", async () => {
+      const code = [
+        `const clientInit = bootClientAnalytics();`,
+        `function bootClientAnalytics() { globalThis.__booted = true; return true; }`,
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { ok: Boolean(API_KEY) } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // Unrelated client init and its helper are untouched (side effect kept).
+      assertStringIncludes(result, "clientInit");
+      assertStringIncludes(result, "bootClientAnalytics");
+      // The hook's own closure still goes.
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [

@@ -368,18 +368,62 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
 }
 
 /**
- * Drop top-level declarations nothing references any more.
- *
- * After a server-only hook is emptied, the module-scope state it closed over —
- * `const API_KEY = getEnv("SECRET_KEY")` and the like — is dead, but still sits
- * in the source and would ship its value (and its call into a framework helper)
- * to the browser. Removing it lets `dropUnusedImportBindings` then drop the
- * import it was the last user of, so neither the secret nor the server call
- * survives. Iterates to a fixpoint: dropping one binding can leave a helper it
- * was the last user of newly dead.
+ * Identifiers referenced inside the server-only hooks that are about to be
+ * emptied — the seed of the hook's dependency closure. Must be collected before
+ * the hook bodies are replaced with stubs. `targets` is the set of local hook
+ * names (as passed to `emptyServerOnlyHooks`).
  */
-function dropUnusedModuleScopeBindings(body: Node[]): Node[] {
+function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<string> {
+  const declarationsIn = (statement: Node): Node[] => {
+    const declaration = statement.type === "ExportNamedDeclaration"
+      ? statement.declaration
+      : statement;
+    return isNode(declaration) ? [declaration] : [];
+  };
+
+  const referenced = new Set<string>();
+  const collect = (node: Node): void => {
+    for (const name of referencedIdentifiers([node])) referenced.add(name);
+  };
+
+  for (const statement of body) {
+    for (const declaration of declarationsIn(statement)) {
+      if (declaration.type === "FunctionDeclaration") {
+        const name = nodeName(declaration.id);
+        if (name && targets.has(name) && isNode(declaration.body)) collect(declaration.body);
+        continue;
+      }
+      if (declaration.type !== "VariableDeclaration") continue;
+      for (
+        const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
+      ) {
+        if (!isNode(declarator)) continue;
+        const name = nodeName(declarator.id);
+        if (name && targets.has(name) && isNode(declarator.init)) collect(declarator.init);
+      }
+    }
+  }
+
+  return referenced;
+}
+
+/**
+ * Drop the top-level declarations the emptied server-only hooks closed over.
+ *
+ * Scope is the *dependency closure of the stripped hooks*, not "everything
+ * unreferenced". A declaration is removed only when (a) it is reached from the
+ * hook's own reference graph — seeded from `hookClosure` and grown through the
+ * initialisers of declarations already removed — and (b) nothing surviving in
+ * the module still references it. So `const API_KEY = getEnv(...)` read only by
+ * `getServerData` goes (letting `dropUnusedImportBindings` drop the import
+ * next), while an unrelated `const _ = bootClientAnalytics()` — never part of
+ * the hook graph — is left intact along with its side effect. Iterates to a
+ * fixpoint: removing one binding can leave a helper it was the last user of
+ * newly dead *within the closure*.
+ */
+function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): Node[] {
   let current = body;
+  const closure = new Set(hookClosure);
 
   for (;;) {
     const decls = moduleScopeDeclarations(current);
@@ -392,9 +436,21 @@ function dropUnusedModuleScopeBindings(body: Node[]): Node[] {
 
     const removable = new Set<Node>();
     for (const decl of decls) {
-      if (decl.names.every((name) => !referenced.has(name))) removable.add(decl.statement);
+      const inClosure = decl.names.some((name) => closure.has(name));
+      const unused = decl.names.every((name) => !referenced.has(name));
+      if (inClosure && unused) removable.add(decl.statement);
     }
     if (removable.size === 0) return current;
+
+    // Grow the closure through the removed declarations' initialisers, so a
+    // chain that only fed the hook (`const RAW = getEnv(); const TOKEN = RAW…`)
+    // is pruned end to end while unrelated declarations stay outside it.
+    for (const decl of decls) {
+      if (!removable.has(decl.statement)) continue;
+      const ownIds = new WeakSet<Node>();
+      for (const id of decl.bindingIds) ownIds.add(id);
+      for (const name of referencedIdentifiers([decl.statement], ownIds)) closure.add(name);
+    }
 
     current = current.filter((statement) => !removable.has(statement));
   }
@@ -513,12 +569,17 @@ export async function stripServerOnlyExports(code: string, filePath?: string): P
     throw new ServerExportStripError(filePath, `it is exported as \`${unhandled[0]}\``);
   }
 
+  // Capture what the hooks reference *before* emptying them, so pruning is
+  // scoped to the hooks' dependency closure and never touches unrelated
+  // top-level declarations (which may run browser side effects).
+  const hookClosure = hookReferencedIdentifiers(body, locals);
+
   if (!emptyServerOnlyHooks(body, locals, stubs)) return code;
 
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
-  const pruned = dropUnusedModuleScopeBindings(body);
+  const pruned = dropUnusedModuleScopeBindings(body, hookClosure);
   setBody(ast, dropUnusedImportBindings(pruned));
 
   const generated = await parser.generate(ast);
