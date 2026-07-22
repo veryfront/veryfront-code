@@ -368,6 +368,29 @@ export class ProjectScopedRegistryManager<T> {
   }
 
   /**
+   * Test effective items without materializing the merged registry.
+   *
+   * Project items shadow shared items with the same id, matching `getAll()`.
+   * Iteration stops after the first match.
+   */
+  some(predicate: (item: T, id: string) => boolean): boolean {
+    const scopeId = this.getCurrentScopeId();
+    const projectRegistry = this.getActiveScopeRegistry(scopeId);
+
+    for (const [id, sharedItem] of this.sharedRegistry) {
+      const item = projectRegistry?.has(id) ? projectRegistry.get(id) as T : sharedItem;
+      if (predicate(item, id)) return true;
+    }
+
+    if (!projectRegistry) return false;
+    for (const [id, item] of projectRegistry) {
+      if (this.sharedRegistry.has(id)) continue;
+      if (predicate(item, id)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Get all IDs for the current project (includes shared items).
    */
   getAllIds(): string[] {

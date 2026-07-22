@@ -194,6 +194,32 @@ describe("ProjectScopedRegistryManager", () => {
     });
   });
 
+  describe("some", () => {
+    it("short-circuits after the first matching effective item", () => {
+      const manager = createManager<string>("tool");
+      manager.register("first", "match");
+      manager.register("later", "skip");
+      const visited: string[] = [];
+
+      const matched = manager.some((item, id) => {
+        visited.push(id);
+        return item === "match";
+      });
+
+      assertEquals(matched, true);
+      assertEquals(visited, ["first"]);
+    });
+
+    it("tests project overrides instead of shadowed shared items", () => {
+      const manager = createManager<string>("tool");
+      manager.registerShared("tool-x", "shared");
+      manager.register("tool-x", "project");
+
+      assertEquals(manager.some((item) => item === "shared"), false);
+      assertEquals(manager.some((item) => item === "project"), true);
+    });
+  });
+
   describe("delete", () => {
     it("should delete a registered project item", () => {
       const manager = createManager<string>("tool");
