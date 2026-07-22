@@ -102,13 +102,13 @@ export async function GET(ctx: APIContext) {
 }
 
 export async function POST(ctx: APIContext) {
-  const body = await ctx.json();
+  const body = await ctx.body<Record<string, unknown>>();
   const user = { id: "user_456", ...body };
   return ctx.json(user, { status: 201 });
 }
 
 export async function DELETE(ctx: APIContext) {
-  const { id } = await ctx.json() as { id?: string };
+  const { id } = await ctx.body<{ id?: string }>();
   if (!id) return ctx.json({ error: "Missing id" }, { status: 400 });
   return new Response(null, { status: 204 });
 }
