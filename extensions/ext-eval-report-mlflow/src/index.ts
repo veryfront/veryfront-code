@@ -44,7 +44,7 @@ const MAX_REQUEST_TIMEOUT_MS = 60_000;
 const MAX_RETRY_ATTEMPTS = 5;
 const MAX_RETRY_DELAY_MS = 5_000;
 
-const EXTENSION_METADATA = {
+export const EvalReportMlflowExtensionMetadata = {
   contracts: {
     requires: ["EvalReportExporterRegistry"],
   },
@@ -1813,8 +1813,8 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
   return {
     name: "ext-eval-report-mlflow",
     version: "0.1.0",
-    contracts: EXTENSION_METADATA.contracts,
-    capabilities: EXTENSION_METADATA.capabilities,
+    contracts: EvalReportMlflowExtensionMetadata.contracts,
+    capabilities: EvalReportMlflowExtensionMetadata.capabilities,
     setup(ctx) {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,

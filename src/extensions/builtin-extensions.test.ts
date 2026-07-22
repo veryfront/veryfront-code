@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "./contracts.ts";
 import type { EvalReportExporterRegistry } from "./eval/index.ts";
@@ -13,6 +13,29 @@ import {
   OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import { EvalReportMlflowExtensionMetadata } from "../../extensions/ext-eval-report-mlflow/src/index.ts";
+
+function canonicalizeUnorderedMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .map(canonicalizeUnorderedMetadata)
+      .sort((left, right) => {
+        const leftJson = JSON.stringify(left) ?? "";
+        const rightJson = JSON.stringify(right) ?? "";
+        return leftJson.localeCompare(rightJson);
+      });
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalizeUnorderedMetadata(nested)]),
+    );
+  }
+
+  return value;
+}
 
 describe("ensureBuiltinSchemaValidator", () => {
   afterEach(() => {
@@ -157,6 +180,44 @@ describe("createBuiltinExtensions", () => {
     );
 
     assertEquals(mlflow?.evalExporterId, "mlflow");
+  });
+
+  it("keeps MLflow builtin metadata in parity with its factory and manifest", async () => {
+    const mlflow = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-mlflow"
+    );
+    assert(mlflow);
+
+    const manifest = JSON.parse(
+      await Deno.readTextFile(
+        new URL(
+          "../../extensions/ext-eval-report-mlflow/deno.json",
+          import.meta.url,
+        ),
+      ),
+    ) as {
+      veryfront: {
+        contracts: unknown;
+        capabilities: unknown;
+      };
+    };
+    const builtinMetadata = {
+      contracts: mlflow.contracts,
+      capabilities: mlflow.capabilities,
+    };
+    const manifestMetadata = {
+      contracts: manifest.veryfront.contracts,
+      capabilities: manifest.veryfront.capabilities,
+    };
+
+    assertEquals(
+      canonicalizeUnorderedMetadata(builtinMetadata),
+      canonicalizeUnorderedMetadata(EvalReportMlflowExtensionMetadata),
+    );
+    assertEquals(
+      canonicalizeUnorderedMetadata(builtinMetadata),
+      canonicalizeUnorderedMetadata(manifestMetadata),
+    );
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
