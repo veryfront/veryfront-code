@@ -273,6 +273,10 @@ describe("getEntityBySlug", () => {
         join(pagesDir, "Layout.tsx"),
         `export default function Layout() { /* empty */ }`,
       );
+      await createTestFile(
+        join(pagesDir, "chat", "layout.tsx"),
+        `export default function ChatLayout() { /* empty */ }`,
+      );
 
       await createTestFile(
         join(pagesDir, "page.tsx"),
@@ -281,6 +285,9 @@ describe("getEntityBySlug", () => {
 
       const layoutInfo = await getEntityBySlug(context.projectDir, "Layout");
       assertEquals(layoutInfo, null);
+
+      const nestedLayoutInfo = await getEntityBySlug(context.projectDir, "chat/layout");
+      assertEquals(nestedLayoutInfo, null);
 
       const pageInfo = await getEntityBySlug(context.projectDir, "page");
       assertExists(pageInfo);

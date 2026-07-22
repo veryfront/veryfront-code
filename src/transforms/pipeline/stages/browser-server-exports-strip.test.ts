@@ -682,6 +682,49 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(strippedShared, "function fmt");
     });
 
+    // Production release modules have already passed through esbuild with
+    // `keepNames`, which emits a top-level name-registration call for every
+    // function. That compiler metadata must not turn a hook-only helper into a
+    // browser reference and keep its server import graph alive.
+    it("prunes hook-only helpers from compiled keepNames output", async () => {
+      const code = [
+        `var defineName = Object.defineProperty;`,
+        `var setName = (target, value) => defineName(target, "name", { value, configurable: true });`,
+        `import { getActivity } from "../lib/api.js";`,
+        `async function loadReview() { return getActivity(); }`,
+        `setName(loadReview, "getReviewProps");`,
+        `function loadStatic() { return loadReview(); }`,
+        `setName(loadStatic, "getStaticData");`,
+        `function loadServer() { return loadReview(); }`,
+        `setName(loadServer, "getServerData");`,
+        `function Page() { return null; }`,
+        `setName(Page, "Page");`,
+        `export { Page as default, loadServer as getServerData, loadStatic as getStaticData };`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../lib/api.js");
+      assertEquals(occurrences(result, "getActivity"), 0);
+      assertEquals(occurrences(result, "loadReview"), 0);
+      assertStringIncludes(result, `setName(Page, "Page")`);
+    });
+
+    it("keeps helpers consumed by ordinary top-level registration", async () => {
+      const code = [
+        `import { getActivity } from "../lib/api.js";`,
+        `async function loadReview() { return getActivity(); }`,
+        `registerClientHandler(loadReview, "review-loader");`,
+        `function loadServer() { return loadReview(); }`,
+        `export { loadServer as getServerData };`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "../lib/api.js");
+      assertStringIncludes(result, "registerClientHandler(loadReview");
+    });
+
     // A chain member the client also reads is kept even though a later link in
     // the chain (used only by the hook) is dropped.
     it("keeps a chain member the client reads while dropping the hook-only tail", async () => {

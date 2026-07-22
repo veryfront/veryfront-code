@@ -99,6 +99,8 @@ const BROWSER_CSP_SAFE_MODULE_PATHS = [
   "/_vf_modules/_veryfront/rendering/rsc/client-dom.js",
   "/_vf_modules/_veryfront/routing/client/page-loader.js",
   "/_vf_modules/_veryfront/client/spa/ClientApp.js",
+  "/_vf_modules/_veryfront/utils/logger/logger.js",
+  "/_vf_modules/_veryfront/utils/version.js",
 ];
 
 async function fetchServedFrameworkModule(
@@ -119,7 +121,8 @@ function assertBrowserSafeFrameworkModule(
   body: string,
   specifiers: string[],
 ): void {
-  const errorSpecifiers = specifiers.filter((specifier) =>
+  const specifierPaths = specifiers.map((specifier) => specifier.replace(/[?#].*$/, ""));
+  const errorSpecifiers = specifierPaths.filter((specifier) =>
     specifier.startsWith("/_vf_modules/_veryfront/errors/")
   );
 
@@ -128,21 +131,47 @@ function assertBrowserSafeFrameworkModule(
     `${modulePath} should not use unsafe-eval`,
   );
   assert(
-    !specifiers.includes("/_vf_modules/_veryfront/errors/index.js"),
+    !specifierPaths.includes("/_vf_modules/_veryfront/errors/index.js"),
     `${modulePath} should not import the heavyweight errors barrel`,
   );
   assert(
-    !specifiers.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
+    !specifierPaths.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
     `${modulePath} should not import process compat`,
   );
   assert(
-    !specifiers.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
+    !specifierPaths.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
     `${modulePath} should not import dynamic-import compat`,
   );
   assert(
     errorSpecifiers.every((specifier) => BROWSER_SAFE_ERROR_MODULES.has(specifier)),
     `${modulePath} should only import narrow browser-safe error modules`,
   );
+}
+
+async function assertBrowserSafeFrameworkGraph(port: number, entryPath: string): Promise<void> {
+  const pending = [entryPath];
+  const visited = new Set<string>();
+  let nextIndex = 0;
+
+  while (nextIndex < pending.length) {
+    const modulePath = pending[nextIndex++];
+    if (!modulePath || visited.has(modulePath)) continue;
+    visited.add(modulePath);
+
+    const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath);
+    assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
+
+    for (const specifier of specifiers) {
+      const resolved = new URL(specifier, `http://127.0.0.1:${port}${modulePath}`);
+      if (
+        resolved.origin === `http://127.0.0.1:${port}` &&
+        resolved.pathname.startsWith("/_vf_modules/_veryfront/") &&
+        !visited.has(resolved.pathname)
+      ) {
+        pending.push(resolved.pathname);
+      }
+    }
+  }
 }
 
 describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -442,6 +471,14 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
         }
 
+        await stopServer(server);
+      });
+    });
+
+    it("serves the complete chat module graph without unsafe-eval dependencies", async () => {
+      await withTestContext("dev-server-framework-chat-graph-csp", async (context) => {
+        const { server, port } = await createTestDevServer(context);
+        await assertBrowserSafeFrameworkGraph(port, "/_vf_modules/_veryfront/chat/index.js");
         await stopServer(server);
       });
     });
