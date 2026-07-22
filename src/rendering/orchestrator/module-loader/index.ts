@@ -54,6 +54,11 @@ export async function transformModuleWithDeps(
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
   lineage: ReadonlySet<string> = new Set(),
+  // Shared by reference across the whole transform tree (unlike `lineage`, which
+  // is copied per level): a descendant records a cycle target here, and the
+  // ancestor that eventually persists that target reads it to write a stable
+  // alias the left-as-authored cycle edge can resolve to.
+  cycleTargets: Set<string> = new Set(),
 ): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(
@@ -97,8 +102,19 @@ export async function transformModuleWithDeps(
       // `await import()` is how a module graph legitimately breaks an import
       // cycle, so following one eagerly can lead straight back to a module
       // further up this chain and recurse until the worker dies. Leave the
-      // specifier as authored; the runtime resolves it when the branch runs.
+      // specifier as authored so the recursion terminates.
+      //
+      // The cycle target is persisted as a content-hashed artifact whose hash
+      // is derived from transformed output we do not produce here (producing it
+      // is the recursion we are breaking), so the edge cannot be rewritten to
+      // that hashed path. Instead we record the target: when its ancestor
+      // persists it, a stable non-hashed alias is written next to the hashed
+      // artifact so the relative `.js` specifier esbuild leaves behind resolves.
+      // NOTE: this alias path is not yet runtime-verified end to end; if it does
+      // not resolve in a real runtime the cycle branch stays broken, which is no
+      // worse than before (and still a strict improvement over hanging).
       if (nextLineage.has(dep.depFilePath!)) {
+        cycleTargets.add(dep.depFilePath!);
         logger.debug("Skipping dependency already in the transform chain:", {
           path: dep.path,
           depFilePath: dep.depFilePath,
@@ -120,6 +136,7 @@ export async function transformModuleWithDeps(
           config,
           dep.isLocalLib,
           nextLineage,
+          cycleTargets,
         );
 
         return { ...dep, depTempPath };
@@ -177,6 +194,7 @@ export async function transformModuleWithDeps(
     cacheKey,
     contentSourceId,
     reactVersion: config.reactVersion,
+    isCycleTarget: cycleTargets.has(filePath),
   });
 }
 

@@ -61,6 +61,13 @@ function assertTransformedImportPath(code: string, expectedPathPart: string): st
 }
 
 describe("module-loader/transformModuleWithDeps", () => {
+  // The `.ts` cycle case compiles real TypeScript, which starts esbuild's child
+  // process; stop it so the test does not leak the handle into a later suite.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   it("transforms @/ alias dependencies before rewriting the import to a file URL", async () => {
     await withModuleLoaderFixture(
       {
@@ -138,6 +145,65 @@ describe("module-loader/transformModuleWithDeps", () => {
           ),
         );
         assertStringIncludes(depCode, `import("../app/page.json")`);
+      },
+    );
+  });
+
+  // The `.ts` counterpart of the cycle case, which the `.json` shape above does
+  // not exercise: a `.ts` module is persisted as a *content-hashed* `.js`
+  // artifact (`app/page.<hash>.js`), and the cycle edge — left un-transformed to
+  // break the recursion — is normalised by esbuild to a relative `../app/page.js`
+  // that does not match the hashed name. To make that edge resolvable, the cycle
+  // target persists a stable non-hashed alias (`app/page.js`) that re-exports
+  // its hashed artifact. This test pins both halves: the edge shape and the
+  // alias that backs it. (The alias is not yet runtime-verified end to end; if
+  // it does not resolve in a real runtime the branch stays broken, no worse than
+  // before.)
+  it("writes a resolvable alias when a dynamic import closes a .ts cycle", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { a } from "../lib/a.ts";`,
+          `export const pageValue = a;`,
+        ].join("\n"),
+        "lib/a.ts": [
+          `export const a = "cycle";`,
+          `export async function later() { return await import("../app/page.ts"); }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let timer = 0;
+        const transformed = await Promise.race([
+          transformModuleWithDeps(
+            join(projectDir, "app/page.ts"),
+            tmpDir,
+            config.adapter,
+            config,
+          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("transform did not terminate")), 10_000);
+          }),
+        ]).finally(() => clearTimeout(timer));
+
+        // The static import to lib/a resolves to its content-hashed artifact.
+        const depArtifactPath = assertTransformedImportPath(
+          await Deno.readTextFile(transformed),
+          "/lib/a.",
+        );
+        assert(/\/lib\/a\.[0-9a-f]{8}\.js$/.test(depArtifactPath), depArtifactPath);
+
+        // The cycle edge survives as the relative `.js` specifier esbuild leaves.
+        const depCode = await Deno.readTextFile(depArtifactPath);
+        assertStringIncludes(depCode, `import("../app/page.js")`);
+
+        // The alias the edge points at exists next to the hashed artifact and
+        // re-exports it, so `../app/page.js` resolves to the real module.
+        const aliasPath = join(tmpDir, "app/page.js");
+        const aliasCode = await Deno.readTextFile(aliasPath);
+        assert(
+          /export \* from "\.\/page\.[0-9a-f]{8}\.js";/.test(aliasCode),
+          `alias should re-export the hashed artifact:\n${aliasCode}`,
+        );
       },
     );
   });
