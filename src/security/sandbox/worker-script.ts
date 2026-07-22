@@ -33,6 +33,7 @@ import { installWorkerEgressGuard, type WorkerEgressGuardOptions } from "./worke
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { createJsonHelper } from "#veryfront/routing/api/context-builder.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
@@ -454,11 +455,10 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
           cookies,
           headers: request.headers,
           url,
-          json: (data: unknown, init?: ResponseInit): Response =>
-            new Response(JSON.stringify(data), {
-              ...init,
-              headers: { "Content-Type": "application/json", ...init?.headers },
-            }),
+          // The same helper the in-process context uses, so `await ctx.json()`
+          // reads the request body here too. A handler must behave the same
+          // whether or not isolation is enabled.
+          json: createJsonHelper(request),
           text: (data: string, init?: ResponseInit): Response =>
             new Response(data, {
               ...init,

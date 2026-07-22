@@ -14,7 +14,16 @@ export interface APIContext {
   cookies: Record<string, string>;
   headers: Headers;
   url: URL;
-  json: (data: unknown, init?: ResponseInit) => Response;
+  /**
+   * Read the request body as JSON, or build a JSON response.
+   *
+   * `ctx.json()` with no arguments parses and returns the request body.
+   * `ctx.json(data, init?)` returns a JSON `Response`.
+   */
+  json: {
+    (): Promise<unknown>;
+    (data: unknown, init?: ResponseInit): Response;
+  };
   text: (data: string, init?: ResponseInit) => Response;
   fs: FileSystemAdapter;
 }
@@ -33,14 +42,38 @@ function createResponse(
   });
 }
 
+/**
+ * Build the `ctx.json` helper for a request.
+ *
+ * Overloaded on arity. `ctx.json(data)` builds a response; `ctx.json()` reads
+ * the request body, which is what handlers reach for, and what the zero-arg
+ * form was previously misread as. It used to stringify `undefined` into a
+ * Response, so `await ctx.json()` yielded a Response object that serialised
+ * back out as `{}` and silently dropped every posted payload.
+ *
+ * Exported because the isolation Worker builds its own context and has to
+ * behave identically. Handlers must not care which one ran them.
+ */
+export function createJsonHelper(request: Request): APIContext["json"] {
+  function json(): Promise<unknown>;
+  function json(data: unknown, init?: ResponseInit): Response;
+  function json(...args: [] | [unknown, ResponseInit?]): Response | Promise<unknown> {
+    if (args.length === 0) return request.json();
+    const [data, init] = args;
+    return createResponse(JSON.stringify(data), "application/json", init);
+  }
+
+  return json;
+}
+
 export function createContext(
   request: Request,
   match: RouteMatch,
   fs: FileSystemAdapter,
 ): APIContext {
   const url = new URL(request.url);
-  const json = (data: unknown, init?: ResponseInit): Response =>
-    createResponse(JSON.stringify(data), "application/json", init);
+  const json = createJsonHelper(request);
+
   const text = (data: string, init?: ResponseInit): Response =>
     createResponse(data, "text/plain", init);
 
