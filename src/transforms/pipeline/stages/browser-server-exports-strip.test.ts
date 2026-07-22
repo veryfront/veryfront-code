@@ -52,6 +52,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "getStaticData");
     });
 
+    it("removes default parameter dependencies from a function hook", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData(job = loadJob("fallback")) {`,
+        `  return { props: { job } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertNotIncludes(result, "fallback");
+      assertEquals(occurrences(result, "loadJob"), 0);
+      assertStringIncludes(result, "function getServerData()");
+    });
+
     it("handles all three hooks in one module", async () => {
       const code = [
         `export async function getServerData() { return serverOne(); }`,
@@ -102,8 +119,7 @@ describe("browser-server-exports-strip", () => {
 
       assertNotIncludes(result, "hashOf");
       assertStringIncludes(result, "getServerData");
-      // Reduced to a side-effect import, as for any other emptied hook.
-      assertStringIncludes(result, `import "../lib/uses-crypto.js"`);
+      assertNotIncludes(result, "../lib/uses-crypto.js");
     });
 
     it("empties a hook declared before a separate export clause", async () => {
@@ -229,9 +245,7 @@ describe("browser-server-exports-strip", () => {
   });
 
   describe("import bindings", () => {
-    // Regression: deleting the statement dropped the module's top-level side
-    // effects with it.
-    it("reduces an unreferenced project import to a side-effect import", async () => {
+    it("removes an unreferenced project import outright", async () => {
       const code = [
         `import { loadOnStart } from "./client-init-and-data.ts";`,
         `export async function getServerData() { return loadOnStart(); }`,
@@ -240,10 +254,237 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // The module still evaluates, so its side effects survive.
-      assertStringIncludes(result, "./client-init-and-data.ts");
-      // The binding that caused the link-time failure is gone.
+      assertNotIncludes(result, "./client-init-and-data.ts");
       assertEquals(occurrences(result, "loadOnStart"), 0);
+    });
+
+    it("removes a hook-only page import so its transitive server graph is not fetched", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData(ctx) { return loadJob(ctx.params.id); }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("keeps an unrelated unused project import as a side-effect import", async () => {
+      const code = [
+        `import { initClientMetrics } from "./client-metrics.ts";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import "./client-metrics.ts"`);
+      assertEquals(occurrences(result, "initClientMetrics"), 0);
+    });
+
+    it("keeps an unrelated import when a hook-local binding shadows its name", async () => {
+      const code = [
+        `import { initClientMetrics } from "./client-metrics.ts";`,
+        `export async function getServerData() {`,
+        `  const initClientMetrics = () => ({ props: {} });`,
+        `  return initClientMetrics();`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import "./client-metrics.ts"`);
+      assertEquals(occurrences(result, "initClientMetrics"), 0);
+    });
+
+    it("removes a hook-only import even when a nested hook scope shadows its name", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData(ctx) {`,
+        `  function nested() {`,
+        `    const loadJob = () => "shadow";`,
+        `    return loadJob();`,
+        `  }`,
+        `  nested();`,
+        `  return loadJob(ctx.params.id);`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("keeps an unrelated unused import when a pruned helper has a nested local of the same name", async () => {
+      const code = [
+        `import { initClientMetrics } from "./client-metrics.ts";`,
+        `function makeData() {`,
+        `  function nested() {`,
+        `    const initClientMetrics = () => "shadow";`,
+        `    return initClientMetrics();`,
+        `  }`,
+        `  return { props: { value: nested() } };`,
+        `}`,
+        `export async function getServerData() { return makeData(); }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import "./client-metrics.ts"`);
+      assertEquals(occurrences(result, "initClientMetrics"), 0);
+      assertEquals(occurrences(result, "makeData"), 0);
+    });
+
+    it("tracks a destructuring default dependency in a stripped hook", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  const { job = loadJob("fallback") } = {};`,
+        `  return { props: { job } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("tracks a computed destructuring key dependency in a stripped hook", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  const { [loadJob("key")]: value } = {};`,
+        `  return { props: { value } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("tracks a for-head destructuring default dependency in a stripped hook", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  for (const { job = loadJob("fallback") } of [{}]) {`,
+        `    return { props: { job } };`,
+        `  }`,
+        `  return { props: {} };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("keeps an unrelated import when a nested-block var shadows its name", async () => {
+      const code = [
+        `import { initClientMetrics } from "./client-metrics.ts";`,
+        `export async function getServerData() {`,
+        `  { var initClientMetrics = () => "shadow"; }`,
+        `  return { props: { value: initClientMetrics() } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import "./client-metrics.ts"`);
+      assertEquals(occurrences(result, "initClientMetrics"), 0);
+    });
+
+    it("removes a hook-only import read after a for-loop block binding of the same name", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  for (let loadJob = 0; loadJob < 1; loadJob++) {}`,
+        `  return { props: { job: loadJob("real") } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("removes a hook-only import read after a switch-case block binding of the same name", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  switch ("x") {`,
+        `    case "x":`,
+        `      const loadJob = () => "shadow";`,
+        `      loadJob();`,
+        `      break;`,
+        `  }`,
+        `  return { props: { job: loadJob("real") } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("keeps an unrelated import when a hook parameter default shadows its name", async () => {
+      const code = [
+        `import { ctx } from "./client-init.ts";`,
+        `export async function getServerData(ctx = ctx) {`,
+        `  return { props: { ok: Boolean(ctx) } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import "./client-init.ts"`);
+      assertEquals(occurrences(result, "ctx"), 0);
+    });
+
+    it("tracks a hook dependency inside TypeScript expression wrappers", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  return { props: { job: loadJob("real") as unknown } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 0);
+    });
+
+    it("removes an unrelated unused veryfront import instead of rewriting it to a side-effect import", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `"veryfront"`);
+      assertEquals(occurrences(result, "getEnv"), 0);
     });
 
     it("removes an unreferenced node builtin import outright", async () => {
@@ -293,9 +534,9 @@ describe("browser-server-exports-strip", () => {
     });
 
     // Contrast pin: a NON-veryfront (project) import in the exact same shape is
-    // reduced to a side-effect import, because this pass knows nothing about the
-    // top-level side effects of the module it points at.
-    it("reduces a non-veryfront import in the same shape to a side-effect import", async () => {
+    // also removed, because a hook-only import keeps its transitive graph in the
+    // browser artifact when reduced to a side-effect import.
+    it("removes a non-veryfront import in the same hook-only shape", async () => {
       const code = [
         `import { thing } from "./local";`,
         `export function getServerData() { return { props: { v: thing("X") } }; }`,
@@ -304,8 +545,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // The module is still fetched for its side effects, but the binding is gone.
-      assertStringIncludes(result, `import "./local"`);
+      assertNotIncludes(result, `./local`);
       assertEquals(occurrences(result, "thing"), 0);
     });
 
@@ -508,7 +748,7 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `from "react"`);
     });
 
-    it("reduces a namespace import the client no longer uses", async () => {
+    it("removes a namespace import the client no longer uses", async () => {
       const code = [
         `import * as helpers from "../lib/util-bag.js";`,
         `export async function getServerData() { return helpers.load(); }`,
@@ -517,7 +757,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, "../lib/util-bag.js");
+      assertNotIncludes(result, "../lib/util-bag.js");
       assertEquals(occurrences(result, "helpers"), 0);
     });
 
@@ -532,7 +772,7 @@ describe("browser-server-exports-strip", () => {
 
       // `props.hashOf` is a property name, not a reference to the import.
       assertStringIncludes(result, "props.hashOf");
-      assertStringIncludes(result, "../lib/uses-crypto.js");
+      assertNotIncludes(result, "../lib/uses-crypto.js");
       assertEquals(occurrences(result, "hashOf"), 1);
     });
 
@@ -595,10 +835,10 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // Only the string survives, so the import kept no binding.
+      // Only the string survives, so the import is removed.
       assertEquals(occurrences(result, "hashOf"), 1);
       assertStringIncludes(result, `"hashOf"`);
-      assertStringIncludes(result, "../lib/uses-crypto.js");
+      assertNotIncludes(result, "../lib/uses-crypto.js");
     });
 
     it("does not count a template literal mention", async () => {
@@ -611,7 +851,7 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(code);
 
       assertEquals(occurrences(result, "hashOf"), 1);
-      assertStringIncludes(result, "../lib/uses-crypto.js");
+      assertNotIncludes(result, "../lib/uses-crypto.js");
     });
 
     it("counts a template literal interpolation, which is real code", async () => {
@@ -637,7 +877,7 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(code, "page.tsx");
 
       assertEquals(occurrences(result, "hashOf"), 1);
-      assertStringIncludes(result, "../lib/uses-crypto.js");
+      assertNotIncludes(result, "../lib/uses-crypto.js");
     });
   });
 
@@ -718,7 +958,7 @@ describe("browser-server-exports-strip", () => {
       const result = await browserServerExportsStripPlugin.transform(ctx(code, "browser"));
 
       assertEquals(occurrences(result, "hashOf"), 0);
-      assertStringIncludes(result, "@/lib/uses-crypto");
+      assertNotIncludes(result, "@/lib/uses-crypto");
       assertStringIncludes(result, "TestD as default");
     });
 

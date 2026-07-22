@@ -12,8 +12,8 @@
  *     named 'createHash'
  *
  * esbuild cannot solve this for us: in transform mode (as opposed to bundle
- * mode) it never drops an import, because it cannot prove the module is free of
- * side effects.
+ * mode) it never drops an import, because it cannot see that the binding was
+ * used only by a server-only hook that this pass just emptied.
  *
  * The pass runs on the AST from the `CodeParser` contract, for the same reason
  * `rendering/rsc/export-extractor.ts` does: a module is not text. Matching
@@ -25,12 +25,14 @@
  *
  * - Only an exported declaration is emptied. A private helper called
  *   `getServerData` is ordinary client code.
- * - An import whose bindings all fall out of use is reduced to a side-effect
- *   import rather than deleted, because this pass knows nothing about the
- *   top-level code of the module it points at. Node built-ins are the
- *   exception: in the browser they resolve to a noop polyfill, so there is no
- *   side effect to keep. This matches what esbuild does with an external
- *   import whose bindings go unused.
+ * - An import whose bindings all fall out of use because they were in the
+ *   stripped hook's dependency closure is deleted. Reducing it to a side-effect
+ *   import keeps the imported module in the browser graph, including any
+ *   transitive server-only modules it reaches. Node built-ins and Veryfront
+ *   framework imports are also deleted when unused, because their browser
+ *   side-effect imports are known unsafe or unnecessary. Other already-unused
+ *   imports are still reduced to side-effect imports for compatibility with the
+ *   older conservative behavior.
  *
  * Hooks are matched on the name they are *exported* under, not the name they
  * are declared with, because that is what the runtime looks up: the data
@@ -46,11 +48,11 @@
  * What this pass does: it empties hook bodies, drops the module-scope
  * declarations the hooks were the last reader of (so `const API_KEY =
  * getEnv(...)` used only by `getServerData` does not reach the browser), and
- * prunes the imports that leaves unused. What it does NOT do: reason about a
- * value that is *also* read by browser code, or one reached only through a
- * side effect rather than a binding — those are kept. It is not a general
- * guarantee that every secret stays on the server, but a value used solely by
- * a server-only hook no longer leaks.
+ * removes the hook-only imports that leaves unused. What it does NOT do: reason
+ * about a value that is *also* read by browser code, or one reached only through
+ * an existing bare side-effect import — those are kept. It is not a general
+ * guarantee that every secret stays on the server, but a value used solely by a
+ * server-only hook no longer leaks.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -129,22 +131,45 @@ async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node 
 function patternBoundNames(pattern: Node): string[] {
   const names: string[] = [];
 
-  walk(pattern, (node) => {
-    // A key is a fixed name, not a binding: `{ getServerData: local }` binds
-    // `local`. Descend into the value only.
-    if (node.type === "ObjectProperty" && node.computed !== true) {
-      const value = node.value;
-      if (isNode(value)) names.push(...patternBoundNames(value));
-      return false;
-    }
-
+  const collect = (node: Node): void => {
     if (node.type === "Identifier") {
       const name = nodeName(node);
       if (name) names.push(name);
+      return;
     }
 
-    return true;
-  });
+    if (node.type === "AssignmentPattern") {
+      if (isNode(node.left)) collect(node.left);
+      return;
+    }
+
+    if (node.type === "RestElement") {
+      if (isNode(node.argument)) collect(node.argument);
+      return;
+    }
+
+    if (node.type === "ArrayPattern") {
+      for (const element of Array.isArray(node.elements) ? node.elements : []) {
+        if (isNode(element)) collect(element);
+      }
+      return;
+    }
+
+    if (node.type === "ObjectPattern") {
+      for (const property of Array.isArray(node.properties) ? node.properties : []) {
+        if (!isNode(property)) continue;
+        if (property.type === "RestElement") {
+          if (isNode(property.argument)) collect(property.argument);
+          continue;
+        }
+        if (property.type === "ObjectProperty" && isNode(property.value)) {
+          collect(property.value);
+        }
+      }
+    }
+  };
+
+  collect(pattern);
 
   return names;
 }
@@ -242,6 +267,7 @@ function emptyServerOnlyHooks(
       if (declaration.type === "FunctionDeclaration") {
         const name = nodeName(declaration.id);
         if (!name || !targets.has(name)) continue;
+        declaration.params = [];
         declaration.body = structuredClone(stubs.body);
         changed = true;
         continue;
@@ -367,6 +393,305 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
   return decls;
 }
 
+/** Whether a name is bound in the current lexical stack. */
+interface LexicalScope {
+  kind: "function" | "block";
+  names: Set<string>;
+}
+
+function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
+  return scopes.some((scope) => scope.names.has(name));
+}
+
+/**
+ * Free identifiers read by a hook body or by a declaration in the stripped
+ * hook's dependency closure. Unlike `referencedIdentifiers`, this is
+ * scope-aware: a nested declaration that shadows `loadJob` must not hide a
+ * real outer hook read of the imported `loadJob`, and a nested local inside a
+ * pruned helper must not add an unrelated import to the hook closure.
+ */
+function freeReferencedIdentifiers(root: Node): Set<string> {
+  const free = new Set<string>();
+  const rootScope: LexicalScope = { kind: "function", names: new Set() };
+
+  const currentFunctionScope = (scopes: LexicalScope[]): LexicalScope =>
+    scopes.find((scope) => scope.kind === "function") ?? scopes[0] ?? rootScope;
+
+  const bindPatternNames = (scope: LexicalScope, value: unknown): void => {
+    if (!isNode(value)) return;
+    for (const name of patternBoundNames(value)) scope.names.add(name);
+  };
+
+  const bindDirectDeclarations = (scope: LexicalScope, node: Node): void => {
+    const body = node.body;
+    if (!Array.isArray(body)) return;
+
+    for (const statement of body) {
+      if (!isNode(statement)) continue;
+      if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
+        bindPatternNames(scope, statement.id);
+        continue;
+      }
+      if (statement.type !== "VariableDeclaration") continue;
+      for (
+        const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
+      ) {
+        if (isNode(declarator)) bindPatternNames(scope, declarator.id);
+      }
+    }
+  };
+
+  const bindNestedVarDeclarations = (scope: LexicalScope, node: Node): void => {
+    for (const child of children(node)) {
+      if (
+        child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
+        child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
+        child.type === "ClassMethod"
+      ) {
+        continue;
+      }
+
+      if (child.type === "VariableDeclaration" && child.kind === "var") {
+        for (
+          const declarator of Array.isArray(child.declarations) ? child.declarations : []
+        ) {
+          if (isNode(declarator)) bindPatternNames(scope, declarator.id);
+        }
+      }
+
+      bindNestedVarDeclarations(scope, child);
+    }
+  };
+
+  const visitChildren = (node: Node, scopes: LexicalScope[]): void => {
+    for (const child of children(node)) visit(child, scopes);
+  };
+
+  const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
+    if (pattern.type === "Identifier") return;
+
+    if (pattern.type === "AssignmentPattern") {
+      if (isNode(pattern.left)) visitPatternRuntime(pattern.left, scopes);
+      if (isNode(pattern.right)) visit(pattern.right, scopes);
+      return;
+    }
+
+    if (pattern.type === "RestElement") {
+      if (isNode(pattern.argument)) visitPatternRuntime(pattern.argument, scopes);
+      return;
+    }
+
+    if (pattern.type === "ArrayPattern") {
+      for (const element of Array.isArray(pattern.elements) ? pattern.elements : []) {
+        if (isNode(element)) visitPatternRuntime(element, scopes);
+      }
+      return;
+    }
+
+    if (pattern.type === "ObjectPattern") {
+      for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
+        if (!isNode(property)) continue;
+        if (property.type === "RestElement") {
+          if (isNode(property.argument)) visitPatternRuntime(property.argument, scopes);
+          continue;
+        }
+        if (property.type !== "ObjectProperty") {
+          visit(property, scopes);
+          continue;
+        }
+        if (property.computed === true && isNode(property.key)) visit(property.key, scopes);
+        if (isNode(property.value)) visitPatternRuntime(property.value, scopes);
+      }
+      return;
+    }
+
+    visit(pattern, scopes);
+  };
+
+  const bindVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
+    const targetScope = node.kind === "var" ? currentFunctionScope(scopes) : scopes[0] ?? rootScope;
+    for (
+      const declarator of Array.isArray(node.declarations) ? node.declarations : []
+    ) {
+      if (isNode(declarator)) bindPatternNames(targetScope, declarator.id);
+    }
+  };
+
+  const visitVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
+    bindVariableDeclaration(node, scopes);
+    for (
+      const declarator of Array.isArray(node.declarations) ? node.declarations : []
+    ) {
+      if (!isNode(declarator)) continue;
+      if (isNode(declarator.id)) visitPatternRuntime(declarator.id, scopes);
+      if (isNode(declarator.init)) visit(declarator.init, scopes);
+    }
+  };
+
+  const visitFunction = (node: Node, scopes: LexicalScope[]): void => {
+    const functionScope: LexicalScope = { kind: "function", names: new Set() };
+    if (node.type === "FunctionDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
+    bindPatternNames(functionScope, node.id);
+
+    for (const param of Array.isArray(node.params) ? node.params : []) {
+      if (isNode(param)) bindPatternNames(functionScope, param);
+    }
+    for (const param of Array.isArray(node.params) ? node.params : []) {
+      if (isNode(param)) visitPatternRuntime(param, [functionScope, ...scopes]);
+    }
+
+    bindDirectDeclarations(functionScope, isNode(node.body) ? node.body : node);
+    if (isNode(node.body)) bindNestedVarDeclarations(functionScope, node.body);
+
+    const body = node.body;
+    if (isNode(body)) {
+      if (Array.isArray(body.body)) {
+        for (const statement of body.body) {
+          if (isNode(statement)) visit(statement, [functionScope, ...scopes]);
+        }
+      } else {
+        visit(body, [functionScope, ...scopes]);
+      }
+    }
+  };
+
+  const visitObjectMember = (node: Node, scopes: LexicalScope[]): void => {
+    if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
+    if (isNode(node.value)) visit(node.value, scopes);
+  };
+
+  const visitFor = (node: Node, scopes: LexicalScope[]): void => {
+    const loopScope: LexicalScope = { kind: "block", names: new Set() };
+    const scoped = [loopScope, ...scopes];
+
+    const init = node.init ?? node.left;
+    if (isNode(init) && init.type === "VariableDeclaration") visitVariableDeclaration(init, scoped);
+    else if (isNode(init)) visit(init, scopes);
+
+    for (const key of ["test", "update", "right"] as const) {
+      const value = node[key];
+      if (isNode(value)) visit(value, scoped);
+    }
+    if (isNode(node.body)) visit(node.body, scoped);
+  };
+
+  const visitSwitch = (node: Node, scopes: LexicalScope[]): void => {
+    if (isNode(node.discriminant)) visit(node.discriminant, scopes);
+
+    const switchScope: LexicalScope = { kind: "block", names: new Set() };
+    const scoped = [switchScope, ...scopes];
+
+    for (const caseNode of Array.isArray(node.cases) ? node.cases : []) {
+      if (!isNode(caseNode)) continue;
+      if (isNode(caseNode.test)) visit(caseNode.test, scopes);
+      for (const statement of Array.isArray(caseNode.consequent) ? caseNode.consequent : []) {
+        if (isNode(statement)) visit(statement, scoped);
+      }
+    }
+  };
+
+  const visitTsExpression = (node: Node, scopes: LexicalScope[]): boolean => {
+    if (
+      node.type === "TSAsExpression" || node.type === "TSTypeAssertion" ||
+      node.type === "TSNonNullExpression" || node.type === "TSInstantiationExpression" ||
+      node.type === "TSSatisfiesExpression"
+    ) {
+      if (isNode(node.expression)) visit(node.expression, scopes);
+      return true;
+    }
+
+    if (node.type.startsWith("TS")) return true;
+    return false;
+  };
+
+  const visit = (node: Node, scopes: LexicalScope[]): void => {
+    if (node.type === "ImportDeclaration") return;
+    if (visitTsExpression(node, scopes)) return;
+
+    if (node.type === "Identifier" || node.type === "JSXIdentifier") {
+      const name = nodeName(node);
+      if (name && !isLexicallyBound(name, scopes)) free.add(name);
+      return;
+    }
+
+    if (node.type === "Program" || node.type === "BlockStatement") {
+      const scope: LexicalScope = { kind: "block", names: new Set() };
+      bindDirectDeclarations(scope, node);
+      for (const statement of Array.isArray(node.body) ? node.body : []) {
+        if (isNode(statement)) visit(statement, [scope, ...scopes]);
+      }
+      return;
+    }
+
+    if (node.type === "VariableDeclaration") {
+      visitVariableDeclaration(node, scopes);
+      return;
+    }
+
+    if (
+      node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
+      node.type === "ArrowFunctionExpression"
+    ) {
+      visitFunction(node, scopes);
+      return;
+    }
+
+    if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+      if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
+      const body = node.body;
+      if (isNode(body)) visitChildren(body, scopes);
+      if (isNode(node.superClass)) visit(node.superClass, scopes);
+      return;
+    }
+
+    if (node.type === "CatchClause") {
+      const scope: LexicalScope = { kind: "block", names: new Set() };
+      if (isNode(node.param)) {
+        visitPatternRuntime(node.param, [scope, ...scopes]);
+        bindPatternNames(scope, node.param);
+      }
+      if (isNode(node.body)) visit(node.body, [scope, ...scopes]);
+      return;
+    }
+
+    if (
+      node.type === "ForStatement" || node.type === "ForInStatement" ||
+      node.type === "ForOfStatement"
+    ) {
+      visitFor(node, scopes);
+      return;
+    }
+
+    if (node.type === "SwitchStatement") {
+      visitSwitch(node, scopes);
+      return;
+    }
+
+    if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
+      if (isNode(node.object)) visit(node.object, scopes);
+      if (node.computed === true && isNode(node.property)) visit(node.property, scopes);
+      return;
+    }
+
+    if (node.type === "ObjectProperty" || node.type === "ClassProperty") {
+      visitObjectMember(node, scopes);
+      return;
+    }
+
+    if (node.type === "ObjectMethod" || node.type === "ClassMethod") {
+      if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
+      visitFunction(node, scopes);
+      return;
+    }
+
+    visitChildren(node, scopes);
+  };
+
+  bindDirectDeclarations(rootScope, root);
+  visit(root, [rootScope]);
+  return free;
+}
+
 /**
  * Identifiers referenced inside the server-only hooks that are about to be
  * emptied — the seed of the hook's dependency closure. Must be collected before
@@ -383,14 +708,14 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
 
   const referenced = new Set<string>();
   const collect = (node: Node): void => {
-    for (const name of referencedIdentifiers([node])) referenced.add(name);
+    for (const name of freeReferencedIdentifiers(node)) referenced.add(name);
   };
 
   for (const statement of body) {
     for (const declaration of declarationsIn(statement)) {
       if (declaration.type === "FunctionDeclaration") {
         const name = nodeName(declaration.id);
-        if (name && targets.has(name) && isNode(declaration.body)) collect(declaration.body);
+        if (name && targets.has(name)) collect(declaration);
         continue;
       }
       if (declaration.type !== "VariableDeclaration") continue;
@@ -423,7 +748,6 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
  */
 function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): Node[] {
   let current = body;
-  const closure = new Set(hookClosure);
 
   for (;;) {
     const decls = moduleScopeDeclarations(current);
@@ -436,7 +760,7 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
 
     const removable = new Set<Node>();
     for (const decl of decls) {
-      const inClosure = decl.names.some((name) => closure.has(name));
+      const inClosure = decl.names.some((name) => hookClosure.has(name));
       const unused = decl.names.every((name) => !referenced.has(name));
       if (inClosure && unused) removable.add(decl.statement);
     }
@@ -447,9 +771,7 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
     // is pruned end to end while unrelated declarations stay outside it.
     for (const decl of decls) {
       if (!removable.has(decl.statement)) continue;
-      const ownIds = new WeakSet<Node>();
-      for (const id of decl.bindingIds) ownIds.add(id);
-      for (const name of referencedIdentifiers([decl.statement], ownIds)) closure.add(name);
+      for (const name of freeReferencedIdentifiers(decl.statement)) hookClosure.add(name);
     }
 
     current = current.filter((statement) => !removable.has(statement));
@@ -470,10 +792,14 @@ function importedBindings(statement: Node): string[] {
 }
 
 /**
- * Reduce imports nothing references any more to side-effect imports, and drop
- * them outright when they point at a Node built-in.
+ * Drop imports nothing references any more when their bindings are in the
+ * stripped hook's dependency closure, or when their source is known unsafe or
+ * unnecessary as a browser side-effect import. Keeping a hook-only import as a
+ * bare side-effect import would keep its transitive graph in the browser
+ * artifact, which is exactly what this stage strips. Other unused imports keep
+ * the legacy conservative side-effect rewrite.
  */
-function dropUnusedImportBindings(body: Node[]): Node[] {
+function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
   const referenced = referencedIdentifiers(body);
 
   return body.filter((statement) => {
@@ -486,17 +812,9 @@ function dropUnusedImportBindings(body: Node[]): Node[] {
     if (bindings.some((binding) => referenced.has(binding))) return true;
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
-    // Node built-ins resolve to a noop polyfill in the browser, so there is no
-    // side effect to preserve. The `veryfront` framework barrel is the same
-    // case for a different reason: keeping it as a side-effect import pulls the
-    // server runtime (`_veryfront/server/production-server.js`) into the client
-    // bundle and breaks hydration. A page that used a framework export only in
-    // a server-only hook must not ship that barrel to the browser at all.
-    if (
-      typeof source === "string" &&
-      (source.startsWith("node:") || source === "veryfront" ||
-        source.startsWith("veryfront/"))
-    ) {
+    const isKnownDroppableSource = typeof source === "string" &&
+      (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
+    if (isKnownDroppableSource || bindings.some((binding) => hookClosure.has(binding))) {
       return false;
     }
 
@@ -580,7 +898,7 @@ export async function stripServerOnlyExports(code: string, filePath?: string): P
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
   const pruned = dropUnusedModuleScopeBindings(body, hookClosure);
-  setBody(ast, dropUnusedImportBindings(pruned));
+  setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
 
   const generated = await parser.generate(ast);
   return generated.code;
