@@ -445,6 +445,120 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
     });
   });
 
+  describe("negative caching", () => {
+    /** Records every write so the tests can see what was cached. */
+    function recordingRepo() {
+      const store = new Map<string, string>();
+      const writes: Array<{ key: string; value: string }> = [];
+
+      return {
+        writes,
+        repo: {
+          get: (key: string) => Promise.resolve(store.get(key) ?? null),
+          set: (key: string, value: string) => {
+            store.set(key, value);
+            writes.push({ key, value });
+            return Promise.resolve();
+          },
+          delete: (key: string) => {
+            store.delete(key);
+            return Promise.resolve();
+          },
+        },
+      };
+    }
+
+    function pagesDirOnly() {
+      return createMockAdapter({
+        stat: (path: string) =>
+          Promise.resolve({
+            isFile: false,
+            isDirectory: path.endsWith("pages"),
+            size: 0,
+            mtime: null,
+          }),
+        resolveFile: () => Promise.resolve(null),
+      });
+    }
+
+    async function runFallback(ctx: HandlerContext): Promise<Response | null> {
+      return await tryErrorPageFallback(
+        new Request("http://localhost/boom"),
+        ctx,
+        new ResponseBuilder(),
+        { statusCode: 500, pathname: "/boom" },
+      );
+    }
+
+    it("caches a miss for a deployed project", async () => {
+      const { repo, writes } = recordingRepo();
+      __injectCacheForTests(repo as never);
+
+      const result = await runFallback(
+        makeCtx({ adapter: pagesDirOnly(), isLocalProject: false }),
+      );
+
+      assertEquals(result, null);
+      assertEquals(writes.length > 0, true, "a deployed project should cache the miss");
+      assertEquals(writes.every((write) => write.value === "__NOT_FOUND__"), true);
+    });
+
+    // Regression: dev reaches this fallback now, and nothing invalidates the
+    // cache on a file change. A cached miss meant that creating pages/500.tsx
+    // mid-session kept showing the dev overlay until the server restarted.
+    it("does not cache a miss in dev", async () => {
+      const { repo, writes } = recordingRepo();
+      __injectCacheForTests(repo as never);
+
+      const result = await runFallback(
+        makeCtx({ adapter: pagesDirOnly(), isLocalProject: true }),
+      );
+
+      assertEquals(result, null);
+      assertEquals(writes.length, 0, "dev must re-probe the filesystem each time");
+    });
+
+    it("finds an error page created after a miss in dev", async () => {
+      const { repo } = recordingRepo();
+      __injectCacheForTests(repo as never);
+
+      let errorPageExists = false;
+      const adapter = createMockAdapter({
+        stat: (path: string) =>
+          Promise.resolve({
+            isFile: false,
+            isDirectory: path.endsWith("pages"),
+            size: 0,
+            mtime: null,
+          }),
+        resolveFile: (path: string) =>
+          Promise.resolve(errorPageExists && path.endsWith("500") ? "pages/500.tsx" : null),
+      });
+      const ctx = makeCtx({ adapter, isLocalProject: true });
+
+      assertEquals(await runFallback(ctx), null);
+
+      // The author creates pages/500.tsx without restarting the server.
+      errorPageExists = true;
+
+      let resolved = false;
+      const adapterAfter = createMockAdapter({
+        stat: adapter.fs.stat as never,
+        readFile: () => {
+          // Reaching the read proves the miss was not cached. Stop here rather
+          // than compiling a component, which is not what this test is about.
+          resolved = true;
+          return Promise.reject(new Error("stop after resolving the error page"));
+        },
+        resolveFile: adapter.fs.resolveFile as never,
+      });
+
+      await runFallback(makeCtx({ adapter: adapterAfter, isLocalProject: true }));
+
+      assertEquals(resolved, true, "the newly created error page must be picked up");
+    });
+  });
+
   describe("__injectCacheForTests", () => {
     it("can inject and reset cache repo", () => {
       const mockRepo = {
