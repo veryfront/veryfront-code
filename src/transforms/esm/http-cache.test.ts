@@ -22,6 +22,7 @@ import {
   normalizeHttpUrl,
 } from "./http-cache.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 
@@ -38,6 +39,22 @@ function extractBundleHashes(code: string): string[] {
 
   BUNDLE_RE.lastIndex = 0;
   return hashes;
+}
+
+/** Minimal distributed cache backend backed by a map the test can inspect. */
+function createMemoryBackend(store: Map<string, string>): CacheBackend {
+  return {
+    type: "memory",
+    get: (key) => Promise.resolve(store.get(key) ?? null),
+    set: (key, value) => {
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    del: (key) => {
+      store.delete(key);
+      return Promise.resolve();
+    },
+  };
 }
 
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -355,6 +372,103 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(hasCalls, [expectedIdentity]);
       assertEquals(addCalls, [expectedIdentity]);
       assertEquals(deleteCalls, [expectedIdentity]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not persist a module whose lazy dependency failed to prefetch", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-degraded-artifact-" });
+    const originalFetch = globalThis.fetch;
+    const parentUrl = "https://modules.example.com/degraded-parent.js";
+    const childUrl = "https://modules.example.com/degraded-child.js";
+    const distributed = new Map<string, string>();
+    let parentFetches = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(createMemoryBackend(distributed)));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      if (String(input) === childUrl) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      parentFetches += 1;
+      return Promise.resolve(
+        new Response(`export const load = () => import("${childUrl}");`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const source = `import { load } from "${parentUrl}"; export { load };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      const first = await cacheHttpImportsToLocal(source, options);
+      const firstPath = first.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+      assert(firstPath, "Expected the render to keep working with a local parent module");
+      assertEquals(parentFetches, 1);
+      assertEquals(distributed.size, 0);
+
+      await cacheHttpImportsToLocal(source, options);
+      assertEquals(parentFetches, 2);
+      assertEquals(distributed.size, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("persists a module whose lazy dependency prefetched successfully", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-healthy-artifact-" });
+    const originalFetch = globalThis.fetch;
+    const parentUrl = "https://modules.example.com/healthy-parent.js";
+    const childUrl = "https://modules.example.com/healthy-child.js";
+    const distributed = new Map<string, string>();
+    let parentFetches = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(createMemoryBackend(distributed)));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      if (String(input) === childUrl) {
+        return Promise.resolve(
+          new Response("export const child = true;", {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }
+      parentFetches += 1;
+      return Promise.resolve(
+        new Response(`export const load = () => import("${childUrl}");`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const source = `import { load } from "${parentUrl}"; export { load };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      await cacheHttpImportsToLocal(source, options);
+      assertEquals(parentFetches, 1);
+      assert(distributed.size > 0, "Expected a healthy module to reach the distributed cache");
+
+      await cacheHttpImportsToLocal(source, options);
+      assertEquals(parentFetches, 1);
     } finally {
       globalThis.fetch = originalFetch;
       __injectCachesForTests(null);
