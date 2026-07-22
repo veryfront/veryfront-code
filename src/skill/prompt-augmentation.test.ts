@@ -68,6 +68,31 @@ describe("src/skill/prompt-augmentation", () => {
       assertStringIncludes(result, "2 more skills available. Use load_skill to discover them.");
     });
 
+    it("should stop iterating after the prompt entry limit", () => {
+      const skills = new Map(
+        Array.from(
+          { length: MAX_SKILL_MANIFEST_PROMPT_ENTRIES + 2 },
+          (_unused, index) => {
+            const id = `skill-${index + 1}`;
+            return [id, createSkill(id, `Skill ${index + 1}`)] as const;
+          },
+        ),
+      );
+      const iterate = skills[Symbol.iterator].bind(skills);
+      let visitedEntries = 0;
+      skills[Symbol.iterator] = function* (): MapIterator<[string, Skill]> {
+        for (const entry of iterate()) {
+          visitedEntries += 1;
+          yield entry;
+        }
+        return undefined;
+      };
+
+      buildSkillManifestPrompt(skills);
+
+      assertEquals(visitedEntries, MAX_SKILL_MANIFEST_PROMPT_ENTRIES);
+    });
+
     it("should include tool usage instructions", () => {
       const skills = new Map([["test", createSkill("test", "desc")]]);
       const result = buildSkillManifestPrompt(skills);

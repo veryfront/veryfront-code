@@ -37,6 +37,10 @@ export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): strin
   return details.length > 0 ? ` (${details.join("; ")})` : "";
 }
 
+function formatRuntimeSkillLabel(skill: RuntimeSkillDefinition): string {
+  return skill.name === skill.id ? skill.id : `${skill.name} (\`${skill.id}\`)`;
+}
+
 /** Builds runtime available skills prompt block. */
 export function buildRuntimeAvailableSkillsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
@@ -44,7 +48,9 @@ export function buildRuntimeAvailableSkillsPromptBlock(
   const displaySkills = skills.slice(0, MAX_RUNTIME_SKILL_PROMPT_ENTRIES);
   const skillsList = displaySkills
     .map((skill) =>
-      `- ${skill.name} (\`${skill.id}\`): ${skill.description}${formatRuntimeSkillMetadata(skill)}`
+      `- ${formatRuntimeSkillLabel(skill)}: ${skill.description}${
+        formatRuntimeSkillMetadata(skill)
+      }`
     )
     .join("\n");
 

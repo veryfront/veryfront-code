@@ -76,6 +76,15 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   );
 });
 
+Deno.test("buildRuntimeAvailableSkillsPromptBlock does not repeat an id-only name", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({ id: "code-review", description: "Review code" }),
+  ]);
+
+  assertStringIncludes(block, "- code-review: Review code");
+  assertEquals(block.includes("code-review (`code-review`)"), false);
+});
+
 Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", () => {
   const skills = Array.from(
     { length: MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 2 },
@@ -88,16 +97,16 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", (
 
   const block = buildRuntimeAvailableSkillsPromptBlock(skills);
 
-  assertStringIncludes(block, "- skill-1 (`skill-1`): Skill 1");
+  assertStringIncludes(block, "- skill-1: Skill 1");
   assertStringIncludes(
     block,
-    `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES} (\`skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}\`): Skill ${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}`,
+    `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}: Skill ${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}`,
   );
   assertEquals(
     block.includes(
-      `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1} (\`skill-${
+      `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1}: Skill ${
         MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1
-      }\`): Skill ${MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1}`,
+      }`,
     ),
     false,
   );
