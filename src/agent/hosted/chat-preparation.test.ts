@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { ContextCompactionError } from "./context-budget-manager.ts";
 import {
@@ -1164,7 +1165,7 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
 });
 
 Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compaction diagnostics", async () => {
-  const diagnostics: unknown[] = [];
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
   const marker = "HOSTED_TOOL_INPUT_MARKER";
   const messages = await prepareHostedChatRuntimeMessages(
     [
@@ -1217,7 +1218,7 @@ Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compac
   assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render-widget");
 });
 
-Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run agent's owner scope", async () => {
+Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector and owner scope", async () => {
   const skills = [
     {
       id: "global-howto",
@@ -1250,7 +1251,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
 
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({}),
-    agentConfig: { id: "researcher", model: "configured-model" },
+    agentConfig: { id: "researcher", model: "configured-model", skills: ["cite"] },
     projectId: "project-1",
     authToken: "token-1",
     resolveModelId: (modelId) => modelId,
@@ -1266,7 +1267,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
     },
   });
 
-  const expected = ["global-howto", "researcher--cite"];
+  const expected = ["researcher--cite"];
   // Prompt-manifest input, per-run load_skill gate, live steering payload, and
   // the returned steering all carry the same owner-scoped set.
   assertEquals(seenByInstructions, [expected]);
@@ -1281,4 +1282,31 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
     expected,
   );
   assertEquals(result.steering.skills.map((skill) => skill.id), expected);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions keeps the loader but advertises no skills for an empty selector", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({}),
+    agentConfig: { id: "researcher", model: "configured-model", skills: [] },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    resolveModelThinking: () => undefined,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "global-howto",
+          name: "Global Howto",
+          description: "Project-global guide",
+          instructions: "Follow the guide.",
+          allowedTools: [],
+        }],
+      }),
+    buildInstructions: (input) => [{ role: "system", content: `${input.skills.length}` }],
+  });
+
+  assertEquals(result.creationOptions.availableSkillIds, []);
+  assertEquals(result.creationOptions.instructions, [{ role: "system", content: "0" }]);
+  assertEquals(result.steering.skills, []);
 });

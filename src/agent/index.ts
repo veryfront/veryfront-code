@@ -66,7 +66,7 @@
  *
  * const assistant = agent({
  *   system: "You are a support engineer. Use skills when relevant.",
- *   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
+ *   skills: ["incident-response", "repo-maintainer"], // omit for all visible skills
  *   tools: {
  *     Read: true,
  *     github__list_issues: true,

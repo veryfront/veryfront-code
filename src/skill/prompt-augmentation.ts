@@ -28,7 +28,7 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   ];
 
   for (const [id, skill] of skills) {
-    lines.push(`- **${id}**: ${skill.metadata.description}`);
+    lines.push(`- **${skill.metadata.name}** (\`${id}\`): ${skill.metadata.description}`);
   }
 
   lines.push("");

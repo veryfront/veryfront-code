@@ -99,7 +99,7 @@ When skills are available, agents get three built-in tools:
 | `load_skill_reference` | Read a file from `references/`, `resources/`, or `assets/` |
 | `execute_skill_script` | Execute a script from a skill (5-minute timeout)           |
 
-Enable skills on an agent:
+Discovered skills are advertised to every agent by default:
 
 ```ts
 // agents/assistant.ts
@@ -108,9 +108,12 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "assistant",
   system: "Use project skills when they match the task.",
-  skills: ["code-review"],
 });
 ```
+
+Use `skills: ["code-review"]` to advertise only that skill. Use `skills: []`
+to advertise none. The built-in skill loading tools remain available to the
+agent regardless of the selector.
 
 Expose the agent through an AG-UI route, then ask it to use the skill:
 

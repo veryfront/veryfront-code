@@ -48,6 +48,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   const block = buildRuntimeAvailableSkillsPromptBlock([
     createSkill({
       id: "build-ui",
+      name: "Build UI guidance",
       description: "Build UI",
       allowedTools: ["bash", "writeFile"],
     }),
@@ -69,7 +70,10 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   );
   assertStringIncludes(block, "Pass through any returned model, thinking, or maxSteps overrides");
   assertStringIncludes(block, "Do not mention child agents, delegation, or tool/process narration");
-  assertStringIncludes(block, "- build-ui: Build UI (tools: bash, writeFile)");
+  assertStringIncludes(
+    block,
+    "- Build UI guidance (`build-ui`): Build UI (tools: bash, writeFile)",
+  );
 });
 
 Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", () => {
@@ -84,16 +88,16 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", (
 
   const block = buildRuntimeAvailableSkillsPromptBlock(skills);
 
-  assertStringIncludes(block, "- skill-1: Skill 1");
+  assertStringIncludes(block, "- skill-1 (`skill-1`): Skill 1");
   assertStringIncludes(
     block,
-    `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}: Skill ${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}`,
+    `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES} (\`skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}\`): Skill ${MAX_RUNTIME_SKILL_PROMPT_ENTRIES}`,
   );
   assertEquals(
     block.includes(
-      `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1}: Skill ${
+      `- skill-${MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1} (\`skill-${
         MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1
-      }`,
+      }\`): Skill ${MAX_RUNTIME_SKILL_PROMPT_ENTRIES + 1}`,
     ),
     false,
   );

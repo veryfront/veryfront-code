@@ -71,6 +71,19 @@ Create a plan.
   );
 });
 
+Deno.test("parseRuntimeAgentMarkdownDefinition preserves an explicit empty skill selector", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "specialist",
+    content: `---
+skills: []
+---
+Use only the authored instructions.
+`,
+  });
+
+  assertEquals(result.skills, []);
+});
+
 Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
   const result = createRuntimeAgentSystemMessages({
     agent: {

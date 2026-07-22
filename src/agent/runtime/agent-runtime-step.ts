@@ -91,7 +91,7 @@ export async function prepareAgentRuntimeStep(
 
   let tools = input.isLocalModel ? [] : await input.getAvailableTools(input.config.tools, {
     callerAgentId: input.agentId,
-    includeSkillTools: Boolean(input.config.skills),
+    includeSkillTools: true,
     allowedRemoteToolNames: input.allowedRemoteToolNames,
     forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
     remoteToolSources: input.remoteToolSources,

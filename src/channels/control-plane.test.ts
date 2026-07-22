@@ -368,7 +368,7 @@ describe("channels/control-plane", () => {
       );
     });
 
-    it("includes resolved skill metadata for agents that enable discovered skills", async () => {
+    it("includes resolved skill metadata for agents with an omitted selector", async () => {
       skillRegistry.clearAll();
       registerSkill("writer-helper", {
         id: "writer-helper",
@@ -382,8 +382,7 @@ describe("channels/control-plane", () => {
       try {
         const response = await listRuntimeAgents(createHandlerContext(), {
           ensureProjectDiscovery: async () => {},
-          getAgent: (id) =>
-            id === "assistant" ? createAgent({ id, skills: ["writer-helper"] }) : undefined,
+          getAgent: (id) => id === "assistant" ? createAgent({ id }) : undefined,
           getAllAgentIds: () => ["assistant"],
         });
 
@@ -608,6 +607,12 @@ Deno.test("resolveAgentSkills includes the agent's own skills and excludes other
     const writer = { id: "writer", config: { skills: true } } as unknown as Agent;
     const writerSkills = resolveAgentSkills(writer).map((skill) => skill.id);
     assertEquals(writerSkills, ["global-howto"]);
+
+    const defaultWriter = { id: "writer", config: {} } as unknown as Agent;
+    assertEquals(resolveAgentSkills(defaultWriter).map((skill) => skill.id), ["global-howto"]);
+
+    const emptyWriter = { id: "writer", config: { skills: [] } } as unknown as Agent;
+    assertEquals(resolveAgentSkills(emptyWriter), []);
   } finally {
     skillRegistry.clearAll();
   }

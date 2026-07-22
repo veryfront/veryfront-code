@@ -201,13 +201,12 @@ export interface AgentConfig {
    */
   onToolResult?: ToolExecutionResultHandler;
   /**
-   * Enable skills for this agent.
-   * - true: include all discovered skills from skills/ directory
-   * - string[]: include only specific skill IDs
+   * Select the skills advertised in this agent's system prompt.
+   * - omitted or true: include every discovered skill visible to this agent
+   * - string[]: include only the listed skill IDs; use [] to advertise none
    *
-   * Discovery happens at startup via discoverAll().
-   * This controls which skills appear in the agent's prompt
-   * and registers the skill tools.
+   * Discovery happens at startup via discoverAll(). Skill loading tools remain
+   * available to every agent regardless of this catalog selection.
    */
   skills?: true | string[];
   suggestions?: Suggestions;

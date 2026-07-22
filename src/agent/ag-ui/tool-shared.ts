@@ -1,7 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { AGENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
@@ -78,9 +77,6 @@ export function buildMergedAgUiTools(
   if (agent.config.tools === true) {
     const merged: Record<string, Tool | boolean> = {};
     for (const [toolId, registryTool] of toolRegistry.getAll()) {
-      if (!agent.config.skills && SKILL_TOOL_IDS.has(toolId)) {
-        continue;
-      }
       // Owner-aware: another agent's owned tool never enters this agent's
       // AG-UI run config.
       if (!isToolVisibleTo(registryTool, { agentId: agent.id })) {

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { agent } from "../index.ts";
 import type {
   AgentConfig,
@@ -84,6 +85,91 @@ function supplierInvoiceEvidenceMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
+  it("requires universal load_skill to establish policy before parallel tool calls", async () => {
+    const rootPath = await Deno.makeTempDir();
+    let writeExecutions = 0;
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/universal-skill-policy",
+      async doGenerate() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "write-before-skill",
+                toolName: "write_report",
+                input: '{"path":"report.md"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "load-policy",
+                toolName: "load_skill",
+                input: '{"skillId":"read-only-review"}',
+              },
+            ],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const writeReport = tool({
+      id: "write_report",
+      description: "Write a report",
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+      execute: () => {
+        writeExecutions++;
+        return { ok: true };
+      },
+    });
+
+    try {
+      await Deno.writeTextFile(
+        `${rootPath}/SKILL.md`,
+        "---\nname: read-only-review\ndescription: Review without writes\nallowed-tools: []\n---\nReview the code without modifying files.\n",
+      );
+      registerSkill("read-only-review", {
+        id: "read-only-review",
+        metadata: {
+          name: "Read-only review",
+          description: "Review without writes",
+          allowedTools: [],
+        },
+        rootPath,
+      });
+      const assistant = agent({
+        id: "universal-skill-policy-agent",
+        model: "hosted/universal-skill-policy",
+        system: "Use the matching skill.",
+        tools: { write_report: writeReport },
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      const response = await assistant.generate({ input: "Review this report" });
+
+      assertEquals(writeExecutions, 0);
+      assertEquals(
+        response.toolCalls.find((call) => call.name === "write_report")?.status,
+        "error",
+      );
+    } finally {
+      skillRegistry.clearAll();
+      await Deno.remove(rootPath, { recursive: true });
+    }
+  });
+
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
     let callCount = 0;
@@ -107,14 +193,14 @@ describe("agent runtime refresh hooks", () => {
           return {
             stream: createRuntimeStream([
               { type: "text-delta", text: "I will reload the skill." },
-              { type: "tool-input-start", id: "tc-stale", toolName: "load_skill" },
-              { type: "tool-input-delta", id: "tc-stale", delta: '{"skillId":"create-agent"}' },
+              { type: "tool-input-start", id: "tc-stale", toolName: "stale_tool" },
+              { type: "tool-input-delta", id: "tc-stale", delta: '{"query":"create-agent"}' },
               { type: "tool-input-end", id: "tc-stale" },
               {
                 type: "tool-call",
                 toolCallId: "tc-stale",
-                toolName: "load_skill",
-                input: { skillId: "create-agent" },
+                toolName: "stale_tool",
+                input: { query: "create-agent" },
               },
               { type: "finish", finishReason: "tool-calls" },
             ]),
@@ -144,7 +230,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(retryPrompt.at(-1)?.role, "user");
     assertEquals(
       JSON.stringify(retryPrompt.at(-1)?.content).includes(
-        "ignored unavailable tool call(s): load_skill",
+        "ignored unavailable tool call(s): stale_tool",
       ),
       true,
     );
@@ -359,7 +445,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], []);
+    assertEquals(toolNamesByStep[1], ["load_skill"]);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {
@@ -446,7 +532,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], []);
+    assertEquals(toolNamesByStep[1], ["load_skill"]);
   });
 
   for (const agentWriteToolName of ["create_agent", "update_agent"] as const) {
@@ -600,7 +686,7 @@ describe("agent runtime refresh hooks", () => {
       assertEquals(toolNamesByStep[0]?.includes("create_schedule"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-      assertEquals(toolNamesByStep[1], ["create_schedule"]);
+      assertEquals(toolNamesByStep[1], ["create_schedule", "load_skill"]);
       assertEquals(toolNamesByStep.length, 3);
       assertEquals(executedTools, [agentWriteToolName, "create_schedule"]);
     });
@@ -1055,7 +1141,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], []);
+    assertEquals(toolNamesByStep[1], ["load_skill"]);
   });
 
   it("notifies configured hooks after stream() executes a tool", async () => {

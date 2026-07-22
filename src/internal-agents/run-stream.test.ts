@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { Agent, AgentMessage } from "#veryfront/agent";
+import { type Agent, agent as createAgent, type AgentMessage } from "#veryfront/agent";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -19,7 +19,7 @@ import type {
 import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
 
 class RecordingSpan implements Span {
   readonly attributes: Record<string, AttributeValue> = {};
@@ -126,6 +126,36 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
+  });
+
+  it("includes skill infrastructure for tools: true agents without a skills selector", () => {
+    toolRegistry.clearAll();
+    try {
+      const runtimeAgent = createAgent({
+        id: "universal-skill-agent",
+        system: "Use available skills.",
+        tools: true,
+      });
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        new AgentRunSessionManager(),
+      );
+
+      assertEquals(Object.keys(mergedTools ?? {}).sort(), [
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ]);
+    } finally {
+      toolRegistry.clearAll();
+    }
   });
 
   it("forwards the scheduled output-token cap to the internal runtime", async () => {
@@ -578,7 +608,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
-  it("preserves skill runtime tools for skill-enabled agents under toolAllowlist", async () => {
+  it("preserves skill runtime tools for every agent under toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -588,7 +618,6 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        skills: true,
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
@@ -1195,7 +1224,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(prompt.includes("- remote_127"), false);
   });
 
-  it("preserves invoke_agent delegation for skill-enabled agents under toolAllowlist", async () => {
+  it("preserves invoke_agent delegation for default-skilled agents under toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -1205,7 +1234,6 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        skills: true,
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
@@ -1248,7 +1276,7 @@ describe("internal-agents/run-stream", () => {
     );
 
     // Documented semantics (see applyRuntimeToolAllowlist): delegation tools
-    // survive the allowlist for skill-enabled agents, and child runs are NOT
+    // survive the allowlist for default-skilled agents, and child runs are NOT
     // capped by this run's allowlist.
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });

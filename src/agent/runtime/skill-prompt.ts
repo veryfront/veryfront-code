@@ -43,7 +43,9 @@ export function buildRuntimeAvailableSkillsPromptBlock(
 ): string {
   const displaySkills = skills.slice(0, MAX_RUNTIME_SKILL_PROMPT_ENTRIES);
   const skillsList = displaySkills
-    .map((skill) => `- ${skill.id}: ${skill.description}${formatRuntimeSkillMetadata(skill)}`)
+    .map((skill) =>
+      `- ${skill.name} (\`${skill.id}\`): ${skill.description}${formatRuntimeSkillMetadata(skill)}`
+    )
     .join("\n");
 
   const truncationNote = skills.length > MAX_RUNTIME_SKILL_PROMPT_ENTRIES

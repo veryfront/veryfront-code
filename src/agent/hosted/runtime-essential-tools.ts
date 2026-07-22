@@ -6,7 +6,7 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
   allowedToolNames?: HostedRuntimeAllowedToolNames;
   localToolNames: Iterable<string>;
   availableSkillIds?: readonly string[];
-  /** Let the existing skill-enabled essential-tool policy handle an empty configured selector. */
+  /** Preserve universal skill infrastructure for an empty configured selector. */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
 };
 
@@ -58,14 +58,19 @@ export function resolveHostedRuntimeAllowedToolNames(
     }
   }
 
-  if (!input.availableSkillIds?.length) {
-    return resolvedToolNames;
+  // Skill loading is framework infrastructure for every agent. Preserve it
+  // under non-empty allowlists and config-derived empty selectors. Explicit
+  // request-level empty allowlists return above and remain deny-all.
+  if (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) {
+    for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
+      if (localToolNames.has(toolName)) {
+        resolvedToolNames.add(toolName);
+      }
+    }
   }
 
-  for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
-    if (localToolNames.has(toolName)) {
-      resolvedToolNames.add(toolName);
-    }
+  if (!input.availableSkillIds?.length) {
+    return resolvedToolNames;
   }
 
   for (const toolName of SKILL_DELEGATION_TOOL_NAMES) {

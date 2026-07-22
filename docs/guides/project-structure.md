@@ -105,14 +105,14 @@ These directories are scanned automatically at startup.
 For TypeScript-based primitives, files with a default export are registered.
 For skills, directories containing `SKILL.md` are registered.
 
-| Directory    | Purpose                           | Import                               |
-| ------------ | --------------------------------- | ------------------------------------ |
-| `agents/`    | AI agent definitions              | `veryfront/agent`                    |
-| `tools/`     | Tool definitions with Zod schemas | `veryfront/tool`                     |
-| `prompts/`   | Prompt templates                  | `veryfront/prompt`                   |
-| `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`                 |
-| `resources/` | MCP-exposable resources           | `veryfront/resource`                 |
-| `skills/`    | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
+| Directory    | Purpose                           | Import                           |
+| ------------ | --------------------------------- | -------------------------------- |
+| `agents/`    | AI agent definitions              | `veryfront/agent`                |
+| `tools/`     | Tool definitions with Zod schemas | `veryfront/tool`                 |
+| `prompts/`   | Prompt templates                  | `veryfront/prompt`               |
+| `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`             |
+| `resources/` | MCP-exposable resources           | `veryfront/resource`             |
+| `skills/`    | Skill packs advertised to agents  | Loaded with built-in skill tools |
 
 TypeScript primitives are registered from their exported definitions. Agents can
 use the filename as the ID when no explicit ID is provided.

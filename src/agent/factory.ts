@@ -36,6 +36,7 @@ import {
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -123,48 +124,42 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
-  // Skill tool registration (immutable config merge)
+  // Skill tools are framework infrastructure shared by every agent. Project
+  // skills remain project-scoped and owner-aware at resolution time.
   let mergedToolsConfig = config.tools;
 
-  if (config.skills) {
-    // Skill tools (load_skill, load_skill_reference, execute_skill_script) are
-    // framework infrastructure — shared across all projects. Project tools and
-    // skills themselves remain project-scoped. Using registerShared avoids
-    // scope mismatch between module-load time and request-handling time.
-    for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!toolRegistry.has(registration.id)) {
-        toolRegistry.registerShared(registration.id, registration.create());
-      }
+  ensureBuiltinSchemaValidator();
+  for (const registration of SKILL_TOOL_REGISTRATIONS) {
+    if (!toolRegistry.has(registration.id)) {
+      toolRegistry.registerShared(registration.id, registration.create());
     }
+  }
 
-    // Ensure skill tools are enabled for this agent even when config.tools is undefined
-    if (config.tools !== true) {
-      mergedToolsConfig = {
-        ...(config.tools ?? {}),
-        "load_skill": true,
-        "load_skill_reference": true,
-        "execute_skill_script": true,
-      };
-    }
+  if (config.tools !== true) {
+    mergedToolsConfig = {
+      ...(config.tools ?? {}),
+      "load_skill": true,
+      "load_skill_reference": true,
+      "execute_skill_script": true,
+    };
   }
 
   // System prompt augmentation with skill manifest.
   // Re-resolve registry-backed entries at invocation time so HMR changes are picked up.
   const originalSystem = config.system;
+  const skillsConfig = config.skills ?? true;
 
-  const augmentedSystem = config.skills
-    ? async () => {
-      // Owner-aware: the manifest only ever advertises skills visible to this
-      // agent (unowned project skills plus its own), matching skill-tool
-      // enforcement at execution time.
-      const currentSkills = skillRegistry.resolveForAgent(config.skills!, { agentId: id });
-      const basePrompt = typeof originalSystem === "function"
-        ? await originalSystem()
-        : originalSystem;
-      if (!currentSkills.size) return basePrompt ?? "You are a helpful assistant.";
-      return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
-    }
-    : originalSystem;
+  const augmentedSystem = async () => {
+    // Owner-aware: omitted selectors advertise every skill visible to this
+    // agent (unowned project skills plus its own). Explicit lists, including
+    // an empty list, retain their authored catalog selection.
+    const currentSkills = skillRegistry.resolveForAgent(skillsConfig, { agentId: id });
+    const basePrompt = typeof originalSystem === "function"
+      ? await originalSystem()
+      : originalSystem;
+    if (!currentSkills.size) return basePrompt ?? "You are a helpful assistant.";
+    return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
+  };
 
   const resolvedMiddleware = resolveSecurityMiddleware(config);
 

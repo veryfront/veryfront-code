@@ -95,6 +95,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    skills?: true | string[];
   };
   projectId: string | null;
   authToken: string;
@@ -117,6 +118,27 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     input: HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition>,
   ) => string | ChatSystemMessage[];
 };
+
+function resolveHostedRuntimeSkills(input: {
+  skills: RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | string[] | undefined;
+}): RuntimeSkillDefinition[] {
+  const visibleSkills = input.skills.filter((skill) =>
+    isRuntimeSkillVisibleTo(skill, { agentId: input.agentId })
+  );
+  if (input.selector === undefined || input.selector === true) {
+    return visibleSkills;
+  }
+
+  const selectedIds = new Set(input.selector);
+  return visibleSkills.filter((skill) =>
+    selectedIds.has(skill.id) ||
+    (skill.ownerAgentId === input.agentId &&
+      skill.shortName !== undefined &&
+      selectedIds.has(skill.shortName))
+  );
+}
 
 /** Result returned from hosted chat runtime creation preparation. */
 export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> = {
@@ -303,9 +325,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
   // plus the agent's own). Filtering here scopes the prompt manifest, the
   // per-run availableSkillIds gate used by hosted load_skill, its not-found
   // enumeration, and the live steering payload in one place.
-  const visibleSkills = steering.skills.filter((skill) =>
-    isRuntimeSkillVisibleTo(skill, { agentId: input.agentConfig.id })
-  );
+  const visibleSkills = resolveHostedRuntimeSkills({
+    skills: steering.skills,
+    agentId: input.agentConfig.id,
+    selector: input.agentConfig.skills,
+  });
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,

@@ -179,7 +179,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps config-derived empty non-skill runs narrowed", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps the loader for config-derived empty non-skill runs", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -204,8 +204,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps config-derived empty non-s
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, []);
-  assertEquals(taskContext.availableToolNames, []);
+  assertEquals(toolAssembly.localToolNames, ["load_skill"]);
+  assertEquals(taskContext.availableToolNames, ["load_skill"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runtime inventory", async () => {

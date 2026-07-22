@@ -4,10 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildSkillManifestPrompt } from "./prompt-augmentation.ts";
 import type { Skill } from "./types.ts";
 
-function createSkill(id: string, description: string): Skill {
+function createSkill(id: string, description: string, name = id): Skill {
   return {
     id,
-    metadata: { name: id, description },
+    metadata: { name, description },
     rootPath: `/test/skills/${id}`,
   };
 }
@@ -19,10 +19,12 @@ describe("src/skill/prompt-augmentation", () => {
     });
 
     it("should include header for single skill", () => {
-      const skills = new Map([["my-skill", createSkill("my-skill", "Does things")]]);
+      const skills = new Map([
+        ["my-skill", createSkill("my-skill", "Does things", "My Skill")],
+      ]);
       const result = buildSkillManifestPrompt(skills);
       assertStringIncludes(result, "## Available Skills");
-      assertStringIncludes(result, "**my-skill**: Does things");
+      assertStringIncludes(result, "**My Skill** (`my-skill`): Does things");
     });
 
     it("should list all skills", () => {
@@ -31,8 +33,8 @@ describe("src/skill/prompt-augmentation", () => {
         ["skill-b", createSkill("skill-b", "Second skill")],
       ]);
       const result = buildSkillManifestPrompt(skills);
-      assertStringIncludes(result, "**skill-a**: First skill");
-      assertStringIncludes(result, "**skill-b**: Second skill");
+      assertStringIncludes(result, "**skill-a** (`skill-a`): First skill");
+      assertStringIncludes(result, "**skill-b** (`skill-b`): Second skill");
     });
 
     it("should include tool usage instructions", () => {

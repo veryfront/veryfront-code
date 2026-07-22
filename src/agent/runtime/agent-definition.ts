@@ -118,7 +118,7 @@ function parseCapabilitySelector(value: unknown): true | string[] | undefined {
     const ids = value
       .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
       .map((entry) => entry.trim());
-    return ids.length > 0 ? ids : undefined;
+    return ids;
   }
   return undefined;
 }

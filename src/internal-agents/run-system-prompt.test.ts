@@ -166,7 +166,7 @@ describe("internal-agents/run-system-prompt", () => {
       assertStringIncludes(prompt, "- load_skill");
     });
 
-    it("preserves the factory-resolved skill manifest", async () => {
+    it("preserves the factory-resolved default skill catalog", async () => {
       registerSkill("support-triage", {
         id: "support-triage",
         metadata: {
@@ -178,7 +178,6 @@ describe("internal-agents/run-system-prompt", () => {
       const skillAgent = agent({
         id: "skill-agent",
         system: "You are a support agent.",
-        skills: ["support-triage"],
       });
       const wrappedSkillAgent = {
         ...skillAgent,
@@ -192,7 +191,10 @@ describe("internal-agents/run-system-prompt", () => {
       });
 
       assertStringIncludes(prompt, "## Available Skills");
-      assertStringIncludes(prompt, "**support-triage**: Triage incoming support requests");
+      assertStringIncludes(
+        prompt,
+        "**Support triage** (`support-triage`): Triage incoming support requests",
+      );
     });
 
     it("omits project and environment blocks when the run has no context", async () => {
