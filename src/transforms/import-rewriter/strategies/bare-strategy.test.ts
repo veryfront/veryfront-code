@@ -146,5 +146,23 @@ describe("BareStrategy", () => {
       const result = bareStrategy.rewrite(makeInfo("npm:zod"), makeCtx({ target: "browser" }));
       assertEquals(result.specifier, "https://esm.sh/zod?external=react,react-dom&target=es2022");
     });
+
+    it("preserves a subpath on a browser-safe npm: specifier", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("npm:zod@4.0.0/mini"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/zod@4.0.0/mini?external=react,react-dom&target=es2022",
+      );
+    });
+
+    // On the SSR target every bare/`npm:` package is left external regardless of
+    // whether it is server-only — the rewrite only ever targets the browser.
+    it("leaves a browser-safe npm: specifier external on the SSR target", () => {
+      const result = bareStrategy.rewrite(makeInfo("npm:zod@4.0.0"), makeCtx({ target: "ssr" }));
+      assertEquals(result.specifier, null);
+    });
   });
 });

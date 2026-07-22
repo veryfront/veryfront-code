@@ -386,6 +386,81 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    // The hook can be an arrow assigned to `const` — its closure must be
+    // captured the same way as a `function` declaration before it is emptied.
+    it("prunes the closure of a const-arrow hook form", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export const getServerData = async () => ({ props: { ok: Boolean(API_KEY) } });`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // A module-scope helper *function* reached only from the hook is part of its
+    // closure and goes; the same helper is kept the moment client code uses it.
+    it("prunes a helper function only the hook used, keeps it when the client uses it", async () => {
+      const onlyHook = [
+        `import { getEnv } from "veryfront";`,
+        `function computeKey() { return getEnv("SECRET_KEY"); }`,
+        `export async function getServerData() { return { props: { k: computeKey() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+      const strippedOnlyHook = await stripServerOnlyExports(onlyHook);
+      assertEquals(occurrences(strippedOnlyHook, "computeKey"), 0);
+      assertEquals(occurrences(strippedOnlyHook, "getEnv"), 0);
+
+      const shared = [
+        `function fmt(x) { return String(x); }`,
+        `export async function getServerData() { return { props: { k: fmt(1) } }; }`,
+        `export default function Page() { return fmt(2); }`,
+      ].join("\n");
+      const strippedShared = await stripServerOnlyExports(shared);
+      assertStringIncludes(strippedShared, "function fmt");
+    });
+
+    // A chain member the client also reads is kept even though a later link in
+    // the chain (used only by the hook) is dropped.
+    it("keeps a chain member the client reads while dropping the hook-only tail", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const RAW = getEnv("X");`,
+        `const TOKEN = RAW + "!";`,
+        `export async function getServerData() { return { props: { t: TOKEN } }; }`,
+        `export default function Page() { return RAW; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "RAW"); // client reads it → kept (with its import)
+      assertStringIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "TOKEN"), 0); // hook-only tail → dropped
+    });
+
+    // Known limitation (pinned): a *destructured* server value is NOT pruned —
+    // `moduleScopeDeclarations` handles only simple identifiers, to avoid
+    // mishandling default-value references inside patterns. Conservative (never
+    // over-prunes) but it means a destructured server value still ships. If this
+    // ever needs closing, extend the declaration collector to safe patterns.
+    it("conservatively keeps a destructured server value (documented limitation)", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { a } = getEnv("X");`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // Pinned as-is: the destructured binding and its import survive.
+      assertStringIncludes(result, "getEnv");
+    });
+
     it("keeps an import that the client still references", async () => {
       const code = [
         `import { formatDate } from "../lib/dates.js";`,
