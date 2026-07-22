@@ -104,6 +104,54 @@ describe("module-loader/transformModuleWithDeps", () => {
     );
   });
 
+  it("isolates progress listener failures without weakening aborts", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": `export const value = "ready";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let listenerCalls = 0;
+        const transformedPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.json"),
+          tmpDir,
+          config.adapter,
+          {
+            ...config,
+            onProgress: () => {
+              listenerCalls++;
+              throw new Error("observer failure");
+            },
+          },
+        );
+
+        assert(listenerCalls > 0);
+        assertEquals((await Deno.stat(transformedPath)).isFile, true);
+
+        const controller = new AbortController();
+        controller.abort(new Error("render cancelled"));
+        let abortedListenerCalls = 0;
+        await assertRejects(
+          () =>
+            transformModuleWithDeps(
+              join(projectDir, "app/page.json"),
+              tmpDir,
+              config.adapter,
+              {
+                ...config,
+                signal: controller.signal,
+                onProgress: () => {
+                  abortedListenerCalls++;
+                },
+              },
+            ),
+          Error,
+          "render cancelled",
+        );
+        assertEquals(abortedListenerCalls, 0);
+      },
+    );
+  });
+
   // A dynamic import is how a module graph legitimately breaks a cycle. Before
   // dynamic specifiers were followed, this shape terminated because the cycle
   // edge was invisible; following it eagerly recurses until the worker dies.

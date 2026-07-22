@@ -39,7 +39,11 @@ function markModuleLoadProgress(
   filePath: string,
 ): void {
   throwIfModuleLoadAborted(config);
-  config.onProgress?.({ phase, filePath });
+  try {
+    config.onProgress?.({ phase, filePath });
+  } catch (error) {
+    logger.debug("Module-load progress listener failed", { phase, filePath, error });
+  }
 }
 
 // Re-export utilities
