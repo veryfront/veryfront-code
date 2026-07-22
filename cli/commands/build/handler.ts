@@ -75,7 +75,10 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
     splitting: opts.split && !opts.noSplit,
     compress: opts.compress && !opts.noCompress,
     prefetch: opts.prefetch,
-    ssg: opts.ssg && !opts.noSsg,
+    // Tri-state: explicit --no-ssg wins, explicit --ssg enables, otherwise
+    // leave undefined so the command can fall back to build.ssg from
+    // veryfront.config.ts (and its default).
+    ssg: opts.noSsg ? false : opts.ssg ? true : undefined,
     include: opts.include,
     exclude: opts.exclude,
     dryRun: opts.dryRun,

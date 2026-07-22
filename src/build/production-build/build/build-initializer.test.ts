@@ -38,14 +38,14 @@ describe("build/production-build/build/build-initializer", () => {
       assertEquals(result.enablePrefetch, true);
     });
 
-    it("should default ssg to false", () => {
+    it("should default ssg to true", () => {
       const result = normalizeBuildOptions({ projectDir: "/project" });
-      assertEquals(result.ssg, false);
+      assertEquals(result.ssg, true);
     });
 
-    it("should respect explicitly enabled ssg", () => {
-      const result = normalizeBuildOptions({ projectDir: "/project", ssg: true });
-      assertEquals(result.ssg, true);
+    it("should respect explicitly disabled ssg", () => {
+      const result = normalizeBuildOptions({ projectDir: "/project", ssg: false });
+      assertEquals(result.ssg, false);
     });
 
     it("should default dryRun to false", () => {

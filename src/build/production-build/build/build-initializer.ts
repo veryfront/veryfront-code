@@ -50,7 +50,9 @@ export function normalizeBuildOptions(options: BuildOptions): BuildOptions {
     enableSplitting: options.enableSplitting ?? true,
     enableCompression: options.enableCompression ?? true,
     enablePrefetch: options.enablePrefetch ?? true,
-    ssg: options.ssg ?? false,
+    // Default to SSG: a non-SSG build collects no routes and emits no pages,
+    // which is never a servable artifact.
+    ssg: options.ssg ?? true,
     include: options.include,
     exclude: options.exclude,
     dryRun: options.dryRun ?? false,

@@ -14,6 +14,25 @@ describe("configSchema", () => {
     assertEquals(findUnknownTopLevelKeys({ foo: 1, router: "pages" }), ["foo"]);
   });
 
+  it("accepts build.ssg as a boolean", () => {
+    const enabled = validateVeryfrontConfig({ build: { ssg: true } });
+    assertEquals(enabled.build?.ssg, true);
+
+    const disabled = validateVeryfrontConfig({ build: { ssg: false } });
+    assertEquals(disabled.build?.ssg, false);
+
+    const omitted = validateVeryfrontConfig({ build: {} });
+    assertEquals(omitted.build?.ssg, undefined);
+  });
+
+  it("rejects non-boolean build.ssg", () => {
+    assertThrows(
+      () => validateVeryfrontConfig({ build: { ssg: "yes" } }),
+      Error,
+      "Invalid veryfront.config at build.ssg:",
+    );
+  });
+
   it("gives helpful error for invalid cors", () => {
     assertThrows(
       () => validateVeryfrontConfig({ security: { cors: { origin: 123 } } }),

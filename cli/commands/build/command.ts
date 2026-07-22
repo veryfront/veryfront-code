@@ -54,7 +54,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
 
         const stats = await runWithBundlerShutdown(async () => {
           const adapter = await runtime.get();
-          await getConfig(options.projectDir, adapter);
+          const config = await getConfig(options.projectDir, adapter);
           await ensureBuiltinContentProcessor();
 
           if (isJsonMode()) {
@@ -70,7 +70,10 @@ export function buildCommand(options: BuildOptions): Promise<void> {
             enableSplitting: options.splitting ?? true,
             enableCompression: options.compress ?? true,
             enablePrefetch: options.prefetch ?? true,
-            ssg: options.ssg ?? false,
+            // Explicit CLI flag > build.ssg in veryfront.config.ts > enabled.
+            // A non-SSG build emits no pages at all, so SSG must be the
+            // default for `veryfront build` to produce a deployable artifact.
+            ssg: options.ssg ?? config.build?.ssg ?? true,
             include: options.include,
             exclude: options.exclude,
             dryRun,

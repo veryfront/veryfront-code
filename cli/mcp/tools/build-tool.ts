@@ -33,8 +33,10 @@ const getBuildInput = defineSchema((v) =>
     ssg: v
       .boolean()
       .optional()
-      .default(false)
-      .describe("Enable static site generation. Defaults to false."),
+      .default(true)
+      .describe(
+        "Enable static site generation. Defaults to true; disabling it produces no pages.",
+      ),
     dryRun: v
       .boolean()
       .optional()
