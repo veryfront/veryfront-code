@@ -24,6 +24,54 @@ export interface RegistryScopeContext {
   immutable: boolean;
 }
 
+function encodeRegistryScopeSegment(value: string): string {
+  try {
+    return encodeURIComponent(value);
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error;
+
+    // encodeURIComponent rejects lone UTF-16 surrogates. Project identity comes
+    // from external boundaries, so keep this encoder total without collapsing
+    // malformed strings onto the replacement character. `%uXXXX` cannot collide
+    // with a literal sequence because encodeURIComponent escapes its `%` first.
+    let encoded = "";
+    let chunkStart = 0;
+    for (let index = 0; index < value.length; index++) {
+      const codeUnit = value.charCodeAt(index);
+      const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+      const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+
+      if (
+        isHighSurrogate && index + 1 < value.length &&
+        value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff
+      ) {
+        index++;
+        continue;
+      }
+      if (!isHighSurrogate && !isLowSurrogate) continue;
+
+      encoded += encodeURIComponent(value.slice(chunkStart, index));
+      encoded += `%u${codeUnit.toString(16).toUpperCase().padStart(4, "0")}`;
+      chunkStart = index + 1;
+    }
+    return encoded + encodeURIComponent(value.slice(chunkStart));
+  }
+}
+
+/**
+ * Check whether a registry scope belongs to a raw project ID.
+ *
+ * The project ID is always encoded before matching. Treating it as a possible
+ * complete scope ID would make a delimiter-bearing project ID ambiguous with a
+ * different project's scope.
+ */
+export function isRegistryScopeForProject(
+  scopeId: string,
+  projectId: string,
+): boolean {
+  return scopeId.startsWith(`${encodeRegistryScopeSegment(projectId)}:`);
+}
+
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
 
 function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
@@ -140,7 +188,8 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   const cacheCtx = cacheKeyContextStorage.getStore();
   if (cacheCtx) {
     return {
-      scopeId: `${cacheCtx.projectId}:${cacheCtx.mode}:${cacheCtx.versionId}`,
+      scopeId: `${encodeRegistryScopeSegment(cacheCtx.projectId)}:${cacheCtx.mode}:` +
+        encodeRegistryScopeSegment(cacheCtx.versionId),
       immutable: cacheCtx.mode === "production",
     };
   }
@@ -153,7 +202,8 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     if (reqCtx.productionMode) {
       if (reqCtx.releaseId) {
         return {
-          scopeId: `${projectId}:production:${reqCtx.releaseId}`,
+          scopeId: `${encodeRegistryScopeSegment(projectId)}:production:` +
+            encodeRegistryScopeSegment(reqCtx.releaseId),
           immutable: true,
         };
       }
@@ -162,13 +212,15 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
       // discovery, and adapter caches all describe the same content source.
       const environmentName = reqCtx.environmentName || "production";
       return {
-        scopeId: `${projectId}:production:environment:${environmentName}`,
+        scopeId: `${encodeRegistryScopeSegment(projectId)}:production:environment:` +
+          encodeRegistryScopeSegment(environmentName),
         immutable: false,
       };
     }
 
     return {
-      scopeId: `${projectId}:preview:${reqCtx.branch || "main"}`,
+      scopeId: `${encodeRegistryScopeSegment(projectId)}:preview:` +
+        encodeRegistryScopeSegment(reqCtx.branch || "main"),
       immutable: false,
     };
   }
