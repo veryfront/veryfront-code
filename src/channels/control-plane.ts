@@ -7,6 +7,8 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
+const BASE64URL_PART_PATTERN = /^[A-Za-z0-9_-]+$/;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
@@ -49,11 +51,15 @@ export function isConfigOptionalControlPlaneRunRequest(
 const getCompactJwsHeaderSchema = defineSchema((v) =>
   v.object({
     alg: v.literal("EdDSA"),
+    crit: v.array(v.string()).optional(),
     typ: v.string().optional(),
     kid: v.string().optional(),
-  })
+  }).passthrough()
 );
 const compactJwsHeaderSchema = lazySchema(getCompactJwsHeaderSchema);
+
+const getAvatarUrlSchema = defineSchema((v) => v.string().url());
+const avatarUrlSchema = lazySchema(getAvatarUrlSchema);
 
 /** Allowed control-plane surfaces — source of truth for the schema and {@link ControlPlaneSurface}. */
 export const CONTROL_PLANE_SURFACES = ["studio", "channels", "a2a", "mcp"] as const;
@@ -222,7 +228,46 @@ type SignedRequestClaims = {
   sub: string;
 } & Record<string, unknown>;
 
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function assertValidMaxAgeSeconds(maxAgeSeconds: number): void {
+  if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds < 0) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature max age must be a finite non-negative number",
+    });
+  }
+}
+
+function validateSignedRequestFreshness(
+  claims: Pick<SignedRequestClaims, "exp" | "iat">,
+  maxAgeSeconds: number,
+): void {
+  assertValidMaxAgeSeconds(maxAgeSeconds);
+
+  const now = Math.floor(Date.now() / 1000);
+  if (claims.exp <= claims.iat) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature expiration must be after its issue time",
+    });
+  }
+  if (claims.exp <= now) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature expired" });
+  }
+  if (claims.iat > now + SIGNATURE_SKEW_SECONDS) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature issued in the future" });
+  }
+  if (now - claims.iat > maxAgeSeconds) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature is too old" });
+  }
+}
+
 function base64urlDecodeToBytes(input: string): ArrayBuffer {
+  if (!BASE64URL_PART_PATTERN.test(input) || input.length % 4 === 1) {
+    throw new TypeError("Invalid base64url encoding in compact JWS");
+  }
+
   const normalized = input
     .replaceAll("-", "+")
     .replaceAll("_", "/")
@@ -238,14 +283,21 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 function parseCompactJwsPart<T>(encodedPart: string): T {
-  return JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
+  return JSON.parse(utf8Decoder.decode(base64urlDecodeToBytes(encodedPart))) as T;
 }
 
 function pemToDer(pem: string, label: string): ArrayBuffer {
-  const body = pem
-    .replace(`-----BEGIN ${label}-----`, "")
-    .replace(`-----END ${label}-----`, "")
-    .replace(/\s/g, "");
+  const begin = `-----BEGIN ${label}-----`;
+  const end = `-----END ${label}-----`;
+  const normalizedPem = pem.trim();
+  if (!normalizedPem.startsWith(begin) || !normalizedPem.endsWith(end)) {
+    throw new TypeError(`Invalid ${label} PEM envelope`);
+  }
+
+  const body = normalizedPem.slice(begin.length, -end.length).replace(/\s/g, "");
+  if (body.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body)) {
+    throw new TypeError(`Invalid ${label} PEM body`);
+  }
 
   return toArrayBuffer(Uint8Array.from(atob(body), (char) => char.charCodeAt(0)));
 }
@@ -283,6 +335,8 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     };
   },
 ): Promise<TClaims> {
+  assertValidMaxAgeSeconds(options.maxAgeSeconds);
+
   const parts = jws.split(".");
   if (parts.length !== 3) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must be a compact JWS" });
@@ -297,7 +351,12 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     });
   }
 
-  compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
+  const header = compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
+  if (header.crit !== undefined) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature uses unsupported critical header parameters",
+    });
+  }
   const claims = options.claimsSchema.parse(parseCompactJwsPart(encodedPayload));
 
   const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
@@ -317,11 +376,13 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     throw SECURITY_VIOLATION.create({ detail: "Control-plane audience mismatch" });
   }
 
-  if (options.expectedProjectId && claims.project_id !== options.expectedProjectId) {
+  if (
+    options.expectedProjectId !== undefined && claims.project_id !== options.expectedProjectId
+  ) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane project mismatch" });
   }
 
-  if (options.expectedSubject && claims.sub !== options.expectedSubject) {
+  if (options.expectedSubject !== undefined && claims.sub !== options.expectedSubject) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane subject mismatch" });
   }
 
@@ -331,18 +392,7 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     });
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  if (claims.exp <= now) {
-    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature expired" });
-  }
-
-  if (claims.iat > now + SIGNATURE_SKEW_SECONDS) {
-    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature issued in the future" });
-  }
-
-  if (now - claims.iat > options.maxAgeSeconds) {
-    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature is too old" });
-  }
+  validateSignedRequestFreshness(claims, options.maxAgeSeconds);
 
   const requestHash = claims[options.hashClaimKey];
   if (typeof requestHash !== "string") {
@@ -370,7 +420,9 @@ export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
         ...(skill.metadata.description ? { description: skill.metadata.description } : {}),
       })
     )
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) =>
+      compareStrings(left.name, right.name) || compareStrings(left.id, right.id)
+    );
 }
 
 /** Get browser-safe runtime metadata for an agent. */
@@ -388,6 +440,9 @@ export function getRuntimeAgentPublicMetadata(
     : typeof rawConfig.avatar_url === "string" && rawConfig.avatar_url.trim().length > 0
     ? rawConfig.avatar_url
     : undefined;
+  const parsedAvatarUrl = avatarUrl === undefined
+    ? undefined
+    : avatarUrlSchema.safeParse(avatarUrl);
 
   return {
     id,
@@ -395,7 +450,7 @@ export function getRuntimeAgentPublicMetadata(
       ? rawConfig.name
       : id,
     description: typeof rawConfig.description === "string" ? rawConfig.description : null,
-    ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+    ...(parsedAvatarUrl?.success ? { avatar_url: parsedAvatarUrl.data } : {}),
     ...(suggestions === undefined ? {} : { suggestions }),
   };
 }
@@ -423,7 +478,9 @@ export async function listRuntimeAgents(
     .map((id) => ({ id, agent: deps.getAgent(id) }))
     .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
     .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent))
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) =>
+      compareStrings(left.name, right.name) || compareStrings(left.id, right.id)
+    );
 
   return RuntimeAgentListResponseSchema.parse({ agents });
 }
@@ -453,12 +510,14 @@ export async function verifyDispatchJwsSignature(
   },
 ): Promise<boolean> {
   try {
+    assertValidMaxAgeSeconds(options.maxAgeSeconds);
     const parts = jws.split(".");
     if (parts.length !== 3) return false;
     const [encodedHeader, encodedPayload, encodedSignature] = parts;
     if (!encodedHeader || !encodedPayload || !encodedSignature) return false;
 
-    compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
+    const header = compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
+    if (header.crit !== undefined) return false;
     const claims = dispatchClaimsSchema.parse(parseCompactJwsPart(encodedPayload));
 
     const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
@@ -469,10 +528,7 @@ export async function verifyDispatchJwsSignature(
 
     if (claims.iss !== "veryfront-api") return false;
 
-    const now = Math.floor(Date.now() / 1000);
-    if (claims.exp <= now) return false;
-    if (claims.iat > now + SIGNATURE_SKEW_SECONDS) return false;
-    if (now - claims.iat > options.maxAgeSeconds) return false;
+    validateSignedRequestFreshness(claims, options.maxAgeSeconds);
 
     return true;
   } catch {
@@ -497,11 +553,11 @@ export async function verifyDispatchJws(
     audience: options.audience,
     claimsSchema: dispatchClaimsSchema,
     expectedProjectId: options.expectedProjectId,
-    ...(options.expectedSubject ? { expectedSubject: options.expectedSubject } : {}),
+    ...(options.expectedSubject !== undefined ? { expectedSubject: options.expectedSubject } : {}),
     hashClaimKey: "body_sha256",
     maxAgeSeconds: options.maxAgeSeconds,
     publicKeyPem: options.publicKeyPem,
-    ...(options.expectedPlatform
+    ...(options.expectedPlatform !== undefined
       ? {
         scopedClaim: {
           key: "platform" as const,
@@ -530,11 +586,11 @@ export async function verifyControlPlaneJws(
     audience: options.audience,
     claimsSchema: controlPlaneClaimsSchema,
     expectedProjectId: options.expectedProjectId,
-    ...(options.expectedSubject ? { expectedSubject: options.expectedSubject } : {}),
+    ...(options.expectedSubject !== undefined ? { expectedSubject: options.expectedSubject } : {}),
     hashClaimKey: "request_hash",
     maxAgeSeconds: options.maxAgeSeconds,
     publicKeyPem: options.publicKeyPem,
-    ...(options.expectedSurface
+    ...(options.expectedSurface !== undefined
       ? {
         scopedClaim: {
           key: "surface" as const,

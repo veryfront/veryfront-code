@@ -37,6 +37,10 @@ export interface ReadSignedChannelDispatchRequestOptions<T> {
   logLabel?: string;
   logWarn: LogWarn;
   schema: ParseSchema<T>;
+  validateClaims?: (
+    claims: Awaited<ReturnType<typeof verifyDispatchJws>>,
+    payload: T,
+  ) => boolean;
 }
 
 export async function readSignedChannelDispatchRequest<T>(
@@ -114,13 +118,9 @@ export async function readSignedChannelDispatchRequest<T>(
     };
   }
 
+  let payload: T;
   try {
-    return {
-      ok: true,
-      claims,
-      payload: options.schema.parse(JSON.parse(rawBody)),
-      rawBody,
-    };
+    payload = options.schema.parse(JSON.parse(rawBody));
   } catch (error) {
     options.logWarn(`${logLabel} request validation failed`, {
       error: error instanceof Error ? error.message : String(error),
@@ -132,4 +132,34 @@ export async function readSignedChannelDispatchRequest<T>(
       response: options.builder.json({ error: options.invalidRequestError }, 400),
     };
   }
+
+  try {
+    if (options.validateClaims && !options.validateClaims(claims, payload)) {
+      options.logWarn(`${logLabel} claims are not bound to the signed request body`, {
+        projectSlug,
+        projectId: ctx.projectId,
+      });
+      return {
+        ok: false,
+        response: options.builder.json({ error: "Invalid dispatch signature" }, 401),
+      };
+    }
+  } catch (error) {
+    options.logWarn(`${logLabel} claim binding validation failed`, {
+      error: error instanceof Error ? error.message : String(error),
+      projectSlug,
+      projectId: ctx.projectId,
+    });
+    return {
+      ok: false,
+      response: options.builder.json({ error: "Invalid dispatch signature" }, 401),
+    };
+  }
+
+  return {
+    ok: true,
+    claims,
+    payload,
+    rawBody,
+  };
 }

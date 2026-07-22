@@ -11,6 +11,7 @@ import {
   ChannelAssistantsResponseSchema,
   type ChannelInvokeDeps,
   type ChannelInvokeRequest,
+  ChannelInvokeRequestSchema,
   executeChannelInvoke,
   listChannelAssistants,
   normalizeConversationHistoryForRuntime,
@@ -314,6 +315,40 @@ describe("channels/invoke", () => {
         },
       ]);
     });
+
+    it("preserves a valid Unix epoch timestamp", () => {
+      const normalized = normalizeConversationHistoryForRuntime([{
+        id: "epoch-message",
+        role: "user",
+        parts: [{ type: "text", text: "At the epoch" }],
+        createdAt: "1970-01-01T00:00:00.000Z",
+      }]);
+
+      assertEquals(normalized[0]?.timestamp, 0);
+    });
+
+    it("rejects invalid history timestamps at the signed request boundary", () => {
+      const payload = createPayload({
+        conversationHistory: [{
+          id: "invalid-date-message",
+          role: "user",
+          parts: [{ type: "text", text: "Bad timestamp" }],
+          createdAt: "not-a-timestamp",
+        }],
+      });
+
+      assertEquals(ChannelInvokeRequestSchema.safeParse(payload).success, false);
+    });
+
+    it("drops orphan tool results instead of inventing a tool name", () => {
+      const normalized = normalizeConversationHistoryForRuntime([{
+        id: "orphan-result",
+        role: "tool",
+        parts: [{ type: "tool_result", tool_call_id: "missing-call", output: "result" }],
+      }]);
+
+      assertEquals(normalized[0]?.parts, []);
+    });
   });
 
   describe("listChannelAssistants", () => {
@@ -486,6 +521,73 @@ describe("channels/invoke", () => {
         { type: "text", text: "Tool answer" },
       ]);
     });
+
+    it("uses response text when the last assistant message has no text part", () => {
+      const response = createAgentResponse("Final answer", {
+        messages: [{
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{
+            type: "tool-search",
+            toolCallId: "tool-1",
+            toolName: "search",
+            args: { query: "docs" },
+          }],
+          timestamp: Date.now(),
+        }],
+      });
+
+      assertEquals(buildChannelResponseParts(response), [
+        {
+          type: "tool_call",
+          id: "tool-1",
+          name: "search",
+          input: { query: "docs" },
+          state: "pending",
+        },
+        { type: "text", text: "Final answer" },
+      ]);
+    });
+
+    it("uses response text when the assistant message contains only empty text", () => {
+      const response = createAgentResponse("Final answer", {
+        messages: [{
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "   " }],
+          timestamp: Date.now(),
+        }],
+      });
+
+      assertEquals(buildChannelResponseParts(response), [
+        { type: "text", text: "Final answer" },
+      ]);
+    });
+
+    it("deduplicates repeated tool calls in the assistant message", () => {
+      const toolPart = {
+        type: "tool-search" as const,
+        toolCallId: "tool-1",
+        toolName: "search",
+        args: { query: "docs" },
+      };
+      const response = createAgentResponse("", {
+        messages: [{
+          id: "assistant-1",
+          role: "assistant",
+          parts: [toolPart, { ...toolPart }],
+          timestamp: Date.now(),
+        }],
+      });
+
+      assertEquals(buildChannelResponseParts(response), [{
+        type: "tool_call",
+        id: "tool-1",
+        name: "search",
+        input: { query: "docs" },
+        state: "pending",
+      }]);
+    });
   });
 
   describe("executeChannelInvoke", () => {
@@ -551,6 +653,73 @@ describe("channels/invoke", () => {
         ignored: false,
         error: { code: "provider_error", retryable: false },
       });
+    });
+
+    it("returns a structured internal error when resetting agent memory fails", async () => {
+      const agent = createAgent({
+        clearMemory: async () => {
+          throw new Error("memory backend unavailable");
+        },
+      });
+
+      const response = await executeChannelInvoke(
+        createPayload(),
+        createHandlerContext(),
+        {
+          ensureProjectDiscovery: async () => {},
+          getAgent: () => agent,
+          getAllAgentIds: () => ["agent-1"],
+        },
+      );
+
+      assertEquals(response, {
+        ignored: false,
+        error: { code: "internal_error", retryable: true },
+      });
+    });
+
+    it("serializes invocations that share an agent with persistent memory", async () => {
+      let activeGenerations = 0;
+      let maximumActiveGenerations = 0;
+      let clearMemoryCalls = 0;
+      const agent = createAgent({
+        clearMemory: async () => {
+          clearMemoryCalls += 1;
+        },
+        generate: async () => {
+          activeGenerations += 1;
+          maximumActiveGenerations = Math.max(maximumActiveGenerations, activeGenerations);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          activeGenerations -= 1;
+          return createAgentResponse("Runtime answer");
+        },
+      });
+      agent.config = {
+        ...agent.config,
+        memory: { type: "conversation" },
+      } as Agent["config"];
+      const deps: ChannelInvokeDeps = {
+        ensureProjectDiscovery: async () => {},
+        getAgent: () => agent,
+        getAllAgentIds: () => ["agent-1"],
+      };
+
+      const responses = await Promise.all([
+        executeChannelInvoke(
+          createPayload({ dispatchId: "dispatch-1" }),
+          createHandlerContext(),
+          deps,
+        ),
+        executeChannelInvoke(
+          createPayload({ dispatchId: "dispatch-2" }),
+          createHandlerContext(),
+          deps,
+        ),
+      ]);
+
+      assertEquals(responses.every((response) => response.error === undefined), true);
+      assertEquals(clearMemoryCalls, 2);
+      assertEquals(maximumActiveGenerations, 1);
     });
 
     it("fails closed when the requested assistant is not registered on the runtime", async () => {
