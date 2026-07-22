@@ -29,7 +29,7 @@ function isPagesApiDirectoryDescendant(relativePath: string): boolean {
 
 function isPagesLayoutFile(relativePath: string): boolean {
   const fileName = relativePath.replace(/\\/g, "/").split("/").pop();
-  return fileName !== undefined && PAGES_LAYOUT_CANDIDATES.has(fileName);
+  return fileName !== undefined && PAGES_LAYOUT_CANDIDATES.has(fileName.toLowerCase());
 }
 
 function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]): boolean {

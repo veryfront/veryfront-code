@@ -163,12 +163,13 @@ async function assertBrowserSafeFrameworkGraph(port: number, entryPath: string):
 
     for (const specifier of specifiers) {
       const resolved = new URL(specifier, `http://127.0.0.1:${port}${modulePath}`);
+      const resolvedModulePath = `${resolved.pathname}${resolved.search}`;
       if (
         resolved.origin === `http://127.0.0.1:${port}` &&
         resolved.pathname.startsWith("/_vf_modules/_veryfront/") &&
-        !visited.has(resolved.pathname)
+        !visited.has(resolvedModulePath)
       ) {
-        pending.push(resolved.pathname);
+        pending.push(resolvedModulePath);
       }
     }
   }
@@ -481,6 +482,36 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await assertBrowserSafeFrameworkGraph(port, "/_vf_modules/_veryfront/chat/index.js");
         await stopServer(server);
       });
+    });
+
+    it("preserves query strings while walking browser framework module variants", async () => {
+      const requestedPaths: string[] = [];
+      const originalFetch = globalThis.fetch;
+
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+        const modulePath = `${url.pathname}${url.search}`;
+        requestedPaths.push(modulePath);
+
+        const body = modulePath === "/_vf_modules/_veryfront/entry.js"
+          ? 'import "/_vf_modules/_veryfront/child.js?v=browser";'
+          : "export const child = true;";
+        return new Response(body, { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        await assertBrowserSafeFrameworkGraph(
+          4173,
+          "/_vf_modules/_veryfront/entry.js",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      assertEquals(requestedPaths, [
+        "/_vf_modules/_veryfront/entry.js",
+        "/_vf_modules/_veryfront/child.js?v=browser",
+      ]);
     });
   });
 

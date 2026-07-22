@@ -207,6 +207,7 @@ describe("server/build-routes", () => {
       const adapter = createMockAdapter({
         "/project/pages/index.tsx": "export default () => <div />",
         "/project/pages/layout.tsx": "export default ({ children }) => children",
+        "/project/pages/admin/Layout.tsx": "export default ({ children }) => children",
         "/project/pages/chat/index.tsx": "export default () => <div />",
         "/project/pages/chat/layout.tsx": "export default ({ children }) => children",
         "/project/pages/docs/index.mdx": "# Docs",
