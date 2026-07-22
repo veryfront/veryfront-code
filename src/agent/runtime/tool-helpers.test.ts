@@ -207,6 +207,37 @@ describe("tool-helpers", () => {
       );
     });
 
+    it("strict configured-tool execution does not fall through to the registry", async () => {
+      toolRegistry.clearAll();
+
+      toolRegistry.register(
+        "shared-search",
+        tool({
+          id: "shared-search",
+          description: "Shared search",
+          inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+          execute: async ({ query }) => ({ source: "registry", query }),
+        }),
+      );
+
+      await assertRejects(
+        () =>
+          executeConfiguredTool(
+            "shared-search",
+            { query: "docs" },
+            {},
+            { toolCallId: "tool-strict" },
+            undefined,
+            undefined,
+            undefined,
+            { strictConfiguredToolsOnly: true },
+          ),
+        Error,
+        'Tool "shared-search" is not available in request-scoped replacement tools',
+      );
+      toolRegistry.clearAll();
+    });
+
     it("rejects remote integration tools excluded by the runtime allowlist", async () => {
       await assertRejects(
         () =>
@@ -502,6 +533,21 @@ describe("tool-helpers", () => {
       } finally {
         toolRegistry.clearAll();
       }
+    });
+
+    it("strict replacement mode fails closed for integration-style registry references", async () => {
+      await assertRejects(
+        () =>
+          getAvailableTools(
+            { github__list_issues: true },
+            {
+              includeIntegrationTools: false,
+              strictConfiguredToolsOnly: true,
+            },
+          ),
+        Error,
+        'Unknown tool reference: github__list_issues. Tool names must exactly match tool({ id: "..." }). Available tools: (none)',
+      );
     });
 
     it("only appends explicitly requested remote definitions for explicit tool maps", async () => {

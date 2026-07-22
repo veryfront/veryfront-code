@@ -168,7 +168,7 @@ export function agent(config: AgentConfig): Agent {
   // System prompt augmentation with skill manifest.
   // Re-resolve registry-backed entries at invocation time so HMR changes are picked up.
   const originalSystem = config.system;
-  const skillsConfig = config.skills ?? true;
+  const skillsConfig = config.skills === false ? [] : config.skills ?? true;
 
   const augmentedSystem = async () => {
     // Owner-aware: omitted selectors advertise every skill visible to this
@@ -234,6 +234,10 @@ export function agent(config: AgentConfig): Agent {
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
+            {
+              toolReplacements: input.tools,
+              retainSkillLoaderTools: input.retainSkillLoaderTools,
+            },
           ),
         { "agent.id": id },
       );

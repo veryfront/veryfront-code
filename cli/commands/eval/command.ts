@@ -5,11 +5,17 @@
 import { dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
-import { isErroredToolExecutionResult, type Tool, type ToolExecutionContext } from "veryfront/tool";
+import {
+  isErroredToolExecutionResult,
+  type Tool,
+  type ToolExecutionContext,
+  type ToolSet,
+} from "veryfront/tool";
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
   EvalMetricResult,
+  EvalMockTools,
   EvalModelComparison,
   EvalModelComparisonMetricName,
   EvalModelComparisonOptions,
@@ -1175,9 +1181,24 @@ function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): 
   return `eval-${toolId}-${context.example.id}-${context.repetition}-${crypto.randomUUID()}`;
 }
 
-function createAgentAdapter(agent: Agent, options: EvalOptions) {
+async function resolveEvalMockTools(
+  mockTools: EvalMockTools | undefined,
+  context: EvalAgentAdapterContext,
+): Promise<ToolSet | undefined> {
+  if (mockTools === undefined) {
+    return undefined;
+  }
+  return typeof mockTools === "function" ? await mockTools(context) : mockTools;
+}
+
+export function createAgentAdapter(agent: Agent, options: EvalOptions) {
   return async ({ definition, example, repetition }: EvalAgentAdapterContext) => {
     const started = Date.now();
+    const mockTools = await resolveEvalMockTools(definition.mockTools, {
+      definition,
+      example,
+      repetition,
+    });
     const response = await agent.generate({
       input: normalizeEvalInputForAgent(example.input),
       context: {
@@ -1190,6 +1211,9 @@ function createAgentAdapter(agent: Agent, options: EvalOptions) {
       },
       ...(options.model ? { model: options.model } : {}),
       ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+      ...(definition.mockTools !== undefined
+        ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+        : {}),
     });
     return {
       text: response.text,

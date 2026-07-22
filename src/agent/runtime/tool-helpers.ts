@@ -239,6 +239,9 @@ export function resolveConfiguredTool(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
   toolName: string,
   context?: ToolExecutionContext,
+  options?: {
+    allowIntegrationStyleConcreteTools?: boolean;
+  },
 ): Tool | null {
   if (!toolsConfig) {
     return null;
@@ -260,8 +263,10 @@ export function resolveConfiguredTool(
   }
 
   if (configuredEntry && typeof configuredEntry === "object") {
-    assertLocalToolId(toolName);
-    assertLocalToolId(configuredEntry.id);
+    if (options?.allowIntegrationStyleConcreteTools !== true) {
+      assertLocalToolId(toolName);
+      assertLocalToolId(configuredEntry.id);
+    }
     return configuredEntry;
   }
 
@@ -276,6 +281,9 @@ export async function executeConfiguredTool(
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
+  options?: {
+    strictConfiguredToolsOnly?: boolean;
+  },
 ): Promise<unknown> {
   if (
     sourceIntegrationPolicy &&
@@ -284,9 +292,15 @@ export async function executeConfiguredTool(
     throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
   }
 
-  const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context);
+  const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context, {
+    allowIntegrationStyleConcreteTools: options?.strictConfiguredToolsOnly,
+  });
   if (configuredTool) {
     return await configuredTool.execute(input, context);
+  }
+
+  if (options?.strictConfiguredToolsOnly) {
+    throw new Error(`Tool "${toolName}" is not available in request-scoped replacement tools`);
   }
 
   // Try local registry first. Owned tools are only executable by their
@@ -376,12 +390,14 @@ export async function getAvailableTools(
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
+    strictConfiguredToolsOnly?: boolean;
     /** Calling agent id for owner-aware tool visibility. */
     callerAgentId?: string;
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
   const sourceIntegrationPolicy = options?.sourceIntegrationPolicy;
+  const strictConfiguredToolsOnly = options?.strictConfiguredToolsOnly === true;
 
   if (toolsConfig === true) {
     const allTools = toolRegistry.getAll();
@@ -400,17 +416,19 @@ export async function getAvailableTools(
       return true;
     });
 
-    // Append remote integration tools (per-request, project-scoped)
-    const remoteDefs = await getRemoteToolDefinitions(options);
-    appendForwardedToolDefinitions(
-      remoteDefs,
-      options?.forwardedRemoteToolDefinitions,
-      options?.allowedRemoteToolNames,
-    );
-    for (const def of remoteDefs) {
-      logToolDefinition(def.name, def);
+    if (!strictConfiguredToolsOnly) {
+      // Append remote integration tools (per-request, project-scoped)
+      const remoteDefs = await getRemoteToolDefinitions(options);
+      appendForwardedToolDefinitions(
+        remoteDefs,
+        options?.forwardedRemoteToolDefinitions,
+        options?.allowedRemoteToolNames,
+      );
+      for (const def of remoteDefs) {
+        logToolDefinition(def.name, def);
+      }
+      tools.push(...remoteDefs);
     }
-    tools.push(...remoteDefs);
 
     return sourceIntegrationPolicy
       ? tools.filter((definition) =>
@@ -420,12 +438,14 @@ export async function getAvailableTools(
   }
 
   const tools: ToolDefinition[] = [];
-  const remoteDefs = await getRemoteToolDefinitions(options);
-  appendForwardedToolDefinitions(
-    remoteDefs,
-    options?.forwardedRemoteToolDefinitions,
-    options?.allowedRemoteToolNames,
-  );
+  const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions(options);
+  if (!strictConfiguredToolsOnly) {
+    appendForwardedToolDefinitions(
+      remoteDefs,
+      options?.forwardedRemoteToolDefinitions,
+      options?.allowedRemoteToolNames,
+    );
+  }
   const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
   const explicitlyRequestedRemoteToolNames = new Set<string>();
   const unresolvedConfiguredToolNames: string[] = [];
@@ -439,6 +459,11 @@ export async function getAvailableTools(
     }
 
     if (entry === true) {
+      if (strictConfiguredToolsOnly) {
+        unresolvedConfiguredToolNames.push(name);
+        continue;
+      }
+
       // Own short name first, then exact id; owned tools of other agents are
       // invisible and fall through to the unresolved diagnostic. Definitions
       // are exposed under the tool's full registry id so execution resolves
@@ -459,8 +484,10 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
-      assertLocalToolId(name);
-      assertLocalToolId(entry.id);
+      if (!strictConfiguredToolsOnly) {
+        assertLocalToolId(name);
+        assertLocalToolId(entry.id);
+      }
       addToolDefinition(tools, name, entry);
     }
   }

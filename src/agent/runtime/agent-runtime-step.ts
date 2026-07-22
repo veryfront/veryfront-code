@@ -18,6 +18,7 @@ export type RuntimeStepToolLoader = (
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
+    strictConfiguredToolsOnly?: boolean;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -54,6 +55,7 @@ export interface PrepareAgentRuntimeStepInput {
   step: number;
   systemPrompt: string;
   toolContextBase: ToolExecutionContext | undefined;
+  strictConfiguredToolsOnly?: boolean;
 }
 
 export interface PreparedAgentRuntimeStep {
@@ -97,6 +99,7 @@ export async function prepareAgentRuntimeStep(
     remoteToolSources: input.remoteToolSources,
     remoteToolContext: toolContext,
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+    strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
   });
 
   if (input.activeSkillPolicy || input.activeSkillToolAvailability) {

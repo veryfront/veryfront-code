@@ -99,7 +99,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
-    skills?: true | string[];
+    skills?: true | false | string[];
   };
   projectId: string | null;
   authToken: string;

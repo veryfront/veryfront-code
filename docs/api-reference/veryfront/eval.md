@@ -129,6 +129,9 @@ const report = await runEval(definition, {
 | `EvalMetricResult` | Result emitted by a metric or check assertion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L307) |
 | `EvalMetricSummary` | Aggregate pass/fail summary for one metric. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L492) |
 | `EvalMetricThreshold` | Numeric threshold attached to score-based metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L17) |
+| `EvalMockTools` | Static or request-scoped mock tools for local `evalAgent` execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L378) |
+| `EvalMockToolsResolver` | Request-scoped mock tool resolver for local `evalAgent` execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L373) |
+| `EvalMockToolsResolverContext` | Context passed to an agent eval mock tool resolver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L366) |
 | `EvalModelCandidateComparison` | Candidate-vs-baseline comparison used to decide whether a model is promotable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L689) |
 | `EvalModelComparison` | Aggregate report for comparing one baseline model against candidate models. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L712) |
 | `EvalModelComparisonConstraint` | Hard model comparison eligibility constraint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L748) |

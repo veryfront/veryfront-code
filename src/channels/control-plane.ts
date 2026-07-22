@@ -360,8 +360,9 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
 export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
   // Owner-aware: the agent's metadata advertises exactly what the agent can
   // resolve at runtime — unowned skills plus its own.
+  const skillsConfig = agent.config.skills === false ? [] : agent.config.skills ?? true;
   return Array.from(
-    skillRegistry.resolveForAgent(agent.config.skills ?? true, { agentId: agent.id }).values(),
+    skillRegistry.resolveForAgent(skillsConfig, { agentId: agent.id }).values(),
   )
     .map((skill) =>
       RuntimeAgentSkillSchema.parse({

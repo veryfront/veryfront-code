@@ -474,6 +474,59 @@ export default evalAgent({
 });
 ```
 
+## Mock tools for local agent evals
+
+Use `mockTools` when a local `evalAgent` should run the real agent while
+replacing its configured tools with deterministic eval doubles. The agent still
+produces the answer and trace; `mockTools` only changes the request-scoped tool
+set passed to `agent.generate({ tools })`.
+
+```ts
+import { datasets, evalAgent, metrics } from "veryfront/eval";
+import { defineSchema } from "veryfront/schemas";
+import { tool } from "veryfront/tool";
+
+const searchDocs = tool({
+  id: "search_docs",
+  description: "Search docs fixture",
+  inputSchema: defineSchema((v) => v.object({ query: v.string().optional() }))(),
+  execute: async (input) => ({ input, passages: ["Refunds require verification."] }),
+});
+
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([{ id: "refund", input: "Can you refund order A1049?" }]),
+  mockTools: { search_docs: searchDocs },
+  metrics: [metrics.agent.calledTool("search_docs").gate()],
+});
+```
+
+`mockTools` can also be a resolver. The local CLI calls it once for each
+example repetition so each record can receive fresh state:
+
+```ts
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([{ id: "refund", input: "Refund order A1049." }]),
+  repetitions: 3,
+  mockTools: ({ example, repetition }) => ({
+    search_docs: createFixtureSearchTool({ exampleId: example.id, repetition }),
+  }),
+});
+```
+
+Mock tools are strict and local-only. When present, no configured agent tools,
+remote tools, provider tools, MCP tools, or sandbox tools are advertised or used
+unless they are explicitly included in the `mockTools` result. Skills agents keep
+only the read-only skill loader tools, `load_skill` and
+`load_skill_reference`, so a skills agent can inspect skill instructions during a
+mocked eval; `execute_skill_script` is not retained unless `mockTools` supplies
+it explicitly. Loaded-skill allowed-tool policies and delegation overrides are
+disabled while mock tools are active; the mock tool map is the complete tool
+allowlist for that `generate()` request. There is no `stream()` equivalent for
+request-scoped mock tools. Live AG-UI agent-service evals reject definitions
+with `mockTools` before sending a request to the hosted endpoint.
+
 ## Live agent-service evals
 
 Use the `veryfront/eval/agent-service` subpath, documented under

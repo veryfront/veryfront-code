@@ -51,6 +51,7 @@ function createEvalDefinition(
     tags: input.tags ?? [],
     metadata: input.metadata ?? {},
     ...("input" in input && input.input ? { input: input.input } : {}),
+    ...("mockTools" in input && input.mockTools ? { mockTools: input.mockTools } : {}),
     ...(input.check ? { check: input.check } : {}),
   };
 }
