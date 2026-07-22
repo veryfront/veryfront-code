@@ -4,6 +4,24 @@ import type {
   ValidationResult,
 } from "#veryfront/extensions/schema/index.ts";
 
+function configurableDescriptor(descriptor: PropertyDescriptor): PropertyDescriptor {
+  return { ...descriptor, configurable: true };
+}
+
+function copyOwnProperties(target: object, source: object): boolean {
+  for (const prop of Reflect.ownKeys(source)) {
+    if (Reflect.getOwnPropertyDescriptor(target, prop)) continue;
+    const descriptor = Reflect.getOwnPropertyDescriptor(source, prop);
+    if (
+      descriptor &&
+      !Reflect.defineProperty(target, prop, configurableDescriptor(descriptor))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function lazySchema<T>(getSchema: () => Schema<T>): Schema<T> {
   let cached: Schema<T> | undefined;
   const schema = () => cached ??= getSchema();
@@ -53,13 +71,19 @@ export function lazySchema<T>(getSchema: () => Schema<T>): Schema<T> {
       return prop in target || prop in (schema() as object);
     },
     ownKeys(target) {
+      if (!Reflect.isExtensible(target)) return Reflect.ownKeys(target);
       return Array.from(
         new Set([...Reflect.ownKeys(target), ...Reflect.ownKeys(schema() as object)]),
       );
     },
     getOwnPropertyDescriptor(target, prop) {
-      return Reflect.getOwnPropertyDescriptor(target, prop) ??
-        Reflect.getOwnPropertyDescriptor(schema() as object, prop);
+      const targetDescriptor = Reflect.getOwnPropertyDescriptor(target, prop);
+      if (targetDescriptor || !Reflect.isExtensible(target)) return targetDescriptor;
+      const schemaDescriptor = Reflect.getOwnPropertyDescriptor(schema() as object, prop);
+      return schemaDescriptor && configurableDescriptor(schemaDescriptor);
+    },
+    preventExtensions(target) {
+      return copyOwnProperties(target, schema() as object) && Reflect.preventExtensions(target);
     },
   });
 }

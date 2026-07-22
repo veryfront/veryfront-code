@@ -6,8 +6,13 @@
  * @module schemas/primitives
  */
 
-import type { InferSchema, Schema } from "veryfront/extensions/schema";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
+
+const ABSOLUTE_PATH_PATTERN = /^(?:\/|\\(?!\\)|[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/;
+const MIN_PORT_NUMBER = 1;
+const MAX_PORT_NUMBER = 65_535;
+const isPathWithoutNullBytes = (path: string): boolean => !path.includes("\0");
 
 export const getNonEmptyStringSchema = defineSchema((v) =>
   v.string().min(1, "String cannot be empty")
@@ -25,7 +30,11 @@ export const getNonNegativeIntSchema = defineSchema((v) =>
 export type NonNegativeInt = InferSchema<ReturnType<typeof getNonNegativeIntSchema>>;
 
 export const getPortNumberSchema = defineSchema((v) =>
-  v.number().int().min(1).max(65535, "Port must be between 1 and 65535")
+  v
+    .number()
+    .int()
+    .min(MIN_PORT_NUMBER)
+    .max(MAX_PORT_NUMBER, `Port must be between ${MIN_PORT_NUMBER} and ${MAX_PORT_NUMBER}`)
 );
 export type PortNumber = InferSchema<ReturnType<typeof getPortNumberSchema>>;
 
@@ -71,14 +80,20 @@ export const getSemverSchema = defineSchema((v) =>
 export type Semver = InferSchema<ReturnType<typeof getSemverSchema>>;
 
 export const getFilePathSchema = defineSchema((v) =>
-  v.string().min(1, "File path cannot be empty")
+  v
+    .string()
+    .min(1, "File path cannot be empty")
+    .refine(isPathWithoutNullBytes, "File path cannot contain null bytes")
 );
 export type FilePath = InferSchema<ReturnType<typeof getFilePathSchema>>;
 
 export const getAbsolutePathSchema = defineSchema((v) =>
-  v.string().regex(
-    /^(?:\/|[A-Za-z]:\\)/,
-    "Path must be absolute (start with / or drive letter)",
-  )
+  v
+    .string()
+    .regex(
+      ABSOLUTE_PATH_PATTERN,
+      "Path must start at a filesystem root, drive letter, or UNC share",
+    )
+    .refine(isPathWithoutNullBytes, "Path cannot contain null bytes")
 );
 export type AbsolutePath = InferSchema<ReturnType<typeof getAbsolutePathSchema>>;

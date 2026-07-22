@@ -9,17 +9,25 @@
  * @module schemas/common
  */
 
-import type { InferSchema, Schema } from "veryfront/extensions/schema";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/index.ts";
 import { defineSchema } from "./define.ts";
 import { getTimestampSchema } from "./primitives.ts";
 
 const SLUG_PATTERN = /^[a-z0-9-]+$/;
 const E164_PHONE_NUMBER_PATTERN = /^\+?[1-9]\d{1,14}$/;
+const MAX_EMAIL_LENGTH = 255;
+const MAX_SLUG_LENGTH = 100;
+const DEFAULT_PAGE_NUMBER = 1;
+const DEFAULT_PAGE_LIMIT = 10;
+const MAX_PAGE_LIMIT = 100;
+const STRONG_PASSWORD_MIN_LENGTH = 8;
 
-export const getEmailSchema = defineSchema((v) => v.string().email().max(255));
+export const getEmailSchema = defineSchema((v) => v.string().email().max(MAX_EMAIL_LENGTH));
 export const getUuidSchema = defineSchema((v) => v.string().uuid());
-export const getSlugSchema = defineSchema((v) => v.string().regex(SLUG_PATTERN).min(1).max(100));
+export const getSlugSchema = defineSchema((v) =>
+  v.string().regex(SLUG_PATTERN).min(1).max(MAX_SLUG_LENGTH)
+);
 export const getUrlSchema = defineSchema((v) =>
   v.string().url().max(MAX_URL_LENGTH_FOR_VALIDATION)
 );
@@ -27,14 +35,19 @@ export const getPhoneNumberSchema = defineSchema((v) =>
   v.string().regex(E164_PHONE_NUMBER_PATTERN)
 );
 
-export const getPaginationSchema = defineSchema((v) =>
-  v.object({
-    page: v.coerce.number().int().positive().default(1),
-    limit: v.coerce.number().int().positive().max(100).default(10),
+export const getPaginationSchema = defineSchema((v) => {
+  const numericQueryParameter = () =>
+    v.union([v.string(), v.number()]).transform((value) => Number(value));
+
+  return v.object({
+    page: numericQueryParameter().pipe(v.number().int().positive()).default(DEFAULT_PAGE_NUMBER),
+    limit: numericQueryParameter().pipe(v.number().int().positive().max(MAX_PAGE_LIMIT)).default(
+      DEFAULT_PAGE_LIMIT,
+    ),
     sort: v.string().optional(),
     order: v.enum(["asc", "desc"]).optional(),
-  })
-);
+  });
+});
 
 export const getDateRangeSchema = defineSchema((v) =>
   v
@@ -50,7 +63,10 @@ export const getDateRangeSchema = defineSchema((v) =>
 export const getStrongPasswordSchema = defineSchema((v) =>
   v
     .string()
-    .min(8, "Password must be at least 8 characters")
+    .min(
+      STRONG_PASSWORD_MIN_LENGTH,
+      `Password must be at least ${STRONG_PASSWORD_MIN_LENGTH} characters`,
+    )
     .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
     .regex(/[a-z]/, "Password must contain at least one lowercase letter")
     .regex(/[0-9]/, "Password must contain at least one number")
