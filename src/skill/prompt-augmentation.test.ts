@@ -65,7 +65,11 @@ describe("src/skill/prompt-augmentation", () => {
         ),
         false,
       );
-      assertStringIncludes(result, "2 more skills available. Use load_skill to discover them.");
+      assertStringIncludes(
+        result,
+        "2 more skill summaries omitted from this prompt. Call load_skill only with a known skill ID.",
+      );
+      assertEquals(result.includes("Use load_skill to discover"), false);
     });
 
     it("should stop iterating after the prompt entry limit", () => {

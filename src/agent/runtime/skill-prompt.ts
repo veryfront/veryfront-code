@@ -57,7 +57,7 @@ export function buildRuntimeAvailableSkillsPromptBlock(
   const truncationNote = skills.length > MAX_RUNTIME_SKILL_PROMPT_ENTRIES
     ? `\n\n(${
       skills.length - MAX_RUNTIME_SKILL_PROMPT_ENTRIES
-    } more skills available — use load_skill to discover)`
+    } more skill summaries omitted from this prompt; use an ID from the load_skill tool schema)`
     : "";
 
   return createRuntimePromptBlock({

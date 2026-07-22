@@ -110,5 +110,9 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", (
     ),
     false,
   );
-  assertStringIncludes(block, "(2 more skills available — use load_skill to discover)");
+  assertStringIncludes(
+    block,
+    "(2 more skill summaries omitted from this prompt; use an ID from the load_skill tool schema)",
+  );
+  assertEquals(block.includes("use load_skill to discover"), false);
 });

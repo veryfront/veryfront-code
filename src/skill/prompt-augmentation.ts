@@ -44,7 +44,7 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
     lines.push(
       `${
         skills.size - MAX_SKILL_MANIFEST_PROMPT_ENTRIES
-      } more skills available. Use load_skill to discover them.`,
+      } more skill summaries omitted from this prompt. Call load_skill only with a known skill ID.`,
     );
   }
 
