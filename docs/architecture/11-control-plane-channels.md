@@ -26,15 +26,26 @@ Primary source areas:
 
 ## Runtime flow
 
-1. A trusted service signs a channel request.
-2. The project runtime validates the signature and request shape.
-3. Dispatch handlers route the request to the intended control-plane operation.
-4. Invoke handlers execute project-scoped runtime work and return structured
+1. A trusted service signs a channel request with a canonical compact EdDSA JWS.
+2. The project runtime validates the protected header, signature, freshness,
+   body hash, project audience, and request shape.
+3. Channel dispatch additionally binds the signed subject, project, and
+   platform claims to the corresponding request-body fields.
+4. Dispatch handlers route the request to the intended control-plane operation.
+5. Invoke handlers execute project-scoped runtime work and return structured
    results.
 
 ## Boundaries
 
 - Control-plane channels are signed management surfaces, not public app routes.
+- Unsupported critical JWS header parameters and non-canonical base64url parts
+  are rejected. Non-critical metadata remains forward-compatible. Optional
+  expected claims are checked whenever supplied, including explicitly empty
+  values.
+- Conversation-history timestamps use ISO 8601 date-time strings. Orphan tool
+  results are discarded rather than assigned a fabricated tool name.
+- Invocations sharing an agent with persistent memory are serialized across the
+  memory reset and generation operation. Stateless agents remain concurrent.
 - `POST /api/ag-ui` is the public AG-UI transport adapter.
 - `/api/runs*` is the sibling run-control API for hosted runtime lifecycle
   operations.

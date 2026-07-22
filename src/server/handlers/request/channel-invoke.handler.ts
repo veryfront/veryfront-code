@@ -46,6 +46,10 @@ export class ChannelInvokeHandler extends BaseHandler {
         logLabel: "Channel invoke",
         logWarn: (message, extra) => this.logWarn(message, extra),
         schema: ChannelInvokeRequestSchema,
+        validateClaims: (claims, payload) =>
+          claims.sub === payload.dispatchId &&
+          claims.project_id === payload.projectId &&
+          claims.platform === payload.platform,
       });
       if (!dispatchRequest.ok) {
         return this.respond(dispatchRequest.response);

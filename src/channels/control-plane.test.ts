@@ -32,6 +32,8 @@ async function createControlPlaneSignature(
   overrides: Partial<{
     algorithm: string;
     audience: string;
+    header: Record<string, unknown>;
+    paddedHeader: boolean;
     projectId: string;
     requestId: string;
     surface: "studio" | "channels" | "a2a" | "mcp";
@@ -49,10 +51,14 @@ async function createControlPlaneSignature(
   const publicKeyPem = encodePem("PUBLIC KEY", publicKeyDer);
   const now = Math.floor(Date.now() / 1000);
 
-  const header = base64urlEncode(JSON.stringify({
+  const headerJson = JSON.stringify({
     alg: overrides.algorithm ?? "EdDSA",
     typ: "JWT",
-  }));
+    ...overrides.header,
+  });
+  const header = overrides.paddedHeader
+    ? btoa(headerJson).replaceAll("+", "-").replaceAll("/", "_")
+    : base64urlEncode(headerJson);
   const payload = base64urlEncode(JSON.stringify({
     iss: "veryfront-api",
     aud: overrides.audience ?? "demo-project",
@@ -210,6 +216,95 @@ describe("channels/control-plane", () => {
           expectedProjectId: "proj-1",
           publicKeyPem,
           maxAgeSeconds: 60,
+        })
+      );
+    });
+
+    it("rejects unsupported critical protected-header parameters", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "studio",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        header: { crit: ["unsupported"], unsupported: true },
+      });
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+    });
+
+    it("accepts non-critical protected-header metadata", async () => {
+      const body = JSON.stringify({ requestId: "agents-1" });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        header: { vendor_metadata: "key-generation-2" },
+      });
+
+      const claims = await verifyControlPlaneJws(jws, body, {
+        audience: "demo-project",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+      });
+
+      assertEquals(claims.sub, "agents-1");
+    });
+
+    it("rejects non-canonical padded compact-JWS parts", async () => {
+      const body = JSON.stringify({ requestId: "agents-1" });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        header: { kid: "padding-required" },
+        paddedHeader: true,
+      });
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+    });
+
+    it("does not treat explicitly empty expected claims as omitted", async () => {
+      const body = JSON.stringify({ requestId: "agents-1" });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          expectedProjectId: "",
+          expectedSubject: "",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+    });
+
+    it("rejects inconsistent timestamps and invalid freshness policies", async () => {
+      const body = JSON.stringify({ requestId: "agents-1" });
+      const now = Math.floor(Date.now() / 1000);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        iat: now + 4,
+        exp: now + 2,
+      });
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          publicKeyPem,
+          maxAgeSeconds: Number.NaN,
         })
       );
     });
@@ -502,6 +597,28 @@ describe("channels/control-plane", () => {
       );
     });
 
+    it("omits an invalid avatar URL instead of failing the complete agent list", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant" ? createAgent({ id, avatarUrl: "not a URL" }) : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(response.agents[0]?.avatar_url, undefined);
+      assertEquals(response.agents[0]?.id, "assistant");
+    });
+
+    it("uses agent ids to make equal-name ordering deterministic", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) => createAgent({ id, name: "Same name" }),
+        getAllAgentIds: () => ["assistant-z", "assistant-a"],
+      });
+
+      assertEquals(response.agents.map((agent) => agent.id), ["assistant-a", "assistant-z"]);
+    });
+
     it("omits invalid suggestions instead of failing the whole agent list", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
         ensureProjectDiscovery: async () => {},
@@ -584,36 +701,38 @@ describe("channels/control-plane", () => {
   });
 });
 
-Deno.test("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
-  skillRegistry.clearAll();
-  try {
-    registerSkill("global-howto", {
-      id: "global-howto",
-      metadata: { name: "global-howto", description: "Global guide" },
-      rootPath: "/nonexistent/global-howto",
-    });
-    registerSkill("researcher--cite", {
-      id: "researcher--cite",
-      metadata: { name: "cite", description: "Cite sources" },
-      rootPath: "/nonexistent/cite",
-      ownerAgentId: "researcher",
-      shortName: "cite",
-    });
-
-    const researcher = { id: "researcher", config: { skills: true } } as unknown as Agent;
-    const researcherSkills = resolveAgentSkills(researcher).map((skill) => skill.id).sort();
-    assertEquals(researcherSkills, ["global-howto", "researcher--cite"]);
-
-    const writer = { id: "writer", config: { skills: true } } as unknown as Agent;
-    const writerSkills = resolveAgentSkills(writer).map((skill) => skill.id);
-    assertEquals(writerSkills, ["global-howto"]);
-
-    const defaultWriter = { id: "writer", config: {} } as unknown as Agent;
-    assertEquals(resolveAgentSkills(defaultWriter).map((skill) => skill.id), ["global-howto"]);
-
-    const emptyWriter = { id: "writer", config: { skills: [] } } as unknown as Agent;
-    assertEquals(resolveAgentSkills(emptyWriter), []);
-  } finally {
+describe("resolveAgentSkills", () => {
+  it("includes the agent's own skills and excludes others'", () => {
     skillRegistry.clearAll();
-  }
+    try {
+      registerSkill("global-howto", {
+        id: "global-howto",
+        metadata: { name: "global-howto", description: "Global guide" },
+        rootPath: "/nonexistent/global-howto",
+      });
+      registerSkill("researcher--cite", {
+        id: "researcher--cite",
+        metadata: { name: "cite", description: "Cite sources" },
+        rootPath: "/nonexistent/cite",
+        ownerAgentId: "researcher",
+        shortName: "cite",
+      });
+
+      const researcher = { id: "researcher", config: { skills: true } } as unknown as Agent;
+      const researcherSkills = resolveAgentSkills(researcher).map((skill) => skill.id).sort();
+      assertEquals(researcherSkills, ["global-howto", "researcher--cite"]);
+
+      const writer = { id: "writer", config: { skills: true } } as unknown as Agent;
+      const writerSkills = resolveAgentSkills(writer).map((skill) => skill.id);
+      assertEquals(writerSkills, ["global-howto"]);
+
+      const defaultWriter = { id: "writer", config: {} } as unknown as Agent;
+      assertEquals(resolveAgentSkills(defaultWriter).map((skill) => skill.id), ["global-howto"]);
+
+      const emptyWriter = { id: "writer", config: { skills: [] } } as unknown as Agent;
+      assertEquals(resolveAgentSkills(emptyWriter), []);
+    } finally {
+      skillRegistry.clearAll();
+    }
+  });
 });

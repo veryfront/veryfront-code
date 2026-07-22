@@ -12,6 +12,7 @@ import { listRuntimeAgents, type RuntimeAgentDiscoveryDeps } from "./control-pla
 import { ensureProjectDiscovery as ensureProjectDiscoveryForProject } from "#veryfront/server/handlers/request/api/project-discovery.ts";
 
 const logger = serverLogger.component("channels-invoke");
+const persistentAgentInvocationTails = new WeakMap<Agent, Promise<void>>();
 
 const getRawHistoryPartSchema = defineSchema((v) =>
   v.object({
@@ -36,7 +37,7 @@ const getChannelInvokeHistoryMessageSchema = defineSchema((v) =>
     role: v.enum(["user", "assistant", "system", "tool"] as const),
     parts: v.array(getRawHistoryPartSchema()),
     metadata: v.record(v.string(), v.unknown()).optional(),
-    createdAt: v.string().optional(),
+    createdAt: v.string().datetime().optional(),
   })
 );
 
@@ -228,14 +229,16 @@ function normalizeConversationPart(
   part: InferSchema<ReturnType<typeof getRawHistoryPartSchema>>,
   toolNamesById: ReadonlyMap<string, string> = new Map(),
 ): Message["parts"][number] | null {
-  if (part.type === "text" && typeof part.text === "string") {
+  if (part.type === "text" && typeof part.text === "string" && part.text.trim().length > 0) {
     return { type: "text", text: part.text };
   }
 
   if (
     part.type === "tool_call" &&
     typeof part.id === "string" &&
+    part.id.length > 0 &&
     typeof part.name === "string" &&
+    part.name.length > 0 &&
     part.input &&
     typeof part.input === "object" &&
     !Array.isArray(part.input)
@@ -248,13 +251,20 @@ function normalizeConversationPart(
     };
   }
 
-  if (part.type === "tool_result" && typeof part.tool_call_id === "string") {
+  if (
+    part.type === "tool_result" &&
+    typeof part.tool_call_id === "string" &&
+    part.tool_call_id.length > 0
+  ) {
+    const toolName = typeof part.tool_name === "string" && part.tool_name.length > 0
+      ? part.tool_name
+      : toolNamesById.get(part.tool_call_id);
+    if (!toolName) return null;
+
     return {
       type: "tool-result",
       toolCallId: part.tool_call_id,
-      toolName: typeof part.tool_name === "string"
-        ? part.tool_name
-        : toolNamesById.get(part.tool_call_id) ?? "unknown",
+      toolName,
       result: "output" in part ? part.output : undefined,
     };
   }
@@ -285,11 +295,13 @@ export function normalizeConversationHistoryForRuntime(
       })
       .filter((part): part is NonNullable<typeof part> => part !== null);
 
+    const timestamp = message.createdAt === undefined ? undefined : Date.parse(message.createdAt);
+
     return {
       id: message.id,
       role: message.role,
       parts,
-      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
+      ...(timestamp !== undefined && Number.isFinite(timestamp) ? { timestamp } : {}),
       ...(message.metadata ? { metadata: message.metadata } : {}),
     };
   });
@@ -318,7 +330,12 @@ function convertAssistantPartToChannelResponsePart(
   part: Message["parts"][number],
   knownToolCallIds: Set<string>,
 ): ChannelResponsePart | null {
-  if (part.type === "text" && "text" in part) {
+  if (
+    part.type === "text" &&
+    "text" in part &&
+    typeof part.text === "string" &&
+    part.text.trim().length > 0
+  ) {
     return channelTextPartSchema.parse({
       type: "text",
       text: part.text,
@@ -364,6 +381,7 @@ function findLastAssistantMessage(messages: Message[]): Message | undefined {
 export function buildChannelResponseParts(response: AgentResponse): ChannelResponsePart[] {
   const responseParts: ChannelResponsePart[] = [];
   const knownToolCallIds = new Set<string>();
+  let hasTextPart = false;
 
   if (response.thinking?.trim()) {
     responseParts.push(channelReasoningPartSchema.parse({
@@ -400,9 +418,13 @@ export function buildChannelResponseParts(response: AgentResponse): ChannelRespo
       const converted = convertAssistantPartToChannelResponsePart(part, knownToolCallIds);
       if (converted) {
         responseParts.push(converted);
+        if (converted.type === "text") hasTextPart = true;
+        if (converted.type === "tool_call") knownToolCallIds.add(converted.id);
       }
     }
-  } else if (response.text.trim()) {
+  }
+
+  if (!hasTextPart && response.text.trim()) {
     responseParts.push(channelTextPartSchema.parse({
       type: "text",
       text: response.text,
@@ -424,6 +446,34 @@ function classifyChannelInvokeError(error: unknown): ChannelInvokeResponse["erro
   }
 
   return { code: "internal_error", retryable: true };
+}
+
+function usesPersistentMemory(agent: Agent): boolean {
+  return agent.config.memory !== undefined && agent.config.memory.enabled !== false;
+}
+
+async function runWithPersistentAgentIsolation<T>(
+  agent: Agent,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!usesPersistentMemory(agent)) return await operation();
+
+  const previous = persistentAgentInvocationTails.get(agent) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  persistentAgentInvocationTails.set(agent, current);
+
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (persistentAgentInvocationTails.get(agent) === current) {
+      persistentAgentInvocationTails.delete(agent);
+    }
+  }
 }
 
 /** Execute channel invoke. */
@@ -451,49 +501,53 @@ export async function executeChannelInvoke(
     };
   }
 
-  const normalizedHistory = normalizeConversationHistoryForRuntime(payload.conversationHistory);
-  await agent.clearMemory();
-
   try {
-    const result = await agent.generate({
-      input: normalizedHistory,
-      context: {
-        requestId: payload.dispatchId,
-        dispatchId: payload.dispatchId,
-        conversationId: payload.conversationId,
-        projectId: payload.projectId,
-        assistantId: payload.assistantId,
-        channel: payload.inboundMessage,
-      },
-      ...(payload.generation?.maxResponseTokens
-        ? {
-          maxOutputTokens: payload.generation.maxResponseTokens,
-        }
-        : {}),
-    });
+    return await runWithPersistentAgentIsolation(agent, async () => {
+      const normalizedHistory = normalizeConversationHistoryForRuntime(
+        payload.conversationHistory,
+      );
+      await agent.clearMemory();
 
-    return ChannelInvokeResponseSchema.parse({
-      ignored: false,
-      responseParts: buildChannelResponseParts(result),
-      tokenUsage: result.usage
-        ? {
-          inputTokens: result.usage.promptTokens,
-          outputTokens: result.usage.completionTokens,
-          totalTokens: result.usage.totalTokens,
-          ...(typeof result.usage.cachedInputTokens === "number"
-            ? { cachedInputTokens: result.usage.cachedInputTokens }
-            : {}),
-          ...(typeof result.usage.cacheCreationInputTokens === "number"
-            ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens }
-            : {}),
-          ...(typeof result.usage.cacheReadInputTokens === "number"
-            ? { cacheReadInputTokens: result.usage.cacheReadInputTokens }
-            : {}),
-          ...(typeof result.usage.reasoningTokens === "number"
-            ? { reasoningTokens: result.usage.reasoningTokens }
-            : {}),
-        }
-        : undefined,
+      const result = await agent.generate({
+        input: normalizedHistory,
+        context: {
+          requestId: payload.dispatchId,
+          dispatchId: payload.dispatchId,
+          conversationId: payload.conversationId,
+          projectId: payload.projectId,
+          assistantId: payload.assistantId,
+          channel: payload.inboundMessage,
+        },
+        ...(payload.generation?.maxResponseTokens
+          ? {
+            maxOutputTokens: payload.generation.maxResponseTokens,
+          }
+          : {}),
+      });
+
+      return ChannelInvokeResponseSchema.parse({
+        ignored: false,
+        responseParts: buildChannelResponseParts(result),
+        tokenUsage: result.usage
+          ? {
+            inputTokens: result.usage.promptTokens,
+            outputTokens: result.usage.completionTokens,
+            totalTokens: result.usage.totalTokens,
+            ...(typeof result.usage.cachedInputTokens === "number"
+              ? { cachedInputTokens: result.usage.cachedInputTokens }
+              : {}),
+            ...(typeof result.usage.cacheCreationInputTokens === "number"
+              ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens }
+              : {}),
+            ...(typeof result.usage.cacheReadInputTokens === "number"
+              ? { cacheReadInputTokens: result.usage.cacheReadInputTokens }
+              : {}),
+            ...(typeof result.usage.reasoningTokens === "number"
+              ? { reasoningTokens: result.usage.reasoningTokens }
+              : {}),
+          }
+          : undefined,
+      });
     });
   } catch (error) {
     logger.error("Channel invoke runtime execution failed", {

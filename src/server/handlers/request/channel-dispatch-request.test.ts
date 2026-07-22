@@ -22,6 +22,11 @@ async function sha256Base64url(body: string): Promise<string> {
 
 async function createDispatchSignature(
   body: string,
+  overrides: Partial<{
+    platform: string;
+    projectId: string;
+    subject: string;
+  }> = {},
 ): Promise<{ jws: string; publicKeyPem: string }> {
   const keyPair = await crypto.subtle.generateKey("Ed25519", true, [
     "sign",
@@ -34,9 +39,9 @@ async function createDispatchSignature(
   const payload = base64urlEncode(JSON.stringify({
     iss: "veryfront-api",
     aud: "demo-project",
-    sub: "dispatch-1",
-    project_id: "proj-1",
-    platform: "slack",
+    sub: overrides.subject ?? "dispatch-1",
+    project_id: overrides.projectId ?? "proj-1",
+    platform: overrides.platform ?? "slack",
     body_sha256: await sha256Base64url(body),
     iat: now,
     exp: now + 60,
@@ -66,11 +71,11 @@ function createCtx(publicKeyPem?: string): HandlerContext {
   } as unknown as HandlerContext;
 }
 
-function createValidBody(): string {
+function createValidBody(overrides: { projectId?: string } = {}): string {
   return JSON.stringify({
     dispatchId: "dispatch-1",
     conversationId: "conversation-1",
-    projectId: "proj-1",
+    projectId: overrides.projectId ?? "proj-1",
     assistantId: "agent-1",
     platform: "slack",
     inboundMessage: {
@@ -90,6 +95,10 @@ async function readFixture(req: Request, ctx: HandlerContext) {
     invalidRequestError: "Invalid channel invoke request",
     schema: ChannelInvokeRequestSchema,
     logWarn: () => {},
+    validateClaims: (claims, payload) =>
+      claims.sub === payload.dispatchId &&
+      claims.project_id === payload.projectId &&
+      claims.platform === payload.platform,
   });
 }
 
@@ -182,6 +191,44 @@ describe("server/handlers/request/channel-dispatch-request", () => {
       assertEquals(await invalidSignature.response.json(), { error: "Invalid dispatch signature" });
     }
   });
+
+  for (
+    const { bodyOptions, label, signatureOptions } of [
+      {
+        label: "subject",
+        signatureOptions: { subject: "another-dispatch" },
+      },
+      {
+        bodyOptions: { projectId: "another-project" },
+        label: "project",
+        signatureOptions: {},
+      },
+      {
+        label: "platform",
+        signatureOptions: { platform: "another-platform" },
+      },
+    ]
+  ) {
+    it(`rejects a valid signature whose ${label} claim is not bound to the body`, async () => {
+      const body = createValidBody(bodyOptions);
+      const { jws, publicKeyPem } = await createDispatchSignature(body, signatureOptions);
+
+      const result = await readFixture(
+        new Request("https://example.com/channels/invoke", {
+          method: "POST",
+          headers: { "x-veryfront-dispatch-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertEquals(result.ok, false);
+      if (!result.ok) {
+        assertEquals(result.response.status, 401);
+        assertEquals(await result.response.json(), { error: "Invalid dispatch signature" });
+      }
+    });
+  }
 
   it("preserves caller-specific schema error responses", async () => {
     const body = JSON.stringify({ dispatchId: "dispatch-1" });
