@@ -92,15 +92,17 @@ allowlist, not an authorization policy. The same list also enables
 provider-native tools such as `web_search`, even though those tools are not MCP
 tools and are executed by the selected model provider.
 
-Skill tools are exposed for every agent without the user manually adding them
-to `tools`. The `skills` field selects which visible skills appear in the
-system prompt, while an omitted selector advertises all visible skills.
+`load_skill` is exposed for every agent without the user manually adding it to
+`tools`. The `skills` field selects which visible skills appear in the system
+prompt, while an omitted selector advertises all visible skills.
 
 - The classic `agent()` factory registers shared skill tools and merges
   the skill platform tools into the agent's internal tools config using the old
   hyphenated runtime spelling.
 - The hosted runtime injects `load_skill` into its local host tool set and uses
-  `load_skill` in hosted steering, eval, and child-agent paths.
+  `load_skill` in hosted steering, eval, and child-agent paths. Its optional
+  `file` input reads references with request-scoped project context. Hosted
+  runs do not expose direct skill script execution.
 
 Public users can narrow the advertised catalog with `skills`; they do not add
 `load_skill` to `tools`. The factory currently implements the platform tools as
@@ -188,8 +190,10 @@ appends forwarded remote definitions, and applies `allowedRemoteToolNames`.
 Provider-native tools are added later during model tool conversion. For
 example, `web_search` is selected from the allowed name list, converted into an
 Anthropic provider tool, and marked as provider-executed in stream handling.
-Runtime skill tools are local platform tools. They are exposed for every agent,
-filtered by the active skill policy, and executed by Veryfront.
+Runtime skill tools are local platform tools. Local and project runtimes expose
+the three-tool skill surface, filter it by the active skill policy, and execute
+it through Veryfront. Hosted chat exposes its request-scoped `load_skill` tool
+instead.
 
 `executeConfiguredTool` resolves in this order:
 

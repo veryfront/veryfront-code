@@ -208,7 +208,7 @@ export interface AgentConfig {
    * This selects the prompt catalog only. It does not restrict which
    * owner-visible skills `load_skill` can resolve by id.
    *
-   * Discovery happens at startup via discoverAll(). Skill loading tools remain
+   * Discovery happens at startup via discoverAll(). `load_skill` remains
    * available to every agent regardless of this catalog selection.
    */
   skills?: true | string[];

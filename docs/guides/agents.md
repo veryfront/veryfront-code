@@ -93,8 +93,8 @@ Research the question and cite every claim.
 ```
 
 - Omit `skills` or use `skills: true` to advertise every skill visible to the
-  agent. Use `skills: []` to advertise none. Skill loading tools remain
-  available in either case.
+  agent. Use `skills: []` to advertise none. `load_skill` remains available in
+  either case.
 - `tools: true` - every tool visible to the agent.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
@@ -189,8 +189,8 @@ export default agent({
 ## Use skills
 
 Skills are reusable instruction packs discovered from your project's `skills/`
-directory. Every agent receives the visible skill catalog and skill loading
-tools automatically.
+directory. Every agent receives the visible skill catalog and `load_skill`
+automatically.
 
 ```ts
 // agents/assistant.ts
@@ -208,12 +208,11 @@ export default agent({
 
 Use `skills: ["incident-response", "repo-maintainer"]` to advertise only those
 skills. Use `skills: []` to advertise no skills. This selector does not remove
-the built-in skill loading tools or restrict which visible skills they can load
-by ID:
+`load_skill` or restrict which visible skills it can load by ID.
 
-- `load_skill`
-- `load_skill_reference`
-- `execute_skill_script`
+Local and project runtimes also expose `load_skill_reference` and
+`execute_skill_script`. Hosted chat reads an advertised reference through
+`load_skill({ skillId, file })` and does not execute skill scripts directly.
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -223,9 +222,10 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 When an agent uses a skill, the flow is:
 
 1. Call `load_skill({ skillId })` to load the skill instructions and policy.
-2. Optionally call `load_skill_reference(...)` to read files from
-   `references/`, `resources/`, or `assets/`.
-3. Optionally call `execute_skill_script(...)` to run scripts from `scripts/`.
+2. Read an advertised reference with `load_skill_reference(...)` on local and
+   project runtimes, or `load_skill({ skillId, file })` in hosted chat.
+3. On local and project runtimes, optionally call
+   `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
 The runtime enforces that non-skill tools cannot run before a successful

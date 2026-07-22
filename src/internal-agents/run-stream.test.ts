@@ -1279,7 +1279,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
-  it("preserves invoke_agent delegation for default-skilled agents with visible skills", async () => {
+  it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
     registerSkill("handoff", {
       id: "handoff",
       metadata: { name: "handoff", description: "Delegate safely" },
@@ -1295,6 +1295,7 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
+        skills: [],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },

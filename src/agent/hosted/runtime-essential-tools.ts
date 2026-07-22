@@ -61,9 +61,10 @@ export function resolveHostedRuntimeAllowedToolNames(
     }
   }
 
-  // Skill loading is framework infrastructure for every agent. Preserve it
-  // under non-empty allowlists and config-derived empty selectors. Explicit
-  // request-level empty allowlists return above and remain deny-all.
+  // Preserve request-scoped skill loading tools when the host supplies them.
+  // Hosted cloud supplies load_skill; other adapters may also supply the
+  // reference tool. Explicit request-level empty allowlists return above and
+  // remain deny-all.
   if (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) {
     for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
       if (localToolNames.has(toolName)) {
