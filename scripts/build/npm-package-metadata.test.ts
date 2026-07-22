@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
@@ -7,6 +7,7 @@ import {
 import {
   EXTENSION_OWNED_DEPENDENCIES,
   normalizeNpmPackageMetadata,
+  removeInternalNpmEntryPointExports,
   ROOT_OPTIONAL_RUNTIME_PEERS,
 } from "./npm-package-metadata.ts";
 import {
@@ -37,6 +38,38 @@ Deno.test("npm package provenance metadata points at veryfront-code", async () =
     'url: "https://github.com/veryfront/veryfront-code/issues"',
   );
   assertEquals(source.includes("github.com/veryfront/veryfront.git"), false);
+});
+
+Deno.test("removes build-only entry points from the published npm exports", () => {
+  const pkg = {
+    exports: {
+      ".": { import: "./esm/src/index.js" },
+      "./index.client": { import: "./esm/src/index.client.js" },
+    } as Record<string, { import: string }>,
+  };
+
+  removeInternalNpmEntryPointExports(pkg, ["./index.client"]);
+
+  assertEquals(pkg.exports, {
+    ".": { import: "./esm/src/index.js" },
+  });
+});
+
+Deno.test("fails closed when generated npm exports cannot prove an internal entry", () => {
+  assertThrows(
+    () => removeInternalNpmEntryPointExports({}, ["./index.client"]),
+    Error,
+    "missing its exports map",
+  );
+  assertThrows(
+    () =>
+      removeInternalNpmEntryPointExports(
+        { exports: { ".": { import: "./esm/src/index.js" } } },
+        ["./index.client"],
+      ),
+    Error,
+    "missing internal entry point ./index.client",
+  );
 });
 
 Deno.test("root npm build metadata does not inject extension implementation dependencies", async () => {
@@ -760,6 +793,20 @@ describe("npm generated integration artifacts", () => {
         buildNpmTask.indexOf("scripts/build/build-npm-dnt.ts"),
       true,
     );
+  });
+
+  it("ships the client root barrel without publishing an import subpath", async () => {
+    const pkg = JSON.parse(await Deno.readTextFile("npm/package.json"));
+    assertEquals(pkg.exports["./index.client"], undefined);
+
+    for (const path of [
+      "npm/esm/src/index.client.js",
+      "npm/esm/src/index.client.d.ts",
+    ]) {
+      const source = await Deno.readTextFile(path);
+      assertEquals(source.includes("_dnt.polyfills"), false);
+      assertEquals(source.includes("_dnt.shims"), false);
+    }
   });
 
   it("keeps the active Jira JQL search endpoint in the npm source artifact", async () => {

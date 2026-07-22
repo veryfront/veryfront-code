@@ -1,13 +1,13 @@
 /**
- * Client/SSR-safe mirror of the `veryfront` root barrel ({@link file://./index.ts}).
+ * Client/SSR-safe mirror of the `veryfront` root barrel in `src/index.ts`.
  *
  * The root barrel re-exports the server bootstrap surface (`createHandler`,
  * `startServer`, `toNodeHandler`) from `#veryfront/server`. Because the browser
  * and SSR pipelines transform modules per-file (no cross-module tree-shaking),
- * an ESM re-export eagerly loads its source module — so pulling the root barrel
+ * an ESM re-export eagerly loads its source module, so pulling the root barrel
  * into a client chunk drags the entire server graph in, including
  * `src/server/production-server.ts`, which has module top-level `await` and
- * cannot be transformed to the es2020 browser target (→ HTTP 500 on that chunk,
+ * cannot be transformed to the es2020 browser target (HTTP 500 on that chunk,
  * which aborts hydration).
  *
  * A client-reachable module doing a *used* value import from the barrel (e.g.
@@ -19,10 +19,9 @@
  * `src/transforms/import-rewriter/strategies/veryfront-strategy.ts`), the same
  * mechanism `veryfront/workflow` already uses.
  *
- * Keep the exports below in sync with {@link file://./index.ts} — everything
+ * This is a build-only entry point, not a public package subpath. Keep the
+ * exports below in sync with `src/index.ts`, including everything
  * except the `createHandler` / `startServer` / `toNodeHandler` value export.
- *
- * @module veryfront
  */
 
 export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
@@ -31,7 +30,7 @@ export type { VeryfrontConfig } from "#veryfront/config";
 export { getEnv } from "#veryfront/platform";
 
 // NOTE: the server bootstrap value export (`createHandler`, `startServer`,
-// `toNodeHandler` from "#veryfront/server") is intentionally omitted here — it
+// `toNodeHandler` from "#veryfront/server") is intentionally omitted here. It
 // is server-only and pulls production-server.ts (top-level await) into client
 // chunks. Types are erased at transform time, so re-exporting them is inert.
 export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";
