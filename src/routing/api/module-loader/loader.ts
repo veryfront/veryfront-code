@@ -84,7 +84,24 @@ async function loadModule(args: {
   }
 
   const fileExistsLocally = await fs.exists(modulePath);
-  if (fileExistsLocally) return loadTSModuleDirect(modulePath);
+  if (fileExistsLocally) {
+    try {
+      return await loadTSModuleDirect(modulePath);
+    } catch (error) {
+      // A direct import shares the dev server's runtime context, which is what
+      // makes auto-discovery (agentRegistry and friends) work — but it leaves
+      // specifier resolution to Deno, which knows nothing about the project's
+      // `@/` alias. Bundling can resolve that import map path, so fall back to
+      // it rather than reporting a routing-shaped 500.
+      if (!isSpecifierResolutionError(error)) throw error;
+
+      logger.debug("Direct import could not resolve a specifier, bundling instead", {
+        modulePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    }
+  }
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
   return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
@@ -95,6 +112,27 @@ async function loadModule(args: {
  * This allows the module to share the same runtime context as the dev server,
  * enabling auto-discovery features like agentRegistry to work.
  */
+
+/**
+ * Deno's resolver reports an unresolvable import as a TypeError whose message
+ * opens by naming the specifier it could not resolve. Anchoring on that opening
+ * is what keeps a module's own error out: a route that throws
+ * `Error("Cannot find module x")` at evaluation time is broken, and re-running
+ * it under bundling would evaluate broken code a second time.
+ */
+const SPECIFIER_RESOLUTION_MESSAGE =
+  /^(?:Import "[^"]+" not a dependency|Module not found "[^"]+"|Relative import path "[^"]+" not prefixed)/;
+
+/**
+ * True when a module failed to load because Deno could not resolve one of its
+ * import specifiers, rather than because the module itself is broken.
+ */
+export function isSpecifierResolutionError(error: unknown): boolean {
+  // Every other error shape the direct import can produce belongs to the module.
+  if (!(error instanceof TypeError)) return false;
+  return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
+}
+
 function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
   const cacheBuster = `?v=${Date.now()}`;
   const url = modulePath.startsWith("file://")

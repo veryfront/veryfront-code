@@ -21,6 +21,40 @@ const HANDLER_CACHE_MAX_ENTRIES = 256;
 
 export type { APIContext, APIRoute };
 
+/** Longest sanitised load error a response body carries. */
+const MAX_LOAD_ERROR_LENGTH = 300;
+
+/**
+ * Roots that only ever identify the machine running the server: home
+ * directories and the temp directories bundling writes to.
+ */
+const MACHINE_PATH_PATTERN =
+  /(?:file:\/\/)?\/(?:private\/)?(?:Users|home|root|var\/folders|var\/tmp|tmp)\/\S*/g;
+
+/**
+ * Reduce a module load error to something safe to put in a response body.
+ *
+ * The message is worth returning, since it usually names a syntax or import
+ * error the developer can act on. The rest of it is not: a raw load error
+ * carries the temp directory the bundle was written to, absolute paths into the
+ * framework install, and a full stack trace. A path inside the project survives
+ * as a project-relative one, because that is the part that identifies the file
+ * to fix.
+ */
+export function sanitizeLoadErrorForResponse(message: string, projectDir?: string): string {
+  // A stack trace is never the actionable part.
+  let text = (message.split("\n")[0] ?? "").trim();
+
+  if (projectDir) {
+    const root = projectDir.replace(/\/+$/, "");
+    text = text.replaceAll(`file://${root}/`, "").replaceAll(`${root}/`, "");
+  }
+
+  text = text.replace(MACHINE_PATH_PATTERN, "<PATH>");
+
+  return text.length > MAX_LOAD_ERROR_LENGTH ? `${text.slice(0, MAX_LOAD_ERROR_LENGTH)}...` : text;
+}
+
 /**
  * Injection interface for testing APIRouteHandler dependencies
  */
@@ -59,10 +93,18 @@ export interface APIResponse {
 /** Function signature for API route handlers. */
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
+/**
+ * Outcome of one load attempt. The failure travels with the attempt that
+ * produced it, so a later route can never report an earlier route's error.
+ */
+interface LoadAttempt {
+  handler: APIRoute | null;
+  errorMessage: string | null;
+}
+
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
-  private lastErrorMessage: string | null = null;
   private activeRequests = 0;
   private destroyRequested = false;
   private destroyed = false;
@@ -176,17 +218,30 @@ export class APIRouteHandler {
           params: match.params,
         });
 
-        const handler = await this.loadHandler(match);
+        const { handler, errorMessage } = await this.loadHandler(match);
         if (!handler) {
+          const msg = errorMessage ?? "Handler not found";
+
           try {
-            logger.error(`handler module failed to load: ${match.route.page}`);
+            // The full detail, paths and all, belongs in the log.
+            logger.error(`handler module failed to load: ${match.route.page}`, { reason: msg });
           } catch (e) {
             logger.warn("API error log failed", e);
           }
 
-          const msg = this.lastErrorMessage ?? "Handler not found";
           if (msg.includes("Remote import blocked by allow-list")) return badGateway(msg);
-          return internalServerError("Handler not found");
+
+          // The reason the module failed to load is the only useful thing here.
+          // Reporting a flat "Handler not found" for what is usually a syntax or
+          // import error sends people hunting for a routing problem that does
+          // not exist. Local development only, and sanitised: a raw load error
+          // carries temp directories, absolute paths and a stack trace, none of
+          // which belong in a response body.
+          return internalServerError(
+            ctx?.isLocalProject
+              ? sanitizeLoadErrorForResponse(msg, this.projectDir)
+              : "Handler not found",
+          );
         }
 
         // App Router routes are always named route.ts/js/tsx/jsx
@@ -224,7 +279,7 @@ export class APIRouteHandler {
     ).finally(() => this.completeRequest());
   }
 
-  private loadHandler(match: RouteMatch): Promise<APIRoute | null> {
+  private loadHandler(match: RouteMatch): Promise<LoadAttempt> {
     const modulePath = match.route.page;
 
     return withSpan(
@@ -234,7 +289,7 @@ export class APIRouteHandler {
         await this.ensureConfig(adapter);
 
         const cached = this.routeCache.get(modulePath);
-        if (cached) return cached;
+        if (cached) return { handler: cached, errorMessage: null };
 
         try {
           const deps = getDeps();
@@ -248,15 +303,14 @@ export class APIRouteHandler {
           // Only cache handlers that export at least one HTTP method.
           // Empty objects ({}) from failed imports are truthy but useless —
           // caching them would prevent retry after the user fixes the import.
-          if (handler && Object.keys(handler).length > 0) {
-            this.routeCache.set(modulePath, handler);
-          }
-          return handler && Object.keys(handler).length > 0 ? handler : null;
+          const usable = handler && Object.keys(handler).length > 0 ? handler : null;
+          if (usable) this.routeCache.set(modulePath, usable);
+
+          return { handler: usable, errorMessage: null };
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          this.lastErrorMessage = msg;
           logger.error(`[API] Failed to load handler for ${modulePath}: ${msg}`);
-          return null;
+          return { handler: null, errorMessage: msg };
         }
       },
       { "api.modulePath": modulePath },
