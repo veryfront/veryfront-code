@@ -6,6 +6,7 @@
  */
 
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 
 /**
  * Transform stages in execution order.
@@ -61,6 +62,8 @@ export interface TransformOptions {
   readFile?: (path: string) => Promise<string>;
   /** Internal per-render dependency hash cache. */
   dependencyHashCache?: DependencyHashCache;
+  /** Internal observer for meaningful transform milestones. */
+  onProgress?: TransformProgressListener;
 }
 
 /**
@@ -102,6 +105,8 @@ export interface TransformContext {
   studioEmbed?: boolean;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Internal observer for meaningful transform milestones. */
+  onProgress?: TransformProgressListener;
 }
 
 /**

@@ -51,7 +51,12 @@ import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/i
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
-import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
+import {
+  type ProgressTimeoutControl,
+  withProgressTimeoutThrow,
+  withTimeout,
+  withTimeoutThrow,
+} from "../utils/stream-utils.ts";
 import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
@@ -89,6 +94,7 @@ import {
   DATA_FETCH_TIMEOUT_MS,
   hasDataFetchingFunction,
   type LoadedModule,
+  MODULE_LOAD_HARD_TIMEOUT_MS,
   MODULE_LOAD_TIMEOUT_MS,
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
@@ -269,8 +275,16 @@ export class RenderPipeline {
   private async loadModulesInParallel(
     modules: ModuleToLoad[],
     options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+    timeoutControl?: ProgressTimeoutControl,
   ): Promise<LoadedModule[]> {
     const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
+    if (timeoutControl) {
+      moduleLoaderConfig.signal = timeoutControl.signal;
+      moduleLoaderConfig.onProgress = ({ phase, filePath }) => {
+        const fileName = filePath?.split("/").pop();
+        timeoutControl.mark(fileName ? `${phase}:${fileName}` : phase);
+      };
+    }
     const results = await Promise.all(
       modules.map(async (m) => {
         try {
@@ -394,10 +408,13 @@ export class RenderPipeline {
         withSpan(
           SpanNames.RENDER_LOAD_MODULES,
           () =>
-            withTimeoutThrow(
-              this.loadModulesInParallel(modulesToLoad, options),
-              MODULE_LOAD_TIMEOUT_MS,
-              `Module loading for ${slug}`,
+            withProgressTimeoutThrow(
+              (control) => this.loadModulesInParallel(modulesToLoad, options, control),
+              {
+                idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
+                hardTimeoutMs: MODULE_LOAD_HARD_TIMEOUT_MS,
+                label: `Module loading for ${slug}`,
+              },
             ),
           { "render.module_count": modulesToLoad.length },
         ),

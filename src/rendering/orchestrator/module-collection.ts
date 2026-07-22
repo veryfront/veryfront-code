@@ -7,8 +7,11 @@
  * @module rendering/orchestrator/module-collection
  */
 
-/** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
+/** Idle timeout for module loading. Concrete transform progress resets this deadline. */
 export const MODULE_LOAD_TIMEOUT_MS = 10_000;
+
+/** Absolute module-load cap. Progress can never extend work beyond this deadline. */
+export const MODULE_LOAD_HARD_TIMEOUT_MS = 45_000;
 
 /** Timeout for data fetching (getStaticData, getServerData) */
 export const DATA_FETCH_TIMEOUT_MS = 15_000;

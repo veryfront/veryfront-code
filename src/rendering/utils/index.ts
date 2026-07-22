@@ -14,9 +14,12 @@ export {
 
 export { createDefaultMDXComponents, normalizeChild } from "./react-helpers.ts";
 export {
+  type ProgressTimeoutControl,
+  type ProgressTimeoutOptions,
   StreamTimeoutError,
   streamToString,
   TimeoutError,
+  withProgressTimeoutThrow,
   withTimeout,
   withTimeoutThrow,
 } from "./stream-utils.ts";

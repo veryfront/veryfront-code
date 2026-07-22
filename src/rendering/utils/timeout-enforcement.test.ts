@@ -8,7 +8,12 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { TimeoutError, withTimeout, withTimeoutThrow } from "./stream-utils.ts";
+import {
+  TimeoutError,
+  withProgressTimeoutThrow,
+  withTimeout,
+  withTimeoutThrow,
+} from "./stream-utils.ts";
 
 function delay<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
@@ -53,6 +58,80 @@ describe("Timeout Enforcement", () => {
         () => withTimeoutThrow(failing, 1000, "failing op"),
         Error,
         "operation failed",
+      );
+    });
+  });
+
+  describe("withProgressTimeoutThrow (bounded idle timeout)", () => {
+    it("allows total work beyond the idle deadline while progress continues", async () => {
+      const result = await withProgressTimeoutThrow(
+        async ({ mark }) => {
+          await delay(25, undefined);
+          mark("first module transformed");
+          await delay(25, undefined);
+          mark("second module transformed");
+          return await delay(10, "success");
+        },
+        { label: "module graph", idleTimeoutMs: 40, hardTimeoutMs: 200 },
+      );
+
+      assertEquals(result, "success");
+    });
+
+    it("throws an idle TimeoutError and aborts cooperative work without progress", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const error = await assertRejects(
+        () =>
+          withProgressTimeoutThrow(
+            ({ signal }) => {
+              observedSignal = signal;
+              return hang();
+            },
+            { label: "idle module graph", idleTimeoutMs: 30, hardTimeoutMs: 100 },
+          ),
+        TimeoutError,
+        "idle module graph timed out after 30ms",
+      );
+
+      assertEquals((error as TimeoutError).timeoutKind, "idle");
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("enforces the hard cap even while progress continues", async () => {
+      const error = await assertRejects(
+        () =>
+          withProgressTimeoutThrow(
+            ({ mark, signal }) =>
+              new Promise<never>((_, reject) => {
+                const intervalId = setInterval(() => mark("still transforming"), 10);
+                signal.addEventListener(
+                  "abort",
+                  () => {
+                    clearInterval(intervalId);
+                    reject(signal.reason);
+                  },
+                  { once: true },
+                );
+              }),
+            { label: "bounded module graph", idleTimeoutMs: 30, hardTimeoutMs: 75 },
+          ),
+        TimeoutError,
+        "bounded module graph timed out after 75ms",
+      );
+
+      assertEquals((error as TimeoutError).timeoutKind, "hard");
+      assertEquals((error as TimeoutError).lastProgress, "still transforming");
+    });
+
+    it("propagates an operation error before either deadline", async () => {
+      await assertRejects(
+        () =>
+          withProgressTimeoutThrow(
+            () => Promise.reject(new Error("transform failed")),
+            { label: "failing module graph", idleTimeoutMs: 50, hardTimeoutMs: 100 },
+          ),
+        Error,
+        "transform failed",
       );
     });
   });

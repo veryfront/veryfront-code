@@ -10,6 +10,10 @@ import {
 } from "#veryfront/cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
+import type {
+  TransformProgressEvent,
+  TransformProgressListener,
+} from "#veryfront/transforms/progress.ts";
 
 const logger = baseLogger.component("transform-cache");
 
@@ -38,6 +42,56 @@ let cacheGateway: TokenizingCacheGateway | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
 let transformFlight = new Singleflight<TransformCacheResult>();
+
+interface TransformProgressState {
+  listeners: Set<TransformProgressListener>;
+  lastEvent?: TransformProgressEvent;
+}
+
+const transformProgress = new Map<string, TransformProgressState>();
+
+function notifyTransformProgressListener(
+  key: string,
+  listener: TransformProgressListener,
+  event: TransformProgressEvent,
+): void {
+  try {
+    listener(event);
+  } catch (error) {
+    logger.debug("Transform progress listener failed", { key, error });
+  }
+}
+
+function subscribeToTransformProgress(
+  key: string,
+  listener?: TransformProgressListener,
+): () => void {
+  if (!listener) return () => {};
+
+  let state = transformProgress.get(key);
+  if (!state) {
+    state = { listeners: new Set() };
+    transformProgress.set(key, state);
+  }
+  state.listeners.add(listener);
+  if (state.lastEvent) notifyTransformProgressListener(key, listener, state.lastEvent);
+
+  return () => {
+    const current = transformProgress.get(key);
+    if (!current) return;
+    current.listeners.delete(listener);
+    if (current.listeners.size === 0) transformProgress.delete(key);
+  };
+}
+
+function publishTransformProgress(key: string, event: TransformProgressEvent): void {
+  const state = transformProgress.get(key);
+  if (!state) return;
+  state.lastEvent = event;
+  for (const listener of state.listeners) {
+    notifyTransformProgressListener(key, listener, event);
+  }
+}
 
 interface LocalFallbackLike<K, V> {
   get(key: K): V | undefined;
@@ -302,6 +356,7 @@ function setLocalFallback(key: string, entry: TransformCacheEntry): void {
 export function destroyTransformCache(): void {
   getLocalFallback().clear();
   transformFlight = new Singleflight<TransformCacheResult>();
+  transformProgress.clear();
 }
 
 export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
@@ -321,36 +376,61 @@ interface TransformCacheResult {
 
 export async function getOrComputeTransform(
   key: string,
-  computeFn: () => Promise<string>,
+  computeFn: (reportProgress?: TransformProgressListener) => Promise<string>,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
+  onProgress?: TransformProgressListener,
+  signal?: AbortSignal,
 ): Promise<TransformCacheResult> {
-  return await transformFlight.do(key, async () => {
-    const cached = await getCachedTransformAsync(key);
-    if (cached) {
-      // Validate cached code doesn't have unresolved _vf_modules imports.
-      // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
-      // If they're still present, the cache is stale and we need to recompute.
-      if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
-        const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
-        logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
-          key: key.slice(-60),
-          unresolvedImport: match?.[1]?.slice(0, 60),
-        });
-        // Fall through to recompute
-      } else {
-        logger.debug("Cache hit", { key });
-        return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+  signal?.throwIfAborted();
+  const unsubscribe = subscribeToTransformProgress(key, onProgress);
+  const reportProgress: TransformProgressListener = (event) => publishTransformProgress(key, event);
+
+  try {
+    const flight = transformFlight.do(key, async () => {
+      const cached = await getCachedTransformAsync(key);
+      if (cached) {
+        // Validate cached code doesn't have unresolved _vf_modules imports.
+        // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
+        // If they're still present, the cache is stale and we need to recompute.
+        if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
+          const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
+          logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
+            key: key.slice(-60),
+            unresolvedImport: match?.[1]?.slice(0, 60),
+          });
+          // Fall through to recompute
+        } else {
+          logger.debug("Cache hit", { key });
+          reportProgress({ phase: "transform-cache:hit" });
+          return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+        }
       }
-    }
 
-    logger.debug("Cache miss, computing", { key });
-    const code = await computeFn();
+      logger.debug("Cache miss, computing", { key });
+      reportProgress({ phase: "transform-cache:miss" });
+      const code = await computeFn(reportProgress);
+      reportProgress({ phase: "transform-cache:computed" });
 
-    const hash = hashCodeHex(code).slice(0, 16);
-    setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
-      logger.debug("Failed to cache computed transform", { key, error });
+      const hash = hashCodeHex(code).slice(0, 16);
+      setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
+        logger.debug("Failed to cache computed transform", { key, error });
+      });
+
+      return { code, cacheHit: false };
     });
 
-    return { code, cacheHit: false };
-  });
+    if (!signal) return await flight;
+
+    // A caller timeout must detach that request without cancelling the shared
+    // singleflight leader: another concurrent render may still depend on the
+    // same cold transform, and completing it warms the cache for later work.
+    return await new Promise<TransformCacheResult>((resolve, reject) => {
+      const onAbort = (): void => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      flight.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
+  } finally {
+    unsubscribe();
+  }
 }

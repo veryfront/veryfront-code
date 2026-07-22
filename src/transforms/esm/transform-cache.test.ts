@@ -306,6 +306,155 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(cachedResult.cacheHit, true);
     });
 
+    it("broadcasts leader progress to followers of the same cold transform", async () => {
+      const leaderPhases: string[] = [];
+      const followerPhases: string[] = [];
+      let computeCalls = 0;
+      let releaseCompute!: () => void;
+      let markComputeStarted!: () => void;
+      const computeGate = new Promise<void>((resolve) => {
+        releaseCompute = resolve;
+      });
+      const computeStarted = new Promise<void>((resolve) => {
+        markComputeStarted = resolve;
+      });
+
+      const first = getOrComputeTransform(
+        "progress-key",
+        async (reportProgress) => {
+          computeCalls++;
+          reportProgress?.({ phase: "leader:started" });
+          markComputeStarted();
+          await computeGate;
+          reportProgress?.({ phase: "leader:finished" });
+          return "shared-progress-code";
+        },
+        300,
+        (event) => leaderPhases.push(event.phase),
+      );
+
+      await computeStarted;
+
+      const second = getOrComputeTransform(
+        "progress-key",
+        async () => {
+          computeCalls++;
+          return "unexpected-code";
+        },
+        300,
+        (event) => followerPhases.push(event.phase),
+      );
+
+      assertEquals(followerPhases.includes("leader:started"), true);
+      releaseCompute();
+      await Promise.all([first, second]);
+
+      assertEquals(computeCalls, 1);
+      assertEquals(leaderPhases.includes("leader:finished"), true);
+      assertEquals(followerPhases.includes("leader:finished"), true);
+    });
+
+    it("isolates a throwing listener during late progress replay", async () => {
+      let computeCalls = 0;
+      let listenerCalls = 0;
+      let releaseCompute!: () => void;
+      let markComputeStarted!: () => void;
+      const computeGate = new Promise<void>((resolve) => {
+        releaseCompute = resolve;
+      });
+      const computeStarted = new Promise<void>((resolve) => {
+        markComputeStarted = resolve;
+      });
+
+      const leader = getOrComputeTransform(
+        "throwing-progress-listener-key",
+        async (reportProgress) => {
+          computeCalls++;
+          reportProgress?.({ phase: "leader:started" });
+          markComputeStarted();
+          await computeGate;
+          return "shared-code";
+        },
+        300,
+        () => {},
+      );
+
+      await computeStarted;
+
+      const follower = getOrComputeTransform(
+        "throwing-progress-listener-key",
+        async () => {
+          computeCalls++;
+          return "unexpected-code";
+        },
+        300,
+        () => {
+          listenerCalls++;
+          throw new Error("listener failure");
+        },
+      );
+
+      releaseCompute();
+      const [, followerResult] = await Promise.all([leader, follower]);
+
+      assertEquals(computeCalls, 1);
+      assertEquals(listenerCalls > 0, true);
+      assertEquals(followerResult.code, "shared-code");
+    });
+
+    it("detaches an aborted caller without cancelling the shared transform", async () => {
+      const controller = new AbortController();
+      const abortedCallerPhases: string[] = [];
+      const followerPhases: string[] = [];
+      let computeCalls = 0;
+      let releaseCompute!: () => void;
+      let markComputeStarted!: () => void;
+      const computeGate = new Promise<void>((resolve) => {
+        releaseCompute = resolve;
+      });
+      const computeStarted = new Promise<void>((resolve) => {
+        markComputeStarted = resolve;
+      });
+
+      const abortedCaller = getOrComputeTransform(
+        "aborted-progress-key",
+        async (reportProgress) => {
+          computeCalls++;
+          reportProgress?.({ phase: "leader:started" });
+          markComputeStarted();
+          await computeGate;
+          reportProgress?.({ phase: "leader:finished" });
+          return "shared-after-abort";
+        },
+        300,
+        (event) => abortedCallerPhases.push(event.phase),
+        controller.signal,
+      );
+
+      await computeStarted;
+
+      const follower = getOrComputeTransform(
+        "aborted-progress-key",
+        async () => {
+          computeCalls++;
+          return "unexpected-code";
+        },
+        300,
+        (event) => followerPhases.push(event.phase),
+      );
+
+      controller.abort(new Error("caller timed out"));
+      await assertRejects(() => abortedCaller, Error, "caller timed out");
+
+      releaseCompute();
+      const followerResult = await follower;
+
+      assertEquals(computeCalls, 1);
+      assertEquals(followerResult.code, "shared-after-abort");
+      assertEquals(abortedCallerPhases.includes("leader:finished"), false);
+      assertEquals(followerPhases.includes("leader:finished"), true);
+    });
+
     it("cleans up a failed cold-miss flight so a later call can recompute", async () => {
       let computeCalls = 0;
       let releaseFailure!: () => void;
