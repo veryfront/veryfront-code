@@ -20,7 +20,7 @@ export const compilePlugin: TransformPlugin = {
       const result = await esbuild.transform(ctx.code, {
         loader,
         format: "esm",
-        target: "es2020",
+        target: "es2022",
         supported: ESBUILD_SUPPORTED_FEATURES,
         jsx: "automatic",
         jsxImportSource: ctx.jsxImportSource,
