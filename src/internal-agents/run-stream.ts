@@ -690,10 +690,11 @@ export async function createRuntimeAgentStreamResponse(
   const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
   const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
     .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
-  const compatibleToolNames = selectProviderCompatibleToolNames(
+  const runtimeToolNames = selectProviderCompatibleToolNames(
     [
       ...new Set([
         ...localToolNames,
+        ...providerToolNames,
         ...(allowedRemoteToolNames ?? []),
         ...forwardedToolNames,
       ]),
@@ -703,7 +704,6 @@ export async function createRuntimeAgentStreamResponse(
       requiredToolNames: localToolNames,
     },
   );
-  const runtimeToolNames = [...new Set([...compatibleToolNames, ...providerToolNames])].sort();
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
