@@ -1,4 +1,8 @@
 export const BROWSER_SAFE_EXPORTS = [
+  // Client/SSR-safe mirror of the root barrel (server bootstrap surface removed).
+  // The import rewriter redirects `veryfront` here for browser/ssr; it must ship
+  // in the npm package (built to esm/src/index.client.js) or that redirect 404s.
+  "./index.client",
   "./head",
   "./router",
   "./context",
