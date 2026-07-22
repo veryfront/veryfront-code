@@ -1,6 +1,7 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import {
   type CacheBackend,
   CacheBackends,
@@ -36,6 +37,7 @@ interface TransformCacheEntry {
 let cacheGateway: TokenizingCacheGateway | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
+let transformFlight = new Singleflight<TransformCacheResult>();
 
 interface LocalFallbackLike<K, V> {
   get(key: K): V | undefined;
@@ -299,6 +301,7 @@ function setLocalFallback(key: string, entry: TransformCacheEntry): void {
 
 export function destroyTransformCache(): void {
   getLocalFallback().clear();
+  transformFlight = new Singleflight<TransformCacheResult>();
 }
 
 export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
@@ -321,31 +324,33 @@ export async function getOrComputeTransform(
   computeFn: () => Promise<string>,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
 ): Promise<TransformCacheResult> {
-  const cached = await getCachedTransformAsync(key);
-  if (cached) {
-    // Validate cached code doesn't have unresolved _vf_modules imports.
-    // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
-    // If they're still present, the cache is stale and we need to recompute.
-    if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
-      const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
-      logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
-        key: key.slice(-60),
-        unresolvedImport: match?.[1]?.slice(0, 60),
-      });
-      // Fall through to recompute
-    } else {
-      logger.debug("Cache hit", { key });
-      return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+  return await transformFlight.do(key, async () => {
+    const cached = await getCachedTransformAsync(key);
+    if (cached) {
+      // Validate cached code doesn't have unresolved _vf_modules imports.
+      // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
+      // If they're still present, the cache is stale and we need to recompute.
+      if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
+        const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
+        logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
+          key: key.slice(-60),
+          unresolvedImport: match?.[1]?.slice(0, 60),
+        });
+        // Fall through to recompute
+      } else {
+        logger.debug("Cache hit", { key });
+        return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+      }
     }
-  }
 
-  logger.debug("Cache miss, computing", { key });
-  const code = await computeFn();
+    logger.debug("Cache miss, computing", { key });
+    const code = await computeFn();
 
-  const hash = hashCodeHex(code).slice(0, 16);
-  setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
-    logger.debug("Failed to cache computed transform", { key, error });
+    const hash = hashCodeHex(code).slice(0, 16);
+    setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
+      logger.debug("Failed to cache computed transform", { key, error });
+    });
+
+    return { code, cacheHit: false };
   });
-
-  return { code, cacheHit: false };
 }

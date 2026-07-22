@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __injectCachesForTests,
@@ -63,6 +63,7 @@ describe("transforms/esm/transform-cache", () => {
     });
 
     afterEach(() => {
+      destroyTransformCache();
       __injectCachesForTests(null);
     });
 
@@ -200,6 +201,7 @@ describe("transforms/esm/transform-cache", () => {
     });
 
     afterEach(() => {
+      destroyTransformCache();
       __injectCachesForTests(null);
     });
 
@@ -228,6 +230,7 @@ describe("transforms/esm/transform-cache", () => {
     });
 
     afterEach(() => {
+      destroyTransformCache();
       __injectCachesForTests(null);
     });
 
@@ -255,6 +258,141 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(computed, false);
       assertEquals(result.code, "first-value");
       assertEquals(result.cacheHit, true);
+    });
+
+    it("coalesces concurrent cold misses for the same key", async () => {
+      let computeCalls = 0;
+      let releaseCompute!: () => void;
+      let markComputeStarted!: () => void;
+      const computeGate = new Promise<void>((resolve) => {
+        releaseCompute = resolve;
+      });
+      const computeStarted = new Promise<void>((resolve) => {
+        markComputeStarted = resolve;
+      });
+
+      const first = getOrComputeTransform("cold-key", async () => {
+        computeCalls++;
+        markComputeStarted();
+        await computeGate;
+        return "shared-code";
+      });
+
+      await computeStarted;
+
+      const second = getOrComputeTransform("cold-key", async () => {
+        computeCalls++;
+        return "unexpected-code";
+      });
+
+      await Promise.resolve();
+      assertEquals(computeCalls, 1);
+
+      releaseCompute();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      assertEquals(firstResult, { code: "shared-code", cacheHit: false });
+      assertEquals(secondResult, { code: "shared-code", cacheHit: false });
+      assertEquals(computeCalls, 1);
+
+      let laterComputed = false;
+      const cachedResult = await getOrComputeTransform("cold-key", async () => {
+        laterComputed = true;
+        return "later-code";
+      });
+
+      assertEquals(laterComputed, false);
+      assertEquals(cachedResult.code, "shared-code");
+      assertEquals(cachedResult.cacheHit, true);
+    });
+
+    it("cleans up a failed cold-miss flight so a later call can recompute", async () => {
+      let computeCalls = 0;
+      let releaseFailure!: () => void;
+      let markComputeStarted!: () => void;
+      const failureGate = new Promise<void>((resolve) => {
+        releaseFailure = resolve;
+      });
+      const computeStarted = new Promise<void>((resolve) => {
+        markComputeStarted = resolve;
+      });
+
+      const first = getOrComputeTransform("failing-key", async () => {
+        computeCalls++;
+        markComputeStarted();
+        await failureGate;
+        throw new Error("transform failed");
+      });
+
+      await computeStarted;
+
+      const second = getOrComputeTransform("failing-key", async () => {
+        computeCalls++;
+        return "unexpected-code";
+      });
+
+      await Promise.resolve();
+      assertEquals(computeCalls, 1);
+
+      releaseFailure();
+      await assertRejects(
+        () => Promise.all([first, second]),
+        Error,
+        "transform failed",
+      );
+      assertEquals(computeCalls, 1);
+
+      const recovered = await getOrComputeTransform("failing-key", async () => {
+        computeCalls++;
+        return "recovered-code";
+      });
+
+      assertEquals(recovered, { code: "recovered-code", cacheHit: false });
+      assertEquals(computeCalls, 2);
+    });
+
+    it("preserves concurrent computes for different cold keys", async () => {
+      let computeCalls = 0;
+      let releaseFirst!: () => void;
+      let releaseSecond!: () => void;
+      let markFirstStarted!: () => void;
+      let markSecondStarted!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const secondGate = new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      const firstStarted = new Promise<void>((resolve) => {
+        markFirstStarted = resolve;
+      });
+      const secondStarted = new Promise<void>((resolve) => {
+        markSecondStarted = resolve;
+      });
+
+      const first = getOrComputeTransform("cold-key-a", async () => {
+        computeCalls++;
+        markFirstStarted();
+        await firstGate;
+        return "first-code";
+      });
+
+      const second = getOrComputeTransform("cold-key-b", async () => {
+        computeCalls++;
+        markSecondStarted();
+        await secondGate;
+        return "second-code";
+      });
+
+      await Promise.all([firstStarted, secondStarted]);
+      assertEquals(computeCalls, 2);
+
+      releaseFirst();
+      releaseSecond();
+
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      assertEquals(firstResult, { code: "first-code", cacheHit: false });
+      assertEquals(secondResult, { code: "second-code", cacheHit: false });
     });
 
     it("invalidates cache with unresolved _vf_modules imports", async () => {
