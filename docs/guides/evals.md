@@ -522,9 +522,9 @@ only the read-only skill loader tools, `load_skill` and
 `load_skill_reference`, so a skills agent can inspect skill instructions during a
 mocked eval; `execute_skill_script` is not retained unless `mockTools` supplies
 it explicitly. Loaded-skill allowed-tool policies and delegation overrides are
-also disabled while mock tools are active, so the mock tool map is the complete
-tool allowlist for that `generate()` request. There is no `stream()` equivalent
-for request-scoped mock tools. Live AG-UI agent-service evals reject definitions
+disabled while mock tools are active; the mock tool map is the complete tool
+allowlist for that `generate()` request. There is no `stream()` equivalent for
+request-scoped mock tools. Live AG-UI agent-service evals reject definitions
 with `mockTools` before sending a request to the hosted endpoint.
 
 ## Live agent-service evals

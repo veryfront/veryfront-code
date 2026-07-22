@@ -20,6 +20,7 @@ order: 1
 | [`veryfront/fonts`](./veryfront/fonts.md) | Font components. |
 | [`veryfront/fs`](./veryfront/fs.md) | Filesystem and path utilities. |
 | [`veryfront/head`](./veryfront/head.md) | Document metadata components. |
+| [`veryfront/index.client`](./veryfront/index.client.md) | Client and SSR-safe root helpers. |
 | [`veryfront/integrations`](./veryfront/integrations.md) | Connector metadata and remote tools. |
 | [`veryfront/knowledge`](./veryfront/knowledge.md) | Project knowledge retrieval helpers. |
 | [`veryfront/markdown`](./veryfront/markdown.md) | Markdown rendering. |

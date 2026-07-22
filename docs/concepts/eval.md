@@ -108,8 +108,9 @@ local-only: hosted AG-UI evals reject `mockTools` before calling the endpoint,
 and skills agents retain only the read-only `load_skill` and
 `load_skill_reference` tools unless the eval explicitly supplies more tools.
 Mocked evals use `agent.generate({ tools })`; there is no streaming equivalent.
-While mock tools are active, loaded-skill allowed-tool policy is replaced by the
-mock tool allowlist for that request.
+Loaded-skill allowed-tool policies and delegation overrides are disabled while
+mock tools are active; the mock tool map is the complete tool allowlist for that
+`generate()` request.
 
 ## Tool behavior
 
