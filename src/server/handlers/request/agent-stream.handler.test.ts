@@ -1085,7 +1085,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         new Response(
           JSON.stringify({
             jsonrpc: "2.0",
-            id: "veryfront-studio-mcp:tools:list",
+            id: "studio-mcp:tools:list",
             result: {
               tools: [
                 {

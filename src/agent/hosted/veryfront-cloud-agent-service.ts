@@ -885,16 +885,18 @@ async function resolveHostedChildAgentExecutionConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
   taskContext: ChildRunContext,
   childAgentId: string,
+  projectId: string,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
   if (!getProjectAgentRuntime(context).agents.has(childAgentId)) {
     return undefined;
   }
 
   const agentConfig = await resolveAgentConfig(context, childAgentId);
+  const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
   const steering = await fetchProjectSteering(context, {
-    projectId: taskContext.projectId || null,
+    projectId: projectId || null,
     authToken: taskContext.authToken,
-    branchId: taskContext.branchId,
+    branchId,
   }, childAgentId);
   const advertisedSkills = resolveRuntimeSkillsForAgent({
     skills: steering.skills,
@@ -917,8 +919,8 @@ async function resolveHostedChildAgentExecutionConfig(
   return {
     system: flattenSystemInstructions(buildVeryfrontCloudRuntimeInstructions({
       agentConfig,
-      projectId: taskContext.projectId || null,
-      branchId: taskContext.branchId,
+      projectId: projectId || null,
+      branchId,
       instructions: steering.instructions,
       skills: advertisedSkills,
       availableToolNames: toolNames,
@@ -972,8 +974,8 @@ function createInvokeAgentTool(
           : {}),
       };
     },
-    resolveChildAgentExecutionConfig: (childAgentId) =>
-      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId),
+    resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
+      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
     refreshProjectSkillIds: (projectSkillContext) =>
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,

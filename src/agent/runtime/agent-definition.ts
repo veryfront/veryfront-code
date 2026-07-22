@@ -195,6 +195,13 @@ export function parseRuntimeAgentMarkdownDefinition(
     parsedInput.id,
     Object.hasOwn(attrs, "delegates") ? parseDelegates(attrs.delegates) : undefined,
   );
+  if (tools === true && delegates?.length) {
+    throw CONFIG_INVALID.create({
+      detail:
+        `Agent frontmatter for "${parsedInput.id}" cannot combine delegates with tools: true. ` +
+        "Declare the required tools by name so delegate capabilities remain explicit.",
+    });
+  }
   if (Object.hasOwn(attrs, "mcp-servers") && Object.hasOwn(attrs, "mcpServers")) {
     throw CONFIG_INVALID.create({
       detail: 'Agent frontmatter must use only one of "mcp-servers" or "mcpServers".',

@@ -153,7 +153,7 @@ Deno.test("fixed hosted delegates inherit project-agent settings without overrid
   });
 });
 
-Deno.test("default hosted invoke applies configured child model temperature max steps tools and system", async () => {
+Deno.test("default hosted invoke resolves and runs configured child against the target project", async () => {
   const captured: {
     model?: string;
     temperature?: number;
@@ -168,8 +168,9 @@ Deno.test("default hosted invoke applies configured child model temperature max 
       enableDurableInvokeAgent: false,
       config: { mcpServers: [] },
       options: {
-        resolveChildAgentExecutionConfig: (childAgentId) => {
+        resolveChildAgentExecutionConfig: (childAgentId, projectId) => {
           assertEquals(childAgentId, "extraction-agent");
+          assertEquals(projectId, "target-project");
           return Promise.resolve({
             system: "Follow the extraction policy.",
             model: "configured-model",
@@ -179,7 +180,8 @@ Deno.test("default hosted invoke applies configured child model temperature max 
             availableSkillIds: ["extraction"],
           });
         },
-        buildGlobalTools: (_context, childAgentId, childConfig) => {
+        buildGlobalTools: (context, childAgentId, childConfig) => {
+          assertEquals(context.projectId, "target-project");
           assertEquals(childAgentId, "extraction-agent");
           assertEquals(childConfig?.toolNames, ["lookup_job"]);
           return {
@@ -237,6 +239,7 @@ Deno.test("default hosted invoke applies configured child model temperature max 
       prompt: "Extract the application.",
       context: {},
       agent_id: "extraction-agent",
+      project_id: "target-project",
     },
     "extraction-agent",
     { toolCallId: "tool-call-configured-child" },

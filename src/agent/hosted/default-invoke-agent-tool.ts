@@ -171,6 +171,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     ) => HostToolSet;
     resolveChildAgentExecutionConfig?: (
       childAgentId: string,
+      projectId: string,
     ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
     /** Require durable child lifecycle even when legacy generic delegation is disabled. */
@@ -566,7 +567,11 @@ export async function executeDefaultHostedInvokeAgentTool<
 ): Promise<DefaultHostedInvokeAgentToolResult> {
   let executionSnapshot: ChildRunExecutionSnapshot | null = null;
   const config = options.getConfig();
-  const childConfig = await options.resolveChildAgentExecutionConfig?.(childAgentId);
+  const targetProjectId = input.project_id ?? options.context.projectId;
+  const childConfig = await options.resolveChildAgentExecutionConfig?.(
+    childAgentId,
+    targetProjectId,
+  );
   const toolCallId = getToolCallId(executionContext);
   const abortSignal = getAbortSignal(executionContext);
   const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
@@ -631,7 +636,7 @@ export async function executeDefaultHostedInvokeAgentTool<
         abortSignal,
       },
       childAgentId,
-      runProjectId: input.project_id ?? options.context.projectId,
+      runProjectId: targetProjectId,
       parentConversationId: options.context.conversationId,
       parentRunId: options.context.parentRunId,
       parentMessageId: options.context.parentMessageId,

@@ -199,6 +199,23 @@ Write copy.
   assertEquals(result.delegates, []);
 });
 
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects implicit all-tools delegation", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "lead",
+        content: `---
+tools: true
+delegates: [writer]
+---
+Coordinate.
+`,
+      }),
+    Error,
+    'Agent frontmatter for "lead" cannot combine delegates with tools: true',
+  );
+});
+
 Deno.test("parseRuntimeAgentMarkdownDefinition rejects scalar capability declarations", () => {
   assertThrows(
     () =>

@@ -29,7 +29,7 @@ import {
 } from "./skill-metadata.ts";
 import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
-/** Shared runtime load skill continuation note value. */
+/** Legacy continuation-note fallback used when runtime tool inventory is unavailable. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
   `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING} ${LOAD_SKILL_TOOL_INTERSECTION}`;
 

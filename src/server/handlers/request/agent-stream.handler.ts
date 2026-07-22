@@ -18,6 +18,7 @@ import {
   getRequestedUnresolvedBooleanToolNames,
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
+  VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildStudioMcpHeaders } from "#veryfront/agent/project/live-studio-mcp-tools.ts";
 import {
@@ -87,7 +88,6 @@ const defaultDeps: AgentStreamHandlerDeps = {
 };
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
-const VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID = "veryfront-studio-mcp";
 const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   [
     "studio_suggestions",
@@ -337,7 +337,7 @@ function hasVeryfrontPlatformRemoteToolSource(
 function hasVeryfrontStudioRemoteToolSource(
   remoteTools: RemoteToolSource[] | undefined,
 ): boolean {
-  return remoteTools?.some((source) => source.id === VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID) ??
+  return remoteTools?.some((source) => source.id === VERYFRONT_STUDIO_MCP_SOURCE_ID) ??
     false;
 }
 
@@ -474,7 +474,7 @@ function withVeryfrontStudioRemoteTools(input: {
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const studioRemoteToolSources = hasVeryfrontStudioRemoteToolSource(remoteTools) ? [] : [
     createRemoteMCPToolSource({
-      id: VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID,
+      id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
       endpoint: studioMcpUrl,
       headers: () =>
         buildStudioMcpHeaders(

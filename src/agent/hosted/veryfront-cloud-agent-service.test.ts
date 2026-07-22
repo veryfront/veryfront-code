@@ -707,7 +707,7 @@ Deno.test("hosted MCP resolver narrows allow policy and unions deny policy under
   );
 });
 
-Deno.test("hosted child project agent execution config preserves markdown temperature", async () => {
+Deno.test("hosted child execution config resolves steering against the target project", async () => {
   const childAgent = {
     id: "extraction-agent",
     name: "Extraction agent",
@@ -716,24 +716,45 @@ Deno.test("hosted child project agent execution config preserves markdown temper
     model: "openai/gpt-5.4",
     temperature: 0.35,
   };
+  const steeringLookups: Array<{
+    projectId: string;
+    authToken: string;
+    branchId?: string | null;
+  }> = [];
   const config = await veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
     {
       options: { mcpServers: [] },
       discoveryResult: { agents: new Map([["extraction-agent", null]]) },
       agentConfigs: new Map([["extraction-agent", childAgent]]),
-      projectSteeringByAgentId: new Map(),
+      projectSteeringByAgentId: new Map([["extraction-agent", {
+        getProjectInstructions: (lookup: typeof steeringLookups[number]) => {
+          steeringLookups.push(lookup);
+          return Promise.resolve("Use the target project's extraction policy.");
+        },
+        getSkillsConfig: (lookup: typeof steeringLookups[number]) => {
+          steeringLookups.push(lookup);
+          return Promise.resolve([]);
+        },
+      }]]),
       trace: (_name: string, operation: () => unknown) => operation(),
     } as never,
     {
       authToken: "token-1",
-      projectId: "",
+      projectId: "source-project",
+      branchId: "source-branch",
       agentId: "orchestrator",
     },
     "extraction-agent",
+    "target-project",
   );
 
   assertEquals(config?.model, "openai/gpt-5.4");
   assertEquals(config?.temperature, 0.35);
+  assert(config?.system.includes("Use the target project's extraction policy."));
+  assertEquals(steeringLookups, [
+    { projectId: "target-project", authToken: "token-1", branchId: null },
+    { projectId: "target-project", authToken: "token-1", branchId: null },
+  ]);
 });
 
 Deno.test({
