@@ -301,7 +301,7 @@ export class RenderPipeline {
 
     for (const result of results) {
       if (result.mod && !result.error) {
-        loaded.push({ type: result.type, id: result.id, mod: result.mod });
+        loaded.push({ type: result.type, id: result.id, path: result.path, mod: result.mod });
         continue;
       }
 

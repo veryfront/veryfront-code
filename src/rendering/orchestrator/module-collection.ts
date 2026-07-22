@@ -30,6 +30,7 @@ export interface ModuleToLoad {
 export interface LoadedModule {
   type: "page" | "layout";
   id: string;
+  path: string;
   mod: unknown;
 }
 

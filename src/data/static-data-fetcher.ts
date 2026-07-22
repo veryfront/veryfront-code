@@ -59,17 +59,25 @@ function resolveProjectId(context: DataContext, fallback: string): string {
 
 type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
 
+export interface StaticDataFetchOptions {
+  modulePath?: string;
+}
+
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
 
   constructor(private cacheManager: CacheManager) {}
 
-  async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
+  async fetch(
+    pageModule: PageWithData,
+    context: DataContext,
+    options: StaticDataFetchOptions = {},
+  ): Promise<DataResult> {
     const getStaticData = pageModule.getStaticData;
     if (typeof getStaticData !== "function") return { props: {} };
 
     const pathname = context.url?.pathname ?? "unknown";
-    const cacheKey = this.cacheManager.createCacheKey(context);
+    const cacheKey = this.cacheManager.createCacheKey(context, options.modulePath);
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {

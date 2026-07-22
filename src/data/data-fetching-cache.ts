@@ -48,9 +48,10 @@ export class CacheManager {
     return Date.now() - entry.timestamp > entry.revalidate * 1000;
   }
 
-  createCacheKey(context: DataContext): string | null {
+  createCacheKey(context: DataContext, modulePath?: string): string | null {
     const params = JSON.stringify(context.params);
-    const resourceKey = `${context.url.pathname}::${params}`;
+    const moduleKey = modulePath?.trim() || "page";
+    const resourceKey = `${moduleKey}::${context.url.pathname}::${params}`;
     return getProjectScopedKey("veryfront:data", resourceKey);
   }
 }
