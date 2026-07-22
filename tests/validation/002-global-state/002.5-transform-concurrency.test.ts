@@ -321,31 +321,30 @@ describe("002.5 Transform Concurrency Under Load", () => {
   });
 
   describe("Timeout Adequacy", () => {
-    it("500ms timeout is sufficient for typical transform queue depth", async () => {
-      // With 50 permits and ~10ms per transform, queue depth of 50 takes ~10ms
-      // 500ms timeout is 50x the expected wait time
-      const semaphore = new Semaphore(50);
+    it("waits through a cold transform burst longer than the old 500ms limit", async () => {
+      const semaphore = new Semaphore(1);
+      assert(await semaphore.tryAcquire(0));
 
-      // Fill the semaphore
-      for (let i = 0; i < 50; i++) {
-        await semaphore.tryAcquire(0);
-      }
-
-      // Start releasing with realistic transform times
-      const releaseTask = (async () => {
-        for (let i = 0; i < 50; i++) {
-          await new Promise((r) => setTimeout(r, 5)); // ~5ms per transform
+      const releaseTask = new Promise<void>((resolve) => {
+        setTimeout(() => {
           semaphore.release();
-        }
-      })();
+          resolve();
+        }, 650);
+      });
 
-      // Try to acquire with 500ms timeout — should succeed
       const start = Date.now();
-      const acquired = await semaphore.tryAcquire(500);
+      const acquired = await semaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
       const elapsed = Date.now() - start;
 
-      assert(acquired, "Should acquire within 500ms timeout");
-      assert(elapsed < 500, `Should acquire well within timeout (took ${elapsed}ms)`);
+      assert(acquired, "Should acquire after bounded cold-transform backpressure");
+      assert(
+        elapsed >= 500,
+        `Should prove the old 500ms deadline was exceeded (took ${elapsed}ms)`,
+      );
+      assert(
+        elapsed < TRANSFORM_ACQUIRE_TIMEOUT_MS,
+        `Should acquire within the configured timeout (took ${elapsed}ms)`,
+      );
 
       semaphore.release();
       await releaseTask;

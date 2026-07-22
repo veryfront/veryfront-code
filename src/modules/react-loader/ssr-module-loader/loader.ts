@@ -27,12 +27,10 @@ import {
 } from "./loader-helpers.ts";
 import {
   getMaxConcurrentTransforms,
-  IN_PROGRESS_WAIT_TIMEOUT_MS,
   MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_BATCH_SIZE,
 } from "./constants.ts";
-import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
   getFromRedis,
   getTransformSemaphore,
@@ -544,23 +542,26 @@ export class SSRModuleLoader {
       }
     }
 
-    const existingTransform = globalInProgress.get(inProgressKey);
-    if (existingTransform) {
+    while (true) {
+      const existingTransform = globalInProgress.get(inProgressKey);
+      if (!existingTransform) break;
+
       try {
         await withSpan(
           SpanNames.SSR_WAIT_IN_PROGRESS,
-          () =>
-            withTimeoutThrow(
-              existingTransform,
-              IN_PROGRESS_WAIT_TIMEOUT_MS,
-              `Waiting for in-progress transform of ${filePath}`,
-            ),
+          () => existingTransform,
           { "ssr.file": filePath.split("/").pop() || filePath },
         );
         return;
       } catch (error) {
-        globalInProgress.delete(inProgressKey);
-        logger.warn("In-progress transform timed out, retrying", {
+        // Retry only after the leader actually rejects. A time-based retry can
+        // delete live singleflight state and multiply one slow cold transform
+        // into many competing transforms; the outer render deadline already
+        // bounds how long an individual request waits.
+        if (globalInProgress.get(inProgressKey) === existingTransform) {
+          globalInProgress.delete(inProgressKey);
+        }
+        logger.warn("In-progress transform failed, retrying", {
           file: filePath.slice(-40),
           error: error instanceof Error ? error.message : String(error),
         });
@@ -573,10 +574,10 @@ export class SSRModuleLoader {
       resolveTransform = resolve;
       rejectTransform = reject;
     });
-    // Attach catch to prevent unhandled rejection when waiters timeout
-    // and stop listening. The actual error is thrown to the caller directly.
+    // The coordinating promise is separate from the leader's direct call, so
+    // it may reject when no follower is currently awaiting it.
     transformPromise.catch((err) => {
-      logger.debug("Transform rejected (waiters may have timed out)", {
+      logger.debug("Transform rejected (no active waiter may remain)", {
         key: inProgressKey,
         error: err instanceof Error ? err.message : String(err),
       });

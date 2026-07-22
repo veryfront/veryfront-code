@@ -57,8 +57,10 @@ export function resetCachedTransformLimits(): void {
   _transformPerProjectLimit = undefined;
 }
 
-export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
-export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;
+// Cold framework transforms can occupy every permit for longer than 500ms.
+// Queue briefly instead of misclassifying normal backpressure as a missing
+// dependency; this remains well below the module-load and render hard caps.
+export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 5_000;
 
 export const MAX_TRANSFORM_DEPTH = 15;
 export const TRANSFORM_BATCH_SIZE = 10;
