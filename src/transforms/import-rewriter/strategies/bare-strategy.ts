@@ -14,6 +14,7 @@ import type {
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
+import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -68,6 +69,19 @@ export class BareStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
+    // Explicit Deno npm specifiers (`npm:redis@5.11.0`) and known server-only
+    // packages (`redis`, `pg`, …) must never be routed through esm.sh — they
+    // only run server-side and either fail to build for the browser or produce
+    // a client that cannot connect. Leave them external for every target so the
+    // runtime resolves them natively (node_modules on Node, npm: on Deno). The
+    // framework's adapters only `import()` these behind a lazy, configured code
+    // path, so an app that does not use the backend never loads them at all.
+    if (info.specifier.startsWith("npm:")) return { specifier: null };
+    const serverOnlyParsed = parseBarePackageSpecifier(info.specifier);
+    if (serverOnlyParsed && isServerOnlyPackage(serverOnlyParsed.packageName)) {
+      return { specifier: null };
+    }
+
     if (ctx.target === "ssr") return { specifier: null };
 
     const parsed = parseBarePackageSpecifier(info.specifier);

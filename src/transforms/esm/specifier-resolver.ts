@@ -10,6 +10,8 @@
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
+import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { type ImportSpecifier, parseImports, replaceSpecifiers } from "./lexer.ts";
 
 const logger = rendererLogger.component("specifier-resolver");
@@ -46,6 +48,17 @@ async function resolveSpecifier(
   cacheHttpModule: CacheHttpModuleFn,
 ): Promise<string | null> {
   if (isExternalScheme(specifier)) return null;
+
+  // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`
+  // form, must never be routed through esm.sh. esm.sh either 500s building them
+  // or emits a browser bundle with Node built-ins stubbed that can never
+  // connect. The framework's adapters only `import()` them behind a lazy,
+  // configured code path, so leaving the specifier external lets the runtime
+  // resolve the real package (node_modules on Node, npm: on Deno) if and when
+  // the backend is actually used — and costs nothing when it is not.
+  const serverOnlyCandidate = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
+  const serverOnlyParsed = parseBarePackageSpecifier(serverOnlyCandidate);
+  if (serverOnlyParsed && isServerOnlyPackage(serverOnlyParsed.packageName)) return null;
 
   if (isInternalBare(specifier)) {
     const mapped = resolveImport(specifier, options.importMap);

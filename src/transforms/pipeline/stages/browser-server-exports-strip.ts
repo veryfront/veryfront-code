@@ -335,7 +335,19 @@ function dropUnusedImportBindings(body: Node[]): Node[] {
     if (bindings.some((binding) => referenced.has(binding))) return true;
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
-    if (typeof source === "string" && source.startsWith("node:")) return false;
+    // Node built-ins resolve to a noop polyfill in the browser, so there is no
+    // side effect to preserve. The `veryfront` framework barrel is the same
+    // case for a different reason: keeping it as a side-effect import pulls the
+    // server runtime (`_veryfront/server/production-server.js`) into the client
+    // bundle and breaks hydration. A page that used a framework export only in
+    // a server-only hook must not ship that barrel to the browser at all.
+    if (
+      typeof source === "string" &&
+      (source.startsWith("node:") || source === "veryfront" ||
+        source.startsWith("veryfront/"))
+    ) {
+      return false;
+    }
 
     statement.specifiers = [];
     return true;

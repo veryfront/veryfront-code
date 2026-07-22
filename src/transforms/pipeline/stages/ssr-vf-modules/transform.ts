@@ -47,6 +47,68 @@ import { buildFrameworkVfModuleCacheFileName } from "../../../mdx/esm-module-loa
 const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
 /**
+ * Extract the export names a source module declares, well enough to build a
+ * shape-compatible stub. Covers `export function/class/const/let/var NAME`,
+ * `export { a, b as c }`, and `export default`. Deliberately conservative —
+ * anything it misses simply won't appear on the stub, which degrades to a
+ * "symbol unavailable" error at use time rather than a load failure.
+ */
+function extractExportNames(source: string): { named: string[]; hasDefault: boolean } {
+  const named = new Set<string>();
+  let hasDefault = false;
+  for (
+    const match of source.matchAll(
+      /\bexport\s+(?:async\s+)?(?:function\*?|class|const|let|var)\s+([A-Za-z_$][\w$]*)/g,
+    )
+  ) {
+    if (match[1]) named.add(match[1]);
+  }
+  for (const match of source.matchAll(/\bexport\s*\{([^}]*)\}/g)) {
+    for (const part of (match[1] ?? "").split(",")) {
+      const segment = part.trim();
+      if (!segment) continue;
+      const asMatch = segment.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
+      const name = asMatch ? asMatch[1] : segment.split(/\s+/)[0];
+      if (!name) continue;
+      if (name === "default") {
+        hasDefault = true;
+      } else if (/^[A-Za-z_$][\w$]*$/.test(name)) {
+        named.add(name);
+      }
+    }
+  }
+  if (/\bexport\s+default\b/.test(source)) hasDefault = true;
+  return { named: Array.from(named), hasDefault };
+}
+
+/**
+ * Build a lazily-throwing stub for a framework dependency that could not be
+ * transformed (e.g. a server-only adapter whose npm package cannot be bundled
+ * for the browser). Importing the stub succeeds; each symbol throws only if it
+ * is actually used at runtime. This keeps one un-bundleable optional dependency
+ * from aborting the whole framework module — which would otherwise 500 every
+ * route that transitively imports it.
+ */
+function buildDegradedModuleStub(source: string, modulePath: string, reason: string): string {
+  const { named, hasDefault } = extractExportNames(source);
+  const label = modulePath.replace(/\\/g, "/").split("/").slice(-3).join("/");
+  const message = `[veryfront] Optional framework module "${label}" could not be transformed ` +
+    `for SSR (${reason}) and has been stubbed. This symbol is unavailable; if you depend on it, ` +
+    `ensure its package is installed and reachable.`;
+  const lines = [
+    `function __vfDegraded(name){throw new Error(${JSON.stringify(message)} + " Symbol: " + name);}`,
+  ];
+  for (const name of named) {
+    lines.push(`export function ${name}(){return __vfDegraded(${JSON.stringify(name)});}`);
+  }
+  if (hasDefault) {
+    lines.push(`export default function(){return __vfDegraded("default");}`);
+  }
+  if (!named.length && !hasDefault) lines.push("export {};");
+  return lines.join("\n");
+}
+
+/**
  * Unique token embedded in every cycle-detection placeholder as an extra
  * collision guard. Detection keys off the stable `/* Cycle detected:` prefix
  * (below); the marker is additional insurance and is not required for a match,
@@ -580,11 +642,28 @@ async function transformFrameworkCodeUncoalesced(
             cachePath: cachePath.slice(-60),
           });
         } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
           logger.warn(`${LOG_PREFIX} Failed to transform relative import: ${specifier}`, {
             from: sourcePath.slice(-40),
             resolvedPath: resolvedPath.slice(-40),
-            error: error instanceof Error ? error.message : String(error),
+            error: reason,
           });
+          // Defense-in-depth: never leave a dangling relative import. If a
+          // dependency cannot be transformed, emit a lazily-throwing stub so
+          // the parent module still resolves and only the specific symbol
+          // fails — and only if it is actually used at runtime. Without this,
+          // a single un-bundleable optional adapter 500s every route that
+          // transitively imports the framework barrel.
+          try {
+            const stubSource = await ctx.fs.readTextFile(resolvedPath).catch(() => "");
+            const stubCode = buildDegradedModuleStub(stubSource, resolvedPath, reason);
+            const stubPath = await cacheTransformedCode(stubCode, resolvedPath, ctx.fs);
+            relativeReplacements.set(specifier, `file://${stubPath}`);
+          } catch (stubError) {
+            logger.warn(`${LOG_PREFIX} Failed to write degraded stub for ${specifier}`, {
+              error: stubError instanceof Error ? stubError.message : String(stubError),
+            });
+          }
         }
       }
     }
