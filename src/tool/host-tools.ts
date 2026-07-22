@@ -30,7 +30,6 @@ export type HostToolSet = Record<string, HostToolDefinition>;
 
 type RunnableHostToolDefinition = HostToolDefinition & {
   description: string;
-  inputSchema: unknown;
   execute: HostToolExecute;
 };
 
@@ -68,7 +67,11 @@ function isHostToolDefinition(value: unknown): value is RunnableHostToolDefiniti
   return (
     isRecord(value) &&
     typeof value.description === "string" &&
-    (isSchemaLike(value.inputSchema) || isParserBackedPrecomputedSchema(value)) &&
+    (
+      isSchemaLike(value.inputSchema) ||
+      isParserBackedPrecomputedSchema(value) ||
+      (value.inputSchema === undefined && isRecord(value.inputSchemaJson))
+    ) &&
     typeof value.execute === "function"
   );
 }

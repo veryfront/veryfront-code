@@ -1139,9 +1139,6 @@ describe("internal-agents/run-stream", () => {
     const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];
     let capturedToolNames: string[] = [];
     let capturedTools: Agent["config"]["tools"];
-    const parserInputSchema = {
-      parse: (input: unknown) => input,
-    };
     const inputSchemaJson = {
       type: "object" as const,
       properties: {},
@@ -1193,19 +1190,16 @@ describe("internal-agents/run-stream", () => {
             tools: {
               bash: {
                 description: "Run bash",
-                inputSchema: parserInputSchema,
                 inputSchemaJson,
                 execute: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
               },
               sandbox_read_file: {
                 description: "Read sandbox file",
-                inputSchema: parserInputSchema,
                 inputSchemaJson,
                 execute: async () => "",
               },
               sandbox_write_file: {
                 description: "Write sandbox file",
-                inputSchema: parserInputSchema,
                 inputSchemaJson,
                 execute: async () => undefined,
               },

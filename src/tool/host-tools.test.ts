@@ -124,6 +124,29 @@ describe("tool/host-tools", () => {
     assertEquals(executeCalls, 1);
   });
 
+  it("materializes JSON-schema-only host tool definitions", async () => {
+    const inputSchemaJson: JsonSchema = {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: ["command"],
+    };
+
+    const tools = createToolsFromHostDefinitions({
+      bash: {
+        description: "Run a sandbox command",
+        inputSchemaJson,
+        execute: (input: unknown) => input,
+      },
+    });
+
+    const bash = tools.bash;
+    if (!bash) throw new Error("bash tool was not materialized");
+    assertEquals(bash.type, "dynamic");
+    assertEquals(bash.inputSchemaJson, inputSchemaJson);
+    assertEquals(await bash.execute({ command: "true" }), { command: "true" });
+    await assertRejects(() => bash.execute("true"), Error, "input must be a non-null object");
+  });
+
   it("skips non-runnable host definitions", () => {
     const tools = createToolsFromHostDefinitions({
       missingExecute: {
