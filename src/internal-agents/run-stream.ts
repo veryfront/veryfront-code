@@ -466,12 +466,11 @@ function applyRuntimeToolAllowlist(
     // rather than silently skipping enforcement.
     return {};
   }
-  const visibleSkills = skillRegistry.resolveForAgent(true, { agentId: agent.id });
-  const availableSkillIds = visibleSkills.size > 0 ? [...visibleSkills.keys()] : undefined;
+  const hasVisibleSkills = skillRegistry.resolveForAgent(true, { agentId: agent.id }).size > 0;
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
     localToolNames: Object.keys(mergedTools),
-    ...(availableSkillIds ? { availableSkillIds } : {}),
+    ...(hasVisibleSkills ? { availableSkillIds: ["*"] } : {}),
   });
   if (!allowedToolNames) {
     return mergedTools;
