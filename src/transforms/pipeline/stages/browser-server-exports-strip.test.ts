@@ -609,6 +609,24 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    it("keeps unrelated co-declared client initializers while dropping hook-only bindings", async () => {
+      const code = [
+        `const secret = serverOnly(), boot = bootClient();`,
+        `function serverOnly() { return "SECRET"; }`,
+        `function bootClient() { globalThis.__booted = true; return true; }`,
+        `export async function getServerData() { return { props: { secret } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "secret"), 0);
+      assertNotIncludes(result, "serverOnly");
+      assertNotIncludes(result, "SECRET");
+      assertStringIncludes(result, "boot = bootClient()");
+      assertStringIncludes(result, "function bootClient()");
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [

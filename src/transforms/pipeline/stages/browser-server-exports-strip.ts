@@ -342,6 +342,7 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
 /** A top-level declaration and the binding names / binding-id nodes it owns. */
 interface ModuleScopeDecl {
   statement: Node;
+  declarator?: Node;
   names: string[];
   bindingIds: Node[];
 }
@@ -365,9 +366,7 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
     }
 
     if (statement.type === "VariableDeclaration") {
-      const names: string[] = [];
-      const bindingIds: Node[] = [];
-      let simple = true;
+      const variableDecls: ModuleScopeDecl[] = [];
 
       for (
         const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
@@ -376,17 +375,14 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
         const id = declarator.id;
         if (isNode(id) && id.type === "Identifier") {
           const name = nodeName(id);
-          if (name) {
-            names.push(name);
-            bindingIds.push(id);
-          }
+          if (name) variableDecls.push({ statement, declarator, names: [name], bindingIds: [id] });
         } else {
-          simple = false;
+          variableDecls.length = 0;
           break;
         }
       }
 
-      if (simple && names.length > 0) decls.push({ statement, names, bindingIds });
+      decls.push(...variableDecls);
     }
   }
 
@@ -758,23 +754,58 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
 
     const referenced = referencedIdentifiers(current, excluded);
 
-    const removable = new Set<Node>();
+    const removableStatements = new Set<Node>();
+    const removableDeclarators = new Map<Node, Set<Node>>();
+    const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
       const inClosure = decl.names.some((name) => hookClosure.has(name));
       const unused = decl.names.every((name) => !referenced.has(name));
-      if (inClosure && unused) removable.add(decl.statement);
+      if (!inClosure || !unused) continue;
+
+      removedDecls.push(decl);
+      if (!decl.declarator) {
+        removableStatements.add(decl.statement);
+        continue;
+      }
+
+      const statementDeclarators = Array.isArray(decl.statement.declarations)
+        ? decl.statement.declarations.filter(isNode)
+        : [];
+      let statementRemoval = removableDeclarators.get(decl.statement);
+      if (!statementRemoval) {
+        statementRemoval = new Set();
+        removableDeclarators.set(decl.statement, statementRemoval);
+      }
+      statementRemoval.add(decl.declarator);
+
+      if (
+        statementDeclarators.length > 0 &&
+        statementDeclarators.every((declarator) => statementRemoval?.has(declarator))
+      ) {
+        removableStatements.add(decl.statement);
+        removableDeclarators.delete(decl.statement);
+      }
     }
-    if (removable.size === 0) return current;
+    if (removedDecls.length === 0) return current;
 
     // Grow the closure through the removed declarations' initialisers, so a
     // chain that only fed the hook (`const RAW = getEnv(); const TOKEN = RAW…`)
     // is pruned end to end while unrelated declarations stay outside it.
-    for (const decl of decls) {
-      if (!removable.has(decl.statement)) continue;
-      for (const name of freeReferencedIdentifiers(decl.statement)) hookClosure.add(name);
+    for (const decl of removedDecls) {
+      for (const name of freeReferencedIdentifiers(decl.declarator ?? decl.statement)) {
+        hookClosure.add(name);
+      }
     }
 
-    current = current.filter((statement) => !removable.has(statement));
+    for (const [statement, declarators] of removableDeclarators) {
+      const declarations = statement.declarations;
+      if (!Array.isArray(declarations)) continue;
+      statement.declarations = declarations.filter((declarator) => {
+        return !isNode(declarator) || !declarators.has(declarator);
+      });
+    }
+
+    current = current.filter((statement) => !removableStatements.has(statement));
   }
 }
 
