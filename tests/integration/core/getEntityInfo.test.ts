@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { dirname, join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -7,11 +7,21 @@ import {
   getEntityInfo,
   getLayoutEntity,
 } from "../../../src/types/entities/getEntityInfo.ts";
+import { createMockAdapter } from "../../../src/platform/adapters/mock.ts";
+import { NotSupportedError } from "../../../src/platform/adapters/fs/wrapper.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function createTestFile(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeTextFile(path, content);
+}
+
+function rejectingAsyncIterable(error: unknown): AsyncIterable<never> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<never> {
+      return { next: () => Promise.reject(error) };
+    },
+  };
 }
 
 describe("getEntityInfo", () => {
@@ -182,6 +192,68 @@ Content`,
       assertEquals(info, null);
     });
   });
+
+  it("does not fall through to a host file when adapter stat fails", async () => {
+    await withTestContext("entity-adapter-stat-authority", async (context) => {
+      const testFile = join(context.projectDir, "remote-only.mdx");
+      await createTestFile(testFile, "# Host content must not be returned");
+
+      const adapter = createMockAdapter();
+      const backendError = new Error("remote backend unavailable");
+      adapter.fs.stat = () => Promise.reject(backendError);
+
+      const error = await assertRejects(() => getEntityInfo(testFile, adapter), Error);
+
+      assertEquals(error, backendError);
+    });
+  });
+
+  it("does not fall through to a host file when adapter read fails", async () => {
+    await withTestContext("entity-adapter-read-authority", async (context) => {
+      const testFile = join(context.projectDir, "remote-only.mdx");
+      await createTestFile(testFile, "# Host content must not be returned");
+
+      const adapter = createMockAdapter();
+      adapter.fs.stat = () =>
+        Promise.resolve({
+          size: 1,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: new Date(),
+        });
+      const backendError = new Error("remote backend unavailable");
+      adapter.fs.readFile = () => Promise.reject(backendError);
+
+      const error = await assertRejects(() => getEntityInfo(testFile, adapter), Error);
+
+      assertEquals(error, backendError);
+    });
+  });
+
+  it("retains local compatibility for explicitly unsupported adapter operations", async () => {
+    await withTestContext("entity-adapter-unsupported-fallback", async (context) => {
+      const testFile = join(context.projectDir, "local-compatible.mdx");
+      await createTestFile(testFile, "# Local compatibility content");
+
+      const adapter = createMockAdapter();
+      adapter.fs.stat = () => Promise.reject(new NotSupportedError("stat", "TestAdapter"));
+      adapter.fs.readFile = () => Promise.reject(new NotSupportedError("readFile", "TestAdapter"));
+
+      const info = await getEntityInfo(testFile, adapter);
+
+      assertExists(info);
+      assertEquals(info.entity.content, "# Local compatibility content");
+    });
+  });
+
+  it("returns null for an authoritative adapter not-found result", async () => {
+    const adapter = createMockAdapter();
+
+    const info = await getEntityInfo("/project/pages/missing.mdx", adapter);
+
+    assertEquals(info, null);
+  });
 });
 
 describe("getEntityBySlug", () => {
@@ -285,6 +357,109 @@ describe("getEntityBySlug", () => {
       const pageInfo = await getEntityBySlug(context.projectDir, "page");
       assertExists(pageInfo);
       assertEquals(pageInfo.entity.isPage, true);
+    });
+  });
+
+  it("selects a dynamic segment over catch-all routes regardless of directory order", async () => {
+    const adapter = createMockAdapter();
+    const projectDir = "/project";
+    adapter.fs.files.set(
+      join(projectDir, "pages", "[...all].tsx"),
+      "// lower-priority catch-all",
+    );
+    adapter.fs.files.set(
+      join(projectDir, "pages", "[id].tsx"),
+      "// higher-priority dynamic segment",
+    );
+
+    const info = await getEntityBySlug(projectDir, "post", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "// higher-priority dynamic segment");
+  });
+
+  it("selects a required catch-all over an optional catch-all", async () => {
+    const adapter = createMockAdapter();
+    const projectDir = "/project";
+    adapter.fs.files.set(
+      join(projectDir, "pages", "[[...all]].tsx"),
+      "// lower-priority optional catch-all",
+    );
+    adapter.fs.files.set(
+      join(projectDir, "pages", "[...all].tsx"),
+      "// higher-priority required catch-all",
+    );
+
+    const info = await getEntityBySlug(projectDir, "docs/getting-started", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "// higher-priority required catch-all");
+  });
+
+  it("fails closed when equally specific dynamic routes are ambiguous", async () => {
+    const adapter = createMockAdapter();
+    const projectDir = "/project";
+    adapter.fs.files.set(join(projectDir, "pages", "[id].tsx"), "// id route");
+    adapter.fs.files.set(join(projectDir, "pages", "[slug].tsx"), "// slug route");
+
+    const info = await getEntityBySlug(projectDir, "post", adapter);
+
+    assertEquals(info, null);
+  });
+
+  it("propagates a dynamic-directory stat failure with its original provenance", async () => {
+    await withTestContext("entity-dynamic-directory-stat", async (context) => {
+      const pagesDir = join(context.projectDir, "pages");
+      await createTestFile(join(pagesDir, "[id].tsx"), "// host-only route");
+
+      const adapter = createMockAdapter();
+      const adapterStat = adapter.fs.stat.bind(adapter.fs);
+      const backendError = new Error("remote directory stat unavailable");
+      adapter.fs.stat = (path) =>
+        path === pagesDir ? Promise.reject(backendError) : adapterStat(path);
+
+      const error = await assertRejects(
+        () => getEntityBySlug(context.projectDir, "post", adapter),
+        Error,
+      );
+
+      assertEquals(error, backendError);
+    });
+  });
+
+  it("propagates a dynamic-directory read failure with its original provenance", async () => {
+    const adapter = createMockAdapter();
+    const projectDir = "/project";
+    const pagesDir = join(projectDir, "pages");
+    adapter.fs.directories.add(pagesDir);
+    const backendError = new Error("remote directory read unavailable");
+    adapter.fs.readDir = () => rejectingAsyncIterable(backendError);
+
+    const error = await assertRejects(
+      () => getEntityBySlug(projectDir, "post", adapter),
+      Error,
+    );
+
+    assertEquals(error, backendError);
+  });
+
+  it("uses host dynamic routes only for explicitly unsupported adapter operations", async () => {
+    await withTestContext("entity-dynamic-unsupported-fallback", async (context) => {
+      await createTestFile(
+        join(context.projectDir, "pages", "[id].tsx"),
+        "// explicit unsupported fallback",
+      );
+
+      const adapter = createMockAdapter();
+      adapter.fs.stat = () => Promise.reject(new NotSupportedError("stat", "TestAdapter"));
+      adapter.fs.readFile = () => Promise.reject(new NotSupportedError("readFile", "TestAdapter"));
+      adapter.fs.readDir = () =>
+        rejectingAsyncIterable(new NotSupportedError("readDir", "TestAdapter"));
+
+      const info = await getEntityBySlug(context.projectDir, "post", adapter);
+
+      assertExists(info);
+      assertEquals(info.entity.content, "// explicit unsupported fallback");
     });
   });
 });
