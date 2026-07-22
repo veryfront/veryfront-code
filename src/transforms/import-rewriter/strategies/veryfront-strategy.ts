@@ -27,6 +27,15 @@ import {
  */
 const REACT_ONLY_MODULE_OVERRIDES: Record<string, string> = {
   "veryfront/workflow": "/_vf_modules/_veryfront/workflow/react/index.js",
+  // The root barrel re-exports the server bootstrap surface from
+  // `#veryfront/server`, which transitively pulls `server/production-server.ts`
+  // (module top-level await → cannot transform to the es2020 browser target →
+  // HTTP 500, aborting hydration). A *used* value import from the barrel (e.g.
+  // `import { getEnv } from "veryfront"`) survives dead-code stripping and drags
+  // the whole server graph into the client. Redirect to a client/SSR-safe mirror
+  // barrel that omits only the server bootstrap value export. See
+  // `src/index.client.ts`.
+  "veryfront": "/_vf_modules/_veryfront/index.client.js",
 };
 
 export class VeryfrontStrategy implements ImportRewriteStrategy {
