@@ -29,7 +29,11 @@ import {
   createIgnoreChecker,
   loadIgnorePatterns,
 } from "../../sync/ignore.ts";
-import { readPushReceipt, writePushReceipt } from "../../shared/deployment-provenance.ts";
+import {
+  computeSourceDigest,
+  readPushReceipt,
+  writePushReceipt,
+} from "../../shared/deployment-provenance.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -1026,10 +1030,10 @@ describe("push deletion ownership", () => {
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
             return Response.json({
               data: [
-                { path: "app.ts" },
-                { path: "stale.ts" },
-                { path: "inbox/seen/runtime.json" },
-                { path: "submissions/submitted/runtime.md" },
+                { path: "app.ts", content: "stale app" },
+                { path: "stale.ts", content: "stale source" },
+                { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
+                { path: "submissions/submitted/runtime.md", content: "runtime\n" },
               ],
               page_info: {},
             });
@@ -1048,6 +1052,16 @@ describe("push deletion ownership", () => {
         await pushCommand({ projectDir, branch: "main", force: true, quiet: true });
 
         assertEquals(deleted, ["stale.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
+            { path: "submissions/submitted/runtime.md", content: "runtime\n" },
+          ]),
+        );
       });
     } finally {
       globalThis.fetch = originalFetch;
