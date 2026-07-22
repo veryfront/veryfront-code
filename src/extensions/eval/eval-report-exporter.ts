@@ -277,8 +277,9 @@ class EvalReportExporterRegistryImpl implements EvalReportExporterRegistry {
   ): Promise<EvalReportExportResult[]> {
     const results: EvalReportExportResult[] = [];
     const redaction = cloneRedaction(context.redaction) ?? {};
+    const exporters = [...this.exporters.values()];
 
-    for (const exporter of this.exporters.values()) {
+    for (const exporter of exporters) {
       try {
         const sanitizedReport = redactEvalReportForExport(report, redaction);
         const exportContext = redactEvalReportExportContext(context, redaction);

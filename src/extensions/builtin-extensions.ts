@@ -18,7 +18,9 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.
 import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
-import extEvalReportMlflow from "../../extensions/ext-eval-report-mlflow/src/index.ts";
+import extEvalReportMlflow, {
+  EvalReportMlflowExtensionMetadata,
+} from "../../extensions/ext-eval-report-mlflow/src/index.ts";
 import extZod from "../../extensions/ext-schema-zod/src/index.ts";
 export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
@@ -166,33 +168,10 @@ export const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] =
     name: "ext-eval-report-mlflow",
     origin: "veryfront/ext-eval-report-mlflow",
     sourceDirectory: "ext-eval-report-mlflow",
-    contracts: { requires: ["EvalReportExporterRegistry"] },
+    contracts: EvalReportMlflowExtensionMetadata.contracts,
     evalExporterId: "mlflow",
     factory: extEvalReportMlflow,
-    capabilities: [
-      { type: "net:outbound", hosts: ["*"] },
-      {
-        type: "env:read",
-        keys: [
-          "MLFLOW_ARTIFACTS_URI",
-          "MLFLOW_EXPERIMENT_NAME",
-          "MLFLOW_RUN_NAME",
-          "MLFLOW_TRACKING_PASSWORD",
-          "MLFLOW_TRACKING_TOKEN",
-          "MLFLOW_TRACKING_URI",
-          "MLFLOW_TRACKING_USERNAME",
-          "MLFLOW_OAUTH_TOKEN_URL",
-          "MLFLOW_OAUTH_CLIENT_ID",
-          "MLFLOW_OAUTH_CLIENT_SECRET",
-          "MLFLOW_OAUTH_SCOPE",
-          "MLFLOW_EXPORT_ARTIFACTS",
-          "MLFLOW_REQUEST_TIMEOUT_MS",
-          "MLFLOW_RETRY_ATTEMPTS",
-          "MLFLOW_RETRY_DELAY_MS",
-          "MLFLOW_RUN_URL_TEMPLATE",
-        ],
-      },
-    ],
+    capabilities: EvalReportMlflowExtensionMetadata.capabilities,
   },
 ];
 
