@@ -2,8 +2,12 @@ import { TRIGGER_CONFIG_INVALID } from "#veryfront/errors";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._/-]*$/;
 
+export function isTriggerId(value: unknown): value is string {
+  return typeof value === "string" && ID_PATTERN.test(value);
+}
+
 export function validateTriggerId(id: string, label: string): void {
-  if (!ID_PATTERN.test(id)) {
+  if (!isTriggerId(id)) {
     throw TRIGGER_CONFIG_INVALID.create({
       detail:
         `${label} id must start with a lowercase letter or number and use lowercase letters, numbers, dots, underscores, slashes, or hyphens.`,
@@ -12,35 +16,80 @@ export function validateTriggerId(id: string, label: string): void {
 }
 
 export function assertSerializable(value: unknown, path = "value"): void {
+  assertSerializableValue(value, path, new WeakSet<object>());
+}
+
+function throwNotSerializable(path: string): never {
+  throw TRIGGER_CONFIG_INVALID.create({ detail: `${path} must be JSON-serializable.` });
+}
+
+function assertSerializableValue(
+  value: unknown,
+  path: string,
+  ancestors: WeakSet<object>,
+): void {
   if (value === undefined) return;
   if (value === null) return;
 
   const valueType = typeof value;
-  if (valueType === "string" || valueType === "number" || valueType === "boolean") return;
-
-  if (valueType === "function" || valueType === "symbol" || valueType === "bigint") {
-    throw TRIGGER_CONFIG_INVALID.create({ detail: `${path} must be JSON-serializable.` });
-  }
-
-  if (value instanceof Date) {
-    throw TRIGGER_CONFIG_INVALID.create({ detail: `${path} must be JSON-serializable.` });
-  }
-
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index++) {
-      assertSerializable(value[index], `${path}[${index}]`);
-    }
+  if (valueType === "string" || valueType === "boolean") return;
+  if (valueType === "number") {
+    if (!Number.isFinite(value)) throwNotSerializable(path);
     return;
   }
 
-  if (typeof value === "object") {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw TRIGGER_CONFIG_INVALID.create({ detail: `${path} must be JSON-serializable.` });
+  if (valueType === "function" || valueType === "symbol" || valueType === "bigint") {
+    throwNotSerializable(path);
+  }
+
+  let isDate: boolean;
+  try {
+    isDate = value instanceof Date;
+  } catch {
+    throwNotSerializable(path);
+  }
+  if (isDate) {
+    throwNotSerializable(path);
+  }
+
+  const objectValue = value as object;
+  if (ancestors.has(objectValue)) throwNotSerializable(path);
+  ancestors.add(objectValue);
+
+  try {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index++) {
+        let child: unknown;
+        try {
+          child = value[index];
+        } catch {
+          throwNotSerializable(`${path}[${index}]`);
+        }
+        assertSerializableValue(child, `${path}[${index}]`, ancestors);
+      }
+      return;
     }
 
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      assertSerializable(child, `${path}.${key}`);
+    let prototype: object | null;
+    try {
+      prototype = Object.getPrototypeOf(value);
+    } catch {
+      throwNotSerializable(path);
     }
+    if (prototype !== Object.prototype && prototype !== null) {
+      throwNotSerializable(path);
+    }
+
+    let entries: [string, unknown][];
+    try {
+      entries = Object.entries(value as Record<string, unknown>);
+    } catch {
+      throwNotSerializable(path);
+    }
+    for (const [key, child] of entries) {
+      assertSerializableValue(child, `${path}.${key}`, ancestors);
+    }
+  } finally {
+    ancestors.delete(objectValue);
   }
 }

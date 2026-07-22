@@ -1,4 +1,5 @@
 import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import { isValidWebhookDefinition } from "./validation.ts";
 
 export type WebhookEventFilterMode = "all" | "any";
 
@@ -34,12 +35,7 @@ export interface WebhookDefinition {
 
 export type WebhookConfig = WebhookDefinition;
 
+/** Return true only when every webhook field and nested invariant is valid. */
 export function isWebhookDefinition(value: unknown): value is WebhookDefinition {
-  if (!value || typeof value !== "object") return false;
-  const definition = value as Record<string, unknown>;
-  return (
-    typeof definition.id === "string" &&
-    definition.target !== null &&
-    typeof definition.target === "object"
-  );
+  return isValidWebhookDefinition(value);
 }
