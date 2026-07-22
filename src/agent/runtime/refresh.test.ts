@@ -142,7 +142,7 @@ describe("agent runtime refresh hooks", () => {
       registerSkill("read-only-review", {
         id: "read-only-review",
         metadata: {
-          name: "Read-only review",
+          name: "read-only-review",
           description: "Review without writes",
           allowedTools: [],
         },

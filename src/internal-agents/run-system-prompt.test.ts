@@ -170,7 +170,7 @@ describe("internal-agents/run-system-prompt", () => {
       registerSkill("support-triage", {
         id: "support-triage",
         metadata: {
-          name: "Support triage",
+          name: "support-triage",
           description: "Triage incoming support requests",
         },
         rootPath: "/test/skills/support-triage",
@@ -193,7 +193,7 @@ describe("internal-agents/run-system-prompt", () => {
       assertStringIncludes(prompt, "## Available Skills");
       assertStringIncludes(
         prompt,
-        "**Support triage** (`support-triage`): Triage incoming support requests",
+        "**support-triage**: Triage incoming support requests",
       );
     });
 

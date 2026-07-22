@@ -48,7 +48,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves an empty catalog a
   skillRegistry.clearAll();
   registerSkill("global-howto", {
     id: "global-howto",
-    metadata: { name: "Global how-to", description: "Follow the project guide" },
+    metadata: { name: "global-howto", description: "Follow the project guide" },
     rootPath: "/project/skills/global-howto",
   });
   try {

@@ -40,14 +40,14 @@ describe("agent factory", () => {
     registerSkill("support-triage", {
       id: "support-triage",
       metadata: {
-        name: "Support triage",
+        name: "support-triage",
         description: "Triage incoming support requests",
       },
       rootPath: "/test/skills/support-triage",
     });
     registerSkill("researcher--cite", {
       id: "researcher--cite",
-      metadata: { name: "Cite sources", description: "Cite primary sources" },
+      metadata: { name: "cite", description: "Cite primary sources" },
       rootPath: "/test/skills/researcher--cite",
       ownerAgentId: "researcher",
       shortName: "cite",
@@ -70,7 +70,7 @@ describe("agent factory", () => {
       : effectiveSystem ?? "";
     assertStringIncludes(
       prompt,
-      "**Support triage** (`support-triage`): Triage incoming support requests",
+      "**support-triage**: Triage incoming support requests",
     );
     assertEquals(prompt.includes("researcher--cite"), false);
 
@@ -133,7 +133,7 @@ describe("agent factory", () => {
     registerSkill("support-triage", {
       id: "support-triage",
       metadata: {
-        name: "Support triage",
+        name: "support-triage",
         description: "Triage incoming support requests",
       },
       rootPath: "/test/skills/support-triage",

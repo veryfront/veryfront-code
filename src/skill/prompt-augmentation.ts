@@ -8,6 +8,9 @@
 
 import type { Skill } from "./types.ts";
 
+/** Maximum number of skills rendered in an agent system prompt. */
+export const MAX_SKILL_MANIFEST_PROMPT_ENTRIES = 30;
+
 /**
  * Build the skill manifest prompt section for an agent's system prompt.
  *
@@ -27,8 +30,18 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
     "",
   ];
 
-  for (const [id, skill] of skills) {
-    lines.push(`- **${skill.metadata.name}** (\`${id}\`): ${skill.metadata.description}`);
+  const displaySkills = Array.from(skills).slice(0, MAX_SKILL_MANIFEST_PROMPT_ENTRIES);
+  for (const [id, skill] of displaySkills) {
+    lines.push(`- **${id}**: ${skill.metadata.description}`);
+  }
+
+  if (skills.size > MAX_SKILL_MANIFEST_PROMPT_ENTRIES) {
+    lines.push("");
+    lines.push(
+      `${
+        skills.size - MAX_SKILL_MANIFEST_PROMPT_ENTRIES
+      } more skills available. Use load_skill to discover them.`,
+    );
   }
 
   lines.push("");
