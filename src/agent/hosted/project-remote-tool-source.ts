@@ -15,7 +15,7 @@ import {
   defaultAgentServiceMcpServers,
 } from "../service/mcp-server-config.ts";
 import type { AgentMcpToolPolicy } from "../types.ts";
-import { PERMISSION_DENIED } from "#veryfront/errors";
+import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
@@ -283,15 +283,20 @@ function resolveHostedProjectMcpServers(
 function throwExplicitStudioMcpUnavailable(
   input: CreateHostedProjectRemoteToolSourcesInput,
 ): never {
-  const missingUrl = !input.studioMcpUrl;
+  const requirement =
+    'Provide studioMcpUrl with a trusted Veryfront Studio client profile, or remove { kind: "veryfront-studio" } from mcpServers.';
+  if (!input.studioMcpUrl) {
+    throw CONFIG_INVALID.create({
+      detail:
+        `Explicit Veryfront Studio MCP server requires a hosted Studio MCP transport, but studioMcpUrl was not provided. ${requirement}`,
+    });
+  }
+
   const clientId = input.clientProfile?.id ?? "unknown";
-  const reason = missingUrl
-    ? "studioMcpUrl was not provided"
-    : `client "${clientId}" is not allowed to use Studio MCP`;
-  throw new Error(
-    `Explicit Veryfront Studio MCP server requires a hosted Studio MCP transport, but ${reason}. ` +
-      'Provide studioMcpUrl with a trusted Veryfront Studio client profile, or remove { kind: "veryfront-studio" } from mcpServers.',
-  );
+  throw PERMISSION_DENIED.create({
+    detail:
+      `Explicit Veryfront Studio MCP server requires a hosted Studio MCP transport, but client "${clientId}" is not allowed to use Studio MCP. ${requirement}`,
+  });
 }
 
 function createHostedProjectRemoteToolSourceFromConfig(

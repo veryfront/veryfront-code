@@ -9,6 +9,7 @@ import {
   createHostedProjectRemoteToolSource,
   createHostedProjectRemoteToolSources,
 } from "./project-remote-tool-source.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function projectFileTool(name: string): ToolDefinition {
   return {
@@ -541,7 +542,7 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
 });
 
 Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP without hosted URL", () => {
-  assertThrows(
+  const error = assertThrows(
     () =>
       createHostedProjectRemoteToolSources({
         authToken: "token-1",
@@ -557,13 +558,14 @@ Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP w
         createRemoteToolSource: (config) =>
           createRemoteSource({ id: config.id, tools: [simpleTool("studio_todo_write")] }),
       }),
-    Error,
+    VeryfrontError,
     "studioMcpUrl was not provided",
   );
+  assertEquals(error.slug, "config-invalid");
 });
 
 Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP from disallowed client", () => {
-  assertThrows(
+  const error = assertThrows(
     () =>
       createHostedProjectRemoteToolSources({
         authToken: "token-1",
@@ -580,9 +582,10 @@ Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP f
         createRemoteToolSource: (config) =>
           createRemoteSource({ id: config.id, tools: [simpleTool("studio_todo_write")] }),
       }),
-    Error,
+    VeryfrontError,
     'client "veryfront-cli" is not allowed to use Studio MCP',
   );
+  assertEquals(error.slug, "permission-denied");
 });
 
 Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed Studio tools", async () => {

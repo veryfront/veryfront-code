@@ -88,7 +88,7 @@ function getTrustedInvocationContext(
     return undefined;
   }
 
-  const depth = Number.isInteger(value.delegation_depth) ? value.delegation_depth : 0;
+  const depth = Number.isInteger(value.delegation_depth) ? Math.max(0, value.delegation_depth) : 0;
 
   return {
     ...(typeof value.root_conversation_id === "string"

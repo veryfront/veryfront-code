@@ -235,6 +235,43 @@ Deno.test("withHostedChildInvocationContext preserves root lineage and advances 
   });
 });
 
+Deno.test("withHostedChildInvocationContext clamps negative trusted delegation depth", () => {
+  const result = withHostedChildInvocationContext(
+    {
+      description: "child task",
+      prompt: "Handle child work.",
+      context: {},
+    },
+    {
+      parentConversationId: "child-conversation",
+      parentRunId: "child-run",
+      parentMessageId: "child-message",
+      toolCallId: "tool-call-child",
+      trustedInvocationContext: {
+        root_conversation_id: "root-conversation",
+        root_run_id: "root-run",
+        root_message_id: "root-message",
+        parent_conversation_id: "parent-conversation",
+        parent_run_id: "parent-run",
+        parent_message_id: "parent-message",
+        tool_call_id: "tool-call-parent",
+        delegation_depth: -4,
+      },
+    },
+  );
+
+  assertEquals(result.context?.veryfront_invocation_context, {
+    root_conversation_id: "root-conversation",
+    parent_conversation_id: "child-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_run_id: "child-run",
+    parent_message_id: "child-message",
+    tool_call_id: "tool-call-child",
+    delegation_depth: 1,
+  });
+});
+
 Deno.test("withHostedChildInvocationContext enforces the delegation depth cap", () => {
   let message = "";
 

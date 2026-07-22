@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -11,6 +11,7 @@ import {
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "./mcp-server-tool-sources.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local", () => {
   assertEquals(
@@ -536,16 +537,17 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Veryfront API
 });
 
 Deno.test("getRuntimeRemoteToolSources requires injected control-plane source for explicit Studio MCP", () => {
-  assertThrows(
+  const error = assertThrows(
     () =>
       getRuntimeRemoteToolSources({
         system: "Use Studio tools.",
         tools: { studio_open_project: true },
         mcpServers: [{ kind: "veryfront-studio" }],
       }),
-    Error,
+    VeryfrontError,
     "trusted host-injected control-plane source",
   );
+  assertEquals(error.slug, "config-invalid");
 });
 
 Deno.test("getRuntimeRemoteToolSources reuses injected Studio MCP source for explicit Studio config", () => {
@@ -612,7 +614,7 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Studio MCP so
 });
 
 Deno.test("getRuntimeRemoteToolSources fails closed without Veryfront server identity", () => {
-  assertThrows(
+  const error = assertThrows(
     () =>
       getRuntimeRemoteToolSources(
         {
@@ -628,7 +630,8 @@ Deno.test("getRuntimeRemoteToolSources fails closed without Veryfront server ide
           }),
         },
       ),
-    Error,
+    VeryfrontError,
     "VERYFRONT_API_TOKEN",
   );
+  assertEquals(error.slug, "config-invalid");
 });

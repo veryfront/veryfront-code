@@ -6,7 +6,7 @@ import {
   type RemoteToolSource,
   toolRegistry,
 } from "#veryfront/tool";
-import { PERMISSION_DENIED } from "#veryfront/errors";
+import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
 import type {
   AgentConfig,
   AgentHttpMcpServerConfig,
@@ -228,9 +228,10 @@ function createVeryfrontApiMcpServerToolSource(
     if (!requireIdentity) {
       return undefined;
     }
-    throw new Error(
-      "Veryfront API MCP requires server-side VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG.",
-    );
+    throw CONFIG_INVALID.create({
+      detail:
+        "Veryfront API MCP requires server-side VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG.",
+    });
   }
 
   const remoteConfig = createAgentServiceRemoteMcpConfig({
@@ -241,7 +242,9 @@ function createVeryfrontApiMcpServerToolSource(
     defaultSourceId: VERYFRONT_API_MCP_SOURCE_ID,
   });
   if (!remoteConfig) {
-    throw new Error("Veryfront API MCP configuration could not be resolved.");
+    throw CONFIG_INVALID.create({
+      detail: "Veryfront API MCP configuration could not be resolved.",
+    });
   }
   const configuredHeaders = remoteConfig.headers;
   const createSource = dependencies.createRemoteToolSource ?? createRemoteMCPToolSource;
@@ -262,12 +265,13 @@ function createVeryfrontApiMcpServerToolSource(
 }
 
 function requiresInjectedStudioMcpServerToolSource(server: AgentVeryfrontMcpServerConfig): never {
-  throw new Error(
-    `Veryfront Studio MCP server "${
-      server.id ?? VERYFRONT_STUDIO_MCP_SOURCE_ID
-    }" requires a trusted host-injected control-plane source. ` +
+  throw CONFIG_INVALID.create({
+    detail:
+      `Veryfront Studio MCP server "${
+        server.id ?? VERYFRONT_STUDIO_MCP_SOURCE_ID
+      }" requires a trusted host-injected control-plane source. ` +
       'Use the hosted/control-plane runtime or inject the Studio MCP remote tool source before declaring { kind: "veryfront-studio" }.',
-  );
+  });
 }
 
 function getFirstPartyMcpSourceId(server: AgentVeryfrontMcpServerConfig): string {
