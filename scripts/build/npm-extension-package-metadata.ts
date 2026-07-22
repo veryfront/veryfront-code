@@ -1,4 +1,5 @@
 import { dirname, join, normalize, relative, toFileUrl } from "#std/path";
+import type { PackageJson } from "#dnt";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
 
 export type ExtensionManifest = {
@@ -33,7 +34,7 @@ export type ExtensionPackageSpec = {
   entryPoint: string;
   packageName: string;
   packageDirectoryName: string;
-  packageJson: Record<string, unknown>;
+  packageJson: PackageJson;
   dntMappings: Record<string, NpmPackageMapping>;
   manifestDependencies: Record<string, string>;
   readmePath: string;

@@ -9,6 +9,7 @@ type PackageJson = {
 	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	devDependencies?: Record<string, string>;
 	overrides?: Record<string, string>;
+	exports?: Record<string, unknown>;
 };
 
 import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
@@ -127,6 +128,24 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 	pinAutomaticDependencyRanges(pkg);
 
 	return pkg;
+}
+
+export function removeInternalNpmEntryPointExports(
+	pkg: Pick<PackageJson, "exports">,
+	internalEntryPoints: readonly string[],
+): void {
+	if (!pkg.exports) {
+		throw new Error("Generated npm package metadata is missing its exports map");
+	}
+
+	for (const entryPoint of internalEntryPoints) {
+		if (!Object.hasOwn(pkg.exports, entryPoint)) {
+			throw new Error(
+				`Generated npm package metadata is missing internal entry point ${entryPoint}`,
+			);
+		}
+		delete pkg.exports[entryPoint];
+	}
 }
 
 function pinAutomaticDependencyRanges(pkg: PackageJson): void {

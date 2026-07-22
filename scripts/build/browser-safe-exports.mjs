@@ -1,8 +1,32 @@
+// Dnt must compile these modules even though they are implementation details,
+// not public package subpaths. The npm build removes their temporary dnt
+// export entries after compilation.
+export const BROWSER_SAFE_INTERNAL_ENTRY_POINTS = Object.freeze({
+  "./index.client": "./src/index.client.ts",
+});
+
+/**
+ * Compose dnt entry points without allowing a build-only implementation detail
+ * to shadow a supported public package subpath.
+ *
+ * @param {Readonly<Record<string, string>>} publicEntryPoints
+ * @param {Readonly<Record<string, string>>} internalEntryPoints
+ * @returns {Array<{ name: string; path: string }>}
+ */
+export function createDntEntryPoints(publicEntryPoints, internalEntryPoints) {
+  for (const name of Object.keys(internalEntryPoints)) {
+    if (Object.hasOwn(publicEntryPoints, name)) {
+      throw new Error(
+        `Dnt entry point ${name} cannot be both public and internal`,
+      );
+    }
+  }
+
+  return [...Object.entries(publicEntryPoints), ...Object.entries(internalEntryPoints)]
+    .map(([name, path]) => ({ name, path }));
+}
+
 export const BROWSER_SAFE_EXPORTS = [
-  // Client/SSR-safe mirror of the root barrel (server bootstrap surface removed).
-  // The import rewriter redirects `veryfront` here for browser/ssr; it must ship
-  // in the npm package (built to esm/src/index.client.js) or that redirect 404s.
-  "./index.client",
   "./head",
   "./router",
   "./context",

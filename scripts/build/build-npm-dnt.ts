@@ -16,6 +16,8 @@ import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
+	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+	createDntEntryPoints,
 } from "./browser-safe-exports.mjs";
 import {
 	npmDependencyRange,
@@ -23,7 +25,10 @@ import {
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
-import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
+import {
+	normalizeNpmPackageMetadata,
+	removeInternalNpmEntryPointExports,
+} from "./npm-package-metadata.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
@@ -42,7 +47,7 @@ console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 // Generate templates manifest before build
 console.log("📝 Generating templates manifest...");
 const genManifest = new Deno.Command("deno", {
-	args: ["run", "-A", "scripts/build/generate-templates-manifest.ts"],
+	args: ["run", "--frozen", "-A", "scripts/build/generate-templates-manifest.ts"],
 	stdout: "inherit",
 	stderr: "inherit",
 });
@@ -54,8 +59,10 @@ if (manifestCode !== 0) {
 await emptyDir("./npm");
 
 // Convert deno.json exports to dnt entry points
-const entryPoints = Object.entries(denoJson.exports as Record<string, string>)
-	.map(([name, path]) => ({ name, path }));
+const entryPoints = createDntEntryPoints(
+	denoJson.exports as Record<string, string>,
+	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+);
 
 // Auto-derive esm.sh URL mappings from deno.json imports so versions stay in sync.
 // dnt ignores mappings it doesn't encounter, so including all is safe.
@@ -248,8 +255,11 @@ await build({
 		// These modules are consumed directly in browser bundles and do not rely on
 		// any Node-only globals, so retaining the injected side-effect import only
 		// bloats the graph and breaks browser builds.
-		for (const exportPath of BROWSER_SAFE_EXPORTS) {
-			const sourcePath = (denoJson.exports as Record<string, string>)[exportPath];
+		const internalEntryPoints: Readonly<Record<string, string>> =
+			BROWSER_SAFE_INTERNAL_ENTRY_POINTS;
+		for (const exportPath of [...BROWSER_SAFE_EXPORTS, ...Object.keys(internalEntryPoints)]) {
+			const sourcePath = (denoJson.exports as Record<string, string>)[exportPath] ??
+				internalEntryPoints[exportPath];
 			if (!sourcePath) {
 				throw new Error(`Missing browser-safe export source for ${exportPath}`);
 			}
@@ -261,6 +271,10 @@ await build({
 				stripPolyfillImportIfPresent(
 					path,
 					`${exportPath} browser-safe polyfill removal`,
+				);
+				assertNoDntRuntimeImports(
+					path,
+					`${exportPath} browser-safe artifact`,
 				);
 			}
 		}
@@ -306,6 +320,10 @@ await build({
 
 		// Update package.json with bin entry and type
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		removeInternalNpmEntryPointExports(
+			pkg,
+			Object.keys(BROWSER_SAFE_INTERNAL_ENTRY_POINTS),
+		);
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
@@ -324,6 +342,15 @@ await build({
 		addTypesExportEntries(pkg.exports);
 		normalizeNpmPackageMetadata(pkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
+
+		const writtenPkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		for (const entryPoint of Object.keys(BROWSER_SAFE_INTERNAL_ENTRY_POINTS)) {
+			if (Object.hasOwn(writtenPkg.exports ?? {}, entryPoint)) {
+				throw new Error(
+					`Published npm metadata still exposes internal entry point ${entryPoint}`,
+				);
+			}
+		}
 	},
 });
 
@@ -437,6 +464,17 @@ function stripPolyfillImportIfPresent(
 
 	Deno.writeTextFileSync(path, patched);
 	console.log(`📝 Patched ${description} in ${path}`);
+}
+
+function assertNoDntRuntimeImports(path: string, description: string): void {
+	const content = Deno.readTextFileSync(path);
+	const forbiddenReferences = ["_dnt.polyfills", "_dnt.shims"]
+		.filter((reference) => content.includes(reference));
+	if (forbiddenReferences.length > 0) {
+		throw new Error(
+			`${description} at ${path} still references ${forbiddenReferences.join(", ")}`,
+		);
+	}
 }
 
 function normalizeBrowserTimerShim(

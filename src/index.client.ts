@@ -1,22 +1,27 @@
 /**
- * Browser- and SSR-safe helpers from the `veryfront` package.
+ * Client/SSR-safe mirror of the `veryfront` root barrel in `src/index.ts`.
  *
- * This entrypoint exposes the root package's client-safe configuration,
- * platform, routing, data, and security helpers without server bootstrap
- * functions. Most app code can import these helpers from `veryfront`; use this
- * explicit entrypoint when a browser or SSR module needs to declare that
- * boundary directly.
+ * The root barrel re-exports the server bootstrap surface (`createHandler`,
+ * `startServer`, `toNodeHandler`) from `#veryfront/server`. Because the browser
+ * and SSR pipelines transform modules per-file (no cross-module tree-shaking),
+ * an ESM re-export eagerly loads its source module, so pulling the root barrel
+ * into a client chunk drags the entire server graph in, including
+ * `src/server/production-server.ts`, which has module top-level `await` and
+ * cannot be transformed to the es2020 browser target (HTTP 500 on that chunk,
+ * which aborts hydration).
  *
- * @example
- * ```ts
- * import { getEnv, json } from "veryfront/index.client";
+ * A client-reachable module doing a used value import from the barrel, for
+ * example `import { getEnv } from "veryfront"`, is not dead-stripped, so it
+ * keeps the barrel and the leak. This barrel exposes exactly the same
+ * browser-safe surface minus the server bootstrap functions, which no
+ * client/SSR page code legitimately calls. The import rewriter redirects
+ * `veryfront` to this module for the `browser` and `ssr` targets (see
+ * `src/transforms/import-rewriter/strategies/veryfront-strategy.ts`), the same
+ * mechanism `veryfront/workflow` already uses.
  *
- * export function GET() {
- *   return json({ mode: getEnv("MODE") ?? "development" });
- * }
- * ```
- *
- * @module veryfront
+ * This is a build-only entry point, not a public package subpath. Keep the
+ * exports below in sync with `src/index.ts`, including everything
+ * except the `createHandler` / `startServer` / `toNodeHandler` value export.
  */
 
 export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
@@ -25,7 +30,7 @@ export type { VeryfrontConfig } from "#veryfront/config";
 export { getEnv } from "#veryfront/platform";
 
 // NOTE: the server bootstrap value export (`createHandler`, `startServer`,
-// `toNodeHandler` from "#veryfront/server") is intentionally omitted here — it
+// `toNodeHandler` from "#veryfront/server") is intentionally omitted here. It
 // is server-only and pulls production-server.ts (top-level await) into client
 // chunks. Types are erased at transform time, so re-exporting them is inert.
 export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";

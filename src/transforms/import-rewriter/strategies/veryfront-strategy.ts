@@ -22,14 +22,14 @@ import {
  *
  * Some modules re-export React hooks alongside heavy server-side code
  * (executors, backends, DAGs) that fails to transform or run in the SSR and
- * browser pipelines. Redirect exact imports to the lightweight React-only
- * submodule for those targets.
+ * browser pipelines. Redirect exact imports to lightweight target-safe
+ * submodules for those targets.
  */
-const REACT_ONLY_MODULE_OVERRIDES: Record<string, string> = {
+const CLIENT_SAFE_MODULE_OVERRIDES: Record<string, string> = {
   "veryfront/workflow": "/_vf_modules/_veryfront/workflow/react/index.js",
   // The root barrel re-exports the server bootstrap surface from
   // `#veryfront/server`, which transitively pulls `server/production-server.ts`
-  // (module top-level await → cannot transform to the es2020 browser target →
+  // (module top-level await cannot transform to the es2020 browser target,
   // HTTP 500, aborting hydration). A *used* value import from the barrel (e.g.
   // `import { getEnv } from "veryfront"`) survives dead-code stripping and drags
   // the whole server graph into the client. Redirect to a client/SSR-safe mirror
@@ -89,7 +89,7 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
       // Redirect broad client-facing barrels to lightweight submodules that
       // exclude server-side dependencies from SSR and browser hydration.
-      const override = REACT_ONLY_MODULE_OVERRIDES[specifier];
+      const override = CLIENT_SAFE_MODULE_OVERRIDES[specifier];
       if (override !== undefined) {
         if (ctx.target === "ssr") return { specifier: `${override}?ssr=true` };
         if (ctx.target === "browser") return { specifier: override };
