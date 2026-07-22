@@ -15,6 +15,7 @@ import {
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
+import { DevAgentAgUiFallback } from "./dev-agent-ag-ui-fallback.ts";
 
 const logger = serverLogger.component("reset-api-handler");
 
@@ -137,7 +138,14 @@ async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> 
 async function createApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
   await refreshPreviewSourceSnapshot(ctx);
 
-  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
+  const devAgentAgUiFallback = new DevAgentAgUiFallback({
+    projectDir: ctx.projectDir,
+    adapter: ctx.adapter,
+  });
+  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter, {
+    onRouteMiss: (input) => devAgentAgUiFallback.handle(input),
+    onDestroy: () => devAgentAgUiFallback.invalidate(),
+  });
   await handler.initialize();
   return handler;
 }

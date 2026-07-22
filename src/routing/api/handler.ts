@@ -21,6 +21,21 @@ const HANDLER_CACHE_MAX_ENTRIES = 256;
 
 export type { APIContext, APIRoute };
 
+export interface ApiRouteMissInput {
+  request: Request;
+  ctx?: HandlerContext;
+  pathname: string;
+}
+
+export type ApiRouteMissHandler = (
+  input: ApiRouteMissInput,
+) => Response | null | Promise<Response | null>;
+
+export interface APIRouteHandlerOptions {
+  onRouteMiss?: ApiRouteMissHandler;
+  onDestroy?: () => void;
+}
+
 /** Longest sanitised load error a response body carries. */
 const MAX_LOAD_ERROR_LENGTH = 300;
 
@@ -122,6 +137,7 @@ export class APIRouteHandler {
   constructor(
     private projectDir: string,
     adapter?: RuntimeAdapter,
+    private options: APIRouteHandlerOptions = {},
   ) {
     this.adapter = adapter ?? null;
     this.adapterPromise = adapter ? Promise.resolve(adapter) : null;
@@ -206,6 +222,9 @@ export class APIRouteHandler {
             isApiPath: pathname.startsWith("/api/"),
             availableRoutes: this.router.listRoutes().map((r) => r.pattern),
           });
+
+          const routeMissResponse = await this.options.onRouteMiss?.({ request, ctx, pathname });
+          if (routeMissResponse) return routeMissResponse;
 
           if (pathname === "/api" || pathname.startsWith("/api/")) return notFound();
           return null;
@@ -344,6 +363,7 @@ export class APIRouteHandler {
     this.destroyed = true;
     this.routeCache.destroy();
     this.router.destroy();
+    this.options.onDestroy?.();
   }
 
   private async ensureAdapter(): Promise<RuntimeAdapter> {

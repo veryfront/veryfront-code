@@ -62,6 +62,67 @@ describe("APIRouteHandler", () => {
   });
 
   describe("request handling - unmatched routes", () => {
+    it("should let an optional route-miss handler serve unmatched API routes", async () => {
+      const adapter = createMockAdapter();
+      const handler = new APIRouteHandler("/test/project", adapter, {
+        onRouteMiss: ({ pathname }) =>
+          pathname === "/api/ag-ui" ? Response.json({ fallback: true }) : null,
+      });
+      handlers.push(handler);
+      await handler.initialize();
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/ag-ui", { method: "POST" }),
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.json(), { fallback: true });
+    });
+
+    it("should keep the normal 404 when the route-miss handler declines", async () => {
+      const adapter = createMockAdapter();
+      const handler = new APIRouteHandler("/test/project", adapter, {
+        onRouteMiss: () => null,
+      });
+      handlers.push(handler);
+      await handler.initialize();
+
+      const response = await handler.handle(new Request("http://localhost/api/notfound"));
+
+      assertEquals(response?.status, 404);
+    });
+
+    it("should not call the route-miss handler when a concrete API route matches", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/ag-ui.ts",
+        "export function POST() { return Response.json({ explicit: true }); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            POST: () => Response.json({ explicit: true }),
+          }),
+      });
+      let misses = 0;
+      const handler = new APIRouteHandler("/test/project", adapter, {
+        onRouteMiss: () => {
+          misses++;
+          return Response.json({ fallback: true });
+        },
+      });
+      handlers.push(handler);
+      await handler.initialize();
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/ag-ui", { method: "POST" }),
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.json(), { explicit: true });
+      assertEquals(misses, 0);
+    });
+
     it("should return null for non-API routes", async () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);
