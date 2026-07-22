@@ -43,11 +43,14 @@
  * put the loader, its imports and any credential it closes over into the
  * browser bundle, and a silent leak is worse than a stopped build.
  *
- * What this pass does NOT do: it empties hook bodies and prunes the imports
- * they were the last user of. It does not remove module-scope declarations the
- * hook was the only reader of, and an import reduced to a side-effect import
- * still fetches that module in the browser. Do not read it as a guarantee that
- * a secret written at module scope stays on the server.
+ * What this pass does: it empties hook bodies, drops the module-scope
+ * declarations the hooks were the last reader of (so `const API_KEY =
+ * getEnv(...)` used only by `getServerData` does not reach the browser), and
+ * prunes the imports that leaves unused. What it does NOT do: reason about a
+ * value that is *also* read by browser code, or one reached only through a
+ * side effect rather than a binding — those are kept. It is not a general
+ * guarantee that every secret stays on the server, but a value used solely by
+ * a server-only hook no longer leaks.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -265,8 +268,12 @@ function emptyServerOnlyHooks(
  * Identifiers the module reads, ignoring import statements and the positions
  * where an identifier is a fixed name rather than a reference (`a.hashOf`,
  * `{ hashOf: 1 }`). Over-counting only ever keeps an import.
+ *
+ * `excluded` holds identifier nodes that are binding *positions* rather than
+ * references (the `id` a declaration introduces), so a declaration is not
+ * counted as a use of itself when deciding whether it is dead.
  */
-function referencedIdentifiers(body: Node[]): Set<string> {
+function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<string> {
   const referenced = new Set<string>();
   // Filled in as each parent is visited, which always happens before its
   // children.
@@ -294,6 +301,7 @@ function referencedIdentifiers(body: Node[]): Set<string> {
 
       if (node.type === "Identifier" || node.type === "JSXIdentifier") {
         if (fixedNames.has(node)) return true;
+        if (excluded?.has(node)) return true;
         const name = nodeName(node);
         if (name) referenced.add(name);
       }
@@ -303,6 +311,93 @@ function referencedIdentifiers(body: Node[]): Set<string> {
   }
 
   return referenced;
+}
+
+/** A top-level declaration and the binding names / binding-id nodes it owns. */
+interface ModuleScopeDecl {
+  statement: Node;
+  names: string[];
+  bindingIds: Node[];
+}
+
+/**
+ * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
+ * whose bindings we could safely drop if nothing references them. Exported
+ * declarations are part of the module's contract and are never candidates.
+ * Destructuring declarations are skipped — a pattern can carry default-value
+ * references, and a partial removal is not worth the risk.
+ */
+function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
+  const decls: ModuleScopeDecl[] = [];
+
+  for (const statement of body) {
+    if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
+      const id = statement.id;
+      const name = nodeName(id);
+      if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+      continue;
+    }
+
+    if (statement.type === "VariableDeclaration") {
+      const names: string[] = [];
+      const bindingIds: Node[] = [];
+      let simple = true;
+
+      for (
+        const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
+      ) {
+        if (!isNode(declarator)) continue;
+        const id = declarator.id;
+        if (isNode(id) && id.type === "Identifier") {
+          const name = nodeName(id);
+          if (name) {
+            names.push(name);
+            bindingIds.push(id);
+          }
+        } else {
+          simple = false;
+          break;
+        }
+      }
+
+      if (simple && names.length > 0) decls.push({ statement, names, bindingIds });
+    }
+  }
+
+  return decls;
+}
+
+/**
+ * Drop top-level declarations nothing references any more.
+ *
+ * After a server-only hook is emptied, the module-scope state it closed over —
+ * `const API_KEY = getEnv("SECRET_KEY")` and the like — is dead, but still sits
+ * in the source and would ship its value (and its call into a framework helper)
+ * to the browser. Removing it lets `dropUnusedImportBindings` then drop the
+ * import it was the last user of, so neither the secret nor the server call
+ * survives. Iterates to a fixpoint: dropping one binding can leave a helper it
+ * was the last user of newly dead.
+ */
+function dropUnusedModuleScopeBindings(body: Node[]): Node[] {
+  let current = body;
+
+  for (;;) {
+    const decls = moduleScopeDeclarations(current);
+    if (decls.length === 0) return current;
+
+    const excluded = new WeakSet<Node>();
+    for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
+
+    const referenced = referencedIdentifiers(current, excluded);
+
+    const removable = new Set<Node>();
+    for (const decl of decls) {
+      if (decl.names.every((name) => !referenced.has(name))) removable.add(decl.statement);
+    }
+    if (removable.size === 0) return current;
+
+    current = current.filter((statement) => !removable.has(statement));
+  }
 }
 
 /** Local binding names an import statement introduces. */
@@ -420,7 +515,11 @@ export async function stripServerOnlyExports(code: string, filePath?: string): P
 
   if (!emptyServerOnlyHooks(body, locals, stubs)) return code;
 
-  setBody(ast, dropUnusedImportBindings(body));
+  // Drop the module-scope state the emptied hooks were the last user of, then
+  // the imports that leaves unused. Order matters: pruning `const API_KEY =
+  // getEnv(...)` is what makes the `veryfront` import droppable.
+  const pruned = dropUnusedModuleScopeBindings(body);
+  setBody(ast, dropUnusedImportBindings(pruned));
 
   const generated = await parser.generate(ast);
   return generated.code;

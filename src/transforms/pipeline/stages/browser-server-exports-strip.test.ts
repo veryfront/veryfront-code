@@ -309,6 +309,59 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "thing"), 0);
     });
 
+    // Secret-leak fix: a module-scope value computed for a server-only hook —
+    // `const API_KEY = getEnv("SECRET_KEY")` read only inside getServerData —
+    // must not survive into the browser output. Emptying the hook leaves it
+    // dead; the pass now drops it, which in turn drops the framework import.
+    it("drops a module-scope server value used only by a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { ok: Boolean(API_KEY) } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertNotIncludes(result, `"veryfront"`);
+    });
+
+    // Contrast pin: the same value is KEPT when the browser component also reads
+    // it — pruning is scoped to declarations nothing else references.
+    it("keeps a module-scope value the client component also reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const REGION = getEnv("REGION");`,
+        `export async function getServerData() { return { props: { r: REGION } }; }`,
+        `export default function Page() { return REGION; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "REGION");
+      assertEquals(occurrences(result, "REGION") > 0, true);
+    });
+
+    // A chain fully feeds the hook: dropping one dead binding frees the next.
+    it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const RAW = getEnv("TOKEN");`,
+        `const TOKEN = RAW.trim();`,
+        `export async function getServerData() { return { props: { t: TOKEN } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "RAW"), 0);
+      assertEquals(occurrences(result, "TOKEN"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
     it("keeps an import that the client still references", async () => {
       const code = [
         `import { formatDate } from "../lib/dates.js";`,
