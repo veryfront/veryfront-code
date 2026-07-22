@@ -17,8 +17,18 @@ export function computeShortContentHash(content: string): Promise<string> {
  * that consumes this output requires the attribute to load a JSON module, so
  * dropping it turns a working import into a load-time error:
  * `Attempted to load JSON module without specifying "type": "json"`.
+ *
+ * `import-assertions` is the separate feature key esbuild uses for the
+ * withdrawn `assert { type: "json" }` spelling of the same clause. It is
+ * enabled for the same reason, so the clause reaches the output instead of
+ * vanishing. The output must not keep that spelling though, because Node 22
+ * and Deno 2 removed the keyword, so every consumer of these options runs the
+ * result through `upgradeImportAssertions` to rewrite it to `with`.
  */
-export const ESBUILD_SUPPORTED_FEATURES = { "import-attributes": true } as const;
+export const ESBUILD_SUPPORTED_FEATURES = {
+  "import-attributes": true,
+  "import-assertions": true,
+} as const;
 
 const EXTENSION_LOADERS: Record<string, Loader> = {
   ".tsx": "tsx",

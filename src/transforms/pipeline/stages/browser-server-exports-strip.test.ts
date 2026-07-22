@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   browserServerExportsStripPlugin,
@@ -87,15 +87,23 @@ describe("browser-server-exports-strip", () => {
       assertEquals(await stripServerOnlyExports(code), code);
     });
 
-    it("leaves a local declaration that is only aliased to a hook name alone", async () => {
-      // `other` is the local declaration; `getServerData` is only its public
-      // name, so the client-side body of `other` must survive.
+    // The runtime reads `mod.getServerData`, so this module has a real server
+    // loader no matter what the function is called locally. Keying on the local
+    // name shipped the body, its imports and anything it closed over.
+    it("empties a hook exported under an alias", async () => {
       const code = [
-        `function other() { return computeOnClient(); }`,
-        `export { other as getServerData };`,
+        `import { hashOf } from "../lib/uses-crypto.js";`,
+        `const API_KEY = "sk-live-example";`,
+        `function loadIt() { return hashOf(API_KEY); }`,
+        `export { loadIt as getServerData };`,
       ].join("\n");
 
-      assertEquals(await stripServerOnlyExports(code), code);
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "hashOf");
+      assertStringIncludes(result, "getServerData");
+      // Reduced to a side-effect import, as for any other emptied hook.
+      assertStringIncludes(result, `import "../lib/uses-crypto.js"`);
     });
 
     it("empties a hook declared before a separate export clause", async () => {
@@ -184,8 +192,38 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "hashed");
     });
 
-    it("leaves a module that does not parse unchanged", async () => {
+    // Emitting a module this pass could not analyse would put the loader and
+    // everything it closes over into the browser bundle. Stopping the build is
+    // the only safe outcome.
+    it("fails the build when a module naming a hook does not parse", async () => {
       const code = `export function getServerData( { this is not javascript`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "pages/x.tsx");
+    });
+
+    it("fails the build when a hook is re-exported from another module", async () => {
+      const code = `export { loadIt as getServerData } from "./loader.ts";`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
+    it("fails the build when a hook is exported from a destructuring pattern", async () => {
+      const code = [
+        `import { loaders } from "./loaders.ts";`,
+        `export const { getServerData } = loaders;`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+    });
+
+    // The pre-check runs before anything else, so a module with no hook at all
+    // is never parsed and can never fail the build.
+    it("leaves a module that does not parse alone when it names no hook", async () => {
+      const code = `export function somethingElse( { this is not javascript`;
       assertEquals(await stripServerOnlyExports(code), code);
     });
   });
@@ -219,6 +257,208 @@ describe("browser-server-exports-strip", () => {
 
       assertNotIncludes(result, "node:crypto");
       assertEquals(occurrences(result, "createHash"), 0);
+    });
+
+    // Client-leak fix: an unused `veryfront` framework-barrel import must be
+    // dropped entirely, not reduced to a bare `import "veryfront"`. Keeping it
+    // as a side-effect import pulls the server runtime into the client bundle
+    // and breaks hydration, so a page that used a framework export only inside a
+    // server-only hook must not ship the barrel to the browser at all.
+    it("removes an unreferenced bare veryfront import outright", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export function getServerData() { return { props: { v: getEnv("X") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // The barrel is gone completely — not even a side-effect import survives.
+      assertNotIncludes(result, `"veryfront"`);
+      assertNotIncludes(result, `'veryfront'`);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("removes an unreferenced veryfront subpath import outright", async () => {
+      const code = [
+        `import { getEnv } from "veryfront/server";`,
+        `export function getServerData() { return { props: { v: getEnv("X") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "veryfront/server");
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // Contrast pin: a NON-veryfront (project) import in the exact same shape is
+    // reduced to a side-effect import, because this pass knows nothing about the
+    // top-level side effects of the module it points at.
+    it("reduces a non-veryfront import in the same shape to a side-effect import", async () => {
+      const code = [
+        `import { thing } from "./local";`,
+        `export function getServerData() { return { props: { v: thing("X") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // The module is still fetched for its side effects, but the binding is gone.
+      assertStringIncludes(result, `import "./local"`);
+      assertEquals(occurrences(result, "thing"), 0);
+    });
+
+    // Secret-leak fix: a module-scope value computed for a server-only hook —
+    // `const API_KEY = getEnv("SECRET_KEY")` read only inside getServerData —
+    // must not survive into the browser output. Emptying the hook leaves it
+    // dead; the pass now drops it, which in turn drops the framework import.
+    it("drops a module-scope server value used only by a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { ok: Boolean(API_KEY) } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertNotIncludes(result, `"veryfront"`);
+    });
+
+    // Contrast pin: the same value is KEPT when the browser component also reads
+    // it — pruning is scoped to declarations nothing else references.
+    it("keeps a module-scope value the client component also reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const REGION = getEnv("REGION");`,
+        `export async function getServerData() { return { props: { r: REGION } }; }`,
+        `export default function Page() { return REGION; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "REGION");
+      assertEquals(occurrences(result, "REGION") > 0, true);
+    });
+
+    // Over-pruning guard: pruning is scoped to the stripped hook's closure, so
+    // unrelated module-scope initialization with side effects (client analytics,
+    // custom-element registration, instrumentation) sitting next to a server-only
+    // hook must survive — only the hook's own closure is removed.
+    it("keeps unrelated top-level side-effect declarations while dropping the hook's closure", async () => {
+      const code = [
+        `const clientInit = bootClientAnalytics();`,
+        `function bootClientAnalytics() { globalThis.__booted = true; return true; }`,
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { ok: Boolean(API_KEY) } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // Unrelated client init and its helper are untouched (side effect kept).
+      assertStringIncludes(result, "clientInit");
+      assertStringIncludes(result, "bootClientAnalytics");
+      // The hook's own closure still goes.
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // A chain fully feeds the hook: dropping one dead binding frees the next.
+    it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const RAW = getEnv("TOKEN");`,
+        `const TOKEN = RAW.trim();`,
+        `export async function getServerData() { return { props: { t: TOKEN } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "RAW"), 0);
+      assertEquals(occurrences(result, "TOKEN"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // The hook can be an arrow assigned to `const` — its closure must be
+    // captured the same way as a `function` declaration before it is emptied.
+    it("prunes the closure of a const-arrow hook form", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export const getServerData = async () => ({ props: { ok: Boolean(API_KEY) } });`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // A module-scope helper *function* reached only from the hook is part of its
+    // closure and goes; the same helper is kept the moment client code uses it.
+    it("prunes a helper function only the hook used, keeps it when the client uses it", async () => {
+      const onlyHook = [
+        `import { getEnv } from "veryfront";`,
+        `function computeKey() { return getEnv("SECRET_KEY"); }`,
+        `export async function getServerData() { return { props: { k: computeKey() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+      const strippedOnlyHook = await stripServerOnlyExports(onlyHook);
+      assertEquals(occurrences(strippedOnlyHook, "computeKey"), 0);
+      assertEquals(occurrences(strippedOnlyHook, "getEnv"), 0);
+
+      const shared = [
+        `function fmt(x) { return String(x); }`,
+        `export async function getServerData() { return { props: { k: fmt(1) } }; }`,
+        `export default function Page() { return fmt(2); }`,
+      ].join("\n");
+      const strippedShared = await stripServerOnlyExports(shared);
+      assertStringIncludes(strippedShared, "function fmt");
+    });
+
+    // A chain member the client also reads is kept even though a later link in
+    // the chain (used only by the hook) is dropped.
+    it("keeps a chain member the client reads while dropping the hook-only tail", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const RAW = getEnv("X");`,
+        `const TOKEN = RAW + "!";`,
+        `export async function getServerData() { return { props: { t: TOKEN } }; }`,
+        `export default function Page() { return RAW; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "RAW"); // client reads it → kept (with its import)
+      assertStringIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "TOKEN"), 0); // hook-only tail → dropped
+    });
+
+    // Known limitation (pinned): a *destructured* server value is NOT pruned —
+    // `moduleScopeDeclarations` handles only simple identifiers, to avoid
+    // mishandling default-value references inside patterns. Conservative (never
+    // over-prunes) but it means a destructured server value still ships. If this
+    // ever needs closing, extend the declaration collector to safe patterns.
+    it("conservatively keeps a destructured server value (documented limitation)", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { a } = getEnv("X");`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // Pinned as-is: the destructured binding and its import survive.
+      assertStringIncludes(result, "getEnv");
     });
 
     it("keeps an import that the client still references", async () => {
@@ -417,17 +657,28 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "computeOnClient");
     });
 
-    it("leaves a local aliased to a hook name alone beside a real hook", async () => {
+    it("empties both an aliased hook and a directly declared one", async () => {
       const code = [
-        `function other() { return computeOnClient(); }`,
-        `export { other as getServerData };`,
+        `function loadIt() { return readAliasedSecret(); }`,
+        `export { loadIt as getServerData };`,
         `export function getStaticData() { return readSecret(); }`,
       ].join("\n");
 
       const result = await stripServerOnlyExports(code);
 
-      assertNotIncludes(result, "readSecret");
-      assertStringIncludes(result, "computeOnClient");
+      assertNotIncludes(result, "readSecret()");
+      assertNotIncludes(result, "readAliasedSecret");
+    });
+
+    // A local that merely shares a hook's name is ordinary client code: it is
+    // the exported name that makes something server-only.
+    it("leaves a local named like a hook but exported as something else alone", async () => {
+      const code = [
+        `function getServerData() { return computeOnClient(); }`,
+        `export { getServerData as loadData };`,
+      ].join("\n");
+
+      assertEquals(await stripServerOnlyExports(code), code);
     });
 
     it("empties a hook declared as an exported function expression", async () => {

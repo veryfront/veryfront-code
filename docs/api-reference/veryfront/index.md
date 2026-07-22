@@ -79,11 +79,11 @@ export function getServerData(ctx: DataContext) {
 | `mergeConfigs` | Merge multiple partial Veryfront configuration objects into one config object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L19) |
 | `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L20) |
 | `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L21) |
-| `notFound` | Return a 404 result from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L9) |
+| `notFound` | Render the 404 page from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L45) |
 | `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L48) |
 | `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L12) |
 | `parseQueryParams` | Parse and validate query parameters from a request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L81) |
-| `redirect` | Return a redirect result from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L4) |
+| `redirect` | Redirect the request from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L34) |
 | `sanitizeData` | Sanitize data to prevent XSS and prototype pollution attacks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/sanitizers.ts#L2) |
 | `serverError` | Create a 500 Internal Server Error response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L134) |
 | `startServer` | Start a Veryfront server in development or production mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L331) |

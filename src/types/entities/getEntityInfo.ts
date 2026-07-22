@@ -20,6 +20,7 @@ const PAGE_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const DIRECT_ROUTE_EXTENSIONS = PAGE_FILE_EXTENSIONS;
 const LAYOUT_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const DYNAMIC_PAGE_ENTRY_PATTERN = /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/;
+const OPTIONAL_CATCH_ALL_ENTRY_PATTERN = /\[\[\.\.\..+\]\]\.(mdx|md|tsx|jsx|ts|js)$/;
 
 type DirectoryEntry = { name: string; isFile: boolean; isDirectory: boolean };
 
@@ -392,7 +393,12 @@ async function findDynamicPageEntity(
   pagesDirectory = "pages",
 ): Promise<EntityInfo | null> {
   const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
-  for (let depth = slugParts.length - 1; depth >= 0; depth--) {
+  // Begin one level deeper than the slug so an optional catch-all in the slug's
+  // own directory can match with zero remaining segments — e.g. `/optional`
+  // resolving `pages/optional/[[...slug]].tsx`. At that top depth only optional
+  // catch-alls may match, since any other dynamic segment needs a real value.
+  for (let depth = slugParts.length; depth >= 0; depth--) {
+    const optionalCatchAllOnly = depth === slugParts.length;
     const parentPath = slugParts.slice(0, depth).join("/");
     const pagesDir = parentPath
       ? pathHelper.join(projectDir, pagesDirectory, parentPath)
@@ -404,7 +410,10 @@ async function findDynamicPageEntity(
 
       const entries = await readDirectoryEntries(pagesDir, adapter);
       const dynamicEntries = entries.filter(
-        (entry) => entry.isFile && DYNAMIC_PAGE_ENTRY_PATTERN.test(entry.name),
+        (entry) =>
+          entry.isFile &&
+          DYNAMIC_PAGE_ENTRY_PATTERN.test(entry.name) &&
+          (!optionalCatchAllOnly || OPTIONAL_CATCH_ALL_ENTRY_PATTERN.test(entry.name)),
       );
 
       const candidateResults = await parallelMap(dynamicEntries, async (entry) => {

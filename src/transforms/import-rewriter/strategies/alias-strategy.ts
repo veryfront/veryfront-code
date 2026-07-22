@@ -5,6 +5,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { normalizeExtension } from "../url-builder.ts";
+import { getProjectRelativePath } from "../project-paths.ts";
 
 export class AliasStrategy implements ImportRewriteStrategy {
   readonly name = "alias";
@@ -21,7 +22,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
     if (ctx.target === "ssr") {
       let normalizedPath = normalizeExtension(path);
       // Add .js if no extension present
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(normalizedPath)) {
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
       return { specifier: `/_vf_modules/${normalizedPath}` };
@@ -33,7 +34,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
     // but module path is "_vf_modules/components/elements/Textarea.js").
     if (ctx.moduleServerUrl) {
       let normalizedPath = normalizeExtension(path);
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(normalizedPath)) {
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
       return { specifier: `${ctx.moduleServerUrl}/${normalizedPath}` };
@@ -41,39 +42,18 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
     // Fallback: Use relative paths when no module server is configured.
     // This is used for local development without a module server.
-    const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
+    const relativeFilePath = getProjectRelativePath(ctx.filePath, ctx.projectDir);
     const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
     const depth = fileDir.split("/").filter(Boolean).length;
 
     const prefix = depth === 0 ? "./" : "../".repeat(depth);
     let relativePath = normalizeExtension(`${prefix}${path}`);
 
-    if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(relativePath)) {
+    if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(relativePath)) {
       relativePath = `${relativePath}.js`;
     }
 
     return { specifier: relativePath };
-  }
-
-  private getRelativeFilePath(filePath: string, projectDir: string): string {
-    const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-
-    if (filePath.startsWith(normalizedProjectDir)) {
-      return filePath.substring(normalizedProjectDir.length + 1);
-    }
-
-    if (!filePath.startsWith("/")) return filePath;
-
-    const pathParts = filePath.split("/");
-    const projectParts = normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts.at(-1);
-    const projectIndex = lastProjectPart ? pathParts.indexOf(lastProjectPart) : -1;
-
-    if (projectIndex >= 0) {
-      return pathParts.slice(projectIndex + 1).join("/");
-    }
-
-    return filePath;
   }
 }
 

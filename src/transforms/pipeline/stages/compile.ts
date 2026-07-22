@@ -2,6 +2,7 @@ import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability";
+import { upgradeImportAssertions } from "../../esm/import-attributes.ts";
 import { ESBUILD_SUPPORTED_FEATURES, getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -29,7 +30,11 @@ export const compilePlugin: TransformPlugin = {
         keepNames: true,
       });
 
-      let code = result.code;
+      // Upgrade the withdrawn `assert` spelling of an import attribute clause
+      // to `with`. esbuild is the parser here: it has already resolved JSX and
+      // TypeScript, so the output is plain JavaScript the module lexer can
+      // anchor to. CSS output is not a module and is left alone.
+      let code = loader === "css" ? result.code : await upgradeImportAssertions(result.code);
 
       const isMdx = ctx.filePath.endsWith(".mdx");
       if (

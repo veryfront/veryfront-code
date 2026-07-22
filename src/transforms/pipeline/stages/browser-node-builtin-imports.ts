@@ -26,6 +26,7 @@
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import { rewriteImports } from "../../esm/lexer.ts";
+import { hasRealBrowserPolyfill } from "../../import-rewriter/strategies/node-builtin-strategy.ts";
 
 const NAMESPACE_PREFIX = "__vf_node_builtin_";
 
@@ -85,6 +86,9 @@ export async function rewriteNodeBuiltinNamedImports(code: string): Promise<stri
     if (!imp.n?.startsWith("node:")) return null;
     if (imp.d > -1) return null; // dynamic import resolves lazily already
     if (!statement.startsWith("import")) return null;
+    // A builtin backed by a real polyfill already links: it exports the names
+    // it is asked for. Rewriting it would only cost it its hoisting.
+    if (hasRealBrowserPolyfill(imp.n)) return null;
 
     // The clause is everything between the `import` keyword and the specifier.
     // Take it from the lexer's own offsets rather than by searching for

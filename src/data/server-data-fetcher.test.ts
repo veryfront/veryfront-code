@@ -2,9 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
-import type { DataContext, PageWithData } from "./types.ts";
+import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { notFound, redirect } from "./helpers.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { join } from "node:path";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
@@ -443,6 +445,120 @@ describe("ServerDataFetcher", () => {
         const result = await fetcher.fetch(pageModule, context);
         assertEquals(result.redirect?.destination, "/login", `call ${i + 1} should still redirect`);
       }
+    });
+
+    // Worker isolation is the configuration operators are told to use for
+    // untrusted project code, so the in-process path alone is not enough. A
+    // control result thrown inside the worker is a plain object, and the worker
+    // error path serialized it with String(), producing "[object Object]" and a
+    // 500 on the host.
+    describe("under worker isolation", () => {
+      let projectDir: string | null = null;
+
+      afterEach(async () => {
+        try {
+          Deno.env.delete("WORKER_ISOLATION_ENABLED");
+        } catch { /* ok */ }
+        try {
+          Deno.env.delete("WORKER_ISOLATION_DATA");
+        } catch { /* ok */ }
+        __resetPoolForTests();
+
+        if (projectDir) {
+          await Deno.remove(projectDir, { recursive: true }).catch(() => {});
+          projectDir = null;
+        }
+      });
+
+      async function writeIsolatedPage(source: string): Promise<
+        { modulePath: string; projectDir: string }
+      > {
+        const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "vf-isolated-data-" }));
+        projectDir = dir;
+        const modulePath = join(dir, "page.ts");
+        await Deno.writeTextFile(modulePath, source);
+
+        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+        Deno.env.set("WORKER_ISOLATION_DATA", "1");
+        __resetPoolForTests();
+
+        return { modulePath, projectDir: dir };
+      }
+
+      // The worker cannot import the framework helpers: its read permission is
+      // scoped to the project directory. `notFound()` brands its result with a
+      // registered symbol precisely so a result built anywhere is recognised
+      // everywhere, so the fixture rebuilds the same public brand.
+      const BRAND_SOURCE =
+        `Object.defineProperty(result, Symbol.for("veryfront.dataControlResult"), { value: true });`;
+
+      function isolatedFetch(
+        modulePath: string,
+        dir: string,
+      ): Promise<DataResult> {
+        const fetcher = new ServerDataFetcher();
+        const pageModule: PageWithData = {
+          default: () => null,
+          getServerData: () => ({ props: {} }),
+        };
+
+        return runWithExactSourceIntegrationPolicy(
+          { schemaVersion: 1, mode: "unrestricted" },
+          () =>
+            fetcher.fetch(pageModule, createContext(), {
+              modulePath,
+              projectDir: dir,
+            }),
+        );
+      }
+
+      it("treats a thrown notFound() as a 404 result", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             const result = { notFound: true };
+             ${BRAND_SOURCE}
+             throw result;
+           }
+           export default function Page() { return null; }`,
+        );
+
+        const result = await isolatedFetch(modulePath, dir);
+
+        assertEquals(result.notFound, true);
+        assertEquals(result.redirect, undefined);
+      });
+
+      it("treats a thrown redirect() as a redirect result", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             const result = { redirect: { destination: "/login", permanent: true } };
+             ${BRAND_SOURCE}
+             throw result;
+           }
+           export default function Page() { return null; }`,
+        );
+
+        const result = await isolatedFetch(modulePath, dir);
+
+        assertEquals(result.redirect?.destination, "/login");
+        assertEquals(result.redirect?.permanent, true);
+        assertEquals(result.notFound, undefined);
+      });
+
+      it("still propagates a genuine Error thrown in the worker", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             throw new Error("intentional test error from isolated getServerData");
+           }
+           export default function Page() { return null; }`,
+        );
+
+        await assertRejects(
+          () => isolatedFetch(modulePath, dir),
+          Error,
+          "intentional test error from isolated getServerData",
+        );
+      });
     });
 
     it("still opens the circuit breaker on repeated genuine errors", async () => {

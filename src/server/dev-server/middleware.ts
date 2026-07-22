@@ -183,6 +183,27 @@ async function loadMiddlewareFromVirtualFS(
   }
 }
 
+/** Describe the shape of the default export that was rejected. */
+function describeDefaultExport(exported: unknown): string {
+  if (Array.isArray(exported)) {
+    if (exported.length === 0) return `Found an empty default export array.`;
+    const badIndex = exported.findIndex((value) => typeof value !== "function");
+    if (badIndex >= 0) {
+      return `Found a default export array with a non-function at index ${badIndex} ` +
+        `(${typeof exported[badIndex]}).`;
+    }
+  }
+
+  if (exported && typeof exported === "object") {
+    const keys = Object.keys(exported as Record<string, unknown>);
+    return keys.length > 0
+      ? `Found a default export of type object with keys: ${keys.join(", ")}.`
+      : `Found a default export of type object with no keys.`;
+  }
+
+  return `Found a default export of type ${typeof exported}.`;
+}
+
 /**
  * Explain what a root middleware file must export. When the module looks like it
  * was written for Next.js, say so, because that is overwhelmingly why this
@@ -192,6 +213,7 @@ async function loadMiddlewareFromVirtualFS(
 function invalidMiddlewareExport(
   middlewareModule: unknown,
   sourceFile: string,
+  exported: unknown,
 ): TypeError {
   const named = middlewareModule && typeof middlewareModule === "object"
     ? Object.keys(middlewareModule as Record<string, unknown>)
@@ -200,10 +222,15 @@ function invalidMiddlewareExport(
   const looksLikeNext = named.includes("middleware") &&
     typeof (middlewareModule as { middleware?: unknown }).middleware === "function";
 
+  const hasDefault = middlewareModule && typeof middlewareModule === "object" &&
+    "default" in middlewareModule;
+
   const detail = looksLikeNext
     ? `Found a named "middleware" export, which is the Next.js convention. ` +
       `Veryfront expects a default export, and its middleware receives ` +
       `(c, next), where c is a context carrying c.req, not the Request itself.`
+    : hasDefault
+    ? describeDefaultExport(exported)
     : named.length > 0
     ? `Found export(s): ${named.join(", ")}.`
     : `The module has no usable export.`;
@@ -234,7 +261,7 @@ function normalizeMiddlewareExport(
     if (
       strict && (exported.length === 0 || exported.some((value) => typeof value !== "function"))
     ) {
-      throw invalidMiddlewareExport(middlewareModule, sourceFile);
+      throw invalidMiddlewareExport(middlewareModule, sourceFile, exported);
     }
     return exported.filter((middleware): middleware is MiddlewareFunction =>
       typeof middleware === "function"
@@ -246,7 +273,7 @@ function normalizeMiddlewareExport(
   }
 
   if (strict) {
-    throw invalidMiddlewareExport(middlewareModule, sourceFile);
+    throw invalidMiddlewareExport(middlewareModule, sourceFile, exported);
   }
 
   return [];

@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type APIContext,
+  createBodyReader,
   createContext,
-  createJsonHelper,
   normalizeParams,
   parseCookies,
 } from "./context-builder.ts";
@@ -389,26 +389,12 @@ describe("API Context Builder", () => {
   });
 });
 
-describe("createContext: ctx.json arity", () => {
+describe("createContext: ctx.json writes, ctx.body reads", () => {
   function ctxFor(request: Request): APIContext {
     return createContext(request, { params: {} } as RouteMatch, mockFs);
   }
 
-  it("parses the request body when called with no arguments", async () => {
-    // `await ctx.json()` used to stringify `undefined` into a Response, so the
-    // handler received an object that serialised back out as `{}`.
-    const ctx = ctxFor(
-      new Request("http://localhost/api/echo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ x: 1, nested: { y: "z" } }),
-      }),
-    );
-
-    assertEquals(await ctx.json(), { x: 1, nested: { y: "z" } });
-  });
-
-  it("still builds a JSON response when called with data", async () => {
+  it("builds a JSON response from ctx.json(data)", async () => {
     const ctx = ctxFor(new Request("http://localhost/api/echo"));
     const response = ctx.json({ received: true });
 
@@ -425,57 +411,78 @@ describe("createContext: ctx.json arity", () => {
     assertEquals(await response.json(), { error: "nope" });
   });
 
-  // Regression: worker isolation built its own `ctx.json` as a response helper
-  // only, so `await ctx.json()` still returned a Response under
-  // WORKER_ISOLATION_API=1. Both contexts now build it from this one function,
-  // so a handler behaves the same whether or not isolation is enabled.
-  describe("createJsonHelper", () => {
-    it("reads the request body with no arguments", async () => {
-      const json = createJsonHelper(
-        new Request("http://localhost/api/echo", {
-          method: "POST",
-          body: JSON.stringify({ isolated: true }),
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-
-      assertEquals(await json(), { isolated: true });
-    });
-
-    it("builds a response when given data", async () => {
-      const json = createJsonHelper(new Request("http://localhost/api/echo"));
-      const response = json({ ok: true }, { status: 201 });
-
-      assertEquals(response instanceof Response, true);
-      assertEquals(response.status, 201);
-      assertEquals(response.headers.get("Content-Type"), "application/json");
-      assertEquals(await response.json(), { ok: true });
-    });
-
-    it("is the same helper the request context exposes", async () => {
-      const request = new Request("http://localhost/api/echo", {
+  it("reads the request body with ctx.body()", async () => {
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
         method: "POST",
-        body: JSON.stringify({ shared: true }),
-      });
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x: 1, nested: { y: "z" } }),
+      }),
+    );
 
-      const viaHelper = await createJsonHelper(request.clone())();
-      const viaContext = await ctxFor(request).json();
-
-      assertEquals(viaContext, viaHelper);
-    });
+    assertEquals(await ctx.body(), { x: 1, nested: { y: "z" } });
   });
 
-  it("rejects when the body is not valid JSON", async () => {
+  it("caches the parse so ctx.body() can be read more than once", async () => {
+    // A validation helper and the handler both receive only `ctx`, so both
+    // reach for the body. A single-use stream would make the second call throw.
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ count: 7 }),
+      }),
+    );
+
+    assertEquals(await ctx.body(), { count: 7 });
+    assertEquals(await ctx.body(), { count: 7 });
+  });
+
+  it("does not consume the body away from a manual ctx.request.json()", async () => {
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ shared: true }),
+      }),
+    );
+
+    await ctx.body();
+    // The raw request stream is untouched by ctx.body(), so this still works.
+    assertEquals(await ctx.request.json(), { shared: true });
+  });
+
+  it("reads via ctx.body() even after ctx.request was consumed raw first", async () => {
+    // The reverse order: a handler reads the raw stream, *then* reaches for
+    // ctx.body(). The clone is taken at construction time, so it does not throw
+    // `Body already consumed` no matter which one runs first.
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ shared: true }),
+      }),
+    );
+
+    assertEquals(await ctx.request.json(), { shared: true });
+    assertEquals(await ctx.body(), { shared: true });
+  });
+
+  it("throws a 400 when the body is not valid JSON", async () => {
     const ctx = ctxFor(
       new Request("http://localhost/api/echo", { method: "POST", body: "not json" }),
     );
 
-    let threw = false;
-    try {
-      await ctx.json();
-    } catch (_) {
-      threw = true;
-    }
-    assertEquals(threw, true);
+    const error = await assertRejects(() => ctx.body());
+    assertEquals((error as { status?: number }).status, 400);
+  });
+
+  it("createBodyReader reads the body under worker isolation too", async () => {
+    // Worker isolation builds its own context, so it uses this same reader.
+    const read = createBodyReader(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ isolated: true }),
+      }),
+    );
+
+    assertEquals(await read(), { isolated: true });
   });
 });

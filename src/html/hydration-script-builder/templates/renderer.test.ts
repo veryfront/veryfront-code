@@ -190,26 +190,51 @@ describe("hydration-script-builder/templates/renderer", () => {
     });
   });
 
+  // Evaluate helpers out of the emitted browser script so the behaviour itself
+  // is under test, not just the presence of a substring. Only the helpers are
+  // extracted; the rest of the script touches `window`.
+  function extractFunction(declaration: string): string {
+    const script = getRendererScript();
+    const start = script.indexOf(declaration);
+    assertEquals(start >= 0, true, declaration + " not found in renderer script");
+    const end = script.indexOf("\n    }", start);
+    assertEquals(end > start, true, "could not find end of " + declaration);
+    return script.slice(start, end + "\n    }".length);
+  }
+
+  function isModuleNotFoundError(error: unknown): boolean {
+    return new Function(
+      "error",
+      extractFunction("function isModuleNotFoundError(") +
+        "\nreturn isModuleNotFoundError(error);",
+    )(error) as boolean;
+  }
+
+  type ImportModule = (url: string) => Promise<unknown>;
+
+  function loadPageModuleWithIndexFallback(
+    basePath: string,
+    pageSlug: string,
+    pageModuleError: unknown,
+    importModule: ImportModule,
+  ): Promise<unknown> {
+    const source = [
+      extractFunction("function isModuleNotFoundError("),
+      extractFunction("function preferReachedModuleError("),
+      extractFunction("async function loadPageModuleWithIndexFallback("),
+    ].join("\n");
+
+    return new Function(
+      "basePath",
+      "pageSlug",
+      "pageModuleError",
+      "importModule",
+      source +
+        "\nreturn loadPageModuleWithIndexFallback(basePath, pageSlug, pageModuleError, importModule);",
+    )(basePath, pageSlug, pageModuleError, importModule) as Promise<unknown>;
+  }
+
   describe("isModuleNotFoundError", () => {
-    // Evaluate the helper out of the emitted browser script so the behaviour
-    // itself is under test, not just the presence of a substring. Only the
-    // helper is extracted — the rest of the script touches `window`.
-    function helperSource(): string {
-      const script = getRendererScript();
-      const start = script.indexOf("function isModuleNotFoundError(error) {");
-      assertEquals(start >= 0, true, "isModuleNotFoundError not found in renderer script");
-      const end = script.indexOf("\n    }", start);
-      assertEquals(end > start, true, "could not find end of isModuleNotFoundError");
-      return script.slice(start, end + "\n    }".length);
-    }
-
-    function isModuleNotFoundError(error: unknown): boolean {
-      return new Function(
-        "error",
-        `${helperSource()}\nreturn isModuleNotFoundError(error);`,
-      )(error) as boolean;
-    }
-
     it("treats a failed fetch as module-not-found", () => {
       assertEquals(
         isModuleNotFoundError(
@@ -244,6 +269,19 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertEquals(isModuleNotFoundError(new ReferenceError("x is not defined")), false);
     });
 
+    it("does not treat app errors that merely mention loading as module-not-found", () => {
+      assertEquals(isModuleNotFoundError(new Error("Failed to load user profile")), false);
+      assertEquals(isModuleNotFoundError(new TypeError("Failed to fetch /api/session")), false);
+    });
+
+    it("recognizes the browser wordings for a module that could not be fetched", () => {
+      assertEquals(isModuleNotFoundError(new TypeError("Importing a module script failed.")), true);
+      assertEquals(
+        isModuleNotFoundError(new TypeError("Failed to load module script: unexpected MIME type")),
+        true,
+      );
+    });
+
     it("handles null and non-Error values", () => {
       assertEquals(isModuleNotFoundError(null), false);
       assertEquals(isModuleNotFoundError(undefined), false);
@@ -251,27 +289,161 @@ describe("hydration-script-builder/templates/renderer", () => {
     });
   });
 
-  describe("page module fallback", () => {
-    it("only retries the /index.js path for module-not-found errors", () => {
-      const script = getRendererScript();
-      assertEquals(script.includes("isModuleNotFoundError(error)"), true);
-      assertEquals(script.includes("canRetryAsIndex"), true);
-    });
-
-    it("rethrows the original error rather than the fallback's", () => {
-      const script = getRendererScript();
-      assertEquals(script.includes("throw pageModuleError"), true);
-    });
-
-    it("prefers the retry's error when the retry reached a module", () => {
-      // A real <route>/index.tsx page 404s on <route>.js first, so the retry is
-      // the load that matters and its link error must not be replaced by the
-      // expected 404.
-      const script = getRendererScript();
-      assertEquals(
-        script.includes("throw isModuleNotFoundError(indexError) ? pageModuleError : indexError;"),
-        true,
+  describe("loadPageModuleWithIndexFallback", () => {
+    const notFound = (url: string) =>
+      new TypeError("Failed to fetch dynamically imported module: " + url);
+    const linkError = () =>
+      new SyntaxError(
+        "The requested module '/_vf_modules/_veryfront/platform/polyfills/node-noop.js' " +
+          "does not provide an export named 'createHash'",
       );
+
+    async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected the fallback to reject");
+    }
+
+    it("loads the module from <route>/index.js when <route>.js is missing", async () => {
+      const requested: string[] = [];
+      const pageModule = { default: "docs-index" };
+
+      const loaded = await loadPageModuleWithIndexFallback(
+        "http://modules/pages/docs",
+        "docs",
+        null,
+        (url) => {
+          requested.push(url);
+          if (url.endsWith("/docs.js")) return Promise.reject(notFound(url));
+          return Promise.resolve(pageModule);
+        },
+      );
+
+      assertEquals(loaded, pageModule);
+      assertEquals(requested, [
+        "http://modules/pages/docs.js",
+        "http://modules/pages/docs/index.js",
+      ]);
+    });
+
+    it("retries at /index.js for rejections the classifier does not recognize", async () => {
+      // A proxy that rewrites a module miss into an HTML shell surfaces as a
+      // SyntaxError. Gating the retry on error wording turned that into a blank
+      // page for routes that load fine from <route>/index.js.
+      const requested: string[] = [];
+      const pageModule = { default: "docs-index" };
+
+      const loaded = await loadPageModuleWithIndexFallback(
+        "http://modules/pages/docs",
+        "docs",
+        null,
+        (url) => {
+          requested.push(url);
+          if (url.endsWith("/docs.js")) {
+            return Promise.reject(new SyntaxError("Unexpected token '<'"));
+          }
+          return Promise.resolve(pageModule);
+        },
+      );
+
+      assertEquals(loaded, pageModule);
+      assertEquals(requested.length, 2);
+    });
+
+    it("throws the original error when both the route and its index are missing", async () => {
+      const original = notFound("http://modules/pages/docs.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          null,
+          (url) => Promise.reject(url.endsWith("/index.js") ? notFound(url) : original),
+        ),
+      );
+
+      assertEquals(thrown, original);
+    });
+
+    it("throws the link error from <route>.js rather than the retry's 404", async () => {
+      const original = linkError();
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          null,
+          (url) => Promise.reject(url.endsWith("/index.js") ? notFound(url) : original),
+        ),
+      );
+
+      assertEquals(thrown, original);
+    });
+
+    it("throws the retry's link error when <route>.js was merely missing", async () => {
+      const indexLinkError = linkError();
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          null,
+          (url) => Promise.reject(url.endsWith("/index.js") ? indexLinkError : notFound(url)),
+        ),
+      );
+
+      assertEquals(thrown, indexLinkError);
+    });
+
+    it("does not retry when the slug is already an index route", async () => {
+      const requested: string[] = [];
+      const original = notFound("http://modules/pages/index.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback("http://modules/pages/index", "index", null, (url) => {
+          requested.push(url);
+          return Promise.reject(original);
+        }),
+      );
+
+      assertEquals(thrown, original);
+      assertEquals(requested, ["http://modules/pages/index.js"]);
+    });
+
+    it("prefers a link error over a stale hydration-data fetch failure", async () => {
+      // Hydration data can carry a pagePath that no longer resolves. That 404
+      // must never outrank an error proving the fallback reached a module.
+      const staleFetchFailure = notFound("http://modules/pages/old-name.js");
+      const indexLinkError = linkError();
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/index",
+          "index",
+          staleFetchFailure,
+          () => Promise.reject(indexLinkError),
+        ),
+      );
+
+      assertEquals(thrown, indexLinkError);
+    });
+
+    it("keeps the hydration-data error when nothing else reached a module", async () => {
+      const original = notFound("http://modules/pages/old-name.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          original,
+          (url) => Promise.reject(notFound(url)),
+        ),
+      );
+
+      assertEquals(thrown, original);
     });
   });
 });
