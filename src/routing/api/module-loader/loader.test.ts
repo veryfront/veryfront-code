@@ -1027,7 +1027,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
           headers: { "content-type": "application/javascript" },
         })) as typeof fetch;
 
-      await assertRejects(
+      const error = await assertRejects(
         async () => {
           await loadHandlerModule({
             projectDir: virtualBase,
@@ -1037,8 +1037,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
           });
         },
         Error,
-        "No such file or directory",
-      );
+      ) as Error;
+      assertMatch(error.message, /Failed to load API handler/i);
+      assertMatch(error.message, /no such file or directory/i);
     } finally {
       globalThis.fetch = originalFetch;
     }
