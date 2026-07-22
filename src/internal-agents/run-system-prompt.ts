@@ -21,6 +21,7 @@
 import type { Agent } from "#veryfront/agent";
 import { buildProjectContextPromptBlock } from "#veryfront/agent/hosted/cloud-runtime-system-messages.ts";
 import { createRuntimeAgentSystemMessages } from "#veryfront/agent/runtime/agent-definition.ts";
+import { getEffectiveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { getRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import { createRuntimePromptBlock } from "#veryfront/agent/runtime/prompt-block.ts";
 import {
@@ -97,6 +98,7 @@ export type ComposeInternalAgentRunSystemPromptInput = {
   agent: Agent;
   runInput: RuntimeRunAgentInput;
   projectId?: string | null;
+  branchId?: string | null;
   toolNames: readonly string[];
 };
 
@@ -104,7 +106,7 @@ export type ComposeInternalAgentRunSystemPromptInput = {
 export async function composeInternalAgentRunSystemPrompt(
   input: ComposeInternalAgentRunSystemPromptInput,
 ): Promise<string> {
-  const baseInstructions = await resolveBaseSystemPrompt(input.agent.config.system);
+  const baseInstructions = await resolveBaseSystemPrompt(getEffectiveAgentSystem(input.agent));
   const studioContext = getInternalAgentStudioRunContext(input.runInput.context);
   const projectId = input.projectId ?? studioContext.projectId;
 
@@ -113,7 +115,7 @@ export async function composeInternalAgentRunSystemPrompt(
     runtimeBlocks.push(
       buildProjectContextPromptBlock({
         projectId,
-        branchId: studioContext.branchId ?? null,
+        branchId: input.branchId !== undefined ? input.branchId : studioContext.branchId ?? null,
       }),
     );
   }

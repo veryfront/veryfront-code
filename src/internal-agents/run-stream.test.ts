@@ -799,6 +799,7 @@ describe("internal-agents/run-stream", () => {
   it("does not treat forwarded integration defs as grants without allowedTools", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: unknown;
 
     const agent = {
       id: "ops-agent",
@@ -824,7 +825,6 @@ describe("internal-agents/run-stream", () => {
           // The caller forwarded a definition for gmail__list_emails, so the
           // runtime can render metadata if it is otherwise granted, but the
           // definition itself is not the grant channel.
-          toolAllowlist: ["gmail__list_emails"],
           integrationToolDefinitions: [
             {
               name: "gmail__list_emails",
@@ -842,6 +842,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
           capturedAllowedRemoteTools = (
             runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
           ).__vfAllowedRemoteTools;
@@ -857,12 +858,16 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    assertEquals(capturedAllowedRemoteTools, []);
+    assertEquals(capturedAllowedRemoteTools, undefined);
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(prompt.includes("- gmail__list_emails"), false);
   });
 
   it("keeps allowlisted forwarded integration tools granted by allowedTools", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: unknown;
 
     const agent = {
       id: "ops-agent",
@@ -893,6 +898,11 @@ describe("internal-agents/run-stream", () => {
               description: "List emails",
               parameters: { type: "object", properties: {} },
             },
+            {
+              name: "gmail__delete_email",
+              description: "Delete an email",
+              parameters: { type: "object", properties: {} },
+            },
           ],
         },
       },
@@ -904,6 +914,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
           capturedAllowedRemoteTools = (
             runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
           ).__vfAllowedRemoteTools;
@@ -920,6 +931,10 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertStringIncludes(prompt, "- gmail__list_emails");
+    assertEquals(prompt.includes("- gmail__delete_email"), false);
   });
 
   it("allows a toolAllowlist subset of declared remote-source tools named like integrations", async () => {
@@ -1081,6 +1096,50 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedProviderTools, []);
+  });
+
+  it("omits provider tools unsupported by the configured model from the inventory", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeSystem: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "openai/gpt-5.4-nano",
+        system: "test",
+        providerTools: ["web_search"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(prompt.includes("- web_search"), false);
   });
 
   it("preserves invoke_agent delegation for skill-enabled agents under toolAllowlist", async () => {

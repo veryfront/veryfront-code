@@ -380,6 +380,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
+  runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
@@ -398,6 +399,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     messages: input.messages,
     tools: input.tools,
     context: input.context,
+    runtimeTargetBranchId: input.run.project.runtimeTargetBranchId ?? null,
     ...(input.credentials ? { credentials: input.credentials } : {}),
     agentSource: input.agentSource,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),

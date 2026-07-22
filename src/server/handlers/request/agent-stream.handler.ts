@@ -780,6 +780,7 @@ export class AgentStreamHandler extends BaseHandler {
                     projectAgentSandbox: {
                       apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
                       authToken: apiAuthToken || undefined,
+                      branchId: payload.runtimeTargetBranchId,
                       projectId: sourceScopedContext.projectId ?? null,
                     },
                   });

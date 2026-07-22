@@ -1,6 +1,9 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Agent } from "#veryfront/agent";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { type Agent, agent } from "#veryfront/agent";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { toolRegistry } from "#veryfront/tool";
 import {
   composeInternalAgentRunSystemPrompt,
   getInternalAgentStudioRunContext,
@@ -37,6 +40,12 @@ function createStudioContextItem(data: Record<string, unknown>): unknown {
 }
 
 describe("internal-agents/run-system-prompt", () => {
+  afterEach(() => {
+    agentRegistry.clearAll();
+    skillRegistry.clearAll();
+    toolRegistry.clearAll();
+  });
+
   describe("getInternalAgentStudioRunContext", () => {
     it("extracts environment context, project id, and branch id", () => {
       const result = getInternalAgentStudioRunContext(
@@ -119,6 +128,21 @@ describe("internal-agents/run-system-prompt", () => {
       assertStringIncludes(prompt, 'branch_id: "branch-9"');
     });
 
+    it("prefers a trusted main branch target over Studio context", async () => {
+      const prompt = await composeInternalAgentRunSystemPrompt({
+        agent: createAgent(),
+        runInput: createRunInput([
+          createStudioContextItem({ projectId: "studio-project", branchId: "branch-9" }),
+        ]),
+        projectId: "sandbox-project",
+        branchId: null,
+        toolNames: [],
+      });
+
+      assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
+      assertEquals(prompt.includes('branch_id: "branch-9"'), false);
+    });
+
     it("includes the requested model in runtime info", async () => {
       const prompt = await composeInternalAgentRunSystemPrompt({
         agent: createAgent({ model: "openai/gpt-5.4-nano" }),
@@ -140,6 +164,35 @@ describe("internal-agents/run-system-prompt", () => {
 
       assertStringIncludes(prompt, "Base instructions with skill manifest.");
       assertStringIncludes(prompt, "- load_skill");
+    });
+
+    it("preserves the factory-resolved skill manifest", async () => {
+      registerSkill("support-triage", {
+        id: "support-triage",
+        metadata: {
+          name: "Support triage",
+          description: "Triage incoming support requests",
+        },
+        rootPath: "/test/skills/support-triage",
+      });
+      const skillAgent = agent({
+        id: "skill-agent",
+        system: "You are a support agent.",
+        skills: ["support-triage"],
+      });
+      const wrappedSkillAgent = {
+        ...skillAgent,
+        config: { ...skillAgent.config },
+      };
+
+      const prompt = await composeInternalAgentRunSystemPrompt({
+        agent: wrappedSkillAgent,
+        runInput: createRunInput(),
+        toolNames: ["load_skill"],
+      });
+
+      assertStringIncludes(prompt, "## Available Skills");
+      assertStringIncludes(prompt, "**support-triage**: Triage incoming support requests");
     });
 
     it("omits project and environment blocks when the run has no context", async () => {

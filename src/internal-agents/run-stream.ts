@@ -11,6 +11,8 @@ import {
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -95,6 +97,7 @@ export interface RuntimeAgentStreamExecutionDeps {
   projectAgentSandbox?: {
     apiUrl?: string;
     authToken?: string;
+    branchId?: string | null;
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
@@ -677,19 +680,30 @@ export async function createRuntimeAgentStreamResponse(
         typeof toolName === "string"
       )
       : []);
-  // The prompt inventory must cover the full model-visible surface: merged
-  // local/injected tools, provider-native tools, capped remote-source grants,
-  // and request-scoped forwarded integration tools — the latter two are
-  // exposed via __vfAllowedRemoteTools/__vfForwardedIntegrationToolDefs
-  // rather than mergedTools.
-  const runtimeToolNames = [
-    ...new Set([
-      ...(mergedTools && mergedTools !== true ? Object.keys(mergedTools) : []),
-      ...effectiveProviderToolNames,
-      ...(allowedRemoteToolNames ?? []),
-      ...(forwardedIntegrationToolDefs?.map((def) => def.name) ?? []),
-    ]),
-  ].sort();
+  const modelSupportedProviderToolNames = new Set(
+    getProviderNativeToolNames({ model: agent.config.model }),
+  );
+  const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
+    modelSupportedProviderToolNames.has(toolName)
+  );
+  const localToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
+  const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
+  const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
+    .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
+  const compatibleToolNames = selectProviderCompatibleToolNames(
+    [
+      ...new Set([
+        ...localToolNames,
+        ...(allowedRemoteToolNames ?? []),
+        ...forwardedToolNames,
+      ]),
+    ].sort(),
+    {
+      model: agent.config.model,
+      requiredToolNames: localToolNames,
+    },
+  );
+  const runtimeToolNames = [...new Set([...compatibleToolNames, ...providerToolNames])].sort();
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
@@ -698,6 +712,7 @@ export async function createRuntimeAgentStreamResponse(
         agent,
         runInput: input,
         projectId: deps.projectAgentSandbox?.projectId ?? null,
+        branchId: deps.projectAgentSandbox?.branchId,
         toolNames: runtimeToolNames,
       }),
       tools: mergedTools,

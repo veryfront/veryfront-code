@@ -193,6 +193,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for the signed runtime agent invocation envelope", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
+    let runtimeSystem: unknown;
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -200,8 +201,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
-      createRuntime: () => ({
+      createRuntime: (runtimeAgent) => ({
         stream: async (_messages, context, callbacks) => {
+          runtimeSystem = runtimeAgent.config.system;
           streamContext = context;
           callbacks?.onFinish?.({
             text: "hello from runtime",
@@ -239,7 +241,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }),
     });
 
-    const body = createRuntimeAgentRunInvocationBody();
+    const invocation = JSON.parse(createRuntimeAgentRunInvocationBody());
+    invocation.context = [{
+      type: "json",
+      title: "studio_context",
+      data: { branchId: null },
+    }];
+    const body = JSON.stringify(invocation);
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
@@ -259,6 +267,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertStringIncludes(
+      prompt,
+      'branch_id: "10000000-1000-4000-8000-100000000006"',
+    );
+    assertEquals(prompt.includes("branch_id: main"), false);
 
     const text = await result.response.text();
     assertStringIncludes(text, "event: RunStarted");
