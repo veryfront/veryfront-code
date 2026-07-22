@@ -106,6 +106,26 @@ Deno.test("getVisibleSkillIds excludes other agents' owned skills", () => {
   }
 });
 
+Deno.test("hasVisibleSkills applies owner scope without building a catalog", () => {
+  setupRegistry();
+  try {
+    assertEquals(skillRegistry.hasVisibleSkills({ agentId: "researcher" }), true);
+    assertEquals(skillRegistry.hasVisibleSkills({ agentId: "writer" }), true);
+
+    skillRegistry.clearAll();
+    registerSkill(
+      "researcher--cite",
+      makeSkill({ id: "researcher--cite", ownerAgentId: "researcher", shortName: "cite" }),
+    );
+
+    assertEquals(skillRegistry.hasVisibleSkills({ agentId: "researcher" }), true);
+    assertEquals(skillRegistry.hasVisibleSkills({ agentId: "writer" }), false);
+    assertEquals(skillRegistry.hasVisibleSkills(), false);
+  } finally {
+    skillRegistry.clearAll();
+  }
+});
+
 Deno.test("load_skill rejects another agent's owned skill and enumerates only visible ids", async () => {
   setupRegistry();
   try {
