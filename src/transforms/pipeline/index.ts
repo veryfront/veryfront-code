@@ -161,6 +161,7 @@ export function runPipeline(
 
       const ctx = await createTransformContext(source, filePath, projectDir, options);
       ctx.debug = config?.debug ?? false;
+      ctx.onProgress?.({ phase: "pipeline:context", filePath });
 
       const configHash = await computeConfigHash({
         reactVersion: ctx.reactVersion,
@@ -212,6 +213,7 @@ export function runPipeline(
             });
             // Fall through to re-run the pipeline
           } else {
+            ctx.onProgress?.({ phase: "pipeline:cache-hit", filePath });
             return {
               code: cached.code,
               contentHash: ctx.contentHash,
@@ -221,6 +223,7 @@ export function runPipeline(
             };
           }
         } else {
+          ctx.onProgress?.({ phase: "pipeline:cache-hit", filePath });
           return {
             code: cached.code,
             contentHash: ctx.contentHash,
@@ -257,6 +260,7 @@ export function runPipeline(
         }
 
         recordStageTiming(ctx, plugin.stage, stageStart);
+        ctx.onProgress?.({ phase: `pipeline:${plugin.name}`, filePath });
       }
 
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
@@ -273,6 +277,8 @@ export function runPipeline(
       if (ctx.debug) {
         logger.debug("Transform complete", formatTimingLog(ctx));
       }
+
+      ctx.onProgress?.({ phase: "pipeline:complete", filePath });
 
       return {
         code: ctx.code,

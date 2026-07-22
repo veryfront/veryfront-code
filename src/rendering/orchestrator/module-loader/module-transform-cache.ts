@@ -18,6 +18,7 @@ import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -48,6 +49,7 @@ interface TransformOptions {
   dev: boolean;
   ssr: boolean;
   reactVersion?: string;
+  onProgress?: TransformProgressListener;
 }
 
 interface PipelineResult {
@@ -58,8 +60,10 @@ export interface ModuleTransformCacheDeps {
   initializeTransformCache: typeof initializeTransformCache;
   getOrComputeTransform: (
     key: string,
-    compute: () => Promise<string>,
+    compute: (reportProgress?: TransformProgressListener) => Promise<string>,
     ttlSeconds: number,
+    onProgress?: TransformProgressListener,
+    signal?: AbortSignal,
   ) => Promise<TransformCacheResult>;
   transformToESM: (
     code: string,
@@ -105,6 +109,8 @@ export interface TransformModuleCodeWithCacheInput {
   adapter: RuntimeAdapter;
   reactVersion?: string;
   ttlSeconds?: number;
+  onProgress?: TransformProgressListener;
+  signal?: AbortSignal;
   deps?: ModuleTransformCacheDeps;
 }
 
@@ -134,24 +140,29 @@ export async function transformModuleCodeWithCache(
     dev: input.mode === "development",
     ssr: true,
     reactVersion,
+    onProgress: input.onProgress,
   };
 
   await deps.initializeTransformCache();
 
   const transformResult = await deps.getOrComputeTransform(
     cacheKey,
-    () => {
+    (reportProgress) => {
       logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
       return deps.transformToESM(
         input.fileContent,
         input.filePath,
         input.projectDir,
         input.adapter,
-        transformOptions,
+        { ...transformOptions, onProgress: reportProgress },
       );
     },
     ttlSeconds,
+    input.onProgress,
+    input.signal,
   );
+
+  input.signal?.throwIfAborted();
 
   let transformedCode = transformResult.code;
 
@@ -161,6 +172,7 @@ export async function transformModuleCodeWithCache(
       transformResult.bundleManifestId,
       deps.getHttpBundleCacheDir(),
     );
+    input.signal?.throwIfAborted();
     if (!validation.valid) {
       logger.warn("Cached HTTP bundle validation failed, re-transforming", {
         filePath: input.filePath,

@@ -406,7 +406,9 @@ async function transformFrameworkCodeUncoalesced(
     // against the cache dir (where those siblings do not exist), producing
     // a runtime "Module not found".
     const compiled = await compileFallbackSource(content, sourcePath);
-    return await rewriteFallbackRelativeImports(compiled, sourcePath, ctx);
+    const fallback = await rewriteFallbackRelativeImports(compiled, sourcePath, ctx);
+    ctx.onProgress?.({ phase: "framework:fallback-transformed", filePath: sourcePath });
+    return fallback;
   }
 
   // Reuse a completed transform before doing any more work.
@@ -426,6 +428,7 @@ async function transformFrameworkCodeUncoalesced(
       frameworkFileCache.delete(transformKey);
     } else {
       logger.debug(`${LOG_PREFIX} Framework file cache hit`, { sourcePath: sourcePath.slice(-60) });
+      ctx.onProgress?.({ phase: "framework:cache-hit", filePath: sourcePath });
       return cached;
     }
   }
@@ -635,6 +638,7 @@ async function transformFrameworkCodeUncoalesced(
 
     // Cache the final transformed code
     frameworkFileCache.set(transformKey, cacheResult.code);
+    ctx.onProgress?.({ phase: "framework:module-transformed", filePath: sourcePath });
 
     return cacheResult.code;
   } finally {
@@ -663,7 +667,10 @@ export async function resolveAndTransformVeryfrontImport(
       content,
     );
     const cached = veryfrontTransformCache.get(transformKey);
-    if (cached) return cached;
+    if (cached) {
+      ctx.onProgress?.({ phase: "framework:specifier-cache-hit", filePath: sourcePath });
+      return cached;
+    }
 
     // Transform the dependency (recursively handles its own #veryfront/ imports)
     const transformed = await transformFrameworkCode(content, sourcePath, ctx, false);
@@ -688,6 +695,7 @@ export async function resolveAndTransformVeryfrontImport(
       sourcePath,
       cachePath,
     });
+    ctx.onProgress?.({ phase: "framework:specifier-transformed", filePath: sourcePath });
 
     return fileUrl;
   } catch (error) {
@@ -728,6 +736,12 @@ export async function transformFrameworkSource(
   reactVersion: string,
   projectDir: string,
   fs: ReturnType<typeof createFileSystem>,
+  onProgress?: TransformContext["onProgress"],
 ): Promise<string> {
-  return transformFrameworkCode(content, sourcePath, { reactVersion, projectDir, fs }, true);
+  return transformFrameworkCode(
+    content,
+    sourcePath,
+    { reactVersion, projectDir, fs, onProgress },
+    true,
+  );
 }

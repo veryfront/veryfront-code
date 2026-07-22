@@ -29,6 +29,8 @@ const IGNORED_PATH_PATTERNS = [
   ".git\\",
   ".veryfront/",
   ".veryfront\\",
+  ".omx/",
+  ".omx\\",
   // Tool output directories that live inside the project root. Tools such as
   // the Playwright MCP server write per-step artifacts here continuously,
   // which would otherwise drive an open-ended HMR refresh loop.

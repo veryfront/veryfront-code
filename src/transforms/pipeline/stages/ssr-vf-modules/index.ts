@@ -159,6 +159,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
             reactVersion,
             ctx.projectDir,
             fs,
+            ctx.onProgress,
           );
 
           // Skip cycle placeholders - don't cache or use them
@@ -171,6 +172,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           return await cacheTransformedCode(transformed, vfModulePath, fs);
         });
         replacements.set(vfModulePath, `file://${cachePath}`);
+        ctx.onProgress?.({ phase: "framework:entry-transformed", filePath: resolved.sourcePath });
 
         logger.debug(`${LOG_PREFIX} Transformed ${vfModulePath} -> file://${cachePath}`);
       } catch (error) {

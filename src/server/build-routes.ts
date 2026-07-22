@@ -8,7 +8,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join, relative } from "#veryfront/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
-import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
+import { isDynamicRoute, isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
@@ -20,6 +20,10 @@ function convertToSlug(relativePath: string): string {
       .replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
       .replace(/\/index$/, "") || "index"
   );
+}
+
+function isPagesApiDirectoryDescendant(relativePath: string): boolean {
+  return relativePath.replace(/\\/g, "/").startsWith("api/");
 }
 
 function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]): boolean {
@@ -49,8 +53,11 @@ export async function collectPagesRoutes(
     const file of discoverFiles({ baseDir: pagesDir, extensions: PAGE_EXTENSIONS, adapter })
   ) {
     const relativePath = relative(pagesDir, file.path);
+    if (isPagesApiDirectoryDescendant(relativePath)) continue;
+
     const slug = convertToSlug(relativePath);
     const pathForRoute = `/${slug === "index" ? "" : slug}`;
+    if (isDynamicRoute(pathForRoute)) continue;
 
     if (!shouldIncludeRoute(pathForRoute, include, exclude)) continue;
     routes.push({ path: pathForRoute, file: file.path, slug });

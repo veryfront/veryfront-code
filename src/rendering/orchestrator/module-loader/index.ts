@@ -23,10 +23,28 @@ import { persistTransformedModule } from "./module-persistence.ts";
 import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
 import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
 import { markBuildFailure } from "./build-failure.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
 const logger = rendererLogger.component("module-loader");
+
+function throwIfModuleLoadAborted(config: ModuleLoaderConfig): void {
+  config.signal?.throwIfAborted();
+}
+
+function markModuleLoadProgress(
+  config: ModuleLoaderConfig,
+  phase: string,
+  filePath: string,
+): void {
+  throwIfModuleLoadAborted(config);
+  try {
+    config.onProgress?.({ phase, filePath });
+  } catch (error) {
+    logger.debug("Module-load progress listener failed", { phase, filePath, error });
+  }
+}
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
@@ -60,6 +78,7 @@ export async function transformModuleWithDeps(
   // alias the left-as-authored cycle edge can resolve to.
   cycleTargets: Set<string> = new Set(),
 ): Promise<string> {
+  throwIfModuleLoadAborted(config);
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(
     filePath,
@@ -80,11 +99,13 @@ export async function transformModuleWithDeps(
     reactVersion: config.reactVersion,
   });
   if (cachedPath) {
+    markModuleLoadProgress(config, "module:cache-hit", filePath);
     return cachedPath;
   }
 
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
   let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
+  markModuleLoadProgress(config, "module:source-read", filePath);
 
   const resolvedDeps = await resolveModuleDependencies({
     adapter,
@@ -92,6 +113,7 @@ export async function transformModuleWithDeps(
     filePath,
     projectDir,
   });
+  markModuleLoadProgress(config, "module:dependencies-resolved", filePath);
 
   // The module cache is only written once a transform completes, so it cannot
   // break a cycle that is still in progress. Carry the chain instead.
@@ -155,6 +177,7 @@ export async function transformModuleWithDeps(
       }
     }),
   )).filter((dep): dep is TransformedModuleDependency => dep !== null);
+  markModuleLoadProgress(config, "module:dependencies-transformed", filePath);
 
   fileContent = rewriteResolvedDependencyImports(fileContent, transformedDeps);
   for (const dep of transformedDeps) {
@@ -182,9 +205,12 @@ export async function transformModuleWithDeps(
     mode,
     adapter,
     reactVersion: config.reactVersion,
+    onProgress: config.onProgress,
+    signal: config.signal,
   });
+  markModuleLoadProgress(config, "module:source-transformed", filePath);
 
-  return await persistTransformedModule({
+  const persistedPath = await persistTransformedModule({
     filePath,
     projectDir,
     tmpDir,
@@ -196,6 +222,8 @@ export async function transformModuleWithDeps(
     reactVersion: config.reactVersion,
     isCycleTarget: cycleTargets.has(filePath),
   });
+  markModuleLoadProgress(config, "module:persisted", filePath);
+  return persistedPath;
 }
 
 export interface ModuleLoaderConfig {
@@ -208,6 +236,10 @@ export interface ModuleLoaderConfig {
   esmCache: Map<string, string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Cooperative cancellation for one module-load stage. */
+  signal?: AbortSignal;
+  /** Meaningful module/transform milestones for the stage idle timeout. */
+  onProgress?: TransformProgressListener;
 }
 
 /**
@@ -256,8 +288,10 @@ export async function loadModule(
   filePath: string,
   config: ModuleLoaderConfig,
 ): Promise<Record<string, unknown>> {
+  throwIfModuleLoadAborted(config);
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
+  markModuleLoadProgress(config, "module:cache-ready", filePath);
 
   // Everything up to here compiles and resolves source, so a failure is a build
   // failure. Everything after it is the module running.
@@ -269,9 +303,12 @@ export async function loadModule(
   }
 
   const moduleUrl = `file://${tempFilePath}`;
+  markModuleLoadProgress(config, "module:import-start", filePath);
 
   try {
-    return await import(moduleUrl);
+    const mod = await import(moduleUrl);
+    markModuleLoadProgress(config, "module:imported", filePath);
+    return mod;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     // HEURISTIC: extract the bundle hash by matching the cache-path pattern in

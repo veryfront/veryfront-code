@@ -2,10 +2,32 @@ import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 
 export class TimeoutError extends Error {
-  constructor(label: string, timeoutMs: number) {
+  readonly timeoutKind?: "idle" | "hard";
+  readonly lastProgress?: string;
+
+  constructor(
+    label: string,
+    timeoutMs: number,
+    details?: { kind?: "idle" | "hard"; lastProgress?: string },
+  ) {
     super(`${label} timed out after ${timeoutMs}ms`);
     this.name = "TimeoutError";
+    this.timeoutKind = details?.kind;
+    this.lastProgress = details?.lastProgress;
   }
+}
+
+export interface ProgressTimeoutControl {
+  /** Aborted when either the idle deadline or hard cap is reached. */
+  signal: AbortSignal;
+  /** Reset the idle deadline after a concrete unit of work completes. */
+  mark(label: string): void;
+}
+
+export interface ProgressTimeoutOptions {
+  label: string;
+  idleTimeoutMs: number;
+  hardTimeoutMs: number;
 }
 
 export async function withTimeout<T>(
@@ -50,6 +72,77 @@ export async function withTimeoutThrow<T>(
     return await Promise.race([promise, timeoutPromise]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Run an operation with a resettable idle deadline and a non-resettable hard cap.
+ *
+ * Callers must only call `mark` after meaningful progress. The hard cap keeps a
+ * noisy or buggy progress source from extending work forever. The supplied
+ * signal lets cooperative operations stop after either deadline.
+ */
+export async function withProgressTimeoutThrow<T>(
+  operation: (control: ProgressTimeoutControl) => Promise<T>,
+  options: ProgressTimeoutOptions,
+): Promise<T> {
+  const { label, idleTimeoutMs, hardTimeoutMs } = options;
+  if (idleTimeoutMs <= 0 || hardTimeoutMs <= 0 || hardTimeoutMs < idleTimeoutMs) {
+    throw new RangeError("Progress timeout requires 0 < idleTimeoutMs <= hardTimeoutMs");
+  }
+
+  const controller = new AbortController();
+  let idleTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let active = true;
+  let lastProgress = "operation started";
+  let rejectTimeout!: (error: TimeoutError) => void;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+  });
+
+  const fail = (kind: "idle" | "hard", timeoutMs: number): void => {
+    if (!active) return;
+    active = false;
+    const error = new TimeoutError(label, timeoutMs, { kind, lastProgress });
+    logger.error("TIMEOUT_PROGRESS operation timed out (throwing)", {
+      label,
+      timeoutKind: kind,
+      timeoutMs,
+      idleTimeoutMs,
+      hardTimeoutMs,
+      lastProgress,
+    });
+    controller.abort(error);
+    rejectTimeout(error);
+  };
+
+  const scheduleIdleTimeout = (): void => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId);
+    idleTimeoutId = setTimeout(() => fail("idle", idleTimeoutMs), idleTimeoutMs);
+  };
+
+  const control: ProgressTimeoutControl = {
+    signal: controller.signal,
+    mark(progressLabel: string): void {
+      if (!active || controller.signal.aborted) return;
+      lastProgress = progressLabel;
+      scheduleIdleTimeout();
+    },
+  };
+
+  scheduleIdleTimeout();
+  const hardTimeoutId = setTimeout(() => fail("hard", hardTimeoutMs), hardTimeoutMs);
+
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => operation(control)),
+      timeoutPromise,
+    ]);
+  } finally {
+    active = false;
+    if (idleTimeoutId) clearTimeout(idleTimeoutId);
+    if (hardTimeoutId) clearTimeout(hardTimeoutId);
   }
 }
 

@@ -54,7 +54,7 @@ export class DataFetcher {
       SpanNames.DATA_FETCH,
       () => {
         if (useServer) return this.serverFetcher.fetch(pageModule, context, isolationOptions);
-        if (useStatic) return this.staticFetcher.fetch(pageModule, context);
+        if (useStatic) return this.staticFetcher.fetch(pageModule, context, options);
         return Promise.resolve({ props: {} });
       },
       {

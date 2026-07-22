@@ -546,6 +546,76 @@ describe(
         );
       });
 
+      it("renders Pages Router routes with static-only data context", async () => {
+        const calls: Array<{
+          slug: string;
+          request?: Request;
+          url?: URL;
+          staticDataOnly?: boolean;
+          contentSourceId?: string;
+        }> = [];
+        const renderer = {
+          renderPage: (
+            slug: string,
+            options?: {
+              request?: Request;
+              url?: URL;
+              staticDataOnly?: boolean;
+              contentSourceId?: string;
+            },
+          ) => {
+            calls.push({
+              slug,
+              request: options?.request,
+              url: options?.url,
+              staticDataOnly: options?.staticDataOnly,
+              contentSourceId: options?.contentSourceId,
+            });
+            return Promise.resolve({
+              html: "<html><head></head><body><div>content</div></body></html>",
+              frontmatter: {},
+              headings: [],
+            });
+          },
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [
+            { slug: "index", path: "/", file: "pages/index.tsx" },
+            { slug: "search", path: "/search?q=jobs", file: "pages/search.tsx" },
+          ],
+          {
+            adapter: createMockAdapter(),
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: true,
+            baseUrl: "https://example.test/app",
+            contentSourceId: "release-test",
+          },
+        );
+
+        assertEquals(calls.length, 2);
+        const rootCall = calls[0];
+        const searchCall = calls[1];
+        assertExists(rootCall);
+        assertExists(searchCall);
+        assertEquals(rootCall.slug, "index");
+        assertEquals(rootCall.request, undefined);
+        assertEquals(rootCall.url?.href, "https://example.test/");
+        assertEquals(rootCall.staticDataOnly, true);
+        assertEquals(rootCall.contentSourceId, "release-test");
+        assertEquals(searchCall.slug, "search");
+        assertEquals(searchCall.request, undefined);
+        assertEquals(searchCall.url?.href, "https://example.test/search?q=jobs");
+        assertEquals(searchCall.staticDataOnly, true);
+        assertEquals(searchCall.url?.searchParams.get("q"), "jobs");
+      });
+
       it("records generated Pages Router paths in SSG stats", async () => {
         const stats = await buildPagesRoutes(
           [

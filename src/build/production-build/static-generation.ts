@@ -79,6 +79,18 @@ function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+function createStaticRouteContext(
+  path: string,
+  baseUrl: string,
+): { staticDataOnly: true; url: URL } {
+  // Static route paths are root-relative; baseUrl supplies only the URL origin.
+  const url = new URL(path, baseUrl || "http://localhost");
+  return {
+    staticDataOnly: true,
+    url,
+  };
+}
+
 function hasImportMapScript(html: string): boolean {
   return /<script\b[^>]*\btype=(["'])importmap\1/i.test(html);
 }
@@ -216,11 +228,13 @@ export async function buildPagesRoutes(
 
   for (const route of routes) {
     try {
+      const staticRouteContext = createStaticRouteContext(route.path, baseUrl);
       const result = await traceStep(
         `page:${route.slug}`,
         () =>
           renderer.renderPage(route.slug, {
             contentSourceId,
+            ...staticRouteContext,
             releaseAssetManifest: options.releaseAssetManifest,
           }),
       );

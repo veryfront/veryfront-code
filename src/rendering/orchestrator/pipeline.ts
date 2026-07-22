@@ -51,7 +51,12 @@ import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/i
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
-import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
+import {
+  type ProgressTimeoutControl,
+  withProgressTimeoutThrow,
+  withTimeout,
+  withTimeoutThrow,
+} from "../utils/stream-utils.ts";
 import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
@@ -89,6 +94,7 @@ import {
   DATA_FETCH_TIMEOUT_MS,
   hasDataFetchingFunction,
   type LoadedModule,
+  MODULE_LOAD_HARD_TIMEOUT_MS,
   MODULE_LOAD_TIMEOUT_MS,
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
@@ -269,8 +275,16 @@ export class RenderPipeline {
   private async loadModulesInParallel(
     modules: ModuleToLoad[],
     options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+    timeoutControl?: ProgressTimeoutControl,
   ): Promise<LoadedModule[]> {
     const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
+    if (timeoutControl) {
+      moduleLoaderConfig.signal = timeoutControl.signal;
+      moduleLoaderConfig.onProgress = ({ phase, filePath }) => {
+        const fileName = filePath?.split("/").pop();
+        timeoutControl.mark(fileName ? `${phase}:${fileName}` : phase);
+      };
+    }
     const results = await Promise.all(
       modules.map(async (m) => {
         try {
@@ -287,7 +301,7 @@ export class RenderPipeline {
 
     for (const result of results) {
       if (result.mod && !result.error) {
-        loaded.push({ type: result.type, id: result.id, mod: result.mod });
+        loaded.push({ type: result.type, id: result.id, path: result.path, mod: result.mod });
         continue;
       }
 
@@ -349,7 +363,7 @@ export class RenderPipeline {
     const pageProps: Record<string, unknown> = {};
     const layoutProps = new Map<string, Record<string, unknown>>();
 
-    if (!options?.request || !options?.url) {
+    if (!options?.url || (!options.staticDataOnly && !options.request)) {
       return { params, pageProps, layoutProps };
     }
 
@@ -368,8 +382,8 @@ export class RenderPipeline {
 
     const dataContext: DataContext = {
       params,
-      query: options.url.searchParams,
-      request: options.request,
+      query: options.staticDataOnly ? new URLSearchParams() : options.url.searchParams,
+      request: options.request ?? new Request(options.url, { method: "GET" }),
       url: options.url,
     };
 
@@ -394,16 +408,23 @@ export class RenderPipeline {
         withSpan(
           SpanNames.RENDER_LOAD_MODULES,
           () =>
-            withTimeoutThrow(
-              this.loadModulesInParallel(modulesToLoad, options),
-              MODULE_LOAD_TIMEOUT_MS,
-              `Module loading for ${slug}`,
+            withProgressTimeoutThrow(
+              (control) => this.loadModulesInParallel(modulesToLoad, options, control),
+              {
+                idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
+                hardTimeoutMs: MODULE_LOAD_HARD_TIMEOUT_MS,
+                label: `Module loading for ${slug}`,
+              },
             ),
           { "render.module_count": modulesToLoad.length },
         ),
     );
 
-    const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
+    const dataJobs = loadedModules.filter((m) =>
+      options?.staticDataOnly
+        ? typeof (m.mod as PageWithData).getStaticData === "function"
+        : hasDataFetchingFunction(m.mod)
+    );
     if (dataJobs.length === 0) {
       return { params, pageProps, layoutProps };
     }
@@ -559,7 +580,7 @@ export class RenderPipeline {
               let layoutDataMap = new Map<string, Record<string, unknown>>();
 
               const dataFetchStart = performance.now();
-              if (options?.request && options?.url) {
+              if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
                   () =>

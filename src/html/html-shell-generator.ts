@@ -5,10 +5,6 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
 import {
-  generateModulePreloadHintsFromManifest,
-  getRouteManifest,
-} from "#veryfront/modules/manifest/route-module-manifest.ts";
-import {
   getReadyManifestForRenderAsync,
   isReleaseAssetManifestEnabled,
 } from "#veryfront/release-assets/manifest-cache.ts";
@@ -143,11 +139,6 @@ function generateModulePreloadHints(
     ? getRelativePagePath(options.pagePath, projectDir)
     : "";
   const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
-  const legacyModuleManifestRoute = relativePagePath
-    ? relativePagePath
-      .replace(/\.(tsx|ts|jsx|mdx)$/, "")
-      .replace(/^pages\//, "")
-    : "";
 
   // Manifest-covered routes: preload the full closure from the manifest.
   if (releaseManifest) {
@@ -155,28 +146,6 @@ function generateModulePreloadHints(
       addHint(url);
     }
     return hints.join("\n  ");
-  }
-
-  const projectSlug = options.projectSlug ?? options.projectId;
-  const manifest = getRouteManifest(projectSlug, legacyModuleManifestRoute);
-  if (!manifest || manifest.renderCount <= 0) return hints.join("\n  ");
-
-  for (
-    const hint of generateModulePreloadHintsFromManifest(
-      projectSlug,
-      legacyModuleManifestRoute,
-      50,
-    )
-  ) {
-    const hintPrefix = '<link rel="modulepreload" href="';
-    const hintSuffix = '">';
-    if (!hint.startsWith(hintPrefix) || !hint.endsWith(hintSuffix)) continue;
-
-    const rawHref = hint.slice(hintPrefix.length, -hintSuffix.length);
-    const href = rawHref && fallbackReleaseId && rawHref.startsWith("/_vf_modules/")
-      ? appendReleaseModuleVersion(rawHref, fallbackReleaseId)
-      : rawHref;
-    addHint(href);
   }
 
   return hints.join("\n  ");

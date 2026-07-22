@@ -116,4 +116,17 @@ describe("transforms/pipeline/stages/compile", () => {
       assertStringIncludes(result, 'import d from "./a.json" assert { type: "json" };');
     });
   });
+
+  describe("modern ESM syntax", () => {
+    it("accepts top-level await in framework server modules", async () => {
+      const result = await compilePlugin.transform(
+        createContext(
+          `const serverMode = await Promise.resolve("production");\nexport { serverMode };`,
+          "/project/src/server/production-server.ts",
+        ),
+      );
+
+      assertStringIncludes(result, 'await Promise.resolve("production")');
+    });
+  });
 });

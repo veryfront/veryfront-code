@@ -39,3 +39,17 @@ Deno.test("every browser-safe module path points at an existing source file", as
 		`Browser-safe module paths with no matching source file: ${missing.join(", ")}`,
 	);
 });
+
+Deno.test("browser-safe client modules include runtime shims reached by browser entrypoints", () => {
+	for (
+		const builtPath of [
+			"src/react/runtime/core.js",
+			"src/react/components/ui/color-mode.js",
+		]
+	) {
+		assert(
+			BROWSER_SAFE_CLIENT_MODULES.includes(builtPath),
+			`${builtPath} must have dnt shim imports stripped for browser-safe npm entrypoints`,
+		);
+	}
+});

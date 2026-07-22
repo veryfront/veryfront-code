@@ -94,6 +94,35 @@ describe("DataFetcher", () => {
         assertEquals(getProps<{ source: string }>(result).source, "static");
       });
 
+      it("should isolate cached getStaticData results by module path", async () => {
+        const fetcher = new DataFetcher();
+        const context = createContext({ url: new URL("http://localhost/dashboard") });
+        const layoutModule: PageWithData<{ source: string }> = {
+          default: () => null,
+          getStaticData: () => ({ props: { source: "layout" } }),
+        };
+        const pageModule: PageWithData<{ source: string }> = {
+          default: () => null,
+          getStaticData: () => ({ props: { source: "page" } }),
+        };
+
+        const layoutResult = await fetcher.fetchData(
+          layoutModule,
+          context,
+          "production",
+          { modulePath: "/project/components/layout.tsx" },
+        );
+        const pageResult = await fetcher.fetchData(
+          pageModule,
+          context,
+          "production",
+          { modulePath: "/project/pages/index.tsx" },
+        );
+
+        assertEquals(getProps<{ source: string }>(layoutResult).source, "layout");
+        assertEquals(getProps<{ source: string }>(pageResult).source, "page");
+      });
+
       it("should use getServerData if getStaticData not defined in production", async () => {
         const fetcher = new DataFetcher();
         const pageModule: PageWithData<{ source: string }> = {

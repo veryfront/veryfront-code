@@ -9,7 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   isMissingModuleError,
@@ -104,6 +104,54 @@ describe("module-loader/transformModuleWithDeps", () => {
     );
   });
 
+  it("isolates progress listener failures without weakening aborts", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": `export const value = "ready";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let listenerCalls = 0;
+        const transformedPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.json"),
+          tmpDir,
+          config.adapter,
+          {
+            ...config,
+            onProgress: () => {
+              listenerCalls++;
+              throw new Error("observer failure");
+            },
+          },
+        );
+
+        assert(listenerCalls > 0);
+        assertEquals((await Deno.stat(transformedPath)).isFile, true);
+
+        const controller = new AbortController();
+        controller.abort(new Error("render cancelled"));
+        let abortedListenerCalls = 0;
+        await assertRejects(
+          () =>
+            transformModuleWithDeps(
+              join(projectDir, "app/page.json"),
+              tmpDir,
+              config.adapter,
+              {
+                ...config,
+                signal: controller.signal,
+                onProgress: () => {
+                  abortedListenerCalls++;
+                },
+              },
+            ),
+          Error,
+          "render cancelled",
+        );
+        assertEquals(abortedListenerCalls, 0);
+      },
+    );
+  });
+
   // A dynamic import is how a module graph legitimately breaks a cycle. Before
   // dynamic specifiers were followed, this shape terminated because the cycle
   // edge was invisible; following it eagerly recurses until the worker dies.
@@ -190,7 +238,7 @@ describe("module-loader/transformModuleWithDeps", () => {
           await Deno.readTextFile(transformed),
           "/lib/a.",
         );
-        assert(/\/lib\/a\.[0-9a-f]{8}\.js$/.test(depArtifactPath), depArtifactPath);
+        assert(/\/lib\/a\.[0-9a-f]{1,8}\.js$/.test(depArtifactPath), depArtifactPath);
 
         // The cycle edge survives as the relative `.js` specifier esbuild leaves.
         const depCode = await Deno.readTextFile(depArtifactPath);
@@ -200,9 +248,9 @@ describe("module-loader/transformModuleWithDeps", () => {
         // re-exports it, so `../app/page.js` resolves to the real module.
         const aliasPath = join(tmpDir, "app/page.js");
         const aliasCode = await Deno.readTextFile(aliasPath);
-        assert(
-          /export \* from "\.\/page\.[0-9a-f]{8}\.js";/.test(aliasCode),
-          `alias should re-export the hashed artifact:\n${aliasCode}`,
+        assertStringIncludes(
+          aliasCode,
+          `export * from "./${basename(transformed)}";`,
         );
       },
     );

@@ -35,6 +35,13 @@ export default function Dashboard({ user }: { user: { name: string } }) {
 
 Run `veryfront dev` and open [http://localhost:3000/dashboard?name=Grace](http://localhost:3000/dashboard?name=Grace). The page should render `Welcome, Grace`.
 
+`getServerData`, `getStaticData`, and `getStaticPaths` are reserved server data
+export names in browser project modules. Veryfront strips their bodies from
+browser bundles, and imports used exclusively by those stripped hooks are removed
+entirely, including their top-level side effects. Put client initialization in a
+separate client-referenced module or a bare side-effect import that is not only
+used by a server data hook.
+
 The `DataContext` provides:
 
 | Property  | Type                     | Description                                 |

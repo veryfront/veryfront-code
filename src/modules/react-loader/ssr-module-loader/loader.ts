@@ -14,6 +14,7 @@ import {
   parseLocalImports,
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
@@ -27,12 +28,12 @@ import {
 } from "./loader-helpers.ts";
 import {
   getMaxConcurrentTransforms,
-  IN_PROGRESS_WAIT_TIMEOUT_MS,
   MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_BATCH_SIZE,
+  TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
+  TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
-import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
   getFromRedis,
   getTransformSemaphore,
@@ -70,6 +71,98 @@ import {
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
+const MAX_REJECTED_IN_PROGRESS_RETRIES = 1;
+
+class InProgressTransformWaitTimeoutError extends Error {
+  constructor(filePath: string) {
+    super(
+      `Timed out waiting for in-progress SSR transform after ${TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS}ms: ${
+        filePath.split("/").pop() || filePath
+      }`,
+    );
+    this.name = "InProgressTransformWaitTimeoutError";
+  }
+}
+
+function deleteInProgressTransformIfCurrent(
+  key: string,
+  transformPromise: Promise<void>,
+): boolean {
+  if (globalInProgress.get(key) !== transformPromise) return false;
+  return globalInProgress.delete(key);
+}
+
+function shouldRetryRejectedInProgressTransform(rejectedLeaderCount: number): boolean {
+  return rejectedLeaderCount <= MAX_REJECTED_IN_PROGRESS_RETRIES;
+}
+
+function scheduleStaleInProgressTransformEviction(
+  key: string,
+  transformPromise: Promise<void>,
+  filePath: string,
+): ReturnType<typeof setTimeout> {
+  const timer = setTimeout(() => {
+    if (!deleteInProgressTransformIfCurrent(key, transformPromise)) return;
+    logger.warn("Evicted stalled in-progress transform", {
+      file: filePath.slice(-40),
+      timeoutMs: TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
+    });
+  }, TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS);
+  unrefTimer(timer);
+  return timer;
+}
+
+function publishTransformCacheIfCurrent(input: {
+  inProgressKey: string;
+  transformPromise: Promise<void>;
+  staleEvictionTimer: ReturnType<typeof setTimeout>;
+  contentCacheKey: string;
+  filePathCacheKey: string;
+  entry: ModuleCacheEntry;
+  publishDistributed?: () => void;
+}): boolean {
+  if (globalInProgress.get(input.inProgressKey) !== input.transformPromise) {
+    return false;
+  }
+
+  // Once the current leader reaches synchronous publication, do not let the
+  // stale-flight timer create a replacement between the identity check and the
+  // cache writes below.
+  clearTimeout(input.staleEvictionTimer);
+  input.publishDistributed?.();
+  globalModuleCache.set(input.contentCacheKey, input.entry);
+  globalModuleCache.set(input.filePathCacheKey, input.entry);
+  return true;
+}
+
+/** Internal test seam for the singleflight timeout lifecycle. */
+export const __ssrModuleLoaderInternals = {
+  deleteInProgressTransformIfCurrent,
+  publishTransformCacheIfCurrent,
+  scheduleStaleInProgressTransformEviction,
+  shouldRetryRejectedInProgressTransform,
+  waitForInProgressTransform,
+};
+
+async function waitForInProgressTransform(
+  transformPromise: Promise<void>,
+  filePath: string,
+): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      transformPromise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new InProgressTransformWaitTimeoutError(filePath)),
+          TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 /**
  * SSR Module Loader with Redis Support.
@@ -544,23 +637,44 @@ export class SSRModuleLoader {
       }
     }
 
-    const existingTransform = globalInProgress.get(inProgressKey);
-    if (existingTransform) {
+    let rejectedInProgressLeaders = 0;
+    while (true) {
+      const existingTransform = globalInProgress.get(inProgressKey);
+      if (!existingTransform) break;
+
       try {
         await withSpan(
           SpanNames.SSR_WAIT_IN_PROGRESS,
-          () =>
-            withTimeoutThrow(
-              existingTransform,
-              IN_PROGRESS_WAIT_TIMEOUT_MS,
-              `Waiting for in-progress transform of ${filePath}`,
-            ),
+          () => waitForInProgressTransform(existingTransform, filePath),
           { "ssr.file": filePath.split("/").pop() || filePath },
         );
         return;
       } catch (error) {
-        globalInProgress.delete(inProgressKey);
-        logger.warn("In-progress transform timed out, retrying", {
+        if (error instanceof InProgressTransformWaitTimeoutError) {
+          logger.warn("In-progress transform wait timed out", {
+            file: filePath.slice(-40),
+            error: error.message,
+          });
+          // Detach this caller without deleting the shared leader. The leader
+          // owns a separate last-resort eviction timer, so healthy slow work is
+          // not multiplied into competing retries.
+          throw error;
+        }
+
+        // Retry only after the leader actually rejects. A time-based retry can
+        // delete live singleflight state and multiply one slow cold transform
+        // into many competing transforms; the outer render deadline already
+        // bounds how long an individual request waits.
+        deleteInProgressTransformIfCurrent(inProgressKey, existingTransform);
+        rejectedInProgressLeaders += 1;
+        if (!shouldRetryRejectedInProgressTransform(rejectedInProgressLeaders)) {
+          logger.warn("In-progress transform failed after retry, propagating", {
+            file: filePath.slice(-40),
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+        logger.warn("In-progress transform failed, retrying", {
           file: filePath.slice(-40),
           error: error instanceof Error ? error.message : String(error),
         });
@@ -573,15 +687,20 @@ export class SSRModuleLoader {
       resolveTransform = resolve;
       rejectTransform = reject;
     });
-    // Attach catch to prevent unhandled rejection when waiters timeout
-    // and stop listening. The actual error is thrown to the caller directly.
+    // The coordinating promise is separate from the leader's direct call, so
+    // it may reject when no follower is currently awaiting it.
     transformPromise.catch((err) => {
-      logger.debug("Transform rejected (waiters may have timed out)", {
+      logger.debug("Transform rejected (no active waiter may remain)", {
         key: inProgressKey,
         error: err instanceof Error ? err.message : String(err),
       });
     });
     globalInProgress.set(inProgressKey, transformPromise);
+    const staleEvictionTimer = scheduleStaleInProgressTransformEviction(
+      inProgressKey,
+      transformPromise,
+      filePath,
+    );
 
     try {
       let parseResult = await parseLocalImports(
@@ -741,20 +860,34 @@ export class SSRModuleLoader {
           return;
         }
 
-        if (isSSRDistributedCacheEnabled()) {
-          void setInRedis(contentCacheKey, transformed, {
-            isProduction: this.cache.isProductionContentSource(),
-          }).catch((error) => {
-            logger.debug("Distributed cache set failed", {
-              key: contentCacheKey,
-              error,
-            });
+        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+        const published = publishTransformCacheIfCurrent({
+          inProgressKey,
+          transformPromise,
+          staleEvictionTimer,
+          contentCacheKey,
+          filePathCacheKey,
+          entry,
+          ...(isSSRDistributedCacheEnabled()
+            ? {
+              publishDistributed: () => {
+                void setInRedis(contentCacheKey, transformed, {
+                  isProduction: this.cache.isProductionContentSource(),
+                }).catch((error) => {
+                  logger.debug("Distributed cache set failed", {
+                    key: contentCacheKey,
+                    error,
+                  });
+                });
+              },
+            }
+            : {}),
+        });
+        if (!published) {
+          logger.debug("Skipped cache publication from stale transform leader", {
+            file: filePath.slice(-40),
           });
         }
-
-        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-        globalModuleCache.set(contentCacheKey, entry);
-        globalModuleCache.set(filePathCacheKey, entry);
       });
 
       resolveTransform();
@@ -762,7 +895,8 @@ export class SSRModuleLoader {
       rejectTransform(error instanceof Error ? error : new Error(String(error)));
       throw error;
     } finally {
-      globalInProgress.delete(inProgressKey);
+      clearTimeout(staleEvictionTimer);
+      deleteInProgressTransformIfCurrent(inProgressKey, transformPromise);
     }
   }
 }
