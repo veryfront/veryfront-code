@@ -1267,11 +1267,10 @@ Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector an
     },
   });
 
-  const expected = ["researcher--cite"];
-  // Prompt-manifest input, per-run load_skill gate, live steering payload, and
-  // the returned steering all carry the same owner-scoped set.
-  assertEquals(seenByInstructions, [expected]);
-  assertEquals(result.creationOptions.availableSkillIds, expected);
+  const advertised = ["researcher--cite"];
+  const loadable = ["global-howto", "researcher--cite"];
+  assertEquals(seenByInstructions, [advertised]);
+  assertEquals(result.creationOptions.availableSkillIds, loadable);
   assertEquals(result.creationOptions.skillSourcePaths, {
     "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
   });
@@ -1279,9 +1278,9 @@ Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector an
     (result.creationOptions.liveProjectSteering?.initialSkills ?? []).map((
       skill: { id: string },
     ) => skill.id),
-    expected,
+    advertised,
   );
-  assertEquals(result.steering.skills.map((skill) => skill.id), expected);
+  assertEquals(result.steering.skills.map((skill) => skill.id), advertised);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions keeps the loader but advertises no skills for an empty selector", async () => {
@@ -1306,7 +1305,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions keeps the loader but advertis
     buildInstructions: (input) => [{ role: "system", content: `${input.skills.length}` }],
   });
 
-  assertEquals(result.creationOptions.availableSkillIds, []);
+  assertEquals(result.creationOptions.availableSkillIds, ["global-howto"]);
   assertEquals(result.creationOptions.instructions, [{ role: "system", content: "0" }]);
   assertEquals(result.steering.skills, []);
 });

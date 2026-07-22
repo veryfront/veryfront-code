@@ -5,6 +5,7 @@ import {
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
   parseRuntimeSkillMetadata,
+  resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
 
 Deno.test("parseRuntimeSkillMetadata parses valid frontmatter", () => {
@@ -72,6 +73,42 @@ Deno.test("buildRuntimeSkillDefinition builds a bare skill", () => {
   assertExists(skill);
   assertEquals(skill.id, "bare");
   assertEquals(skill.name, "bare");
+});
+
+Deno.test("resolveRuntimeSkillsForAgent applies owner visibility and short-name precedence", () => {
+  const globalCite = buildRuntimeSkillDefinition({
+    id: "cite",
+    content: "---\ndescription: Global citations\n---\nUse global citations.",
+  })!;
+  const ownedCite = buildRuntimeSkillDefinition({
+    id: "researcher--helper",
+    content: "---\ndescription: Research citations\n---\nUse research citations.",
+    ownerAgentId: "researcher",
+    shortName: "cite",
+  })!;
+  const otherOwned = buildRuntimeSkillDefinition({
+    id: "writer--style",
+    content: "---\ndescription: Writer style\n---\nUse writer style.",
+    ownerAgentId: "writer",
+    shortName: "style",
+  })!;
+
+  assertEquals(
+    resolveRuntimeSkillsForAgent({
+      skills: [globalCite, ownedCite, otherOwned],
+      agentId: "researcher",
+      selector: ["cite"],
+    }).map((skill) => skill.id),
+    ["researcher--helper"],
+  );
+  assertEquals(
+    resolveRuntimeSkillsForAgent({
+      skills: [globalCite, ownedCite, otherOwned],
+      agentId: "researcher",
+      selector: true,
+    }).map((skill) => skill.id),
+    ["cite", "researcher--helper"],
+  );
 });
 
 Deno.test("buildRuntimeSkillDefinition includes optional runtime fields", () => {
