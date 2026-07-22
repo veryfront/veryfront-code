@@ -1,7 +1,7 @@
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontRouter } from "./router.ts";
+import { boot, VeryfrontRouter } from "./router.ts";
 import { getNavigationStore } from "./navigation-store.ts";
 import type { RouteData } from "#veryfront/routing";
 
@@ -15,20 +15,45 @@ function resetNavigationStore(): void {
 function installDom(url: string): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url });
   const window = dom.window;
-  const keys = ["window", "document", "navigator", "self", "history", "location"] as const;
-  const previous: Record<string, unknown> = {};
-  for (const key of keys) previous[key] = (globalThis as Record<string, unknown>)[key];
-  Object.assign(globalThis, {
+  const keys = [
+    "window",
+    "document",
+    "navigator",
+    "self",
+    "history",
+    "location",
+    "addEventListener",
+    "removeEventListener",
+    "scrollTo",
+  ] as const;
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of keys) previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  const replacements = {
     window,
     document: window.document,
     navigator: window.navigator,
     self: window,
     history: window.history,
     location: window.location,
-  });
+    addEventListener: window.addEventListener.bind(window),
+    removeEventListener: window.removeEventListener.bind(window),
+    scrollTo: () => {},
+  };
+  for (const [key, value] of Object.entries(replacements)) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
   resetNavigationStore();
   return () => {
-    Object.assign(globalThis, previous);
+    for (const key of keys) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
     resetNavigationStore();
     dom.window.close();
   };
@@ -302,6 +327,270 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
 
       first.resolve({ html: "slow" });
       await staleNavigation;
+    } finally {
+      restore();
+    }
+  });
+
+  it("restores the previous SPA handler when the newest registration is disposed", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const calls: string[] = [];
+      const releaseFirst = router.registerNavigationHandler(async () => {
+        calls.push("first");
+      });
+      const releaseSecond = router.registerNavigationHandler(async () => {
+        calls.push("second");
+      });
+
+      releaseSecond();
+      releaseSecond();
+      // deno-lint-ignore no-explicit-any
+      await (router as any).spaNavigationHandler({});
+      assertEquals(calls, ["first"]);
+
+      releaseFirst();
+      // deno-lint-ignore no-explicit-any
+      assertEquals((router as any).spaNavigationHandler, null);
+      router.destroy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("an older SPA registration cannot clear a newer handler", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const calls: string[] = [];
+      const releaseFirst = router.registerNavigationHandler(async () => {
+        calls.push("first");
+      });
+      const releaseSecond = router.registerNavigationHandler(async () => {
+        calls.push("second");
+      });
+
+      releaseFirst();
+      // deno-lint-ignore no-explicit-any
+      await (router as any).spaNavigationHandler({});
+      assertEquals(calls, ["second"]);
+
+      releaseSecond();
+      router.destroy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("destroy releases the router's shared navigation ownership", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const loads = spyOnLoaders(router);
+      router.destroy();
+
+      let assigned = "";
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          assign(href: string) {
+            assigned = href;
+          },
+          hash: "",
+          hostname: "example.com",
+          pathname: "/",
+          search: "",
+        },
+        writable: true,
+      });
+
+      await getNavigationStore().navigate("/after-destroy");
+      assertEquals(loads, []);
+      assertEquals(assigned, "/after-destroy");
+    } finally {
+      restore();
+    }
+  });
+
+  it("honours replace and none when the store falls back to browser navigation", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const assigned: string[] = [];
+      const replaced: string[] = [];
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          assign(href: string) {
+            assigned.push(href);
+          },
+          replace(href: string) {
+            replaced.push(href);
+          },
+          hash: "",
+          hostname: "example.com",
+          pathname: "/",
+          search: "",
+        },
+        writable: true,
+      });
+
+      const store = getNavigationStore();
+      await store.navigate("/push");
+      await store.navigate("/replace", { history: "replace" });
+      await store.navigate("/already-current", { history: "none" });
+
+      assertEquals(assigned, ["/push"]);
+      assertEquals(replaced, ["/replace"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("can destroy against a legacy v1 store whose setNavigator returns void", () => {
+    const restore = installDom("https://example.com/");
+    try {
+      let navigator: (href: string, options?: unknown) => Promise<void> = () => Promise.resolve();
+      (globalThis as Record<symbol, unknown>)[NAVIGATION_STORE_KEY] = {
+        subscribe: () => () => {},
+        getHref: () => "/",
+        notify: () => {},
+        navigate: (href: string, options?: unknown) => navigator(href, options),
+        setNavigator(next: typeof navigator) {
+          navigator = next;
+          // The original v1 protocol returned void.
+        },
+      };
+
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      router.destroy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("cancels deferred initialization and permits a fresh boot after destroy", () => {
+    const restore = installDom("https://example.com/");
+    const globalWithRouter = globalThis as typeof globalThis & {
+      veryFrontRouter?: VeryfrontRouter;
+    };
+    try {
+      delete globalWithRouter.veryFrontRouter;
+      Object.defineProperty(document, "readyState", {
+        configurable: true,
+        value: "loading",
+      });
+
+      const first = boot({ baseUrl: "https://example.com" })!;
+      let initCalls = 0;
+      first.init = () => {
+        initCalls++;
+      };
+
+      first.destroy();
+      document.dispatchEvent(new globalThis.window.Event("DOMContentLoaded"));
+      const replacement = boot({ baseUrl: "https://example.com" })!;
+
+      assertEquals(initCalls, 0);
+      assertEquals(replacement === first, false);
+      replacement.destroy();
+    } finally {
+      delete globalWithRouter.veryFrontRouter;
+      restore();
+    }
+  });
+
+  it("destroying an older boot does not clear a newer global owner", () => {
+    const restore = installDom("https://example.com/");
+    const globalWithRouter = globalThis as typeof globalThis & {
+      veryFrontRouter?: VeryfrontRouter;
+    };
+    try {
+      delete globalWithRouter.veryFrontRouter;
+      const older = boot({ baseUrl: "https://example.com" })!;
+      const newer = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      globalWithRouter.veryFrontRouter = newer;
+
+      older.destroy();
+
+      assertEquals(globalWithRouter.veryFrontRouter === newer, true);
+      newer.destroy();
+    } finally {
+      delete globalWithRouter.veryFrontRouter;
+      restore();
+    }
+  });
+
+  it("uses the global SPA handler when the app mounts before the router", async () => {
+    const restore = installDom("https://example.com/");
+    const globalWithSpaHandler = globalThis as typeof globalThis & {
+      __VERYFRONT_SPA_MODE__?: boolean;
+      __VERYFRONT_SPA_NAVIGATE__?: (data: unknown) => Promise<void>;
+    };
+    try {
+      const received: unknown[] = [];
+      const pageData = { slug: "/spa" };
+      globalWithSpaHandler.__VERYFRONT_SPA_MODE__ = true;
+      globalWithSpaHandler.__VERYFRONT_SPA_NAVIGATE__ = (data) => {
+        received.push(data);
+        return Promise.resolve();
+      };
+
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const htmlLoads: string[] = [];
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.loadSpaPageData = () => Promise.resolve(pageData);
+      // deno-lint-ignore no-explicit-any
+      (router as any).loadPage = (path: string) => {
+        htmlLoads.push(path);
+        return Promise.resolve();
+      };
+
+      await router.navigate("/spa");
+
+      assertEquals(received, [pageData]);
+      assertEquals(htmlLoads, []);
+      router.destroy();
+    } finally {
+      delete globalWithSpaHandler.__VERYFRONT_SPA_MODE__;
+      delete globalWithSpaHandler.__VERYFRONT_SPA_NAVIGATE__;
+      restore();
+    }
+  });
+
+  it("destroying an older router does not clear a newer router's navigation ownership", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const older = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const newer = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const olderLoads = spyOnLoaders(older);
+      const newerLoads = spyOnLoaders(newer);
+
+      older.destroy();
+      await getNavigationStore().navigate("/new-owner");
+
+      assertEquals(olderLoads, []);
+      assertEquals(newerLoads, ["/new-owner"]);
+      newer.destroy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("destroying the newest router restores the previous navigation owner", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const older = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const newer = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const olderLoads = spyOnLoaders(older);
+      const newerLoads = spyOnLoaders(newer);
+
+      newer.destroy();
+      await getNavigationStore().navigate("/restored-owner");
+
+      assertEquals(olderLoads, ["/restored-owner"]);
+      assertEquals(newerLoads, []);
+      older.destroy();
     } finally {
       restore();
     }
