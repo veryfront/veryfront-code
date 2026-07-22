@@ -1134,10 +1134,19 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(JSON.stringify(capturedMessages), "Continue and finish the diagram.");
   });
 
-  it("materializes explicitly configured sandbox bash before constructing the runtime", async () => {
+  it("materializes explicitly configured sandbox tools before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];
     let capturedToolNames: string[] = [];
+    let capturedTools: Agent["config"]["tools"];
+    const parserInputSchema = {
+      parse: (input: unknown) => input,
+    };
+    const inputSchemaJson = {
+      type: "object" as const,
+      properties: {},
+      additionalProperties: true,
+    };
 
     const agent = {
       id: "builder-agent",
@@ -1147,6 +1156,8 @@ describe("internal-agents/run-stream", () => {
         system: "test",
         tools: {
           bash: true,
+          sandbox_read_file: true,
+          sandbox_write_file: true,
           missing_tool: true,
         },
         sandbox: {
@@ -1182,11 +1193,21 @@ describe("internal-agents/run-stream", () => {
             tools: {
               bash: {
                 description: "Run bash",
+                inputSchema: parserInputSchema,
+                inputSchemaJson,
                 execute: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
               },
               sandbox_read_file: {
                 description: "Read sandbox file",
+                inputSchema: parserInputSchema,
+                inputSchemaJson,
                 execute: async () => "",
+              },
+              sandbox_write_file: {
+                description: "Write sandbox file",
+                inputSchema: parserInputSchema,
+                inputSchemaJson,
+                execute: async () => undefined,
               },
             },
             sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
@@ -1194,6 +1215,7 @@ describe("internal-agents/run-stream", () => {
           });
         },
         createRuntime: (_agent, mergedTools) => {
+          capturedTools = mergedTools;
           capturedToolNames = Object.keys(mergedTools ?? {}).sort();
           return {
             stream: async () =>
@@ -1207,7 +1229,26 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    assertEquals(capturedToolNames, ["bash"]);
+    assertEquals(capturedToolNames, ["bash", "sandbox_read_file", "sandbox_write_file"]);
+    if (!capturedTools || capturedTools === true) {
+      throw new Error("Expected materialized sandbox tools");
+    }
+    for (const toolName of ["bash", "sandbox_read_file", "sandbox_write_file"]) {
+      const runtimeTool = capturedTools[toolName];
+      if (!runtimeTool || runtimeTool === true) {
+        throw new Error(`Expected materialized ${toolName}`);
+      }
+      assertEquals(runtimeTool.type, "dynamic");
+    }
+    const bash = capturedTools.bash;
+    if (!bash || bash === true || !bash.execute) {
+      throw new Error("Expected executable bash tool");
+    }
+    assertEquals(await bash.execute({}, { toolCallId: "bash-call" }), {
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
     assertEquals(
       sandboxInputs.map((sandboxInput) => ({
         apiUrl: sandboxInput.apiUrl,
