@@ -164,27 +164,7 @@ Work alone.
   assertEquals(noDelegates.delegates, undefined);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition parses first-party MCP presets", () => {
-  const result = parseRuntimeAgentMarkdownDefinition({
-    id: "project-reader",
-    content: `---
-name: Project reader
-mcp-servers:
-  - kind: veryfront-api
-    toolPolicy:
-      allow: [get_file, list_files]
----
-Read project evidence.
-`,
-  });
-
-  assertEquals(result.mcpServers, [{
-    kind: "veryfront-api",
-    toolPolicy: { allow: ["get_file", "list_files"] },
-  }]);
-});
-
-Deno.test("parseRuntimeAgentMarkdownDefinition preserves an explicit empty delegate selector", () => {
+Deno.test("parseRuntimeAgentMarkdownDefinition ignores empty delegate entries", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "writer",
     content: `---
@@ -195,7 +175,7 @@ Write copy.
 `,
   });
 
-  assertEquals(result.delegates, []);
+  assertEquals(result.delegates, undefined);
 });
 
 Deno.test("parseRuntimeAgentMarkdownDefinition rejects self-delegation with a diagnostic", () => {

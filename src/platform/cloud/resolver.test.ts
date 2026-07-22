@@ -14,7 +14,6 @@ import {
   getDefaultVeryfrontCloudModel,
   getVeryfrontCloudAuthToken,
   getVeryfrontCloudBootstrap,
-  getVeryfrontCloudHostBootstrap,
   getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
   resolveVeryfrontApiBaseUrlFromHostEnv,
@@ -125,30 +124,6 @@ describe("platform/cloud/resolver", () => {
 
     assertEquals(getVeryfrontCloudAuthToken(), "vf_env_token");
     assertEquals(getVeryfrontCloudProjectSlug(), "env-project");
-  });
-
-  it("keeps direct host bootstrap identity isolated from scoped request context", () => {
-    setEnv("VERYFRONT_API_URL", "https://api.veryfront.org");
-    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
-    setEnv("VERYFRONT_PROJECT_SLUG", "host-project");
-
-    runWithVeryfrontCloudContext(
-      {
-        apiBaseUrl: "https://untrusted.example.com",
-        apiToken: "vf_request_token",
-        projectSlug: "request-project",
-      },
-      () => {
-        assertEquals(getVeryfrontCloudHostBootstrap(), {
-          apiBaseUrl: "https://api.veryfront.org",
-          apiToken: "vf_host_token",
-          projectSlug: "host-project",
-          serviceLayer: undefined,
-          hasRequestContext: false,
-          usesVeryfrontFs: false,
-        });
-      },
-    );
   });
 
   it("resolves the API base URL from host env without the config bridge", () => {

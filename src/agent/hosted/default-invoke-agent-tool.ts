@@ -63,7 +63,6 @@ import type { RuntimeReasoningOption } from "../types.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
-import { buildHostedChildForkInstructions } from "./child-fork-instructions.ts";
 
 /** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
@@ -85,17 +84,6 @@ export type DefaultHostedInvokeAgentConfig = {
   studioMcpUrl?: string | null;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   enableDurableInvokeAgent?: boolean;
-};
-
-/** Resolved project-agent settings applied to a fixed hosted child run. */
-export type DefaultHostedChildAgentExecutionConfig = {
-  system: string;
-  model?: string;
-  maxSteps?: number;
-  thinking?: HostedChildForkToolInput["thinking"];
-  toolNames?: string[];
-  mcpServers?: readonly AgentServiceMcpServerConfig[];
-  availableSkillIds?: string[];
 };
 
 /** Public API contract for default hosted invoke agent logger. */
@@ -151,14 +139,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     ) => RuntimeReasoningOption | undefined;
     resolveModelThinking?: (modelId: string) => HostedChildForkRuntimeConfig["thinkingConfig"];
     shouldRethrowError?: (error: unknown) => boolean;
-    buildGlobalTools?: (
-      context: TContext,
-      childAgentId: string,
-      childConfig?: DefaultHostedChildAgentExecutionConfig,
-    ) => HostToolSet;
-    resolveChildAgentExecutionConfig?: (
-      childAgentId: string,
-    ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
+    buildGlobalTools?: (context: TContext) => HostToolSet;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
     defaultModel?: string;
     defaultMaxSteps?: number;
@@ -252,14 +233,12 @@ async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgent
 async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentContext>(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
   config: DefaultHostedInvokeAgentConfig,
-  childAgentId: string,
-  childConfig: DefaultHostedChildAgentExecutionConfig | undefined,
   abortSignal?: AbortSignal,
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   throwIfChildRunAborted(abortSignal);
 
   const globalTools: HostToolSet = {
-    ...(options.buildGlobalTools?.(options.context, childAgentId, childConfig) ?? {}),
+    ...(options.buildGlobalTools?.(options.context) ?? {}),
     sleep: sleepTool,
   };
 
@@ -291,8 +270,6 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
   config: DefaultHostedInvokeAgentConfig,
   input: {
-    childAgentId: string;
-    childConfig?: DefaultHostedChildAgentExecutionConfig;
     provider: string;
     forkModel: string;
     effectivePrompt: string;
@@ -301,14 +278,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
   const toolAssembly = await prepareDefaultHostedChildForkToolAssembly({
-    prepareToolSources: () =>
-      prepareForkToolSources(
-        options,
-        config,
-        input.childAgentId,
-        input.childConfig,
-        input.abortSignal,
-      ),
+    prepareToolSources: () => prepareForkToolSources(options, config, input.abortSignal),
     provider: input.provider,
     forkModel: input.forkModel,
     effectivePrompt: input.effectivePrompt,
@@ -375,16 +345,11 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   },
   runtimeOptions: {
-    childAgentId: string;
-    childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
-  },
+  } = {},
 ): Promise<ChildRunExecutionResult> {
-  const baseConfig = options.getConfig();
-  const config = runtimeOptions.childConfig?.mcpServers === undefined
-    ? baseConfig
-    : { ...baseConfig, mcpServers: runtimeOptions.childConfig.mcpServers };
+  const config = options.getConfig();
   const instrumentation = buildInstrumentation(options);
   const writeHostedChildExecutionLog = createHostedChildExecutionLogWriter(options.logger);
 
@@ -414,8 +379,6 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     },
     prepareToolAssembly: ({ runtimeConfig, requestedTools, abortSignal }) =>
       prepareForkToolAssembly(options, config, {
-        childAgentId: runtimeOptions.childAgentId,
-        childConfig: runtimeOptions.childConfig,
         provider: runtimeConfig.provider,
         forkModel: runtimeConfig.forkModel,
         effectivePrompt: runtimeConfig.effectivePrompt,
@@ -425,19 +388,6 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     resolveProviderOptions: options.resolveProviderOptions,
     resolveReasoning: options.resolveReasoning,
     forkContext: options.context,
-    ...(runtimeOptions.childConfig
-      ? {
-        buildInstructions: () => {
-          const baseInstructions = buildHostedChildForkInstructions({
-            ...options.context,
-            availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
-          });
-          return runtimeOptions.childConfig?.system
-            ? `${runtimeOptions.childConfig.system}\n\n${baseInstructions}`
-            : baseInstructions;
-        },
-      }
-      : {}),
     abortSignal: execution.abortSignal,
     durableChildRun: runtimeOptions.durableChildRun,
     conversationId: options.context.conversationId,
@@ -466,34 +416,6 @@ function getAbortSignal(executionContext?: ToolExecutionContext): AbortSignal | 
     : undefined;
 }
 
-function applyChildAgentExecutionConfig(
-  input: DefaultHostedInvokeAgentInput,
-  childConfig: DefaultHostedChildAgentExecutionConfig | undefined,
-): DefaultHostedInvokeAgentInput {
-  if (!childConfig) {
-    return input;
-  }
-
-  return {
-    ...input,
-    ...(input.model === undefined && childConfig.model ? { model: childConfig.model } : {}),
-    ...(input.max_steps === undefined && childConfig.maxSteps !== undefined
-      ? { max_steps: childConfig.maxSteps }
-      : {}),
-    ...(input.thinking === undefined && childConfig.thinking !== undefined
-      ? { thinking: childConfig.thinking }
-      : {}),
-    ...(input.tools === undefined && childConfig.toolNames !== undefined
-      ? { tools: childConfig.toolNames }
-      : {}),
-  };
-}
-
-/** Test-only helpers for fixed-target hosted delegation behavior. */
-export const defaultHostedInvokeAgentToolInternals = {
-  applyChildAgentExecutionConfig,
-};
-
 /** Execute default hosted invoke agent tool. */
 export async function executeDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
@@ -505,12 +427,10 @@ export async function executeDefaultHostedInvokeAgentTool<
 ): Promise<DefaultHostedInvokeAgentToolResult> {
   let executionSnapshot: ChildRunExecutionSnapshot | null = null;
   const config = options.getConfig();
-  const childConfig = await options.resolveChildAgentExecutionConfig?.(childAgentId);
   const toolCallId = getToolCallId(executionContext);
   const abortSignal = getAbortSignal(executionContext);
   const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-  const configuredInput = applyChildAgentExecutionConfig(input, childConfig);
-  const forkInput = withHostedChildInvocationContext(configuredInput, {
+  const forkInput = withHostedChildInvocationContext(input, {
     conversationId: options.context.conversationId,
     parentRunId: options.context.parentRunId,
     toolCallId,
@@ -537,8 +457,6 @@ export async function executeDefaultHostedInvokeAgentTool<
         sourceIntegrationPolicy,
       },
       {
-        childAgentId,
-        childConfig,
         onSettled: (snapshot) => {
           executionSnapshot = snapshot;
         },

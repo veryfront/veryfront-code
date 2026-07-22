@@ -146,11 +146,6 @@ export interface AgentConfig {
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
   /**
-   * Exact registered agent ids this agent may call through scoped
-   * `agent_<id>` tools. Each delegate keeps its own model, skills, and tools.
-   */
-  delegates?: string[];
-  /**
    * Optional sandbox selection for runtime-owned sandbox tools such as `bash`.
    * `id` attaches to an existing sandbox session and detaches on run cleanup.
    * When omitted, sandbox tools lazily create a request/project-scoped session.

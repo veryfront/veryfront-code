@@ -310,24 +310,6 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects disallowed execution", a
   );
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog rejects tools absent from remote discovery", async () => {
-  const source: RemoteToolSource = {
-    id: "api",
-    async listTools() {
-      return [toolDefinition({ name: "list_files" })];
-    },
-    async executeTool() {
-      return { ok: true };
-    },
-  };
-  const catalog = createProjectScopedRemoteToolCatalog({ source });
-
-  await assertRejectsWithMessage(
-    () => catalog.prepareExecution({ toolName: "delete_file", toolInput: {} }),
-    'Tool "delete_file" is not advertised by remote source "api"',
-  );
-});
-
 Deno.test("createProjectScopedRemoteToolCatalog rejects missing required remote tool input", async () => {
   const source: RemoteToolSource = {
     id: "api",

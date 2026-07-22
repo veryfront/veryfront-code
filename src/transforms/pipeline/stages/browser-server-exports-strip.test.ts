@@ -758,21 +758,6 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "loadSecret"), 0);
     });
 
-    it("does not grow a hook closure through a removed variable's own identifier", async () => {
-      const code = [
-        `import { secret as unrelated } from "./client-setup.ts";`,
-        `const secret = "secret-value";`,
-        `export async function getServerData() { return { props: { secret } }; }`,
-        `export default function Page() { return null; }`,
-      ].join("\n");
-
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `import "./client-setup.ts"`);
-      assertEquals(occurrences(result, "secret-value"), 0);
-      assertEquals(occurrences(result, "secret"), 0);
-    });
-
     it("keeps a bare side-effect import untouched", async () => {
       const code = [
         `import "../lib/polyfill.js";`,

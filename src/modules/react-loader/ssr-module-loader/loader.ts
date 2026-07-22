@@ -14,6 +14,7 @@ import {
   parseLocalImports,
 } from "#veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
@@ -30,6 +31,7 @@ import {
   MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_BATCH_SIZE,
+  TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
 import {
@@ -80,6 +82,61 @@ class InProgressTransformWaitTimeoutError extends Error {
     this.name = "InProgressTransformWaitTimeoutError";
   }
 }
+
+function deleteInProgressTransformIfCurrent(
+  key: string,
+  transformPromise: Promise<void>,
+): boolean {
+  if (globalInProgress.get(key) !== transformPromise) return false;
+  return globalInProgress.delete(key);
+}
+
+function scheduleStaleInProgressTransformEviction(
+  key: string,
+  transformPromise: Promise<void>,
+  filePath: string,
+): ReturnType<typeof setTimeout> {
+  const timer = setTimeout(() => {
+    if (!deleteInProgressTransformIfCurrent(key, transformPromise)) return;
+    logger.warn("Evicted stalled in-progress transform", {
+      file: filePath.slice(-40),
+      timeoutMs: TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
+    });
+  }, TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS);
+  unrefTimer(timer);
+  return timer;
+}
+
+function publishTransformCacheIfCurrent(input: {
+  inProgressKey: string;
+  transformPromise: Promise<void>;
+  staleEvictionTimer: ReturnType<typeof setTimeout>;
+  contentCacheKey: string;
+  filePathCacheKey: string;
+  entry: ModuleCacheEntry;
+  publishDistributed?: () => void;
+}): boolean {
+  if (globalInProgress.get(input.inProgressKey) !== input.transformPromise) {
+    return false;
+  }
+
+  // Once the current leader reaches synchronous publication, do not let the
+  // stale-flight timer create a replacement between the identity check and the
+  // cache writes below.
+  clearTimeout(input.staleEvictionTimer);
+  input.publishDistributed?.();
+  globalModuleCache.set(input.contentCacheKey, input.entry);
+  globalModuleCache.set(input.filePathCacheKey, input.entry);
+  return true;
+}
+
+/** Internal test seam for the singleflight timeout lifecycle. */
+export const __ssrModuleLoaderInternals = {
+  deleteInProgressTransformIfCurrent,
+  publishTransformCacheIfCurrent,
+  scheduleStaleInProgressTransformEviction,
+  waitForInProgressTransform,
+};
 
 async function waitForInProgressTransform(
   transformPromise: Promise<void>,
@@ -587,22 +644,20 @@ export class SSRModuleLoader {
         return;
       } catch (error) {
         if (error instanceof InProgressTransformWaitTimeoutError) {
-          if (globalInProgress.get(inProgressKey) === existingTransform) {
-            globalInProgress.delete(inProgressKey);
-          }
           logger.warn("In-progress transform wait timed out", {
             file: filePath.slice(-40),
             error: error.message,
           });
+          // Detach this caller without deleting the shared leader. The leader
+          // owns a separate last-resort eviction timer, so healthy slow work is
+          // not multiplied into competing retries.
           throw error;
         }
         // Retry only after the leader actually rejects. A time-based retry can
         // delete live singleflight state and multiply one slow cold transform
         // into many competing transforms; the outer render deadline already
         // bounds how long an individual request waits.
-        if (globalInProgress.get(inProgressKey) === existingTransform) {
-          globalInProgress.delete(inProgressKey);
-        }
+        deleteInProgressTransformIfCurrent(inProgressKey, existingTransform);
         logger.warn("In-progress transform failed, retrying", {
           file: filePath.slice(-40),
           error: error instanceof Error ? error.message : String(error),
@@ -625,6 +680,11 @@ export class SSRModuleLoader {
       });
     });
     globalInProgress.set(inProgressKey, transformPromise);
+    const staleEvictionTimer = scheduleStaleInProgressTransformEviction(
+      inProgressKey,
+      transformPromise,
+      filePath,
+    );
 
     try {
       let parseResult = await parseLocalImports(
@@ -784,20 +844,34 @@ export class SSRModuleLoader {
           return;
         }
 
-        if (isSSRDistributedCacheEnabled()) {
-          void setInRedis(contentCacheKey, transformed, {
-            isProduction: this.cache.isProductionContentSource(),
-          }).catch((error) => {
-            logger.debug("Distributed cache set failed", {
-              key: contentCacheKey,
-              error,
-            });
+        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+        const published = publishTransformCacheIfCurrent({
+          inProgressKey,
+          transformPromise,
+          staleEvictionTimer,
+          contentCacheKey,
+          filePathCacheKey,
+          entry,
+          ...(isSSRDistributedCacheEnabled()
+            ? {
+              publishDistributed: () => {
+                void setInRedis(contentCacheKey, transformed, {
+                  isProduction: this.cache.isProductionContentSource(),
+                }).catch((error) => {
+                  logger.debug("Distributed cache set failed", {
+                    key: contentCacheKey,
+                    error,
+                  });
+                });
+              },
+            }
+            : {}),
+        });
+        if (!published) {
+          logger.debug("Skipped cache publication from stale transform leader", {
+            file: filePath.slice(-40),
           });
         }
-
-        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-        globalModuleCache.set(contentCacheKey, entry);
-        globalModuleCache.set(filePathCacheKey, entry);
       });
 
       resolveTransform();
@@ -805,7 +879,8 @@ export class SSRModuleLoader {
       rejectTransform(error instanceof Error ? error : new Error(String(error)));
       throw error;
     } finally {
-      globalInProgress.delete(inProgressKey);
+      clearTimeout(staleEvictionTimer);
+      deleteInProgressTransformIfCurrent(inProgressKey, transformPromise);
     }
   }
 }

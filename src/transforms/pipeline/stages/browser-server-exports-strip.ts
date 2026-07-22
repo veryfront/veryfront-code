@@ -788,15 +788,11 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
     }
     if (removedDecls.length === 0) return current;
 
-    // Grow the closure through the removed declarations' initializers, so a
+    // Grow the closure through the removed declarations' initialisers, so a
     // chain that only fed the hook (`const RAW = getEnv(); const TOKEN = RAW…`)
     // is pruned end to end while unrelated declarations stay outside it.
     for (const decl of removedDecls) {
-      const dependencyRoot = decl.declarator
-        ? (isNode(decl.declarator.init) ? decl.declarator.init : undefined)
-        : decl.statement;
-      if (!dependencyRoot) continue;
-      for (const name of freeReferencedIdentifiers(dependencyRoot)) {
+      for (const name of freeReferencedIdentifiers(decl.declarator ?? decl.statement)) {
         hookClosure.add(name);
       }
     }

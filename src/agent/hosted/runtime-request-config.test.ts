@@ -155,7 +155,6 @@ Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools"
     request: {},
     agentConfig: createAgentConfig({
       tools: ["get_agent", "get_agent_source", "update_agent"],
-      delegates: ["writer"],
       providerTools: ["web_search"],
     }),
     resolveModelId: (model) => model,
@@ -165,7 +164,6 @@ Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools"
     "get_agent",
     "get_agent_source",
     "update_agent",
-    "agent_writer",
   ]);
   assertEquals(result.requestedAllowedProviderTools, ["web_search"]);
   assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, true);

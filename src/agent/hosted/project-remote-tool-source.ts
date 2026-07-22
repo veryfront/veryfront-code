@@ -241,7 +241,6 @@ function resolveHostedProjectMcpServers(
 ): readonly AgentServiceMcpServerConfig[] {
   const servers = [...(input.mcpServers ?? defaultAgentServiceMcpServers())];
   if (
-    input.mcpServers === undefined &&
     needsStudioMcpSource(input) &&
     !servers.some((server) => server.kind === "veryfront-studio")
   ) {

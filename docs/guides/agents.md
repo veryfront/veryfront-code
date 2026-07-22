@@ -158,27 +158,6 @@ on the server that owns the tools. When `tools` is an explicit object, include
 the remote MCP tool name in `tools` and authorize it with the server
 `toolPolicy`.
 
-Explicitly named tools that are not local are resolved from the Veryfront API
-MCP server when `mcpServers` is omitted and the server bootstrap is available.
-This lets a project pulled from Studio run locally without repeating transport
-configuration. `VERYFRONT_API_URL` selects the API endpoint;
-`VERYFRONT_API_TOKEN` and `VERYFRONT_PROJECT_SLUG` provide server-side identity.
-These environment variables do not grant tools by themselves.
-
-```ts
-export default agent({
-  id: "project-reader",
-  system: "Read project files when needed.",
-  tools: { get_file: true, list_files: true },
-});
-```
-
-Only the explicitly named unresolved tools are requested from the remote MCP
-catalog. Remote `tools/list` remains authoritative, and browser AG-UI context
-cannot replace server identity. Set `mcpServers: []` to opt out. An explicit
-`mcpServers` list overrides the default; use `{ kind: "veryfront-api" }` with a
-`toolPolicy` when the connection policy should travel with the agent.
-
 ```ts
 // agents/docs.ts
 import { agent } from "veryfront/agent";
@@ -348,7 +327,6 @@ export default agent({
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
 | `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                                               |
-| `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |
 | `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                        |

@@ -862,7 +862,7 @@ export class AgentRuntime {
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
       const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
-      const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
+      const remoteToolSources = getRuntimeRemoteToolSources(this.config);
       const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
       const configuredProviderTools = getRuntimeProviderTools(this.config);
       const providerTools = sourceIntegrationPolicy
@@ -1339,7 +1339,7 @@ export class AgentRuntime {
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
-    const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
+    const remoteToolSources = getRuntimeRemoteToolSources(this.config);
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
     const configuredProviderTools = getRuntimeProviderTools(this.config);
     const providerTools = sourceIntegrationPolicy
@@ -1391,12 +1391,7 @@ export class AgentRuntime {
         model: effectiveModel,
         providerTools: stepProviderTools,
       });
-      const runtimeToolNames = [
-        ...new Set([
-          ...tools.map((tool) => tool.name),
-          ...Object.keys(runtimeTools ?? {}),
-        ]),
-      ].sort();
+      const runtimeToolNames = Object.keys(runtimeTools ?? {});
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,

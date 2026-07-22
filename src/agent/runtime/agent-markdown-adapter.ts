@@ -1,6 +1,7 @@
 import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
+import { buildAgentDelegateTools } from "./agent-delegation.ts";
 
 const markdownDefinitionByAgent = new WeakMap<Agent, RuntimeAgentMarkdownDefinition>();
 
@@ -8,14 +9,24 @@ const markdownDefinitionByAgent = new WeakMap<Agent, RuntimeAgentMarkdownDefinit
 export function createRuntimeAgentFromMarkdownDefinition(
   definition: RuntimeAgentMarkdownDefinition,
 ): Agent {
+  const delegateTools = definition.delegates && definition.delegates.length > 0
+    ? buildAgentDelegateTools({ delegates: definition.delegates, selfId: definition.id })
+    : undefined;
+
   // `tools:` is a binding selector resolved at invocation time by the
   // owner-aware resolver: `true` binds all visible tools; a list binds each
-  // entry (own short name first, then exact global id). The factory adds the
-  // scoped tools derived from `delegates` for both code and markdown agents.
+  // entry (own short name first, then exact global id). Delegate tools merge
+  // on top; on key collision the delegate tool wins (keys never overlap in
+  // practice: selectors use tool ids, delegates use `agent_{id}`).
   const selectedTools: true | Record<string, true> | undefined = definition.tools === true
     ? true
     : definition.tools
     ? Object.fromEntries(definition.tools.map((name) => [name, true as const]))
+    : undefined;
+  const mergedTools = selectedTools === true
+    ? true
+    : selectedTools || delegateTools
+    ? { ...(selectedTools ?? {}), ...(delegateTools ?? {}) }
     : undefined;
 
   const runtimeAgent = agent({
@@ -29,11 +40,9 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(definition.providerTools ? { providerTools: definition.providerTools } : {}),
     ...(definition.skills === undefined ? {} : { skills: definition.skills }),
-    ...(definition.delegates === undefined ? {} : { delegates: definition.delegates }),
-    ...(definition.mcpServers === undefined ? {} : { mcpServers: definition.mcpServers }),
-    ...(selectedTools !== undefined &&
-        (selectedTools === true || Object.keys(selectedTools).length > 0)
-      ? { tools: selectedTools }
+    ...(mergedTools !== undefined &&
+        (mergedTools === true || Object.keys(mergedTools).length > 0)
+      ? { tools: mergedTools }
       : {}),
   });
 

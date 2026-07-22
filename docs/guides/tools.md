@@ -120,27 +120,6 @@ Use `mcpServers` for remote MCP tools. Put remote visibility policy on the MCP
 server. When `tools` is an explicit object, also list the remote tool name in
 `tools` so the model can use it.
 
-When `mcpServers` is omitted, explicitly named tools that are not local are
-resolved from the Veryfront API MCP server if server bootstrap credentials are
-available. This makes a project pulled from Studio runnable locally without
-duplicating transport configuration.
-
-```ts
-export default agent({
-  id: "project-reader",
-  system: "Use project evidence when answering.",
-  tools: { get_file: true, list_files: true },
-});
-```
-
-`VERYFRONT_API_URL` selects the endpoint, while `VERYFRONT_API_TOKEN` and
-`VERYFRONT_PROJECT_SLUG` provide server-side identity. Environment variables
-never grant tools: only explicitly named unresolved tools are requested, and
-the remote `tools/list` response defines their schemas. Use `mcpServers: []`
-to opt out, or declare `{ kind: "veryfront-api", toolPolicy: ... }` to make the
-connection policy explicit. Direct application routes and hosted runtimes do
-not accept browser-supplied credentials or project identity for this server.
-
 ```ts
 // agents/docs.ts
 import { agent } from "veryfront/agent";

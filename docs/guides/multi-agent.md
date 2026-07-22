@@ -101,23 +101,11 @@ const researchTool = agentAsTool(researcher, "Research a topic using web search"
 
 ## Declarative delegation with `delegates`
 
-Code and markdown agents can opt into orchestration by listing the exact
-specialists they may call. The runtime gives the agent one `agent_{id}` tool
-per delegate. Each scoped tool accepts `{ input: string }` and runs the actual
-delegate definition with its own model, skills, MCP servers, and tools.
-
-```ts
-// agents/orchestrator.ts
-import { agent } from "veryfront/agent";
-
-export default agent({
-  id: "orchestrator",
-  system: "Use agent_researcher, then agent_writer.",
-  delegates: ["researcher", "writer"],
-});
-```
-
-The same configuration is available in markdown frontmatter:
+A markdown agent can opt into orchestration by listing the specialists it may
+call in its `delegates` frontmatter. The runtime gives the agent one
+`agent_{id}` tool per delegate; each delegate runs with its own settings,
+skills, and tools - capability ownership does not cross the delegation
+boundary in either direction.
 
 ```md
 ---
@@ -130,13 +118,9 @@ Break the task down. Use agent_researcher to gather facts, then agent_writer to
 produce the final copy.
 ```
 
-Set `delegates: []` when an agent must not delegate. Hosted runtimes retain the
-legacy generic `invoke_agent` tool only for older definitions where
-`delegates` is absent; direct runtimes do not add it automatically.
-Self-delegation and delegate ids that cannot form a valid provider tool name
-are rejected with explicit diagnostics. Declare direct tools by name when
-using `delegates`; `tools: true` is intentionally rejected because it would
-hide the agent's capability boundary.
+With several agents and no `delegates`, the agents are independent: a caller
+selects one by id. Self-delegation and delegate ids that cannot form a valid
+provider tool name are rejected at discovery with explicit diagnostics.
 
 ## Workflow-based composition
 

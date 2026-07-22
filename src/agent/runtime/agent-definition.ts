@@ -1,11 +1,12 @@
 import { extract } from "#std/front-matter/yaml.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
-import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
 
 /** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
@@ -25,28 +26,6 @@ export type RuntimeAgentThinkingConfig = InferSchema<
   ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
 >;
 
-const getRuntimeAgentMcpToolPolicySchema = defineSchema((v) =>
-  v.object({
-    allow: v.array(v.string().min(1)).optional(),
-    deny: v.array(v.string().min(1)).optional(),
-    approval: v.literal("never").optional(),
-  })
-);
-
-/** Schema for a first-party MCP preset that is safe to serialize with an agent definition. */
-export const getRuntimeAgentMcpServerConfigSchema = defineSchema((v) =>
-  v.object({
-    kind: v.union([v.literal("veryfront-api"), v.literal("veryfront-studio")]),
-    id: v.string().min(1).optional(),
-    toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
-  })
-);
-
-/** First-party MCP preset carried over the hosted agent-definition boundary. */
-export type RuntimeAgentMcpServerConfig = InferSchema<
-  ReturnType<typeof getRuntimeAgentMcpServerConfigSchema>
->;
-
 /** Zod schema for get runtime agent markdown definition. */
 export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   v.object({
@@ -63,7 +42,6 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     skills: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     delegates: v.array(v.string().min(1)).optional(),
-    mcpServers: v.array(getRuntimeAgentMcpServerConfigSchema()).optional(),
   })
 );
 
@@ -155,14 +133,25 @@ function parseDelegates(value: unknown): string[] | undefined {
   const ids = value
     .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
     .map((entry) => entry.trim());
-  return ids;
+  return ids.length > 0 ? ids : undefined;
 }
 
-function parseMcpServers(value: unknown): RuntimeAgentMcpServerConfig[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
+function validateDelegates(agentId: string, delegates: string[] | undefined): void {
+  if (!delegates) {
+    return;
   }
-  return value.map((server) => getRuntimeAgentMcpServerConfigSchema().parse(server));
+  for (const delegateId of delegates) {
+    if (delegateId === agentId) {
+      throw INVALID_ARGUMENT.create({ detail: `Agent "${agentId}" cannot delegate to itself.` });
+    }
+    if (!isProviderSafeDelegateId(delegateId)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
+          `"${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}" (must match [A-Za-z0-9_-], max 64 chars).`,
+      });
+    }
+  }
 }
 
 /** Definition for parse runtime agent markdown. */
@@ -187,8 +176,8 @@ export function parseRuntimeAgentMarkdownDefinition(
   const providerTools = parseProviderTools(attrs["provider-tools"]);
   const skills = parseCapabilitySelector(attrs.skills);
   const tools = parseCapabilitySelector(attrs.tools);
-  const delegates = normalizeAgentDelegateIds(parsedInput.id, parseDelegates(attrs.delegates));
-  const mcpServers = parseMcpServers(attrs["mcp-servers"] ?? attrs.mcpServers);
+  const delegates = parseDelegates(attrs.delegates);
+  validateDelegates(parsedInput.id, delegates);
 
   return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
@@ -204,7 +193,6 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(skills === undefined ? {} : { skills }),
     ...(tools === undefined ? {} : { tools }),
     ...(delegates === undefined ? {} : { delegates }),
-    ...(mcpServers === undefined ? {} : { mcpServers }),
   });
 }
 

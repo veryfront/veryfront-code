@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { Singleflight } from "./singleflight.ts";
 
 describe("Singleflight", () => {
@@ -115,5 +116,46 @@ describe("Singleflight", () => {
 
     assertEquals(r1, 1);
     assertEquals(r2, 2);
+  });
+
+  it("evicts only the exact leader that exceeds its stale window", async () => {
+    using time = new FakeTime();
+    const sf = new Singleflight<number>();
+    let resolveStale!: (value: number) => void;
+    let resolveReplacement!: (value: number) => void;
+    let staleIsCurrent!: () => boolean;
+    let replacementIsCurrent!: () => boolean;
+    let staleEvictions = 0;
+
+    const stale = sf.do(
+      "key",
+      (control) => {
+        staleIsCurrent = control.isCurrent;
+        return new Promise<number>((resolve) => resolveStale = resolve);
+      },
+      { staleAfterMs: 1_000, onStaleEvicted: () => staleEvictions++ },
+    );
+
+    await time.tickAsync(1_000);
+    assertEquals(sf.has("key"), false);
+    assertEquals(staleEvictions, 1);
+    assertEquals(staleIsCurrent(), false);
+
+    const replacement = sf.do(
+      "key",
+      (control) => {
+        replacementIsCurrent = control.isCurrent;
+        return new Promise<number>((resolve) => resolveReplacement = resolve);
+      },
+      { staleAfterMs: 1_000 },
+    );
+    resolveStale(1);
+    assertEquals(await stale, 1);
+    assertEquals(sf.has("key"), true);
+    assertEquals(replacementIsCurrent(), true);
+
+    resolveReplacement(2);
+    assertEquals(await replacement, 2);
+    assertEquals(sf.has("key"), false);
   });
 });

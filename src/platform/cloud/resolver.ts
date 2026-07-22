@@ -127,18 +127,6 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
   };
 }
 
-/** Resolve the trusted host identity used by direct server-side platform clients. */
-export function getVeryfrontCloudHostBootstrap(): VeryfrontCloudBootstrap {
-  return {
-    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-    apiToken: getHostEnv("VERYFRONT_API_TOKEN"),
-    projectSlug: getHostEnv("VERYFRONT_PROJECT_SLUG"),
-    serviceLayer: normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
-    hasRequestContext: false,
-    usesVeryfrontFs: false,
-  };
-}
-
 export function isVeryfrontCloudEnabled(): boolean {
   const bootstrap = getVeryfrontCloudBootstrap();
 

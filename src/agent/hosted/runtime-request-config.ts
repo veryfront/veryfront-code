@@ -8,7 +8,6 @@ import {
   resolveRuntimeClientProfile,
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
-import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -19,13 +18,7 @@ export type HostedRuntimeRequestConfigRequest = Pick<
 /** Public API contract for hosted runtime request config agent. */
 export type HostedRuntimeRequestConfigAgent = Pick<
   RuntimeAgentMarkdownDefinition,
-  | "model"
-  | "thinking"
-  | "temperature"
-  | "maxSteps"
-  | "tools"
-  | "providerTools"
-  | "delegates"
+  "model" | "thinking" | "temperature" | "maxSteps" | "tools" | "providerTools"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -116,7 +109,6 @@ export function resolveHostedRuntimeThinkingOverride(input: {
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
-  configuredDelegates: RuntimeAgentMarkdownDefinition["delegates"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
   if (input.requestedTools !== undefined) {
@@ -127,12 +119,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
     return undefined;
   }
 
-  return [
-    ...new Set([
-      ...(input.configuredTools ?? []),
-      ...(input.configuredDelegates ?? []).map((id) => `${AGENT_DELEGATE_TOOL_PREFIX}${id}`),
-    ]),
-  ];
+  return [...new Set(input.configuredTools ?? [])];
 }
 
 /** Resolve provider-native tool bindings without widening direct tool access. */
@@ -171,7 +158,6 @@ export function resolveHostedRuntimeRequestConfig(
     requestedMaxOutputTokens: effectiveRuntimeOverrides?.maxOutputTokens,
     requestedAllowedTools: resolveHostedRuntimeAllowedTools({
       configuredTools: input.agentConfig.tools,
-      configuredDelegates: input.agentConfig.delegates,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
     requestedAllowedProviderTools: resolveHostedRuntimeAllowedProviderTools({

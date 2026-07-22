@@ -1,11 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
+import { __ssrModuleLoaderInternals } from "./loader.ts";
 import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
+import {
+  TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
+  TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
+} from "./constants.ts";
 import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
@@ -973,6 +979,113 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(globalInProgress.has(contentCacheKey), false);
     } finally {
       await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("bounds a caller wait without evicting the shared transform", async () => {
+    using time = new FakeTime();
+    const key = "test:shared-transform-wait";
+    const pending = new Promise<void>(() => {});
+    globalInProgress.set(key, pending);
+
+    try {
+      const wait = __ssrModuleLoaderInternals.waitForInProgressTransform(
+        pending,
+        "/app/SlowPage.tsx",
+      );
+      const waitRejected = assertRejects(
+        () => wait,
+        Error,
+        "Timed out waiting for in-progress SSR transform",
+      );
+      await time.tickAsync(TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS);
+      await waitRejected;
+      assertEquals(globalInProgress.get(key), pending);
+    } finally {
+      globalInProgress.delete(key);
+    }
+  });
+
+  it("evicts only the exact transform that exceeds the stale safety window", async () => {
+    using time = new FakeTime();
+    const key = "test:stale-transform-eviction";
+    const stale = new Promise<void>(() => {});
+    const replacement = new Promise<void>(() => {});
+    globalInProgress.set(key, stale);
+    const timer = __ssrModuleLoaderInternals.scheduleStaleInProgressTransformEviction(
+      key,
+      stale,
+      "/app/StalledPage.tsx",
+    );
+
+    try {
+      await time.tickAsync(TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS - 1);
+      assertEquals(globalInProgress.get(key), stale);
+
+      globalInProgress.set(key, replacement);
+      await time.tickAsync(1);
+      assertEquals(globalInProgress.get(key), replacement);
+    } finally {
+      clearTimeout(timer);
+      globalInProgress.delete(key);
+    }
+  });
+
+  it("allows retry after the current transform exceeds the stale safety window", async () => {
+    using time = new FakeTime();
+    const key = "test:current-stale-transform-eviction";
+    const stale = new Promise<void>(() => {});
+    globalInProgress.set(key, stale);
+    const timer = __ssrModuleLoaderInternals.scheduleStaleInProgressTransformEviction(
+      key,
+      stale,
+      "/app/StalledPage.tsx",
+    );
+
+    try {
+      await time.tickAsync(TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS);
+      assertEquals(globalInProgress.has(key), false);
+    } finally {
+      clearTimeout(timer);
+      globalInProgress.delete(key);
+    }
+  });
+
+  it("does not let an evicted loader leader overwrite replacement cache entries", () => {
+    const inProgressKey = "test:late-loader-publication";
+    const contentCacheKey = "test:late-loader-content";
+    const filePathCacheKey = "test:late-loader-path";
+    const oldLeader = new Promise<void>(() => {});
+    const replacementLeader = new Promise<void>(() => {});
+    const replacementEntry = { tempPath: "/cache/replacement.mjs", contentHash: "replacement" };
+    const oldEntry = { tempPath: "/cache/old.mjs", contentHash: "old" };
+    const timer = setTimeout(() => {}, 60_000);
+    let distributedWrites = 0;
+
+    globalInProgress.set(inProgressKey, replacementLeader);
+    globalModuleCache.set(contentCacheKey, replacementEntry);
+    globalModuleCache.set(filePathCacheKey, replacementEntry);
+
+    try {
+      const published = __ssrModuleLoaderInternals.publishTransformCacheIfCurrent({
+        inProgressKey,
+        transformPromise: oldLeader,
+        staleEvictionTimer: timer,
+        contentCacheKey,
+        filePathCacheKey,
+        entry: oldEntry,
+        publishDistributed: () => distributedWrites++,
+      });
+
+      assertEquals(published, false);
+      assertEquals(distributedWrites, 0);
+      assertEquals(globalModuleCache.get(contentCacheKey), replacementEntry);
+      assertEquals(globalModuleCache.get(filePathCacheKey), replacementEntry);
+    } finally {
+      clearTimeout(timer);
+      globalInProgress.delete(inProgressKey);
+      globalModuleCache.delete(contentCacheKey);
+      globalModuleCache.delete(filePathCacheKey);
     }
   });
 });

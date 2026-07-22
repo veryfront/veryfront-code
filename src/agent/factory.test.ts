@@ -147,35 +147,6 @@ describe("agent factory", () => {
     });
   });
 
-  it("binds one scoped tool for each declared delegate", () => {
-    const assistant = agent({
-      id: "orchestrator",
-      system: "Delegate specialist work.",
-      delegates: ["ingestion-agent"],
-    });
-
-    if (!assistant.config.tools || assistant.config.tools === true) {
-      throw new Error("Expected an agent tool map");
-    }
-    assertEquals(typeof assistant.config.tools["agent_ingestion-agent"], "object");
-    assertEquals(assistant.config.delegates, ["ingestion-agent"]);
-    assertEquals(toolRegistry.has("agent_ingestion-agent"), false);
-  });
-
-  it("rejects delegates combined with the implicit all-tools selector", () => {
-    assertThrows(
-      () =>
-        agent({
-          id: "broad-orchestrator",
-          system: "Delegate specialist work.",
-          delegates: ["ingestion-agent"],
-          tools: true,
-        }),
-      Error,
-      "cannot combine delegates with tools: true",
-    );
-  });
-
   it("uses the default system prompt before an available skill catalog", async () => {
     registerSkill("support-triage", {
       id: "support-triage",

@@ -18,7 +18,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
+Deno.test("createRuntimeAgentFromMarkdownDefinition binds delegate tools from delegates", () => {
   toolRegistry.clearAll();
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
@@ -40,34 +40,8 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools"
       "load_skill_reference",
     ],
   );
-  assertEquals(runtimeAgent.config.delegates, ["writer", "researcher"]);
-});
-
-Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
-  toolRegistry.clearAll();
-
-  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
-    id: "project-orchestrator",
-    name: "Project Orchestrator",
-    description: "Coordinates project agents",
-    instructions: "Use project tools.",
-    delegates: ["worker-agent"],
-    mcpServers: [{
-      kind: "veryfront-api",
-      toolPolicy: { allow: ["get_file", "list_files"] },
-    }],
-    tools: ["get_file", "list_files"],
-  });
-
-  const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
-  assertEquals(typeof tools?.["agent_worker-agent"], "object");
-  assertEquals(tools?.get_file, true);
-  assertEquals(tools?.list_files, true);
-  assertEquals(runtimeAgent.config.delegates, ["worker-agent"]);
-  assertEquals(runtimeAgent.config.mcpServers, [{
-    kind: "veryfront-api",
-    toolPolicy: { allow: ["get_file", "list_files"] },
-  }]);
+  assertEquals(toolRegistry.has("agent_researcher"), false);
+  assertEquals(toolRegistry.has("agent_writer"), false);
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves an empty catalog and binds skill tools", async () => {

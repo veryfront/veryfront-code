@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import {
   __injectCachesForTests,
@@ -11,6 +12,7 @@ import {
   getOrComputeTransform,
   setCachedTransform,
   setCachedTransformAsync,
+  TRANSFORM_FLIGHT_STALE_EVICTION_MS,
 } from "./transform-cache.ts";
 
 describe("transforms/esm/transform-cache", () => {
@@ -399,6 +401,54 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(followerPhases.includes("leader:finished"), true);
     });
 
+    it("keeps late progress from a reset flight isolated from its replacement", async () => {
+      let releaseOld!: () => void;
+      let markOldStarted!: () => void;
+      const oldGate = new Promise<void>((resolve) => releaseOld = resolve);
+      const oldStarted = new Promise<void>((resolve) => markOldStarted = resolve);
+      const oldFlight = getOrComputeTransform("reset-progress-key", async (reportProgress) => {
+        reportProgress?.({ phase: "old:started" });
+        markOldStarted();
+        await oldGate;
+        reportProgress?.({ phase: "old:finished" });
+        return "old-code";
+      });
+
+      await oldStarted;
+      destroyTransformCache();
+
+      let releaseReplacement!: () => void;
+      let markReplacementStarted!: () => void;
+      const replacementGate = new Promise<void>((resolve) => releaseReplacement = resolve);
+      const replacementStarted = new Promise<void>((resolve) => markReplacementStarted = resolve);
+      const replacement = getOrComputeTransform(
+        "reset-progress-key",
+        async (reportProgress) => {
+          reportProgress?.({ phase: "replacement:started" });
+          markReplacementStarted();
+          await replacementGate;
+          return "replacement-code";
+        },
+      );
+
+      await replacementStarted;
+      releaseOld();
+      await oldFlight;
+
+      const followerPhases: string[] = [];
+      const follower = getOrComputeTransform(
+        "reset-progress-key",
+        async () => "unexpected-code",
+        300,
+        (event) => followerPhases.push(event.phase),
+      );
+
+      assertEquals(followerPhases, ["replacement:started"]);
+      releaseReplacement();
+      await Promise.all([replacement, follower]);
+      assertEquals(followerPhases.includes("old:finished"), false);
+    });
+
     it("isolates a throwing listener during late progress replay", async () => {
       let computeCalls = 0;
       let listenerCalls = 0;
@@ -543,10 +593,18 @@ describe("transforms/esm/transform-cache", () => {
         del: () => Promise.resolve(),
       };
 
+      let markComputeFinished!: () => void;
+      const computeFinished = new Promise<void>((resolve) => {
+        markComputeFinished = resolve;
+      });
+
       __injectCachesForTests({ cacheBackend: abortingCacheBackend });
       const alreadyAbortedCaller = getOrComputeTransform(
         "already-aborted-key",
-        async () => "shared-after-already-aborted",
+        async () => {
+          markComputeFinished();
+          throw new Error("detached shared transform failed");
+        },
         300,
         undefined,
         controller.signal,
@@ -557,7 +615,8 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(removeAbortListenerCalls, 0);
 
       resolveCacheGet(null);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await computeFinished;
+      await Promise.resolve();
       assertEquals(addAbortListenerCalls, 0);
       assertEquals(removeAbortListenerCalls, 0);
     });
@@ -605,6 +664,150 @@ describe("transforms/esm/transform-cache", () => {
 
       assertEquals(recovered, { code: "recovered-code", cacheHit: false });
       assertEquals(computeCalls, 2);
+    });
+
+    it("allows recompute after a never-settling leader exceeds the stale window", async () => {
+      using time = new FakeTime();
+      const controller = new AbortController();
+      let computeCalls = 0;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => markStarted = resolve);
+
+      const abandonedCaller = getOrComputeTransform(
+        "stalled-transform-key",
+        async () => {
+          computeCalls++;
+          markStarted();
+          return await new Promise<string>(() => {});
+        },
+        300,
+        undefined,
+        controller.signal,
+      );
+
+      await started;
+      controller.abort(new Error("caller deadline"));
+      await assertRejects(() => abandonedCaller, Error, "caller deadline");
+      await time.tickAsync(TRANSFORM_FLIGHT_STALE_EVICTION_MS);
+
+      const recovered = await getOrComputeTransform("stalled-transform-key", async () => {
+        computeCalls++;
+        return "recovered-code";
+      });
+
+      assertEquals(computeCalls, 2);
+      assertEquals(recovered.code, "recovered-code");
+    });
+
+    it("does not let a late stale leader overwrite its replacement cache entry", async () => {
+      using time = new FakeTime();
+      let releaseStale!: () => void;
+      let markStaleStarted!: () => void;
+      const staleGate = new Promise<void>((resolve) => releaseStale = resolve);
+      const staleStarted = new Promise<void>((resolve) => markStaleStarted = resolve);
+      const stale = getOrComputeTransform("late-cache-write-key", async () => {
+        markStaleStarted();
+        await staleGate;
+        return "stale-code";
+      });
+
+      await staleStarted;
+      await time.tickAsync(TRANSFORM_FLIGHT_STALE_EVICTION_MS);
+      const replacement = await getOrComputeTransform(
+        "late-cache-write-key",
+        async () => "replacement-code",
+      );
+      assertEquals(replacement.code, "replacement-code");
+
+      releaseStale();
+      await stale;
+      await Promise.resolve();
+
+      assertEquals(
+        (await getCachedTransformAsync("late-cache-write-key"))?.code,
+        "replacement-code",
+      );
+    });
+
+    it("does not let a leader from a destroyed registry overwrite replacement cache", async () => {
+      let releaseOldLeader!: () => void;
+      let markOldLeaderStarted!: () => void;
+      const oldLeaderGate = new Promise<void>((resolve) => releaseOldLeader = resolve);
+      const oldLeaderStarted = new Promise<void>((resolve) => markOldLeaderStarted = resolve);
+      const oldLeader = getOrComputeTransform("reset-cache-write-key", async () => {
+        markOldLeaderStarted();
+        await oldLeaderGate;
+        return "old-code";
+      });
+
+      await oldLeaderStarted;
+      destroyTransformCache();
+
+      const replacement = await getOrComputeTransform(
+        "reset-cache-write-key",
+        async () => "replacement-code",
+      );
+      assertEquals(replacement.code, "replacement-code");
+
+      releaseOldLeader();
+      await oldLeader;
+      await Promise.resolve();
+
+      assertEquals(
+        (await getCachedTransformAsync("reset-cache-write-key"))?.code,
+        "replacement-code",
+      );
+    });
+
+    it("serializes cache publication across a registry reset", async () => {
+      const firstSetStarted = Promise.withResolvers<void>();
+      const releaseFirstSet = Promise.withResolvers<void>();
+      const secondSetStarted = Promise.withResolvers<void>();
+      const releaseSecondSet = Promise.withResolvers<void>();
+      const secondSetFinished = Promise.withResolvers<void>();
+      let storedValue: string | null = null;
+      let setCalls = 0;
+      const cacheBackend: CacheBackend = {
+        type: "memory",
+        get: () => Promise.resolve(storedValue),
+        async set(_key, value) {
+          setCalls++;
+          if (setCalls === 1) {
+            firstSetStarted.resolve();
+            await releaseFirstSet.promise;
+          } else {
+            secondSetStarted.resolve();
+            await releaseSecondSet.promise;
+          }
+          storedValue = value;
+          if (setCalls === 2) secondSetFinished.resolve();
+        },
+        del: () => Promise.resolve(),
+      };
+      __injectCachesForTests({ cacheBackend });
+
+      const original = await getOrComputeTransform(
+        "async-reset-cache-write-key",
+        async () => "original-code",
+      );
+      assertEquals(original.code, "original-code");
+      await firstSetStarted.promise;
+
+      destroyTransformCache();
+      const replacement = await getOrComputeTransform(
+        "async-reset-cache-write-key",
+        async () => "replacement-code",
+      );
+      assertEquals(replacement.code, "replacement-code");
+      assertEquals(setCalls, 1);
+
+      releaseFirstSet.resolve();
+      await secondSetStarted.promise;
+      releaseSecondSet.resolve();
+      await secondSetFinished.promise;
+
+      assertEquals(setCalls, 2);
+      assertEquals(JSON.parse(storedValue ?? "null").code, "replacement-code");
     });
 
     it("preserves concurrent computes for different cold keys", async () => {
