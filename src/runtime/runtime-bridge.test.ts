@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateText, streamText } from "./runtime-bridge.ts";
+import { embed, embedMany, generateText, streamText } from "./runtime-bridge.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -148,6 +148,113 @@ describe("runtime-bridge", () => {
       outputTokens: 3,
       totalTokens: 7,
     });
+  });
+
+  it("rejects buffered generation when the model stream emits an error part", async () => {
+    const model = {
+      ...createStreamModel("test", "test/error-stream", async () => ({
+        stream: ReadableStream.from([
+          { type: "text-delta", delta: "partial" },
+          { type: "error", error: new Error("provider stream failed") },
+        ]),
+      })),
+      _generateViaStream: true,
+    };
+
+    await assertRejects(
+      () =>
+        Promise.resolve(generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+        })),
+      Error,
+      "provider stream failed",
+    );
+  });
+
+  it("preserves provider-executed metadata and null results while buffering a stream", async () => {
+    const model = {
+      ...createStreamModel("test", "test/provider-tool-stream", async () => ({
+        stream: ReadableStream.from([
+          {
+            type: "tool-input-start",
+            id: "provider-tool-1",
+            toolName: "web_search",
+            providerExecuted: true,
+          },
+          {
+            type: "tool-input-delta",
+            id: "provider-tool-1",
+            delta: '{"query":"Veryfront"}',
+          },
+          { type: "tool-input-end", id: "provider-tool-1" },
+          {
+            type: "tool-result",
+            toolCallId: "provider-tool-1",
+            toolName: "web_search",
+            result: null,
+            providerExecuted: true,
+          },
+        ]),
+      })),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Search" }],
+    });
+
+    assertEquals(result.toolCalls, [{
+      toolCallId: "provider-tool-1",
+      toolName: "web_search",
+      input: { query: "Veryfront" },
+    }]);
+    assertEquals(result.toolResults, [{
+      toolCallId: "provider-tool-1",
+      toolName: "web_search",
+      result: null,
+      providerExecuted: true,
+    }]);
+  });
+
+  it("preserves provider-executed metadata from direct generate results", async () => {
+    const model = createGenerateModel("test", "test/provider-tool-generate", async () => ({
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "provider-tool-2",
+          toolName: "web_fetch",
+          input: '{"url":"https://veryfront.com"}',
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "provider-tool-2",
+          toolName: "web_fetch",
+          result: { status: 200 },
+          providerExecuted: true,
+        },
+      ],
+      finishReason: "stop",
+    }));
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Fetch" }],
+    });
+
+    assertEquals(result.toolCalls, [{
+      toolCallId: "provider-tool-2",
+      toolName: "web_fetch",
+      input: { url: "https://veryfront.com" },
+    }]);
+    assertEquals(result.toolResults, [{
+      toolCallId: "provider-tool-2",
+      toolName: "web_fetch",
+      result: { status: 200 },
+      providerExecuted: true,
+    }]);
   });
 
   it("uses the direct stream path for models without tools", async () => {
@@ -952,5 +1059,35 @@ describe("runtime-bridge", () => {
     });
 
     assertEquals(result.text, "Continuing");
+  });
+
+  it("rejects a missing embedding from a single-value provider response", async () => {
+    const model = {
+      provider: "test",
+      modelId: "test/missing-single-embedding",
+      specificationVersion: "v3",
+      doEmbed: () => Promise.resolve({ embeddings: [] }),
+    };
+
+    await assertRejects(
+      () => Promise.resolve(embed({ model, value: "Hello" })),
+      Error,
+      "expected 1 embedding but received 0",
+    );
+  });
+
+  it("rejects an embedding count that does not match the requested values", async () => {
+    const model = {
+      provider: "test",
+      modelId: "test/mismatched-embedding-count",
+      specificationVersion: "v3",
+      doEmbed: () => Promise.resolve({ embeddings: [[1, 0]] }),
+    };
+
+    await assertRejects(
+      () => Promise.resolve(embedMany({ model, values: ["first", "second"] })),
+      Error,
+      "expected 2 embeddings but received 1",
+    );
   });
 });
