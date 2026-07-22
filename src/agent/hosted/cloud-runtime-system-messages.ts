@@ -24,7 +24,10 @@ function createProjectInstructionsBlock(instructions: string): string {
   });
 }
 
-function createProjectContextBlock(input: { projectId: string; branchId?: string | null }): string {
+/** Builds the shared project-context prompt block (project reference + branch). */
+export function buildProjectContextPromptBlock(
+  input: { projectId: string; branchId?: string | null },
+): string {
   const branchLine = input.branchId
     ? `branch_id: "${input.branchId}"`
     : "branch_id: main (no branch_id needed for file operations)";
@@ -52,7 +55,7 @@ export function createVeryfrontCloudRuntimeSystemMessages(
 
   if (input.projectId) {
     runtimeBlocks.push(
-      createProjectContextBlock({
+      buildProjectContextPromptBlock({
         projectId: input.projectId,
         branchId: input.branchId,
       }),
