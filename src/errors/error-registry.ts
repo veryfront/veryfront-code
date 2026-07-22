@@ -1,4 +1,5 @@
 import {
+  composeErrorRegistry,
   getRegistryEntriesByCategory,
   getRegistryEntry,
   getRegistrySlugs,
@@ -35,19 +36,19 @@ export * from "./error-registry/general.ts";
  * Central registry mapping every error slug to its definition. Assembled from
  * the per-category registry fragments.
  */
-export const ERROR_REGISTRY = {
-  ...CONFIG_REGISTRY,
-  ...BUILD_REGISTRY,
-  ...RUNTIME_REGISTRY,
-  ...ROUTE_REGISTRY,
-  ...MODULE_REGISTRY,
-  ...SERVER_REGISTRY,
-  ...BOUNDARY_REGISTRY,
-  ...DEV_REGISTRY,
-  ...DEPLOY_REGISTRY,
-  ...AGENT_REGISTRY,
-  ...GENERAL_REGISTRY,
-} as const;
+export const ERROR_REGISTRY = composeErrorRegistry(
+  CONFIG_REGISTRY,
+  BUILD_REGISTRY,
+  RUNTIME_REGISTRY,
+  ROUTE_REGISTRY,
+  MODULE_REGISTRY,
+  SERVER_REGISTRY,
+  BOUNDARY_REGISTRY,
+  DEV_REGISTRY,
+  DEPLOY_REGISTRY,
+  AGENT_REGISTRY,
+  GENERAL_REGISTRY,
+);
 
 export type ErrorSlug = keyof typeof ERROR_REGISTRY;
 
