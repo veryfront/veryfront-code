@@ -208,7 +208,8 @@ export default agent({
 
 Use `skills: ["incident-response", "repo-maintainer"]` to advertise only those
 skills. Use `skills: []` to advertise no skills. This selector does not remove
-the built-in skill loading tools:
+the built-in skill loading tools or restrict which visible skills they can load
+by ID:
 
 - `load_skill`
 - `load_skill_reference`

@@ -112,8 +112,8 @@ export default agent({
 ```
 
 Use `skills: ["code-review"]` to advertise only that skill. Use `skills: []`
-to advertise none. The built-in skill loading tools remain available to the
-agent regardless of the selector.
+to advertise none. This changes the prompt catalog only. The built-in skill
+loading tools remain available and can load any visible skill by ID.
 
 Expose the agent through an AG-UI route, then ask it to use the skill:
 

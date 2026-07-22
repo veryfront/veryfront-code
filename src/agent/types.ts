@@ -205,6 +205,9 @@ export interface AgentConfig {
    * - omitted or true: include every discovered skill visible to this agent
    * - string[]: include only the listed skill IDs; use [] to advertise none
    *
+   * This selects the prompt catalog only. It does not restrict which
+   * owner-visible skills `load_skill` can resolve by id.
+   *
    * Discovery happens at startup via discoverAll(). Skill loading tools remain
    * available to every agent regardless of this catalog selection.
    */
