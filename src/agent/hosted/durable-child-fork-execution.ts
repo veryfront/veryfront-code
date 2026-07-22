@@ -28,6 +28,7 @@ import {
 import {
   buildHostedChildForkEffectivePrompt,
   type HostedChildForkToolInput,
+  type HostedChildInvocationContext,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 import { isChildRunAbortError, throwIfChildRunAborted } from "../child-run/execution-support.ts";
@@ -449,6 +450,7 @@ export type ExecuteHostedDurableChildForkInput<
   parentConversationId?: string;
   parentRunId?: string;
   parentMessageId?: string;
+  trustedInvocationContext?: HostedChildInvocationContext;
   getProjectId: () => string | null | undefined;
   getRuntimeTargetKind?: () => ConversationRunTargets["runtimeTargetKind"] | undefined;
   getRuntimeTargetEnvironmentId?: () => string | null | undefined;
@@ -554,9 +556,12 @@ async function bootstrapHostedDurableChildFork<
   return runBootstrap(async () => {
     await input.bootstrap?.onBootstrapStart?.(input.bootstrapContext);
     const forkInput = withHostedChildInvocationContext(input.forkInput, {
+      parentConversationId: input.bootstrapContext.parentConversationId,
       conversationId: input.bootstrapContext.parentConversationId,
       parentRunId: input.bootstrapContext.parentRunId,
+      parentMessageId: input.bootstrapContext.parentMessageId,
       toolCallId: input.executionOptions.toolCallId,
+      trustedInvocationContext: input.trustedInvocationContext,
     });
 
     const bootstrapChildRun = input.runtime?.bootstrapChildRun ?? bootstrapHostedChildRun;

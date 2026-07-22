@@ -229,6 +229,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       environmentContext: input.liveProjectSteering.environmentContext,
       instructions: projectInstructions,
       skills: advertisedSkills,
+      availableToolNames: toolNames,
     });
 
     return flattenSystemInstructions(withRuntimeToolInventory(refreshedInstructions, toolNames));

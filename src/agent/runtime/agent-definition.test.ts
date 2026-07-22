@@ -84,19 +84,20 @@ Use only the authored instructions.
   assertEquals(result.skills, []);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition ignores filtered-to-empty selectors", () => {
-  const result = parseRuntimeAgentMarkdownDefinition({
-    id: "specialist",
-    content: `---
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects malformed capability selectors", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "specialist",
+        content: `---
 skills: [" ", 7]
-tools: [" ", 7]
 ---
-Use omitted selector defaults.
+Use the selected skills.
 `,
-  });
-
-  assertEquals(result.skills, undefined);
-  assertEquals(result.tools, undefined);
+      }),
+    Error,
+    'Agent frontmatter "skills" entry 1 must be a non-empty string',
+  );
 });
 
 Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
@@ -164,18 +165,84 @@ Work alone.
   assertEquals(noDelegates.delegates, undefined);
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition ignores empty delegate entries", () => {
+Deno.test("parseRuntimeAgentMarkdownDefinition parses first-party MCP presets", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "project-reader",
+    content: `---
+name: Project reader
+mcp-servers:
+  - kind: veryfront-api
+    toolPolicy:
+      allow: [get_file, list_files]
+---
+Read project evidence.
+`,
+  });
+
+  assertEquals(result.mcpServers, [{
+    kind: "veryfront-api",
+    toolPolicy: { allow: ["get_file", "list_files"] },
+  }]);
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition preserves an explicit empty delegate selector", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "writer",
     content: `---
 name: Writer
-delegates: ["", "  "]
+delegates: []
 ---
 Write copy.
 `,
   });
 
-  assertEquals(result.delegates, undefined);
+  assertEquals(result.delegates, []);
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects implicit all-tools delegation", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "lead",
+        content: `---
+tools: true
+delegates: [writer]
+---
+Coordinate.
+`,
+      }),
+    Error,
+    'Agent frontmatter for "lead" cannot combine delegates with tools: true',
+  );
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects scalar capability declarations", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "lead",
+        content: `---
+delegates: writer
+---
+Coordinate.
+`,
+      }),
+    Error,
+    'Agent frontmatter "delegates" must be an array of non-empty strings',
+  );
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "lead",
+        content: `---
+mcp-servers: disabled
+---
+Coordinate.
+`,
+      }),
+    Error,
+    'Agent frontmatter "mcp-servers" must be an array of MCP server configurations',
+  );
 });
 
 Deno.test("parseRuntimeAgentMarkdownDefinition rejects self-delegation with a diagnostic", () => {

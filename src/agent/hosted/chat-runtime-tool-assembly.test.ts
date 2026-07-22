@@ -315,6 +315,43 @@ Deno.test("prepareHostedChatRuntimeToolAssembly removes source-denied integratio
   assertEquals(toolAssembly.systemInstructions.includes("gmail__list_emails"), false);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly honors explicit API-only MCP without granting Studio tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-4.1",
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+  };
+  const createdSourceIds: string[] = [];
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    studioMcpUrl: "https://studio.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    allowedToolNames: ["studio_open_project"],
+    createRemoteToolSource: (config) => {
+      createdSourceIds.push(config.id ?? "source");
+      return remoteSourceFromConfig(config);
+    },
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(createdSourceIds, ["veryfront-mcp"]);
+  assertEquals(toolAssembly.remoteToolNames, []);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, []);
+  assertEquals(taskContext.availableToolNames, []);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly applies configured tools before the OpenAI cap", async () => {
   const availableConfiguredToolNames = ["get_agent", "get_agent_source", "update_agent"];
   const configuredToolNames = ["bash", ...availableConfiguredToolNames];

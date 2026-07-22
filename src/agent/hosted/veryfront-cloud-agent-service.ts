@@ -76,9 +76,11 @@ import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-g
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
+  DefaultHostedChildAgentExecutionConfig,
   DefaultHostedInvokeAgentConfig,
   DefaultHostedInvokeAgentContext,
 } from "./default-invoke-agent-tool.ts";
+import type { HostedChildRunIdentifiers } from "./child-status.ts";
 import {
   createDefaultHostedProjectSteeringRefresh,
   fetchDefaultHostedProjectSteering,
@@ -88,11 +90,15 @@ import {
   type AgentServiceMcpServerConfig,
   defaultAgentServiceMcpServers,
 } from "../service/mcp-server-config.ts";
-import type { AgentVeryfrontMcpServerConfig } from "../types.ts";
+import type { AgentMcpToolPolicy, AgentVeryfrontMcpServerConfig } from "../types.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-catalog.ts";
-import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import {
+  resolveRuntimeSkillsForAgent,
+  type RuntimeSkillDefinition,
+} from "../runtime/skill-metadata.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
@@ -105,6 +111,7 @@ import {
   runWithProjectAgentRuntime,
 } from "../project/agent-runtime.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import {
   createNodeAgentServiceRuntimeInfrastructure,
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
@@ -258,15 +265,29 @@ export type AgentServiceProcessTarget = NodeVeryfrontCloudAgentServiceProcessTar
 type NodeVeryfrontCloudAgentServiceContext = ReturnType<
   typeof createNodeVeryfrontCloudAgentServiceContext
 >;
-type ChildRunContext = DefaultHostedInvokeAgentContext & {
-  clientProfile?: RuntimeClientProfile | null;
-};
+type ChildRunContext =
+  & DefaultHostedInvokeAgentContext
+  & Pick<
+    RuntimeLoadSkillToolContext,
+    | "agentId"
+    | "availableSkillIds"
+    | "skillSourcePaths"
+    | "loadedSkillResponses"
+    | "loadedSkillReferenceResponses"
+  >
+  & {
+    clientProfile?: RuntimeClientProfile | null;
+  };
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_DRAIN_TIMEOUT_MS = 15_000;
 const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
 const DEFAULT_AGENT_SERVICE_NAME = "veryfront-agent-service";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
+const HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES = new Set([
+  "execute_skill_script",
+  "load_skill_reference",
+]);
 const PROJECT_CONFIG_FILES = [
   "veryfront.config.js",
   "veryfront.config.ts",
@@ -387,8 +408,62 @@ function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTar
 
 function resolveMcpServers(
   options: Pick<NodeVeryfrontCloudAgentServiceOptions, "mcpServers">,
+  agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers">,
 ): readonly NodeVeryfrontCloudAgentServiceMcpServer[] {
-  return options.mcpServers ?? defaultAgentServiceMcpServers();
+  if (options.mcpServers !== undefined) {
+    if (agentConfig?.mcpServers === undefined) {
+      return options.mcpServers;
+    }
+    return agentConfig.mcpServers.flatMap((agentServer) => {
+      const hostServer = options.mcpServers?.find((server) =>
+        server.kind === agentServer.kind && server.id === agentServer.id
+      );
+      if (!hostServer) {
+        return [];
+      }
+      const toolPolicy = mergeMcpToolPolicies(hostServer.toolPolicy, agentServer.toolPolicy);
+      return [{
+        ...hostServer,
+        ...(toolPolicy === undefined ? {} : { toolPolicy }),
+      }];
+    });
+  }
+
+  if (agentConfig?.mcpServers !== undefined) {
+    return agentConfig.mcpServers;
+  }
+  return defaultAgentServiceMcpServers();
+}
+
+function mergeMcpToolPolicies(
+  hostPolicy: AgentMcpToolPolicy | undefined,
+  agentPolicy: AgentMcpToolPolicy | undefined,
+): AgentMcpToolPolicy | undefined {
+  if (hostPolicy === undefined) {
+    return agentPolicy;
+  }
+  if (agentPolicy === undefined) {
+    return hostPolicy;
+  }
+
+  const allow = hostPolicy.allow === undefined
+    ? agentPolicy.allow
+    : agentPolicy.allow === undefined
+    ? hostPolicy.allow
+    : hostPolicy.allow.filter((toolName) => agentPolicy.allow?.includes(toolName));
+  const deny = [
+    ...new Set([
+      ...(hostPolicy.deny ?? []),
+      ...(agentPolicy.deny ?? []),
+    ]),
+  ];
+  const approval = hostPolicy.approval ?? agentPolicy.approval;
+
+  return {
+    ...(allow === undefined ? {} : { allow }),
+    ...(deny.length === 0 ? {} : { deny }),
+    ...(approval === undefined ? {} : { approval }),
+  };
 }
 
 async function loadDefaultCreateBashTool(): Promise<
@@ -699,18 +774,20 @@ export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSe
 function getProjectInstructions(
   context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
+  agentId?: string,
 ): Promise<string> {
   return context.trace("chat.getProjectInstructions", async () => {
-    return await getProjectSteering(context).getProjectInstructions(lookup);
+    return await getProjectSteering(context, agentId).getProjectInstructions(lookup);
   });
 }
 
 function getSkillsConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
+  agentId?: string,
 ): Promise<RuntimeSkillDefinition[]> {
   return context.trace("chat.getSkillsConfig", async () => {
-    return await getProjectSteering(context).getSkillsConfig(lookup);
+    return await getProjectSteering(context, agentId).getSkillsConfig(lookup);
   });
 }
 
@@ -718,14 +795,14 @@ function createLoadSkillTool(
   context: NodeVeryfrontCloudAgentServiceContext,
   toolContext: RuntimeLoadSkillToolContext,
 ) {
-  return getProjectSteering(context).createLoadSkillTool(toolContext);
+  return getProjectSteering(context, toolContext.agentId).createLoadSkillTool(toolContext);
 }
 
 async function refreshProjectSkillIds(
   context: NodeVeryfrontCloudAgentServiceContext,
   skillContext: HostedProjectSkillIdsContext,
 ): Promise<void> {
-  await getProjectSteering(context).refreshProjectSkillIds(skillContext);
+  await getProjectSteering(context, skillContext.agentId).refreshProjectSkillIds(skillContext);
 }
 
 function setFilteredTraceAttributes(
@@ -753,9 +830,117 @@ function shouldRethrowInvokeAgentError(error: unknown): boolean {
   return parseProviderError(error).code === "INSUFFICIENT_CREDITS";
 }
 
+function resolveHostedChildToolNames(
+  agentConfig: RuntimeAgentMarkdownDefinition,
+): string[] | undefined {
+  if (agentConfig.tools === true) {
+    return undefined;
+  }
+
+  return [
+    ...new Set([
+      ...(agentConfig.tools ?? []).filter((toolName) =>
+        !HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES.has(toolName)
+      ),
+      ...(agentConfig.providerTools ?? []),
+      ...(agentConfig.delegates ?? []).map((id) => `agent_${id}`),
+      "load_skill",
+    ]),
+  ];
+}
+
+function buildHostedChildToolContext(
+  globalToolContext: ChildRunContext,
+  childAgentId: string,
+  childConfig: DefaultHostedChildAgentExecutionConfig | undefined,
+  durableChildRun?: HostedChildRunIdentifiers,
+): ChildRunContext {
+  return {
+    ...globalToolContext,
+    agentId: childAgentId,
+    ...(childConfig?.availableSkillIds ? { availableSkillIds: childConfig.availableSkillIds } : {}),
+    ...(childConfig?.skillSourcePaths ? { skillSourcePaths: childConfig.skillSourcePaths } : {}),
+    ...(childConfig?.toolNames ? { availableToolNames: childConfig.toolNames } : {}),
+    loadedSkillResponses: {},
+    loadedSkillReferenceResponses: {},
+    ...(durableChildRun
+      ? {
+        conversationId: durableChildRun.childConversationId,
+        parentRunId: durableChildRun.childRunId,
+        parentMessageId: durableChildRun.childMessageId,
+      }
+      : {}),
+  };
+}
+
+/** Internal test seams for hosted project-agent materialization. */
+export const veryfrontCloudAgentServiceInternals = {
+  buildHostedChildToolContext,
+  resolveHostedChildAgentExecutionConfig,
+  resolveHostedChildToolNames,
+  resolveMcpServers,
+};
+
+async function resolveHostedChildAgentExecutionConfig(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  taskContext: ChildRunContext,
+  childAgentId: string,
+  projectId: string,
+): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
+  if (!getProjectAgentRuntime(context).agents.has(childAgentId)) {
+    return undefined;
+  }
+
+  const agentConfig = await resolveAgentConfig(context, childAgentId);
+  const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
+  const steering = await fetchProjectSteering(context, {
+    projectId: projectId || null,
+    authToken: taskContext.authToken,
+    branchId,
+  }, childAgentId);
+  const advertisedSkills = resolveRuntimeSkillsForAgent({
+    skills: steering.skills,
+    agentId: childAgentId,
+    selector: agentConfig.skills,
+  });
+  const loadableSkills = resolveRuntimeSkillsForAgent({
+    skills: steering.skills,
+    agentId: childAgentId,
+    selector: true,
+  });
+  const skillSourcePaths = Object.fromEntries(
+    loadableSkills
+      .filter((skill) => skill.sourcePath)
+      .map((skill) => [skill.id, skill.sourcePath as string]),
+  );
+  const toolNames = resolveHostedChildToolNames(agentConfig);
+  const thinking = agentConfig.thinking?.enabled === false ? 0 : agentConfig.thinking?.budgetTokens;
+
+  return {
+    system: flattenSystemInstructions(buildVeryfrontCloudRuntimeInstructions({
+      agentConfig,
+      projectId: projectId || null,
+      branchId,
+      instructions: steering.instructions,
+      skills: advertisedSkills,
+      availableToolNames: toolNames,
+    })),
+    ...(agentConfig.model ? { model: agentConfig.model } : {}),
+    ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
+    ...(agentConfig.maxSteps === undefined ? {} : { maxSteps: agentConfig.maxSteps }),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(toolNames === undefined ? {} : { toolNames }),
+    mcpServers: resolveMcpServers(context.options, agentConfig),
+    availableSkillIds: loadableSkills.map((skill) => skill.id),
+    ...(Object.keys(skillSourcePaths).length > 0 ? { skillSourcePaths } : {}),
+    ...(agentConfig.delegates === undefined ? {} : { delegateIds: agentConfig.delegates }),
+  };
+}
+
 function createInvokeAgentTool(
   context: NodeVeryfrontCloudAgentServiceContext,
   childContext: ChildRunContext,
+  options?: { requireDurable?: boolean },
 ) {
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
@@ -770,15 +955,68 @@ function createInvokeAgentTool(
     resolveProviderOptions: resolveVeryfrontCloudThinkingProviderOptions,
     resolveReasoning: resolveVeryfrontCloudReasoningOption,
     shouldRethrowError: shouldRethrowInvokeAgentError,
-    buildGlobalTools: (globalToolContext) => ({
-      load_skill: createLoadSkillTool(context, globalToolContext),
-    }),
+    buildGlobalTools: (globalToolContext, childAgentId, childConfig, durableChildRun) => {
+      const childToolContext = buildHostedChildToolContext(
+        globalToolContext,
+        childAgentId,
+        childConfig,
+        durableChildRun,
+      );
+      return {
+        ...(childConfig ? getDiscoveredHostTools({ agentId: childAgentId }) : {}),
+        load_skill: createLoadSkillTool(context, childToolContext),
+        ...(childConfig?.delegateIds?.length
+          ? buildHostedDelegateTools(context, {
+            delegates: childConfig.delegateIds,
+            selfId: childAgentId,
+            taskContext: childToolContext,
+          })
+          : {}),
+      };
+    },
+    resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
+      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
     refreshProjectSkillIds: (projectSkillContext) =>
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
     createRemoteToolSource: createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions,
+    requireDurableInvokeAgent: options?.requireDurable,
+  });
+}
+
+function buildHostedDelegateTools(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  input: {
+    delegates: readonly string[];
+    selfId: string;
+    taskContext: ChildRunContext;
+  },
+): HostToolSet {
+  const invokeAgent = createInvokeAgentTool(context, input.taskContext, { requireDurable: true });
+  return buildAgentDelegateTools({
+    delegates: input.delegates,
+    selfId: input.selfId,
+    resolveAgent: (delegateId) => getProjectAgentRuntime(context).agents.get(delegateId),
+    executeDelegate: ({ delegateId, toolInput, context: executionContext }) =>
+      invokeAgent.execute({
+        agent_id: delegateId,
+        description: `Run ${delegateId} specialist task`,
+        prompt: toolInput.input,
+      }, executionContext),
+  });
+}
+
+function buildHostedDeclarativeDelegateTools(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  agentConfig: RuntimeAgentMarkdownDefinition,
+  taskContext: DefaultHostedChatRuntimeTaskContext,
+): HostToolSet {
+  return buildHostedDelegateTools(context, {
+    delegates: agentConfig.delegates ?? [],
+    selfId: agentConfig.id,
+    taskContext,
   });
 }
 
@@ -797,7 +1035,17 @@ function buildLocalTools(
   };
 
   if (options.allowDelegation !== false) {
-    tools.invoke_agent = createInvokeAgentTool(context, taskContext);
+    const agentConfig = options.liveProjectSteering?.agent;
+    if (agentConfig?.delegates !== undefined) {
+      Object.assign(
+        tools,
+        buildHostedDeclarativeDelegateTools(context, agentConfig, taskContext),
+      );
+    } else {
+      // Agents authored before declarative delegates retain the legacy hosted
+      // child-fork tool. An explicit empty list opts out.
+      tools.invoke_agent = createInvokeAgentTool(context, taskContext);
+    }
   }
 
   return tools;
@@ -837,7 +1085,10 @@ function createAgentRuntime(
       apiUrl: config.VERYFRONT_API_URL,
       apiMcpUrl: config.VERYFRONT_MCP_URL,
       studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
-      mcpServers: resolveMcpServers(context.options),
+      mcpServers: resolveMcpServers(
+        context.options,
+        options.liveProjectSteering?.agent,
+      ),
     },
     buildLocalTools: localToolRuntime.buildLocalTools,
     cleanup: localToolRuntime.cleanup,
@@ -936,11 +1187,12 @@ function setPrepareChatExecutionResultAttributes(
 function fetchProjectSteering(
   context: NodeVeryfrontCloudAgentServiceContext,
   input: { projectId: string | null; authToken: string; branchId?: string | null },
+  agentId?: string,
 ) {
   return fetchDefaultHostedProjectSteering({
     ...input,
-    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
-    fetchSkills: (lookup) => getSkillsConfig(context, lookup),
+    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup, agentId),
+    fetchSkills: (lookup) => getSkillsConfig(context, lookup, agentId),
     trace: context.trace,
     traceOperationName: "chat.fetchSteering",
   });

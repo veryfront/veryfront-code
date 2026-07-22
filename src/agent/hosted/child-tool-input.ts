@@ -6,6 +6,7 @@ import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts"
 
 /** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
+export const MAX_HOSTED_CHILD_DELEGATION_DEPTH = 8;
 const HOSTED_CHILD_FORK_RESULT_MODES = ["summary", "full", "structured"] as const;
 
 /** Hosted child fork result return mode. */
@@ -25,6 +26,9 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
       "Tool subset for this fork. Omit = inherit all parent tools.",
     ),
     model: v.string().optional().describe('Model override (e.g. "sonnet" for cheaper work).'),
+    temperature: v.number().min(0).max(2).optional().describe(
+      "Sampling temperature override. Omit for the hosted child default.",
+    ),
     thinking: v
       .number()
       .nonnegative()
@@ -45,9 +49,14 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
 export const hostedChildForkToolInputSchema = lazySchema(getHostedChildForkToolInputSchema);
 
 /** Input payload for hosted child fork tool. */
-export type HostedChildForkToolInput = InferSchema<
+type ParsedHostedChildForkToolInput = InferSchema<
   ReturnType<typeof getHostedChildForkToolInputSchema>
 >;
+export type HostedChildForkToolInput =
+  & Omit<ParsedHostedChildForkToolInput, "context">
+  & {
+    context?: ParsedHostedChildForkToolInput["context"];
+  };
 
 /** Configuration used by hosted child fork runtime. */
 export type HostedChildForkRuntimeConfig = {
@@ -56,47 +65,87 @@ export type HostedChildForkRuntimeConfig = {
   requestedTools: string[] | undefined;
   forkModel: string;
   provider: string;
+  temperature?: number;
   maxSteps: number;
   thinkingConfig: RuntimeAgentThinkingConfig | undefined;
 };
 
-function getStringRecord(value: unknown): Record<string, string> {
+export type HostedChildInvocationContext = {
+  root_conversation_id?: string;
+  root_run_id?: string;
+  root_message_id?: string;
+  parent_conversation_id?: string;
+  parent_run_id?: string;
+  parent_message_id?: string;
+  tool_call_id?: string;
+  delegation_depth: number;
+};
+
+function getTrustedInvocationContext(
+  value: HostedChildInvocationContext | undefined,
+): HostedChildInvocationContext | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
+    return undefined;
   }
 
-  const record: Record<string, string> = {};
-  for (const [key, property] of Object.entries(value)) {
-    if (typeof property === "string") {
-      record[key] = property;
-    }
-  }
+  const depth = Number.isInteger(value.delegation_depth) ? Math.max(0, value.delegation_depth) : 0;
 
-  return record;
+  return {
+    ...(typeof value.root_conversation_id === "string"
+      ? { root_conversation_id: value.root_conversation_id }
+      : {}),
+    ...(typeof value.root_run_id === "string" ? { root_run_id: value.root_run_id } : {}),
+    ...(typeof value.root_message_id === "string"
+      ? { root_message_id: value.root_message_id }
+      : {}),
+    ...(typeof value.parent_conversation_id === "string"
+      ? { parent_conversation_id: value.parent_conversation_id }
+      : {}),
+    ...(typeof value.parent_run_id === "string" ? { parent_run_id: value.parent_run_id } : {}),
+    ...(typeof value.parent_message_id === "string"
+      ? { parent_message_id: value.parent_message_id }
+      : {}),
+    ...(typeof value.tool_call_id === "string" ? { tool_call_id: value.tool_call_id } : {}),
+    delegation_depth: depth,
+  };
+}
+
+function assertCanDelegate(parentDepth: number): void {
+  if (parentDepth >= MAX_HOSTED_CHILD_DELEGATION_DEPTH) {
+    throw new Error(
+      `invoke_agent delegation depth limit exceeded: maximum depth is ${MAX_HOSTED_CHILD_DELEGATION_DEPTH}.`,
+    );
+  }
 }
 
 function buildHostedChildInvocationContext(
-  forkInput: HostedChildForkToolInput,
   input: {
+    parentConversationId?: string;
     conversationId?: string;
     parentRunId?: string;
+    parentMessageId?: string;
     toolCallId: string;
+    trustedInvocationContext?: HostedChildInvocationContext;
   },
-): Record<string, string> {
-  const existing = getStringRecord(forkInput.context?.veryfront_invocation_context);
-  const rootConversationId = existing.root_conversation_id || input.conversationId;
-  const rootRunId = existing.root_run_id || input.parentRunId;
+): HostedChildInvocationContext {
+  const trusted = getTrustedInvocationContext(input.trustedInvocationContext);
+  const parentDepth = trusted?.delegation_depth ?? 0;
+  assertCanDelegate(parentDepth);
+
+  const parentConversationId = input.parentConversationId ?? input.conversationId;
+  const rootConversationId = trusted?.root_conversation_id || parentConversationId;
+  const rootRunId = trusted?.root_run_id || input.parentRunId;
+  const rootMessageId = trusted?.root_message_id || input.parentMessageId;
 
   return {
-    ...existing,
     ...(rootConversationId
       ? {
         root_conversation_id: rootConversationId,
       }
       : {}),
-    ...(input.conversationId
+    ...(parentConversationId
       ? {
-        parent_conversation_id: input.conversationId,
+        parent_conversation_id: parentConversationId,
       }
       : {}),
     ...(rootRunId
@@ -104,12 +153,23 @@ function buildHostedChildInvocationContext(
         root_run_id: rootRunId,
       }
       : {}),
+    ...(rootMessageId
+      ? {
+        root_message_id: rootMessageId,
+      }
+      : {}),
     ...(input.parentRunId
       ? {
         parent_run_id: input.parentRunId,
       }
       : {}),
+    ...(input.parentMessageId
+      ? {
+        parent_message_id: input.parentMessageId,
+      }
+      : {}),
     tool_call_id: input.toolCallId,
+    delegation_depth: parentDepth + 1,
   };
 }
 
@@ -117,16 +177,21 @@ function buildHostedChildInvocationContext(
 export function withHostedChildInvocationContext(
   forkInput: HostedChildForkToolInput,
   input: {
+    parentConversationId?: string;
     conversationId?: string;
     parentRunId?: string;
+    parentMessageId?: string;
     toolCallId: string;
+    trustedInvocationContext?: HostedChildInvocationContext;
   },
 ): HostedChildForkToolInput {
   return {
     ...forkInput,
     context: {
       ...(forkInput.context ?? {}),
-      veryfront_invocation_context: buildHostedChildInvocationContext(forkInput, input),
+      veryfront_invocation_context: buildHostedChildInvocationContext({
+        ...input,
+      }),
     },
   };
 }
@@ -140,6 +205,7 @@ export type ResolveHostedChildForkRuntimeConfigInput = {
     | "context"
     | "tools"
     | "model"
+    | "temperature"
     | "thinking"
     | "max_steps"
   >;
@@ -196,7 +262,8 @@ export function buildHostedChildForkEffectivePrompt(input: {
 export function resolveHostedChildForkRuntimeConfig(
   input: ResolveHostedChildForkRuntimeConfigInput,
 ): HostedChildForkRuntimeConfig {
-  const { description, prompt, context, tools, model, thinking, max_steps } = input.forkInput;
+  const { description, prompt, tools, model, temperature, thinking, max_steps } = input.forkInput;
+  const context = input.forkInput.context ?? {};
   const forkModel = input.resolveModelId(model || input.contextModel || input.defaultModel);
   const requestedMaxSteps = typeof max_steps === "number" ? max_steps : undefined;
   const thinkingConfig = resolveHostedChildForkThinkingOverride(thinking) ??
@@ -213,6 +280,7 @@ export function resolveHostedChildForkRuntimeConfig(
     requestedTools: tools,
     forkModel,
     provider: input.resolveProvider(forkModel),
+    ...(temperature === undefined ? {} : { temperature }),
     maxSteps: Math.max(requestedMaxSteps ?? input.defaultMaxSteps, input.defaultMaxSteps),
     thinkingConfig,
   };

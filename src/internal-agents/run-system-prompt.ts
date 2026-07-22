@@ -139,6 +139,7 @@ export async function composeInternalAgentRunSystemPrompt(
       instructions: baseInstructions,
     },
     runtimeBlocks,
+    availableToolNames: input.toolNames,
     ...(studioContext.environmentContext
       ? { environmentContext: studioContext.environmentContext }
       : {}),

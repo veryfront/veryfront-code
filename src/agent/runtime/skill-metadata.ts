@@ -165,6 +165,25 @@ export type RuntimeSkillMetadataLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+function getAvailableScopedDelegateToolNames(
+  availableToolNameSet: ReadonlySet<string> | null,
+): string[] {
+  if (!availableToolNameSet) {
+    return [];
+  }
+
+  return [...availableToolNameSet].filter((toolName) => toolName.startsWith("agent_")).sort();
+}
+
+function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
+  return availableToolNameSet === null || availableToolNameSet.has("invoke_agent");
+}
+
+function hasAvailableDelegationTool(availableToolNameSet: ReadonlySet<string> | null): boolean {
+  return availableToolNameSet === null || canUseLegacyInvokeAgent(availableToolNameSet) ||
+    getAvailableScopedDelegateToolNames(availableToolNameSet).length > 0;
+}
+
 /** Public API contract for parsed runtime skill document. */
 export type ParsedRuntimeSkillDocument = {
   metadata: RuntimeSkillFrontmatter;
@@ -292,7 +311,7 @@ export function buildRuntimeLoadedSkillResponse(input: {
 }): RuntimeLoadedSkillResponse {
   const metadata = parseRuntimeSkillMetadata(input.instructions, { logger: input.logger });
   const declaredAllowedTools = metadata?.allowedTools ?? [];
-  const availableToolNameSet = input.availableToolNames && input.availableToolNames.length > 0
+  const availableToolNameSet = input.availableToolNames !== undefined
     ? new Set(input.availableToolNames)
     : null;
   const currentRunAllowedTools = availableToolNameSet
@@ -321,13 +340,15 @@ export function buildRuntimeLoadedSkillResponse(input: {
     ...(unavailableCurrentRunTools.length > 0
       ? {
         unavailableCurrentRunTools,
-        delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote,
+        ...(hasAvailableDelegationTool(availableToolNameSet)
+          ? { delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote }
+          : {}),
       }
       : {}),
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides
+    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet)
       ? {
         overrideNote: input.messages.overrideNote,
       }

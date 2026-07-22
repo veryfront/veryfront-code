@@ -134,6 +134,74 @@ Write carefully.`,
   assertEquals(result.maxSteps, 8);
 });
 
+Deno.test("createRuntimeLoadSkillTool names scoped delegates and omits override forwarding", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableToolNames: ["read_file", "agent_writer", "load_skill"],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([
+        [
+          "write",
+          `---
+allowed-tools:
+  - read_file
+  - write_file
+model: sonnet
+max-steps: 8
+---
+Write carefully.`,
+        ],
+      ]),
+    }),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
+
+  assertEquals(result.allowedTools, ["read_file"]);
+  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
+  assertStringIncludes(
+    result.nextStep,
+    "use only these available scoped delegation tools: `agent_writer`",
+  );
+  assertStringIncludes(result.delegationNote ?? "", "`agent_writer`");
+  assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
+  assertEquals(result.overrideNote, undefined);
+});
+
+Deno.test("createRuntimeLoadSkillTool omits delegation advice without delegate tools", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableToolNames: ["read_file", "load_skill"],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([
+        [
+          "write",
+          `---
+allowed-tools:
+  - read_file
+  - write_file
+---
+Write carefully.`,
+        ],
+      ]),
+    }),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
+
+  assertEquals(result.allowedTools, ["read_file"]);
+  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
+  assertEquals(result.delegationNote, undefined);
+  assertEquals(result.nextStep.includes("multi-step or isolated work"), false);
+  assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
+});
+
 Deno.test("createRuntimeLoadSkillTool makes same-skill reloads concise and idempotent", async () => {
   const context = createProjectContext({
     availableToolNames: ["read_file"],

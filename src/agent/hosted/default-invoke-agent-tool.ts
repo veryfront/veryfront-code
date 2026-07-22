@@ -24,7 +24,11 @@ import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import { createConversationChildLifecycleAdapter } from "../conversation/hosted-lifecycle.ts";
 import { bootstrapHostedChildRun } from "./child-bootstrap.ts";
 import { createHostedChildExecutionLogWriter } from "./child-execution-logging.ts";
-import { startHostedChildForkRuntimeWithHostTools } from "./child-fork-runtime-start.ts";
+import {
+  type StartedHostedChildForkRuntime,
+  startHostedChildForkRuntimeWithHostTools,
+  type StartHostedChildForkRuntimeWithHostToolsInput,
+} from "./child-fork-runtime-start.ts";
 import { prepareDefaultHostedChildForkSandboxToolSources } from "./child-fork-tool-sources.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { executeHostedChildForkToolInput } from "./child-fork-execution-runner.ts";
@@ -51,6 +55,7 @@ import {
   getHostedChildForkToolInputSchema,
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
+  type HostedChildInvocationContext,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 import type {
@@ -59,10 +64,12 @@ import type {
 } from "./child-requested-tools.ts";
 import { prepareDefaultHostedChildForkToolAssembly } from "./child-requested-tools.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
+import { buildHostedChildForkInstructions } from "./child-fork-instructions.ts";
 
 /** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
@@ -72,6 +79,7 @@ export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   conversationId?: string;
   parentRunId?: string;
   parentMessageId?: string;
+  veryfrontInvocationContext?: HostedChildInvocationContext;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void> | void;
   availableToolNames?: string[];
   steeringRevision?: number;
@@ -84,6 +92,22 @@ export type DefaultHostedInvokeAgentConfig = {
   studioMcpUrl?: string | null;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   enableDurableInvokeAgent?: boolean;
+};
+
+/** Resolved project-agent settings applied to a fixed hosted child run. */
+export type DefaultHostedChildAgentExecutionConfig = {
+  system: string;
+  model?: string;
+  temperature?: number;
+  maxSteps?: number;
+  thinking?: HostedChildForkToolInput["thinking"];
+  toolNames?: string[];
+  mcpServers?: readonly AgentServiceMcpServerConfig[];
+  availableSkillIds?: string[];
+  skillSourcePaths?: Readonly<Record<string, string>>;
+  loadedSkillResponses?: RuntimeLoadSkillToolContext["loadedSkillResponses"];
+  loadedSkillReferenceResponses?: RuntimeLoadSkillToolContext["loadedSkillReferenceResponses"];
+  delegateIds?: string[];
 };
 
 /** Public API contract for default hosted invoke agent logger. */
@@ -139,8 +163,19 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     ) => RuntimeReasoningOption | undefined;
     resolveModelThinking?: (modelId: string) => HostedChildForkRuntimeConfig["thinkingConfig"];
     shouldRethrowError?: (error: unknown) => boolean;
-    buildGlobalTools?: (context: TContext) => HostToolSet;
+    buildGlobalTools?: (
+      context: TContext,
+      childAgentId: string,
+      childConfig?: DefaultHostedChildAgentExecutionConfig,
+      durableChildRun?: HostedChildRunIdentifiers,
+    ) => HostToolSet;
+    resolveChildAgentExecutionConfig?: (
+      childAgentId: string,
+      projectId: string,
+    ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
+    /** Require durable child lifecycle even when legacy generic delegation is disabled. */
+    requireDurableInvokeAgent?: boolean;
     defaultModel?: string;
     defaultMaxSteps?: number;
     resolveChildAgentId?: (input: DefaultHostedInvokeAgentInput) => string;
@@ -152,6 +187,9 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     createLiveStudioTools?: Parameters<typeof prepareDefaultHostedChildForkSandboxToolSources>[0][
       "createLiveStudioTools"
     ];
+    startRuntime?: (
+      input: StartHostedChildForkRuntimeWithHostToolsInput<DefaultHostedInvokeAgentTraceAttributes>,
+    ) => StartedHostedChildForkRuntime | Promise<StartedHostedChildForkRuntime>;
   };
 
 const defaultHostedInvokeAgentSelectionFields = (v: SchemaValidator) => ({
@@ -184,9 +222,14 @@ export const defaultHostedInvokeAgentInputSchema = lazySchema(
 );
 
 /** Input payload for default hosted invoke agent. */
-export type DefaultHostedInvokeAgentInput = InferSchema<
+type ParsedDefaultHostedInvokeAgentInput = InferSchema<
   ReturnType<typeof getDefaultHostedInvokeAgentInputSchema>
 >;
+export type DefaultHostedInvokeAgentInput =
+  & Omit<ParsedDefaultHostedInvokeAgentInput, "context">
+  & {
+    context?: ParsedDefaultHostedInvokeAgentInput["context"];
+  };
 
 const DEFAULT_USER_AGENT_MODEL = "opus";
 const DEFAULT_USER_AGENT_MAX_STEPS = 80;
@@ -233,12 +276,20 @@ async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgent
 async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentContext>(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
   config: DefaultHostedInvokeAgentConfig,
+  childAgentId: string,
+  childConfig: DefaultHostedChildAgentExecutionConfig | undefined,
   abortSignal?: AbortSignal,
+  durableChildRun?: HostedChildRunIdentifiers,
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   throwIfChildRunAborted(abortSignal);
 
   const globalTools: HostToolSet = {
-    ...(options.buildGlobalTools?.(options.context) ?? {}),
+    ...(options.buildGlobalTools?.(
+      options.context,
+      childAgentId,
+      childConfig,
+      durableChildRun,
+    ) ?? {}),
     sleep: sleepTool,
   };
 
@@ -270,15 +321,26 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
   config: DefaultHostedInvokeAgentConfig,
   input: {
+    childAgentId: string;
+    childConfig?: DefaultHostedChildAgentExecutionConfig;
     provider: string;
     forkModel: string;
     effectivePrompt: string;
     requestedTools?: HostedChildForkToolInput["tools"];
     abortSignal?: AbortSignal;
+    durableChildRun?: HostedChildRunIdentifiers;
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
   const toolAssembly = await prepareDefaultHostedChildForkToolAssembly({
-    prepareToolSources: () => prepareForkToolSources(options, config, input.abortSignal),
+    prepareToolSources: () =>
+      prepareForkToolSources(
+        options,
+        config,
+        input.childAgentId,
+        input.childConfig,
+        input.abortSignal,
+        input.durableChildRun,
+      ),
     provider: input.provider,
     forkModel: input.forkModel,
     effectivePrompt: input.effectivePrompt,
@@ -345,31 +407,58 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   },
   runtimeOptions: {
+    childAgentId: string;
+    childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
-  } = {},
+  },
 ): Promise<ChildRunExecutionResult> {
-  const config = options.getConfig();
-  const instrumentation = buildInstrumentation(options);
+  const baseConfig = options.getConfig();
+  const config = runtimeOptions.childConfig?.mcpServers === undefined
+    ? baseConfig
+    : { ...baseConfig, mcpServers: runtimeOptions.childConfig.mcpServers };
+  const forkInput = withHostedChildInvocationContext(input, {
+    parentConversationId: options.context.conversationId,
+    conversationId: options.context.conversationId,
+    parentRunId: options.context.parentRunId,
+    parentMessageId: options.context.parentMessageId,
+    toolCallId: execution.toolCallId,
+    trustedInvocationContext: options.context.veryfrontInvocationContext,
+  });
+  const invocationContext = forkInput.context?.veryfront_invocation_context as
+    | HostedChildInvocationContext
+    | undefined;
+  const scopedOptions = invocationContext
+    ? {
+      ...options,
+      context: {
+        ...options.context,
+        veryfrontInvocationContext: invocationContext,
+      },
+    }
+    : options;
+  const instrumentation = buildInstrumentation(scopedOptions);
   const writeHostedChildExecutionLog = createHostedChildExecutionLogWriter(options.logger);
 
   return executeHostedChildForkToolInput<DefaultHostedInvokeAgentTraceAttributes>({
     apiUrl: config.apiUrl,
-    authToken: options.context.authToken,
-    projectId: options.context.projectId || null,
-    forkInput: input,
+    authToken: scopedOptions.context.authToken,
+    projectId: scopedOptions.context.projectId || null,
+    forkInput,
     toolCallId: execution.toolCallId,
-    contextModel: options.context.model,
+    contextModel: scopedOptions.context.model,
     defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
-    defaultMaxSteps: options.defaultMaxSteps ?? DEFAULT_USER_AGENT_MAX_STEPS,
+    defaultMaxSteps: runtimeOptions.childConfig?.maxSteps ??
+      options.defaultMaxSteps ??
+      DEFAULT_USER_AGENT_MAX_STEPS,
     resolveModelId: options.resolveModelId,
     resolveProvider: options.resolveProvider,
     resolveModelThinking: options.resolveModelThinking,
-    onRequestedProjectId: (projectId) => applyRequestedProjectId(options, projectId),
+    onRequestedProjectId: (projectId) => applyRequestedProjectId(scopedOptions, projectId),
     onRuntimeConfig: (runtimeConfig) => {
       options.logger.info("Starting child fork", {
-        conversationId: options.context.conversationId,
-        parentRunId: options.context.parentRunId,
+        conversationId: scopedOptions.context.conversationId,
+        parentRunId: scopedOptions.context.parentRunId,
         description: runtimeConfig.description,
         kind: "invoke_agent",
         model: runtimeConfig.forkModel,
@@ -378,26 +467,46 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
       });
     },
     prepareToolAssembly: ({ runtimeConfig, requestedTools, abortSignal }) =>
-      prepareForkToolAssembly(options, config, {
+      prepareForkToolAssembly(scopedOptions, config, {
+        childAgentId: runtimeOptions.childAgentId,
+        childConfig: runtimeOptions.childConfig,
         provider: runtimeConfig.provider,
         forkModel: runtimeConfig.forkModel,
         effectivePrompt: runtimeConfig.effectivePrompt,
         requestedTools,
         abortSignal,
+        durableChildRun: runtimeOptions.durableChildRun,
       }),
     resolveProviderOptions: options.resolveProviderOptions,
     resolveReasoning: options.resolveReasoning,
-    forkContext: options.context,
+    forkContext: scopedOptions.context,
+    parentConversationId: scopedOptions.context.conversationId,
+    parentMessageId: scopedOptions.context.parentMessageId,
+    trustedInvocationContext: scopedOptions.context.veryfrontInvocationContext,
+    inputAlreadyHasInvocationContext: true,
+    ...(runtimeOptions.childConfig
+      ? {
+        buildInstructions: () => {
+          const baseInstructions = buildHostedChildForkInstructions({
+            ...scopedOptions.context,
+            availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
+          });
+          return runtimeOptions.childConfig?.system
+            ? `${runtimeOptions.childConfig.system}\n\n${baseInstructions}`
+            : baseInstructions;
+        },
+      }
+      : {}),
     abortSignal: execution.abortSignal,
     durableChildRun: runtimeOptions.durableChildRun,
-    conversationId: options.context.conversationId,
-    parentRunId: options.context.parentRunId,
+    conversationId: scopedOptions.context.conversationId,
+    parentRunId: scopedOptions.context.parentRunId,
     kind: "invoke_agent",
     onSettled: runtimeOptions.onSettled,
     logger: options.logger,
     pendingToolLogWriter: options.logger,
     writeLog: writeHostedChildExecutionLog,
-    startRuntime: startHostedChildForkRuntimeWithHostTools,
+    startRuntime: options.startRuntime ?? startHostedChildForkRuntimeWithHostTools,
     shouldRethrowError: options.shouldRethrowError,
     instrumentation,
     sourceIntegrationPolicy: execution.sourceIntegrationPolicy,
@@ -416,6 +525,37 @@ function getAbortSignal(executionContext?: ToolExecutionContext): AbortSignal | 
     : undefined;
 }
 
+function applyChildAgentExecutionConfig(
+  input: DefaultHostedInvokeAgentInput,
+  childConfig: DefaultHostedChildAgentExecutionConfig | undefined,
+): DefaultHostedInvokeAgentInput {
+  if (!childConfig) {
+    return input;
+  }
+
+  return {
+    ...input,
+    ...(input.model === undefined && childConfig.model ? { model: childConfig.model } : {}),
+    ...(input.temperature === undefined && childConfig.temperature !== undefined
+      ? { temperature: childConfig.temperature }
+      : {}),
+    ...(input.max_steps === undefined && childConfig.maxSteps !== undefined
+      ? { max_steps: childConfig.maxSteps }
+      : {}),
+    ...(input.thinking === undefined && childConfig.thinking !== undefined
+      ? { thinking: childConfig.thinking }
+      : {}),
+    ...(input.tools === undefined && childConfig.toolNames !== undefined
+      ? { tools: childConfig.toolNames }
+      : {}),
+  };
+}
+
+/** Test-only helpers for fixed-target hosted delegation behavior. */
+export const defaultHostedInvokeAgentToolInternals = {
+  applyChildAgentExecutionConfig,
+};
+
 /** Execute default hosted invoke agent tool. */
 export async function executeDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
@@ -427,14 +567,16 @@ export async function executeDefaultHostedInvokeAgentTool<
 ): Promise<DefaultHostedInvokeAgentToolResult> {
   let executionSnapshot: ChildRunExecutionSnapshot | null = null;
   const config = options.getConfig();
+  const targetProjectId = input.project_id ?? options.context.projectId;
+  const childConfig = await options.resolveChildAgentExecutionConfig?.(
+    childAgentId,
+    targetProjectId,
+  );
   const toolCallId = getToolCallId(executionContext);
   const abortSignal = getAbortSignal(executionContext);
   const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-  const forkInput = withHostedChildInvocationContext(input, {
-    conversationId: options.context.conversationId,
-    parentRunId: options.context.parentRunId,
-    toolCallId,
-  });
+  const configuredInput = applyChildAgentExecutionConfig(input, childConfig);
+  const forkInput = configuredInput;
   const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
     traceBase: {
       conversationId: options.context.conversationId,
@@ -457,6 +599,8 @@ export async function executeDefaultHostedInvokeAgentTool<
         sourceIntegrationPolicy,
       },
       {
+        childAgentId,
+        childConfig,
         onSettled: (snapshot) => {
           executionSnapshot = snapshot;
         },
@@ -466,7 +610,7 @@ export async function executeDefaultHostedInvokeAgentTool<
 
   durableInvokeRecorder.annotate();
 
-  if (!config.enableDurableInvokeAgent) {
+  if (!config.enableDurableInvokeAgent && !options.requireDurableInvokeAgent) {
     return executeHostedLocalChildInvoke({
       forkInput,
       abortSignal,
@@ -492,10 +636,11 @@ export async function executeDefaultHostedInvokeAgentTool<
         abortSignal,
       },
       childAgentId,
-      runProjectId: input.project_id ?? options.context.projectId,
+      runProjectId: targetProjectId,
       parentConversationId: options.context.conversationId,
       parentRunId: options.context.parentRunId,
       parentMessageId: options.context.parentMessageId,
+      trustedInvocationContext: options.context.veryfrontInvocationContext,
       getProjectId: () => options.context.projectId,
       getRuntimeTargetKind: () => options.context.runtimeTargetKind,
       getRuntimeTargetEnvironmentId: () => options.context.runtimeTargetEnvironmentId,

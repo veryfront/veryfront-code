@@ -17,6 +17,7 @@ import {
   getDiscoveredHostTools,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
+  veryfrontCloudAgentServiceInternals,
   veryfrontStudioMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -135,6 +136,127 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
   } finally {
     toolRegistry.clearAll();
   }
+});
+
+Deno.test("hosted child project agents request only materialized skill and delegate tools", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      tools: [
+        "get_file",
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ],
+      providerTools: ["web_search"],
+      delegates: ["validation-agent"],
+    }),
+    ["get_file", "load_skill", "web_search", "agent_validation-agent"],
+  );
+});
+
+Deno.test("hosted nested delegates inherit child scope and durable lineage", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableToolNames: ["agent_extraction-agent", "root_only"],
+      availableSkillIds: ["root-skill"],
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "extraction-agent",
+    {
+      system: "Extract applications.",
+      toolNames: ["get_file", "agent_validation-agent", "load_skill"],
+      availableSkillIds: ["extraction-skill"],
+      skillSourcePaths: {
+        "extraction-skill": "agents/extraction-agent/skills/extract/SKILL.md",
+      },
+      delegateIds: ["validation-agent"],
+      mcpServers: [],
+    },
+    {
+      childConversationId: "child-conversation",
+      childRunId: "child-run",
+      childMessageId: "child-message",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
+  );
+
+  assertEquals(context.agentId, "extraction-agent");
+  assertEquals(context.availableToolNames, [
+    "get_file",
+    "agent_validation-agent",
+    "load_skill",
+  ]);
+  assertEquals(context.availableSkillIds, ["extraction-skill"]);
+  assertEquals(context.skillSourcePaths, {
+    "extraction-skill": "agents/extraction-agent/skills/extract/SKILL.md",
+  });
+  assertEquals(context.loadedSkillResponses, {});
+  assertEquals(context.loadedSkillReferenceResponses, {});
+  assertEquals(context.conversationId, "child-conversation");
+  assertEquals(context.parentRunId, "child-run");
+  assertEquals(context.parentMessageId, "child-message");
+});
+
+Deno.test("hosted nested delegates preserve trusted root invocation context", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      agentId: "orchestrator",
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+      veryfrontInvocationContext: {
+        root_conversation_id: "root-conversation",
+        root_run_id: "root-run",
+        root_message_id: "root-message",
+        parent_conversation_id: "root-conversation",
+        parent_run_id: "root-run",
+        parent_message_id: "root-message",
+        tool_call_id: "tool-call-child",
+        delegation_depth: 1,
+      },
+    },
+    "validation-agent",
+    {
+      system: "Validate applications.",
+      toolNames: ["get_file", "load_skill"],
+      availableSkillIds: ["validation-skill"],
+      mcpServers: [],
+    },
+    {
+      childConversationId: "child-conversation",
+      childRunId: "child-run",
+      childMessageId: "child-message",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
+  );
+
+  assertEquals(context.veryfrontInvocationContext, {
+    root_conversation_id: "root-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_conversation_id: "root-conversation",
+    parent_run_id: "root-run",
+    parent_message_id: "root-message",
+    tool_call_id: "tool-call-child",
+    delegation_depth: 1,
+  });
+  assertEquals(context.conversationId, "child-conversation");
+  assertEquals(context.parentRunId, "child-run");
+  assertEquals(context.parentMessageId, "child-message");
 });
 
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent and binds service routes", async () => {
@@ -498,6 +620,141 @@ Deno.test("startNodeVeryfrontCloudAgentService rejects registration without an i
 Deno.test("Veryfront MCP server helpers create explicit server configs", () => {
   assertEquals(veryfrontApiMcpServer(), { kind: "veryfront-api" });
   assertEquals(veryfrontStudioMcpServer(), { kind: "veryfront-studio" });
+});
+
+Deno.test("hosted MCP resolver preserves default behavior without a service ceiling", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers({}),
+    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+  );
+
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers({}, {
+      mcpServers: [{
+        kind: "veryfront-studio",
+        toolPolicy: { allow: ["studio_open_project"] },
+      }],
+    }),
+    [{
+      kind: "veryfront-studio",
+      toolPolicy: { allow: ["studio_open_project"] },
+    }],
+  );
+});
+
+Deno.test("hosted MCP resolver keeps explicit service opt-out as a hard ceiling", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { mcpServers: [] },
+      { mcpServers: [{ kind: "veryfront-api" }] },
+    ),
+    [],
+  );
+});
+
+Deno.test("hosted MCP resolver drops agent servers not granted by the service", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { mcpServers: [{ kind: "veryfront-api" }] },
+      { mcpServers: [{ kind: "veryfront-api", id: "agent-picked" }] },
+    ),
+    [],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { mcpServers: [{ kind: "veryfront-studio" }] },
+      { mcpServers: [{ kind: "veryfront-api" }] },
+    ),
+    [],
+  );
+});
+
+Deno.test("hosted MCP resolver narrows allow policy and unions deny policy under service ceiling", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      {
+        mcpServers: [{
+          kind: "veryfront-api",
+          id: "primary",
+          toolPolicy: {
+            allow: ["read_job", "update_job"],
+            deny: ["delete_job"],
+            approval: "never",
+          },
+        }],
+      },
+      {
+        mcpServers: [{
+          kind: "veryfront-api",
+          id: "primary",
+          toolPolicy: {
+            allow: ["read_job", "submit_job"],
+            deny: ["update_job"],
+            approval: "never",
+          },
+        }],
+      },
+    ),
+    [{
+      kind: "veryfront-api",
+      id: "primary",
+      toolPolicy: {
+        allow: ["read_job"],
+        deny: ["delete_job", "update_job"],
+        approval: "never",
+      },
+    }],
+  );
+});
+
+Deno.test("hosted child execution config resolves steering against the target project", async () => {
+  const childAgent = {
+    id: "extraction-agent",
+    name: "Extraction agent",
+    description: "Extract job applications",
+    instructions: "Extract the application.",
+    model: "openai/gpt-5.4",
+    temperature: 0.35,
+  };
+  const steeringLookups: Array<{
+    projectId: string;
+    authToken: string;
+    branchId?: string | null;
+  }> = [];
+  const config = await veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
+    {
+      options: { mcpServers: [] },
+      discoveryResult: { agents: new Map([["extraction-agent", null]]) },
+      agentConfigs: new Map([["extraction-agent", childAgent]]),
+      projectSteeringByAgentId: new Map([["extraction-agent", {
+        getProjectInstructions: (lookup: typeof steeringLookups[number]) => {
+          steeringLookups.push(lookup);
+          return Promise.resolve("Use the target project's extraction policy.");
+        },
+        getSkillsConfig: (lookup: typeof steeringLookups[number]) => {
+          steeringLookups.push(lookup);
+          return Promise.resolve([]);
+        },
+      }]]),
+      trace: (_name: string, operation: () => unknown) => operation(),
+    } as never,
+    {
+      authToken: "token-1",
+      projectId: "source-project",
+      branchId: "source-branch",
+      agentId: "orchestrator",
+    },
+    "extraction-agent",
+    "target-project",
+  );
+
+  assertEquals(config?.model, "openai/gpt-5.4");
+  assertEquals(config?.temperature, 0.35);
+  assert(config?.system.includes("Use the target project's extraction policy."));
+  assertEquals(steeringLookups, [
+    { projectId: "target-project", authToken: "token-1", branchId: null },
+    { projectId: "target-project", authToken: "token-1", branchId: null },
+  ]);
 });
 
 Deno.test({

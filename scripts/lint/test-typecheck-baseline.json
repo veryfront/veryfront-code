@@ -20,7 +20,6 @@
   "src/agent/conversation/run-mirror.test.ts",
   "src/agent/hosted/child-fork-step-message-preparation.test.ts",
   "src/agent/hosted/child-stream-watchdog.test.ts",
-  "src/agent/hosted/cloud-runtime-system-messages.test.ts",
   "src/agent/hosted/form-input-tool.test.ts",
   "src/agent/hosted/response-stream.test.ts",
   "src/agent/hosted/root-sandbox-tool-source.test.ts",

@@ -85,6 +85,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   environmentContext?: string;
   instructions: string;
   skills: RuntimeSkillDefinition[];
+  availableToolNames?: readonly string[];
 };
 
 /** Input payload for hosted chat runtime creation preparation. */

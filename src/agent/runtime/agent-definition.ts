@@ -1,12 +1,12 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
-import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
+import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 /** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
@@ -26,6 +26,28 @@ export type RuntimeAgentThinkingConfig = InferSchema<
   ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
 >;
 
+const getRuntimeAgentMcpToolPolicySchema = defineSchema((v) =>
+  v.object({
+    allow: v.array(v.string().min(1)).optional(),
+    deny: v.array(v.string().min(1)).optional(),
+    approval: v.literal("never").optional(),
+  })
+);
+
+/** Schema for a first-party MCP preset that is safe to serialize with an agent definition. */
+export const getRuntimeAgentMcpServerConfigSchema = defineSchema((v) =>
+  v.object({
+    kind: v.union([v.literal("veryfront-api"), v.literal("veryfront-studio")]),
+    id: v.string().min(1).optional(),
+    toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
+  })
+);
+
+/** First-party MCP preset carried over the hosted agent-definition boundary. */
+export type RuntimeAgentMcpServerConfig = InferSchema<
+  ReturnType<typeof getRuntimeAgentMcpServerConfigSchema>
+>;
+
 /** Zod schema for get runtime agent markdown definition. */
 export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   v.object({
@@ -42,6 +64,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     skills: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     delegates: v.array(v.string().min(1)).optional(),
+    mcpServers: v.array(getRuntimeAgentMcpServerConfigSchema()).optional(),
   })
 );
 
@@ -85,6 +108,7 @@ export type CreateRuntimeAgentSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
   runtimeBlocks?: readonly string[];
   skills?: readonly RuntimeSkillDefinition[];
+  availableToolNames?: readonly string[];
   environmentContext?: string;
   runtimeContextMarker?: string;
 };
@@ -102,56 +126,41 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
   return undefined;
 }
 
-function parseProviderTools(value: unknown): unknown[] | undefined {
+function parseStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) {
-    return undefined;
+    throw CONFIG_INVALID.create({
+      detail: `Agent frontmatter "${field}" must be an array of non-empty strings.`,
+    });
   }
 
-  return value;
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw CONFIG_INVALID.create({
+        detail: `Agent frontmatter "${field}" entry ${index + 1} must be a non-empty string.`,
+      });
+    }
+    return entry.trim();
+  });
 }
 
-function parseCapabilitySelector(value: unknown): true | string[] | undefined {
+function parseCapabilitySelector(value: unknown, field: string): true | string[] {
   if (value === true) {
     return true;
   }
-  if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return [];
-    }
-    const ids = value
-      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-      .map((entry) => entry.trim());
-    return ids.length > 0 ? ids : undefined;
-  }
-  return undefined;
+  return parseStringArray(value, field);
 }
 
-function parseDelegates(value: unknown): string[] | undefined {
+function parseDelegates(value: unknown): string[] {
+  return parseStringArray(value, "delegates");
+}
+
+function parseMcpServers(value: unknown): RuntimeAgentMcpServerConfig[] {
   if (!Array.isArray(value)) {
-    return undefined;
+    throw CONFIG_INVALID.create({
+      detail: 'Agent frontmatter "mcp-servers" must be an array of MCP server configurations.',
+    });
   }
-  const ids = value
-    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    .map((entry) => entry.trim());
-  return ids.length > 0 ? ids : undefined;
-}
-
-function validateDelegates(agentId: string, delegates: string[] | undefined): void {
-  if (!delegates) {
-    return;
-  }
-  for (const delegateId of delegates) {
-    if (delegateId === agentId) {
-      throw INVALID_ARGUMENT.create({ detail: `Agent "${agentId}" cannot delegate to itself.` });
-    }
-    if (!isProviderSafeDelegateId(delegateId)) {
-      throw INVALID_ARGUMENT.create({
-        detail:
-          `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
-          `"${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}" (must match [A-Za-z0-9_-], max 64 chars).`,
-      });
-    }
-  }
+  return value.map((server) => getRuntimeAgentMcpServerConfigSchema().parse(server));
 }
 
 /** Definition for parse runtime agent markdown. */
@@ -173,11 +182,36 @@ export function parseRuntimeAgentMarkdownDefinition(
   const thinking = parseThinking(attrs.thinking);
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
-  const providerTools = parseProviderTools(attrs["provider-tools"]);
-  const skills = parseCapabilitySelector(attrs.skills);
-  const tools = parseCapabilitySelector(attrs.tools);
-  const delegates = parseDelegates(attrs.delegates);
-  validateDelegates(parsedInput.id, delegates);
+  const providerTools = Object.hasOwn(attrs, "provider-tools")
+    ? parseStringArray(attrs["provider-tools"], "provider-tools")
+    : undefined;
+  const skills = Object.hasOwn(attrs, "skills")
+    ? parseCapabilitySelector(attrs.skills, "skills")
+    : undefined;
+  const tools = Object.hasOwn(attrs, "tools")
+    ? parseCapabilitySelector(attrs.tools, "tools")
+    : undefined;
+  const delegates = normalizeAgentDelegateIds(
+    parsedInput.id,
+    Object.hasOwn(attrs, "delegates") ? parseDelegates(attrs.delegates) : undefined,
+  );
+  if (tools === true && delegates?.length) {
+    throw CONFIG_INVALID.create({
+      detail:
+        `Agent frontmatter for "${parsedInput.id}" cannot combine delegates with tools: true. ` +
+        "Declare the required tools by name so delegate capabilities remain explicit.",
+    });
+  }
+  if (Object.hasOwn(attrs, "mcp-servers") && Object.hasOwn(attrs, "mcpServers")) {
+    throw CONFIG_INVALID.create({
+      detail: 'Agent frontmatter must use only one of "mcp-servers" or "mcpServers".',
+    });
+  }
+  const mcpServers = Object.hasOwn(attrs, "mcp-servers")
+    ? parseMcpServers(attrs["mcp-servers"])
+    : Object.hasOwn(attrs, "mcpServers")
+    ? parseMcpServers(attrs.mcpServers)
+    : undefined;
 
   return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
@@ -193,6 +227,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(skills === undefined ? {} : { skills }),
     ...(tools === undefined ? {} : { tools }),
     ...(delegates === undefined ? {} : { delegates }),
+    ...(mcpServers === undefined ? {} : { mcpServers }),
   });
 }
 
@@ -234,7 +269,11 @@ export function createRuntimeAgentSystemMessages(
   }
 
   if (input.skills?.length) {
-    staticParts.push(buildRuntimeAvailableSkillsPromptBlock(input.skills));
+    staticParts.push(
+      buildRuntimeAvailableSkillsPromptBlock(input.skills, {
+        availableToolNames: input.availableToolNames,
+      }),
+    );
   }
 
   const result: ChatSystemMessage[] = [
