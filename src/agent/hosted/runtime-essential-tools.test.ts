@@ -6,11 +6,18 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
   it("keeps skill loading available under a non-empty restrictive allowlist", () => {
     const result = resolveHostedRuntimeAllowedToolNames({
       allowedToolNames: new Set(["sleep"]),
-      localToolNames: ["sleep", "load_skill", "load_skill_reference", "invoke_agent"],
+      localToolNames: [
+        "sleep",
+        "load_skill",
+        "load_skill_reference",
+        "execute_skill_script",
+        "invoke_agent",
+      ],
     });
 
     assertEquals(result?.has("load_skill"), true);
     assertEquals(result?.has("load_skill_reference"), true);
+    assertEquals(result?.has("execute_skill_script"), false);
     assertEquals(result?.has("invoke_agent"), false);
   });
 

@@ -115,10 +115,13 @@ function parseCapabilitySelector(value: unknown): true | string[] | undefined {
     return true;
   }
   if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return [];
+    }
     const ids = value
       .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
       .map((entry) => entry.trim());
-    return ids;
+    return ids.length > 0 ? ids : undefined;
   }
   return undefined;
 }

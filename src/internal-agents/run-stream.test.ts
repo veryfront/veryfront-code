@@ -16,6 +16,7 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
@@ -126,6 +127,7 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
+    skillRegistry.clearAll();
   });
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
@@ -1224,7 +1226,66 @@ describe("internal-agents/run-stream", () => {
     assertEquals(prompt.includes("- remote_127"), false);
   });
 
-  it("preserves invoke_agent delegation for default-skilled agents under toolAllowlist", async () => {
+  it("withholds invoke_agent delegation for default-skilled agents with no visible skills", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
+  it("preserves invoke_agent delegation for default-skilled agents with visible skills", async () => {
+    registerSkill("handoff", {
+      id: "handoff",
+      metadata: { name: "handoff", description: "Delegate safely" },
+      rootPath: "/test/skills/handoff",
+    });
+
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -1275,9 +1336,6 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    // Documented semantics (see applyRuntimeToolAllowlist): delegation tools
-    // survive the allowlist for default-skilled agents, and child runs are NOT
-    // capped by this run's allowlist.
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });
 

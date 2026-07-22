@@ -84,6 +84,21 @@ Use only the authored instructions.
   assertEquals(result.skills, []);
 });
 
+Deno.test("parseRuntimeAgentMarkdownDefinition ignores filtered-to-empty selectors", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "specialist",
+    content: `---
+skills: [" ", 7]
+tools: [" ", 7]
+---
+Use omitted selector defaults.
+`,
+  });
+
+  assertEquals(result.skills, undefined);
+  assertEquals(result.tools, undefined);
+});
+
 Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
   const result = createRuntimeAgentSystemMessages({
     agent: {

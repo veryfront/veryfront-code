@@ -10,6 +10,9 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
 };
 
+// Script execution is intentionally not runtime-essential under allowlists:
+// loading skill instructions is framework infrastructure, while running a
+// project-provided script remains a direct execution capability.
 const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
 
