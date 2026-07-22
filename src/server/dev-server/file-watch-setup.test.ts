@@ -19,6 +19,13 @@ describe("shouldIgnorePath", () => {
     expect(shouldIgnorePath("/proj/.playwright-mcp/screenshot.png")).toBe(true);
   });
 
+  it("ignores OMX runtime state and log output directories", () => {
+    expect(shouldIgnorePath("/proj/.omx/state/session.json")).toBe(true);
+    expect(shouldIgnorePath("/proj/.omx/logs/runtime.log")).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.omx\state\session.json`)).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.omx\logs\runtime.log`)).toBe(true);
+  });
+
   it("ignores generated-artifact extensions anywhere in the tree", () => {
     // Defends against tools that write logs outside a known output directory.
     expect(shouldIgnorePath("/proj/server.log")).toBe(true);
