@@ -7,7 +7,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -168,12 +168,14 @@ describe("module-loader/transformModuleWithDeps", () => {
   });
 });
 
-// sanitizeResources disabled: compiling a real page module starts esbuild's
-// long-lived child process, which outlives the test.
-describe("module-loader/loadModule build-failure tagging", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("module-loader/loadModule build-failure tagging", () => {
+  // Compiling a real page module starts esbuild's child process; stop it so the
+  // test does not leak the handle rather than opting out of the sanitizer.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   // A page whose module ran and threw is an application bug the project's own
   // error page should present. A page that never compiled is a developer-facing
   // build failure. Only the loader can tell them apart, so it tags the error.
