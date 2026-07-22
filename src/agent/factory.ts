@@ -136,12 +136,13 @@ export function agent(config: AgentConfig): Agent {
   }
 
   if (config.tools !== true) {
-    mergedToolsConfig = {
-      ...(config.tools ?? {}),
-      "load_skill": true,
-      "load_skill_reference": true,
-      "execute_skill_script": true,
-    };
+    const configuredTools = { ...(config.tools ?? {}) };
+    for (const registration of SKILL_TOOL_REGISTRATIONS) {
+      if (!(registration.id in configuredTools)) {
+        configuredTools[registration.id] = true;
+      }
+    }
+    mergedToolsConfig = configuredTools;
   }
 
   // System prompt augmentation with skill manifest.
@@ -154,10 +155,10 @@ export function agent(config: AgentConfig): Agent {
     // agent (unowned project skills plus its own). Explicit lists, including
     // an empty list, retain their authored catalog selection.
     const currentSkills = skillRegistry.resolveForAgent(skillsConfig, { agentId: id });
-    const basePrompt = typeof originalSystem === "function"
-      ? await originalSystem()
-      : originalSystem;
-    if (!currentSkills.size) return basePrompt ?? "You are a helpful assistant.";
+    const basePrompt =
+      (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
+        "You are a helpful assistant.";
+    if (!currentSkills.size) return basePrompt;
     return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
   };
 
