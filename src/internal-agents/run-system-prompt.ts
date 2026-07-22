@@ -70,13 +70,12 @@ export function getInternalAgentStudioRunContext(
 
     const environmentContext = getNonEmptyString(data.environmentContext);
     const projectId = getNonEmptyString(data.projectId);
+    const branchId = data.branchId === null ? null : getNonEmptyString(data.branchId);
 
     return {
       ...(environmentContext ? { environmentContext } : {}),
       ...(projectId ? { projectId } : {}),
-      ...(typeof data.branchId === "string" || data.branchId === null
-        ? { branchId: data.branchId }
-        : {}),
+      ...(branchId !== undefined ? { branchId } : {}),
     };
   }
 

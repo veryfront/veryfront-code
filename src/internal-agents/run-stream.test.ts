@@ -195,7 +195,18 @@ describe("internal-agents/run-stream", () => {
           },
         },
       ],
-      forwardedProps: {},
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["outlook__send_email"],
+          integrationToolDefinitions: [
+            {
+              name: "outlook__send_email",
+              description: "Send an Outlook email",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
 
     await createRuntimeAgentStreamResponse(input, agent, {
@@ -225,6 +236,7 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(prompt, '<runtime_info>\nmodel: "openai/gpt-5.4-nano"\n</runtime_info>');
     assertStringIncludes(prompt, "Current run tool inventory:");
     assertStringIncludes(prompt, "- create_file");
+    assertStringIncludes(prompt, "- outlook__send_email");
   });
 
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {

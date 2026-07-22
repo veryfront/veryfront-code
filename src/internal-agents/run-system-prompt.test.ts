@@ -65,6 +65,19 @@ describe("internal-agents/run-system-prompt", () => {
 
       assertEquals(result, {});
     });
+
+    it("trims values and drops whitespace-only branch ids", () => {
+      const result = getInternalAgentStudioRunContext(
+        createRunInput([
+          createStudioContextItem({
+            projectId: "  project-1  ",
+            branchId: "   ",
+          }),
+        ]).context,
+      );
+
+      assertEquals(result, { projectId: "project-1" });
+    });
   });
 
   describe("composeInternalAgentRunSystemPrompt", () => {

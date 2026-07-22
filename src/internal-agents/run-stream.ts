@@ -677,10 +677,17 @@ export async function createRuntimeAgentStreamResponse(
         typeof toolName === "string"
       )
       : []);
+  // The prompt inventory must cover the full model-visible surface: merged
+  // local/injected tools, provider-native tools, capped remote-source grants,
+  // and request-scoped forwarded integration tools — the latter two are
+  // exposed via __vfAllowedRemoteTools/__vfForwardedIntegrationToolDefs
+  // rather than mergedTools.
   const runtimeToolNames = [
     ...new Set([
       ...(mergedTools && mergedTools !== true ? Object.keys(mergedTools) : []),
       ...effectiveProviderToolNames,
+      ...(allowedRemoteToolNames ?? []),
+      ...(forwardedIntegrationToolDefs?.map((def) => def.name) ?? []),
     ]),
   ].sort();
   const runtimeAgent: RuntimeFilteredAgent = {
