@@ -1,9 +1,9 @@
 /**
  * Portable BDD testing utilities (describe, it, beforeEach, afterEach).
  *
- * In Deno: Direct re-export from @std/testing/bdd (no wrapper)
- * In Node.js: Uses node:test
- * In Bun: Uses bun:test
+ * Delegates to `@std/testing/bdd` in Deno, `node:test` in Node.js, and
+ * `bun:test` in Bun. Each test gets an async-context environment overlay so
+ * concurrent tests cannot leak environment mutations into one another.
  *
  * @module
  */
@@ -170,15 +170,82 @@ function installDenoEnvOverlayFacade(): void {
   });
 }
 
-async function installDenoEnvOverlayStorage(): Promise<void> {
-  if (!isDeno) return;
-
+function installProcessEnvOverlayFacade(): void {
   const globalAny = globalThis as Record<string, unknown>;
-  if (!globalAny["__vfTestDenoEnvOverlay"]) {
+  if (globalAny["__vfTestProcessEnvOverlayFacadeInstalled"]) return;
+
+  const processAny = globalAny["process"] as
+    | { env?: Record<string, string | undefined> }
+    | undefined;
+  if (!processAny?.env) return;
+
+  const baseProcessEnv = processAny.env;
+  processAny.env = new Proxy(baseProcessEnv, {
+    get(target, prop, receiver) {
+      if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
+      const overlay = getActiveEnvOverlay();
+      if (overlay?.has(prop)) return overlay.get(prop) ?? undefined;
+      return Reflect.get(target, prop, receiver);
+    },
+    set(target, prop, value, receiver) {
+      if (typeof prop !== "string") return Reflect.set(target, prop, value, receiver);
+      const overlay = getActiveEnvOverlay();
+      if (overlay) {
+        overlay.set(prop, String(value));
+        return true;
+      }
+      return Reflect.set(target, prop, value, receiver);
+    },
+    deleteProperty(target, prop) {
+      if (typeof prop !== "string") return Reflect.deleteProperty(target, prop);
+      const overlay = getActiveEnvOverlay();
+      if (overlay) {
+        overlay.set(prop, null);
+        return true;
+      }
+      return Reflect.deleteProperty(target, prop);
+    },
+    has(target, prop) {
+      if (typeof prop !== "string") return Reflect.has(target, prop);
+      const overlay = getActiveEnvOverlay();
+      if (overlay?.has(prop)) return overlay.get(prop) !== null;
+      return Reflect.has(target, prop);
+    },
+    ownKeys(target) {
+      const keys = new Set(Reflect.ownKeys(target));
+      const overlay = getActiveEnvOverlay();
+      if (!overlay) return [...keys];
+      for (const [key, value] of overlay) {
+        if (value === null) keys.delete(key);
+        else keys.add(key);
+      }
+      return [...keys];
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (typeof prop !== "string") return Reflect.getOwnPropertyDescriptor(target, prop);
+      const overlay = getActiveEnvOverlay();
+      if (!overlay?.has(prop)) return Reflect.getOwnPropertyDescriptor(target, prop);
+      const value = overlay.get(prop);
+      if (value === null) return undefined;
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value,
+      };
+    },
+  });
+  globalAny["__vfTestProcessEnvOverlayFacadeInstalled"] = true;
+}
+
+async function installEnvOverlayStorage(): Promise<void> {
+  const globalAny = globalThis as Record<string, unknown>;
+  const storageKey = isDeno ? "__vfTestDenoEnvOverlay" : "__vfTestEnvOverlay";
+  if (!globalAny[storageKey]) {
     const { AsyncLocalStorage } = await import("node:async_hooks");
     const storage = new AsyncLocalStorage<EnvOverlayStore>();
 
-    globalAny["__vfTestDenoEnvOverlay"] = {
+    globalAny[storageKey] = {
       storage: {
         getStore: () => storage.getStore(),
         run: <T>(store: unknown, fn: () => T) => storage.run(store as EnvOverlayStore, fn),
@@ -187,7 +254,36 @@ async function installDenoEnvOverlayStorage(): Promise<void> {
     } satisfies EnvOverlayStorageShim;
   }
 
-  installDenoEnvOverlayFacade();
+  if (isDeno) installDenoEnvOverlayFacade();
+  else installProcessEnvOverlayFacade();
+}
+
+function beginEnvOverlay(): void {
+  getEnvOverlayStorage()?.enterWith?.(new Map<string, string | null>());
+}
+
+const nodeEnvOverlays = new WeakMap<object, EnvOverlayStore>();
+
+function prepareNodeEnvOverlay(context?: BddTestContext): void {
+  if (context && typeof context === "object") {
+    nodeEnvOverlays.set(context, new Map<string, string | null>());
+  }
+}
+
+function withNodeEnvOverlay<T extends TestFn | HookFn>(fn: T): T {
+  return ((context?: BddTestContext) => {
+    const overlay = getEnvOverlayStorage();
+    if (!overlay?.run || !context || typeof context !== "object") {
+      return withEnvOverlay(fn)(context);
+    }
+
+    let store = nodeEnvOverlays.get(context);
+    if (!store) {
+      store = new Map<string, string | null>();
+      nodeEnvOverlays.set(context, store);
+    }
+    return overlay.run(store, () => fn(context));
+  }) as T;
 }
 
 function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
@@ -223,12 +319,13 @@ function withoutEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
   }) as T;
 }
 
-// For Deno, we directly use @std/testing/bdd - no wrapper needed
-// This avoids creating a "global" test suite from top-level await
+// Deno uses @std/testing/bdd as the host runner. Keep the module reference
+// separate so top-level initialization does not create an implicit suite.
 let denoBdd: typeof import("#std/testing/bdd") | null = null;
 
+await installEnvOverlayStorage();
+
 if (isDeno) {
-  await installDenoEnvOverlayStorage();
   denoBdd = await import("#std/testing/bdd");
 }
 
@@ -283,6 +380,8 @@ function createNodeImpl(nodeTest: {
   beforeEach: (fn: HookFn) => void;
   afterEach: (fn: HookFn) => void;
 }): BddImpl {
+  nodeTest.beforeEach(prepareNodeEnvOverlay);
+
   return {
     describe(nameOrOptions, optionsOrFn, fn): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
@@ -304,27 +403,28 @@ function createNodeImpl(nodeTest: {
     it(nameOrOptions, optionsOrFn, fn): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
       if (!testFn) throw new Error("it requires a test function");
+      const testWithEnv = withNodeEnvOverlay(testFn);
 
       if (options.skip || options.ignore) {
-        nodeTest.it.skip(name, testFn);
+        nodeTest.it.skip(name, testWithEnv);
         return;
       }
 
       if (options.only && nodeTest.it.only) {
-        nodeTest.it.only(name, testFn);
+        nodeTest.it.only(name, testWithEnv);
         return;
       }
 
       if (options.timeout !== undefined) {
-        nodeTest.it(name, { timeout: options.timeout }, testFn);
+        nodeTest.it(name, { timeout: options.timeout }, testWithEnv);
         return;
       }
 
-      nodeTest.it(name, testFn);
+      nodeTest.it(name, testWithEnv);
     },
 
-    beforeEach: nodeTest.beforeEach,
-    afterEach: nodeTest.afterEach,
+    beforeEach: (fn) => nodeTest.beforeEach(withNodeEnvOverlay(fn)),
+    afterEach: (fn) => nodeTest.afterEach(withNodeEnvOverlay(fn)),
     beforeAll: nodeTest.before,
     afterAll: nodeTest.after,
   };
@@ -354,6 +454,8 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
   })();
+
+  bunTest.beforeEach(beginEnvOverlay);
 
   return {
     describe(nameOrOptions, optionsOrFn, fn): void {

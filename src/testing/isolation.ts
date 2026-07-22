@@ -15,31 +15,36 @@ type LabeledCleanupTask = {
   label: string;
   task: CleanupTask;
 };
+type CleanupFailure = {
+  label: string;
+  error: unknown;
+};
 
-const cleanupTasks = new Set<CleanupTask>();
+const cleanupTasks: CleanupTask[] = [];
 
-/** Registers test cleanup. */
+/** Register one cleanup invocation for the next comprehensive state reset. */
 export function registerTestCleanup(task: CleanupTask): void {
-  cleanupTasks.add(task);
+  cleanupTasks.push(task);
 }
 
-async function runBestEffortCleanups(cleanups: Iterable<LabeledCleanupTask>): Promise<void> {
+async function runCleanups(cleanups: Iterable<LabeledCleanupTask>): Promise<CleanupFailure[]> {
+  const failures: CleanupFailure[] = [];
   for (const { label, task } of cleanups) {
     try {
       await task();
     } catch (error) {
-      console.debug(`resetAllTestState ${label} failed`, error);
+      failures.push({ label, error });
     }
   }
+  return failures;
 }
 
-async function runRegisteredCleanups(): Promise<void> {
-  const tasks = Array.from(cleanupTasks);
-  cleanupTasks.clear();
+async function runRegisteredCleanups(): Promise<CleanupFailure[]> {
+  const tasks = cleanupTasks.splice(0);
 
-  await runBestEffortCleanups(
-    tasks.map((task) => ({
-      label: "registered cleanup",
+  return await runCleanups(
+    tasks.map((task, index) => ({
+      label: `registered cleanup #${index + 1}`,
       task,
     })),
   );
@@ -62,7 +67,7 @@ async function runRegisteredCleanups(): Promise<void> {
  * - Reload notifier
  */
 export async function resetAllTestState(): Promise<void> {
-  await runRegisteredCleanups();
+  const failures = await runRegisteredCleanups();
 
   const cleanupSteps: LabeledCleanupTask[] = [
     // Config state - CRITICAL for test isolation
@@ -161,18 +166,29 @@ export async function resetAllTestState(): Promise<void> {
     },
   ];
 
-  await runBestEffortCleanups(cleanupSteps);
+  failures.push(...await runCleanups(cleanupSteps));
 
   // Bun-specific cleanup
   if (isBun) {
-    await runBestEffortCleanups([
-      {
-        label: "bundler cleanup",
-        task: async () => {
-          const { cleanupBundler } = await import("../rendering/cleanup.ts");
-          await cleanupBundler();
+    failures.push(
+      ...await runCleanups([
+        {
+          label: "bundler cleanup",
+          task: async () => {
+            const { cleanupBundler } = await import("../rendering/cleanup.ts");
+            await cleanupBundler();
+          },
         },
-      },
-    ]);
+      ]),
+    );
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map(({ label, error }) =>
+        new Error(`resetAllTestState ${label} failed`, { cause: error })
+      ),
+      `test state cleanup failed in ${failures.length} step${failures.length === 1 ? "" : "s"}`,
+    );
   }
 }

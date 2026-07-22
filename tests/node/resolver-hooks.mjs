@@ -9,13 +9,14 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve as pathResolve } from "node:path";
+import { dirname, resolve as pathResolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = pathResolve(__dirname, "../..");
 
 const importMap = {};
+const workspacePackages = [];
 
 const stdImportMap = {
   "#std/assert": "./src/testing/assert.ts",
@@ -60,15 +61,37 @@ const fallbackAliasMap = {
   ...reactImportMap,
 };
 
+let rootDenoJson = null;
 try {
   const denoJsonPath = pathResolve(projectRoot, "deno.json");
-  const denoJson = JSON.parse(readFileSync(denoJsonPath, "utf-8"));
-  for (const [key, value] of Object.entries(denoJson.imports || {})) {
+  rootDenoJson = JSON.parse(readFileSync(denoJsonPath, "utf-8"));
+  for (const [key, value] of Object.entries(rootDenoJson.imports || {})) {
     if (typeof value === "string") importMap[key] = value;
   }
 } catch (e) {
   console.warn("Could not read deno.json:", e.message);
 }
+
+for (const workspaceEntry of rootDenoJson?.workspace || []) {
+  if (typeof workspaceEntry !== "string") continue;
+  const directory = pathResolve(projectRoot, workspaceEntry);
+  try {
+    const config = JSON.parse(readFileSync(pathResolve(directory, "deno.json"), "utf-8"));
+    if (typeof config.name !== "string" || !config.name) continue;
+    workspacePackages.push({
+      directory,
+      exports: config.exports,
+      imports: Object.fromEntries(
+        Object.entries(config.imports || {}).filter(([, value]) => typeof value === "string"),
+      ),
+      name: config.name,
+    });
+  } catch (error) {
+    console.warn(`Could not read workspace config for ${workspaceEntry}:`, error.message);
+  }
+}
+
+workspacePackages.sort((a, b) => b.directory.length - a.directory.length);
 
 function normalizeStdSpecifier(specifier) {
   if (specifier.startsWith("@std/")) return `#std/${specifier.slice("@std/".length)}`;
@@ -87,14 +110,14 @@ function resolveStdCompatTarget(specifier) {
   return null;
 }
 
-function resolveFromImportMap(specifier) {
+function resolveFromImportMap(specifier, imports) {
   // 1. Direct match (highest priority)
-  if (importMap[specifier]) {
-    return importMap[specifier];
+  if (imports[specifier]) {
+    return imports[specifier];
   }
 
   // 2. Prefix match with wildcard (e.g., #veryfront/testing/* -> ./src/testing/*.ts)
-  for (const [prefix, target] of Object.entries(importMap)) {
+  for (const [prefix, target] of Object.entries(imports)) {
     if (prefix.endsWith("/*") && specifier.startsWith(prefix.slice(0, -1))) {
       let suffix = specifier.slice(prefix.length - 1);
       // If target ends with *.ts and suffix also ends with .ts, strip .ts from suffix
@@ -106,7 +129,7 @@ function resolveFromImportMap(specifier) {
   }
 
   // 3. Prefix match without wildcard (e.g., #veryfront/ -> ./src/)
-  for (const [prefix, target] of Object.entries(importMap)) {
+  for (const [prefix, target] of Object.entries(imports)) {
     if (prefix.endsWith("/") && !prefix.endsWith("/*") && specifier.startsWith(prefix)) {
       const suffix = specifier.slice(prefix.length);
       return target + suffix;
@@ -116,8 +139,8 @@ function resolveFromImportMap(specifier) {
   return null;
 }
 
-function findActualFile(relativePath) {
-  const fullPath = pathResolve(projectRoot, relativePath);
+function findActualFile(relativePath, baseDirectory = projectRoot) {
+  const fullPath = pathResolve(baseDirectory, relativePath);
 
   const tryPaths = [
     fullPath,
@@ -143,35 +166,113 @@ function findActualFile(relativePath) {
   return null;
 }
 
-function resolveAliasSpecifier(specifier) {
+function workspaceForParent(parentURL) {
+  if (!parentURL?.startsWith("file://")) return null;
+  let parentPath;
+  try {
+    parentPath = fileURLToPath(parentURL);
+  } catch {
+    return null;
+  }
+  return workspacePackages.find(({ directory }) =>
+    parentPath === directory || parentPath.startsWith(`${directory}${sep}`)
+  ) ?? null;
+}
+
+function stringExportTarget(exports, exportKey) {
+  if (typeof exports === "string") return exportKey === "." ? exports : null;
+  if (!exports || typeof exports !== "object") return null;
+  const target = exports[exportKey];
+  if (typeof target === "string") return target;
+  if (!target || typeof target !== "object") return null;
+  for (const condition of ["import", "default", "node"]) {
+    if (typeof target[condition] === "string") return target[condition];
+  }
+  return null;
+}
+
+function resolveWorkspacePackage(specifier) {
+  for (const workspace of workspacePackages) {
+    if (specifier !== workspace.name && !specifier.startsWith(`${workspace.name}/`)) continue;
+    const subpath = specifier.slice(workspace.name.length);
+    const exportKey = subpath ? `.${subpath}` : ".";
+    const target = stringExportTarget(workspace.exports, exportKey);
+    if (!target) return null;
+    return findActualFile(target, workspace.directory);
+  }
+  return null;
+}
+
+function stripNpmVersion(npmSpecifier) {
+  const firstSlash = npmSpecifier.indexOf("/");
+  const slashAfterName = npmSpecifier.startsWith("@")
+    ? npmSpecifier.indexOf("/", firstSlash + 1)
+    : firstSlash;
+  const packageAndVersion = slashAfterName === -1
+    ? npmSpecifier
+    : npmSpecifier.slice(0, slashAfterName);
+  const subpath = slashAfterName === -1 ? "" : npmSpecifier.slice(slashAfterName);
+  const versionIndex = packageAndVersion.indexOf("@", packageAndVersion.startsWith("@") ? 1 : 0);
+  const packageName = versionIndex === -1
+    ? packageAndVersion
+    : packageAndVersion.slice(0, versionIndex);
+  return `${packageName}${subpath}`;
+}
+
+function resolveReactTarget(target) {
+  if (!target.startsWith("https://esm.sh/")) return null;
+  const pathname = new URL(target).pathname.slice(1);
+  for (const packageName of ["react-dom", "react"]) {
+    if (!pathname.startsWith(`${packageName}@`)) continue;
+    const slashIndex = pathname.indexOf("/");
+    const subpath = slashIndex === -1 ? "" : pathname.slice(slashIndex);
+    const mapped = reactImportMap[`${packageName}${subpath}`];
+    return mapped ? findActualFile(mapped) : null;
+  }
+  return null;
+}
+
+function resolveVendoredJsrTarget(target) {
+  const match = target.match(/^jsr:(@[^/]+\/[^@/]+)@([^/]+)(?:\/(.+))?$/);
+  if (!match) return null;
+  const [, packageName, version, subpath = "mod"] = match;
+  return findActualFile(`npm/esm/deps/jsr.io/${packageName}/${version}/${subpath}.js`) ??
+    findActualFile(`npm/src/deps/jsr.io/${packageName}/${version}/${subpath}.ts`);
+}
+
+function resolveAliasSpecifier(specifier, parentURL) {
   const stdNormalized = normalizeStdSpecifier(specifier);
-  const mapped = resolveFromImportMap(specifier) ?? resolveFromImportMap(stdNormalized);
+  const workspace = workspaceForParent(parentURL);
+  const workspaceMapped = workspace
+    ? resolveFromImportMap(specifier, workspace.imports) ??
+      resolveFromImportMap(stdNormalized, workspace.imports)
+    : null;
+  const rootMapped = resolveFromImportMap(specifier, importMap) ??
+    resolveFromImportMap(stdNormalized, importMap);
+  const mapped = workspaceMapped ?? rootMapped;
   const fallback = fallbackAliasMap[specifier] ?? fallbackAliasMap[stdNormalized];
   const target = mapped ?? fallback;
 
   if (!target) return null;
 
   if (target.startsWith("./") || target.startsWith("../")) {
-    return findActualFile(target.replace(/^\.\//, ""));
+    const baseDirectory = workspaceMapped ? workspace.directory : projectRoot;
+    return findActualFile(target, baseDirectory);
   }
 
   if (target.startsWith("jsr:@std/")) {
     const stdTarget = resolveStdCompatTarget(specifier);
-    if (!stdTarget) return null;
-    return findActualFile(stdTarget.replace(/^\.\//, ""));
+    const compatPath = stdTarget ? findActualFile(stdTarget) : null;
+    return compatPath ?? resolveVendoredJsrTarget(target);
   }
 
   if (target.startsWith("https://esm.sh/react") || target.startsWith("npm:react")) {
     const reactTarget = reactImportMap[specifier] ?? reactImportMap[stdNormalized];
-    if (!reactTarget) return null;
-    return findActualFile(reactTarget.replace(/^\.\//, ""));
+    return resolveReactTarget(target) ?? (reactTarget ? findActualFile(reactTarget) : null);
   }
 
   if (target.startsWith("npm:")) {
-    const npmSpecifier = target.slice(4);
-    const atIndex = npmSpecifier.indexOf("@", 1);
-    const packageName = atIndex > 0 ? npmSpecifier.slice(0, atIndex) : npmSpecifier;
-    return { packageName };
+    return { packageName: stripNpmVersion(target.slice(4)) };
   }
 
   return null;
@@ -183,8 +284,8 @@ function resolveJsrStdSpecifier(specifier) {
   const normalizedSubpath = jsrSubpath.replace(/@[^/]+/, "");
   const stdSpecifier = `#std/${normalizedSubpath}`;
   const stdTarget = resolveStdCompatTarget(stdSpecifier);
-  if (!stdTarget) return null;
-  return findActualFile(stdTarget.replace(/^\.\//, ""));
+  const compatPath = stdTarget ? findActualFile(stdTarget) : null;
+  return compatPath ?? resolveVendoredJsrTarget(specifier);
 }
 
 export async function resolve(specifier, context, nextResolve) {
@@ -213,7 +314,15 @@ export async function resolve(specifier, context, nextResolve) {
     return nextResolve(packageName, context);
   }
 
-  const resolvedAlias = resolveAliasSpecifier(cleanSpecifier);
+  const workspacePackage = resolveWorkspacePackage(cleanSpecifier);
+  if (workspacePackage) {
+    return {
+      shortCircuit: true,
+      url: pathToFileURL(workspacePackage).href + querySuffix,
+    };
+  }
+
+  const resolvedAlias = resolveAliasSpecifier(cleanSpecifier, context.parentURL);
   if (resolvedAlias) {
     if (typeof resolvedAlias === "object" && "packageName" in resolvedAlias) {
       return nextResolve(resolvedAlias.packageName, context);
