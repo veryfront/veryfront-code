@@ -129,6 +129,24 @@ describe("agent factory", () => {
     assertEquals(assistant.config.tools.execute_skill_script, true);
   });
 
+  it("does not let false disable universal skill infrastructure", () => {
+    const assistant = agent({
+      id: "universal-skill-tools",
+      system: "Use skills when they match the task.",
+      tools: {
+        load_skill: false,
+        load_skill_reference: false,
+        execute_skill_script: false,
+      },
+    });
+
+    assertEquals(assistant.config.tools, {
+      load_skill: true,
+      load_skill_reference: true,
+      execute_skill_script: true,
+    });
+  });
+
   it("uses the default system prompt before an available skill catalog", async () => {
     registerSkill("support-triage", {
       id: "support-triage",

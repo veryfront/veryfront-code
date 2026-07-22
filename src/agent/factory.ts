@@ -138,7 +138,10 @@ export function agent(config: AgentConfig): Agent {
   if (config.tools !== true) {
     const configuredTools = { ...(config.tools ?? {}) };
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!(registration.id in configuredTools)) {
+      const configuredTool = configuredTools[registration.id];
+      // Skill infrastructure cannot be disabled with `false`. Preserve
+      // concrete tools because hosted runs bind them to request context.
+      if (typeof configuredTool !== "object" || configuredTool === null) {
         configuredTools[registration.id] = true;
       }
     }
