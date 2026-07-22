@@ -79,6 +79,17 @@ function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+function createStaticRouteRequest(
+  path: string,
+  baseUrl: string,
+): { request: Request; url: URL } {
+  const url = new URL(path, baseUrl || "http://localhost");
+  return {
+    request: new Request(url, { method: "GET" }),
+    url,
+  };
+}
+
 function hasImportMapScript(html: string): boolean {
   return /<script\b[^>]*\btype=(["'])importmap\1/i.test(html);
 }
@@ -216,11 +227,13 @@ export async function buildPagesRoutes(
 
   for (const route of routes) {
     try {
+      const requestContext = createStaticRouteRequest(route.path, baseUrl);
       const result = await traceStep(
         `page:${route.slug}`,
         () =>
           renderer.renderPage(route.slug, {
             contentSourceId,
+            ...requestContext,
             releaseAssetManifest: options.releaseAssetManifest,
           }),
       );
