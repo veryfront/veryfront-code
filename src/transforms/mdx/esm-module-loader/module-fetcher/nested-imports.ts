@@ -132,6 +132,38 @@ export interface ResolveNestedModuleImportsInput {
   strictMissingModules: boolean;
   fetchAndCacheModule: (path: string, parent?: string) => Promise<string | null>;
   log?: Logger;
+  /**
+   * Path this module's relative imports resolve against. Defaults to
+   * `normalizedPath`; see {@link resolveNestedImportBase}.
+   */
+  parentBasePath?: string;
+}
+
+/**
+ * The path a module's own relative imports should resolve against.
+ *
+ * A directory barrel lives at `lib/index.ts` but is addressed as
+ * `_vf_modules/lib`. Resolving its children against `_vf_modules/lib.js` drops
+ * the trailing segment as if it were a filename, so `./constants.js` becomes
+ * `_vf_modules/constants.js` — one directory too high. The file is then not
+ * found and gets replaced by a stub, and the barrel silently stops re-exporting
+ * anything: `does not provide an export named 'COLORS'`.
+ *
+ * When the module actually resolved to an index file, keep the directory
+ * segment by addressing it as `<dir>/index.js`.
+ */
+export function resolveNestedImportBase(
+  normalizedPath: string,
+  actualFilePath?: string,
+): string {
+  if (!actualFilePath || !/(?:^|\/)index\.(?:tsx?|jsx?|mdx|md)$/.test(actualFilePath)) {
+    return normalizedPath;
+  }
+
+  const withoutExt = normalizedPath.replace(/\.(?:js|mjs)$/, "");
+  if (withoutExt.endsWith("/index")) return normalizedPath;
+
+  return `${withoutExt}/index.js`;
 }
 
 /**
@@ -167,7 +199,10 @@ export async function resolveNestedModuleImports(
       original,
       start,
       end,
-      nestedFilePath: await input.fetchAndCacheModule(path, input.normalizedPath),
+      nestedFilePath: await input.fetchAndCacheModule(
+        path,
+        input.parentBasePath ?? input.normalizedPath,
+      ),
       [key]: path,
     })),
   );

@@ -21,7 +21,7 @@ import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
-import { resolveNestedModuleImports } from "./nested-imports.ts";
+import { resolveNestedImportBase, resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache } from "./distributed-cache.ts";
 import { resolveUnresolvedModuleViaHttpFallback } from "./http-fallback.ts";
 import { normalizePath } from "./module-cache.ts";
@@ -285,6 +285,7 @@ async function doFetchAndCacheModule(
       moduleCode,
       esmCacheDir,
       normalizedPath,
+      parentBasePath: resolveNestedImportBase(normalizedPath, actualFilePath),
       strictMissingModules: context.strictMissingModules ?? true,
       projectSlug,
       fetchAndCacheModule: fetchAndCacheModuleFn,
