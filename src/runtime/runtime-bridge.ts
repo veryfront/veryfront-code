@@ -141,6 +141,7 @@ type DirectGenerateResult = {
       toolName: string;
       result: unknown;
       isError?: boolean;
+      providerExecuted?: boolean;
     }
     | Record<string, unknown>
   >;
@@ -518,7 +519,12 @@ function buildDirectModelOptions(
 
 function isDirectToolCallPart(
   part: unknown,
-): part is { type: "tool-call"; toolCallId: string; toolName: string; input: unknown } {
+): part is {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+} {
   return !!part &&
     typeof part === "object" &&
     "type" in part &&
@@ -546,6 +552,7 @@ function isDirectToolResultPart(
   toolName: string;
   result: unknown;
   isError?: boolean;
+  providerExecuted?: boolean;
 } {
   return !!part &&
     typeof part === "object" &&
@@ -585,6 +592,7 @@ function buildDirectGenerateResult(
         toolName: part.toolName,
         result: part.result,
         ...(part.isError === true ? { isError: true } : {}),
+        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   }
@@ -736,7 +744,7 @@ async function buildGenerateResultFromStream(
         break;
 
       case "tool-result": {
-        const result = part.result ?? part.output ?? part.error;
+        const result = "result" in part ? part.result : "output" in part ? part.output : part.error;
         toolResults.push({
           toolCallId: part.toolCallId,
           toolName: part.toolName,
@@ -756,6 +764,12 @@ async function buildGenerateResultFromStream(
           ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
         });
         break;
+
+      case "error":
+        if (part.error instanceof Error) {
+          throw part.error;
+        }
+        throw new Error("Model stream failed", { cause: part.error });
 
       case "finish":
         finishReason = part.finishReason ?? null;
@@ -948,29 +962,46 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   };
 }
 
+function assertEmbeddingCount(expected: number, embeddings: number[][]): void {
+  if (embeddings.length === expected) {
+    return;
+  }
+
+  const label = expected === 1 ? "embedding" : "embeddings";
+  throw new Error(
+    `Embedding runtime expected ${expected} ${label} but received ${embeddings.length}`,
+  );
+}
+
 export function embed(options: EmbedOptions) {
   return options.model.doEmbed({
     values: [options.value],
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embedding: result.embeddings[0] ?? [],
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertEmbeddingCount(1, result.embeddings);
+    return {
+      embedding: result.embeddings[0]!,
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
 
 export function embedMany(options: EmbedManyOptions) {
   return options.model.doEmbed({
     values: options.values,
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertEmbeddingCount(options.values.length, result.embeddings);
+    return {
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
 /** Compute cosine similarity between two numeric vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
