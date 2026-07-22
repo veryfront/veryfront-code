@@ -151,9 +151,10 @@ function assertBrowserSafeFrameworkModule(
 async function assertBrowserSafeFrameworkGraph(port: number, entryPath: string): Promise<void> {
   const pending = [entryPath];
   const visited = new Set<string>();
+  let nextIndex = 0;
 
-  while (pending.length > 0) {
-    const modulePath = pending.shift();
+  while (nextIndex < pending.length) {
+    const modulePath = pending[nextIndex++];
     if (!modulePath || visited.has(modulePath)) continue;
     visited.add(modulePath);
 

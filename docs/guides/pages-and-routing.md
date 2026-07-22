@@ -77,6 +77,9 @@ app/
 
 `/dashboard/settings` renders inside both the root layout and the dashboard layout.
 
+`layout.tsx` and the other supported `layout.*` extensions are reserved layout metadata at every
+directory level in both routers. They wrap descendant pages and never create a `/layout` route.
+
 ## Dynamic routes
 
 Use brackets for dynamic segments:
