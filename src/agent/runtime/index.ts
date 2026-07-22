@@ -14,6 +14,7 @@
 import {
   type AgentConfig,
   type AgentContext,
+  type AgentGenerateToolReplacements,
   type AgentResponse,
   type AgentStatus,
   getTextFromParts,
@@ -110,6 +111,7 @@ export {
   getAvailableTools,
   isDynamicTool,
   parseToolArgs,
+  resolveConfiguredTool,
 } from "./tool-helpers.ts";
 export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
 export {
@@ -178,6 +180,7 @@ import {
   executeConfiguredTool,
   getAvailableTools,
   isDynamicTool,
+  resolveConfiguredTool,
   type ToolConfigEntry,
 } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
@@ -193,6 +196,7 @@ import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 
 const logger = serverLogger.component("agent");
+const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
 function buildStreamFinishUsage(
   usage: AgentResponse["usage"],
@@ -357,6 +361,7 @@ async function traceConfiguredToolExecution(input: {
   allowedRemoteToolNames: string[] | undefined;
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined;
+  strictConfiguredToolsOnly?: boolean;
 }): Promise<unknown> {
   const inputSizeBytes = estimateSerializedSizeBytes(input.args);
   return await withSpan(
@@ -383,6 +388,7 @@ async function traceConfiguredToolExecution(input: {
           input.allowedRemoteToolNames,
           input.remoteToolSources,
           input.sourceIntegrationPolicy,
+          { strictConfiguredToolsOnly: input.strictConfiguredToolsOnly },
         );
         const resultError = getToolResultError(result);
         if (resultError !== undefined) {
@@ -586,6 +592,32 @@ export class AgentRuntime {
     });
   }
 
+  private createGenerateReplacementTools(
+    toolReplacements: AgentGenerateToolReplacements | undefined,
+    retainSkillLoaderTools: boolean | undefined,
+  ): AgentGenerateToolReplacements | undefined {
+    if (toolReplacements === undefined) {
+      return undefined;
+    }
+    if (!retainSkillLoaderTools || this.config.skills === false) {
+      return toolReplacements;
+    }
+
+    const tools: AgentGenerateToolReplacements = { ...toolReplacements };
+    for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
+      if (tools[toolName]) {
+        continue;
+      }
+      const configuredTool = resolveConfiguredTool(this.config.tools, toolName, {
+        agentId: this.id,
+      });
+      if (configuredTool) {
+        tools[toolName] = configuredTool;
+      }
+    }
+    return tools;
+  }
+
   /**
    * Generate a response (non-streaming)
    */
@@ -595,6 +627,10 @@ export class AgentRuntime {
     modelOverride?: string,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
+    options?: {
+      toolReplacements?: AgentGenerateToolReplacements;
+      retainSkillLoaderTools?: boolean;
+    },
   ): Promise<AgentResponse> {
     throwIfAborted(abortSignal);
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
@@ -644,6 +680,10 @@ export class AgentRuntime {
             transport.reasoning,
             maxOutputTokensOverride,
             requestedModel,
+            this.createGenerateReplacementTools(
+              options?.toolReplacements,
+              options?.retainSkillLoaderTools,
+            ),
             abortSignal,
           ),
       );
@@ -834,6 +874,7 @@ export class AgentRuntime {
     reasoning?: RuntimeReasoningOption,
     maxOutputTokensOverride?: number,
     temperatureModelString?: string,
+    toolReplacements?: AgentGenerateToolReplacements,
     abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
@@ -860,11 +901,33 @@ export class AgentRuntime {
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
-      const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
-      const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
-      const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
-      const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
-      const configuredProviderTools = getRuntimeProviderTools(this.config);
+      const hasToolReplacements = toolReplacements !== undefined;
+      const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
+      const runtimeStepConfig: AgentConfig = hasToolReplacements
+        ? {
+          ...this.config,
+          tools: runtimeToolsConfig,
+          skills: undefined,
+          providerTools: undefined,
+          mcpServers: undefined,
+          sandbox: undefined,
+        }
+        : this.config;
+      const allowedRemoteToolNames = hasToolReplacements
+        ? undefined
+        : getRuntimeAllowedRemoteTools(this.config);
+      const forwardedRemoteToolDefinitions = hasToolReplacements
+        ? undefined
+        : getRuntimeForwardedIntegrationToolDefs(this.config);
+      const remoteToolSources = hasToolReplacements
+        ? undefined
+        : getRuntimeRemoteToolSources(this.config, undefined, this.id);
+      const sourceIntegrationPolicy = hasToolReplacements
+        ? undefined
+        : getRuntimeSourceIntegrationPolicy(this.config);
+      const configuredProviderTools = hasToolReplacements
+        ? []
+        : getRuntimeProviderTools(this.config);
       const providerTools = sourceIntegrationPolicy
         ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
         : configuredProviderTools;
@@ -882,11 +945,13 @@ export class AgentRuntime {
 
         const preparedStep = await prepareAgentRuntimeStep({
           agentId: this.id,
-          activeSkillId,
-          activeSkillPolicy,
-          activeSkillToolAvailability,
+          activeSkillId: hasToolReplacements ? undefined : activeSkillId,
+          activeSkillPolicy: hasToolReplacements ? undefined : activeSkillPolicy,
+          activeSkillToolAvailability: hasToolReplacements
+            ? undefined
+            : activeSkillToolAvailability,
           allowedRemoteToolNames,
-          config: this.config,
+          config: runtimeStepConfig,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
           isLocalModel: isLocal,
@@ -899,6 +964,7 @@ export class AgentRuntime {
           step,
           systemPrompt: currentSystemPrompt,
           toolContextBase: { ...toolContextBase, abortSignal },
+          strictConfiguredToolsOnly: hasToolReplacements,
         });
         throwIfAborted(abortSignal);
         currentSystemPrompt = preparedStep.systemPrompt;
@@ -1011,8 +1077,38 @@ export class AgentRuntime {
           throwIfAborted(abortSignal);
         };
 
+        const rejectUnpairedRequestScopedGeneratedToolResult = async (
+          generatedToolResult: RuntimeGenerateToolResult,
+        ): Promise<boolean> => {
+          if (!hasToolReplacements) {
+            return false;
+          }
+
+          const error =
+            `Tool "${generatedToolResult.toolName}" is not available in request-scoped replacement tools`;
+          const toolCall: ToolCall = {
+            id: generatedToolResult.toolCallId,
+            name: generatedToolResult.toolName,
+            args: {},
+            status: "error",
+            error,
+          };
+          toolCalls.push(toolCall);
+          const errorMessage = createToolErrorMessage(
+            generatedToolResult.toolCallId,
+            generatedToolResult.toolName,
+            error,
+          );
+          currentMessages.push(errorMessage);
+          await this.memory.add(errorMessage);
+          return true;
+        };
+
         if (!response.toolCalls?.length) {
           for (const generatedToolResult of generatedToolResults.values()) {
+            if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
+              continue;
+            }
             await persistGeneratedToolResult(generatedToolResult);
           }
           this.status = "completed";
@@ -1059,7 +1155,7 @@ export class AgentRuntime {
               }),
             );
 
-            if (generatedToolResult) {
+            if (generatedToolResult && !hasToolReplacements) {
               if (generatedToolResult.providerExecuted === true) {
                 await traceProviderExecutedTool({
                   mode: "generate",
@@ -1154,7 +1250,7 @@ export class AgentRuntime {
               toolCall.args = applySkillDelegationOverridesToToolInput(
                 tc.toolName,
                 toolCall.args,
-                activeSkillDelegationOverrides,
+                hasToolReplacements ? undefined : activeSkillDelegationOverrides,
               );
               const executionContext = {
                 toolCallId: tc.toolCallId,
@@ -1171,11 +1267,12 @@ export class AgentRuntime {
                 toolName: tc.toolName,
                 toolCallId: tc.toolCallId,
                 args: toolCall.args,
-                toolsConfig: this.config.tools,
+                toolsConfig: runtimeToolsConfig,
                 context: executionContext,
                 allowedRemoteToolNames,
                 remoteToolSources,
                 sourceIntegrationPolicy,
+                strictConfiguredToolsOnly: hasToolReplacements,
               });
               await this.notifyToolResult({
                 mode: "generate",

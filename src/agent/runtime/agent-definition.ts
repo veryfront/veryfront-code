@@ -61,7 +61,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
-    skills: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    skills: v.union([v.literal(true), v.literal(false), v.array(v.string().min(1))]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     delegates: v.array(v.string().min(1)).optional(),
     mcpServers: v.array(getRuntimeAgentMcpServerConfigSchema()).optional(),

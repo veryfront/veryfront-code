@@ -558,6 +558,26 @@ export function createAgentServiceEvalAdapter(
 
   return async (context): Promise<EvalAgentAdapterResult> => {
     const started = getNow(config);
+    if (context.definition.mockTools !== undefined) {
+      return {
+        text: "",
+        output: {
+          text: "",
+          agUi: {
+            responseStatus: 0,
+            eventTypes: [],
+            runError: "mockTools are only supported by local eval agent execution.",
+          },
+        },
+        trace: {
+          events: [],
+          toolCalls: [],
+        },
+        durationMs: getNow(config) - started,
+        completed: false,
+        error: "mockTools are only supported by local eval agent execution.",
+      };
+    }
     const body = buildAgentServiceEvalRequestBody({
       exampleId: context.example.id,
       input: context.example.input,

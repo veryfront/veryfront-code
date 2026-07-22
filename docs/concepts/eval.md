@@ -101,6 +101,13 @@ Live AG-UI evals normalize tool names, IDs, status, input, and output into
 `record.trace.toolCalls`. Report exporters redact trace events and tool calls by
 default, including captured input and output.
 
+Local agent evals can use `mockTools` to replace the agent's tool set for one
+run while keeping the real agent answer and trace. Static mock tools are reused;
+resolver mock tools are created once per example repetition. This is strict and
+local-only: hosted AG-UI evals reject `mockTools` before calling the endpoint,
+and skills agents retain only the read-only `load_skill` and
+`load_skill_reference` tools unless the eval explicitly supplies more tools.
+
 ## Tool behavior
 
 Use `evalTool` when the eval should measure one tool directly instead of an

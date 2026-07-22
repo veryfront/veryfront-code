@@ -208,7 +208,7 @@ export interface AgentConfig {
   /**
    * Select the skills advertised in this agent's system prompt.
    * - omitted or true: include every discovered skill visible to this agent
-   * - string[]: include only the listed skill IDs; use [] to advertise none
+   * - string[] or false: include only the listed skill IDs; use [] or false to advertise none
    *
    * This selects the prompt catalog only. It does not restrict which
    * owner-visible skills `load_skill` can resolve by id.
@@ -216,7 +216,7 @@ export interface AgentConfig {
    * Discovery happens at startup via discoverAll(). `load_skill` remains
    * available to every agent regardless of this catalog selection.
    */
-  skills?: true | string[];
+  skills?: true | false | string[];
   suggestions?: Suggestions;
   /** Set to false to disable the default security middleware */
   security?: false;
@@ -289,6 +289,9 @@ export type ToolExecutionResultHandler = (
   request: ToolExecutionResultRequest,
 ) => void | Promise<void>;
 
+/** Tool map that replaces an agent's configured tools for one generate request. */
+export type AgentGenerateToolReplacements = Record<string, Tool>;
+
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
 
@@ -350,6 +353,15 @@ export interface Agent {
     model?: ModelString;
     /** Override the maximum model output tokens for this request. */
     maxOutputTokens?: number;
+    /**
+     * Replace this agent's configured tools for this generate request only.
+     * When present, only these tools are advertised and executable.
+     */
+    tools?: AgentGenerateToolReplacements;
+    /**
+     * @internal Retain framework skill loader tools while replacement tools are active.
+     */
+    retainSkillLoaderTools?: boolean;
     /** Abort signal for cooperative cancellation. */
     abortSignal?: AbortSignal;
   }): Promise<AgentResponse>;

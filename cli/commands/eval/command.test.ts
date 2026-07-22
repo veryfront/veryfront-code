@@ -1,19 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { Agent, AgentResponse } from "veryfront/agent";
+import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
+import { defineSchema } from "veryfront/schemas";
 import {
   compareEvalReports,
+  datasets,
   type DiscoveredEval,
   EVAL_REPORT_SCHEMA_VERSION,
   evalAgent,
   type EvalReport,
   evalTool,
   metrics,
+  runEval,
 } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
-import type { Tool } from "veryfront/tool";
+import type { ModelRuntime } from "veryfront/provider";
+import { type Tool, tool } from "veryfront/tool";
 import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
 import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
 import {
@@ -23,6 +27,7 @@ import {
 import { saveToken } from "../../auth/token-store.ts";
 import {
   applyGatewayBillingGroupFinalization,
+  createAgentAdapter,
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
   createEvalCliExportConfig,
@@ -261,6 +266,57 @@ function createProjectRuntimeDiscovery(
     evals: new Map(),
     errors: [],
     sourceIntegrationPolicy,
+  };
+}
+
+function createEvalOptions(overrides: Partial<EvalOptions> = {}): EvalOptions {
+  const parsed = parseEvalArgs({ _: ["eval"] });
+  if (!parsed.success) throw new Error("Failed to create eval options fixture");
+  return { ...parsed.data, ...overrides };
+}
+
+function makeEvalTool(id: string, source = id): Tool {
+  return tool({
+    id,
+    description: `${id} mock`,
+    inputSchema: defineSchema((v) => v.object({ query: v.string().optional() }))(),
+    execute: async (input) => ({ source, input }),
+  }) as Tool;
+}
+
+function makeAgentStub(
+  generate: Agent["generate"],
+  config: Partial<Agent["config"]> = {},
+): Agent {
+  return {
+    id: "agent:stub",
+    config: {
+      model: "hosted/stub",
+      system: "Stub.",
+      ...config,
+    } as Agent["config"],
+    generate,
+    stream: async () => ({ toDataStreamResponse: () => new Response() }),
+    respond: async () => new Response(),
+    getMemory: () => ({}) as ReturnType<Agent["getMemory"]>,
+    getMemoryStats: async () => ({ totalMessages: 0, estimatedTokens: 0, type: "stub" }),
+    clearMemory: async () => {},
+  };
+}
+
+function completedAgentResponse(toolName = "search_docs"): AgentResponse {
+  return {
+    text: "real answer",
+    status: "completed",
+    messages: [],
+    toolCalls: [{
+      id: "call-1",
+      name: toolName,
+      args: { query: "docs" },
+      status: "completed",
+      result: { source: "real-agent" },
+    }],
+    usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
   };
 }
 
@@ -581,6 +637,211 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("passes static mock tools into real agent.generate and keeps real traces", async () => {
+    const mockTools = { search_docs: makeEvalTool("search_docs", "mock") };
+    let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
+    const agent = makeAgentStub(async (input) => {
+      capturedGenerateInput = input;
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:mocked-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Find docs" }]),
+      mockTools,
+    });
+
+    const result = await createAgentAdapter(agent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Find docs" },
+      repetition: 1,
+    });
+
+    assertEquals(capturedGenerateInput?.tools, mockTools);
+    assertEquals(result.text, "real answer");
+    assertEquals(result.trace?.toolCalls, [{
+      id: "call-1",
+      name: "search_docs",
+      status: "ok",
+      input: { query: "docs" },
+      output: { source: "real-agent" },
+    }]);
+  });
+
+  it("resolves mock tools once for each example repetition", async () => {
+    const calls: string[] = [];
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "one" },
+        { id: "q2", input: "two" },
+      ]),
+      repetitions: 2,
+      mockTools: ({ example, repetition }) => {
+        calls.push(`${example.id}:${repetition}`);
+        return { search_docs: makeEvalTool("search_docs", `${example.id}:${repetition}`) };
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(report.records.map((record) => record.completed), [true, true, true, true]);
+    assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
+  });
+
+  it("isolates mock tool resolver errors to the current eval record", async () => {
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-error",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "ok", input: "ok" },
+        { id: "bad", input: "bad" },
+      ]),
+      mockTools: ({ example }) => {
+        if (example.id === "bad") throw new Error("mock resolver failed");
+        return { search_docs: makeEvalTool("search_docs") };
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(report.records.map((record) => record.completed), [true, false]);
+    assertEquals(report.records[1]?.error, "mock resolver failed");
+  });
+
+  it("retains only skill loader tools for skills agents when mock tools are active", async () => {
+    const observedToolNames: string[][] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-skill-mocks",
+      async doGenerate(options: unknown) {
+        const tools = (options as { tools?: Array<{ name?: string }> | Record<string, unknown> })
+          .tools;
+        observedToolNames.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name ?? "").filter(Boolean).sort()
+            : Object.keys(tools ?? {}).sort(),
+        );
+        return {
+          content: [{ type: "text", text: "real answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const agent = createAgent({
+      id: "eval-skills-agent",
+      model: "hosted/eval-skill-mocks",
+      system: "Use skills.",
+      skills: true,
+      tools: {
+        load_skill: makeEvalTool("load_skill"),
+        load_skill_reference: makeEvalTool("load_skill_reference"),
+        execute_skill_script: makeEvalTool("execute_skill_script"),
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:skills-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Use skill" }]),
+      mockTools: { search_docs: makeEvalTool("search_docs") },
+    });
+
+    await createAgentAdapter(agent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Use skill" },
+      repetition: 1,
+    });
+
+    assertEquals(observedToolNames, [[
+      "load_skill",
+      "load_skill_reference",
+      "search_docs",
+    ]]);
+  });
+
+  it("uses default-enabled skills when retaining skill loader tools for mocked evals", async () => {
+    const observedToolNames: string[][] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-default-skills-mocks",
+      async doGenerate(options: unknown) {
+        const tools = (options as { tools?: Array<{ name?: string }> | Record<string, unknown> })
+          .tools;
+        observedToolNames.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name ?? "").filter(Boolean).sort()
+            : Object.keys(tools ?? {}).sort(),
+        );
+        return {
+          content: [{ type: "text", text: "real answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const definition = evalAgent({
+      id: "eval:default-skills-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Use skill" }]),
+      mockTools: { search_docs: makeEvalTool("search_docs") },
+    });
+
+    const defaultSkillsAgent = createAgent({
+      id: "eval-default-skills-agent",
+      model: "hosted/eval-default-skills-mocks",
+      system: "Use skills.",
+      tools: {
+        load_skill: makeEvalTool("load_skill"),
+        load_skill_reference: makeEvalTool("load_skill_reference"),
+        execute_skill_script: makeEvalTool("execute_skill_script"),
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+    const disabledSkillsAgent = createAgent({
+      id: "eval-disabled-skills-agent",
+      model: "hosted/eval-default-skills-mocks",
+      system: "Do not use skills.",
+      skills: false,
+      tools: {
+        load_skill: makeEvalTool("load_skill"),
+        load_skill_reference: makeEvalTool("load_skill_reference"),
+        execute_skill_script: makeEvalTool("execute_skill_script"),
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await createAgentAdapter(defaultSkillsAgent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Use skill" },
+      repetition: 1,
+    });
+    await createAgentAdapter(disabledSkillsAgent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Use skill" },
+      repetition: 1,
+    });
+
+    assertEquals(observedToolNames, [
+      ["load_skill", "load_skill_reference", "search_docs"],
+      ["search_docs"],
+    ]);
+  });
+
   it("creates a CLI tool adapter for direct tool evals", async () => {
     const contexts: Array<Parameters<Tool["execute"]>[1]> = [];
     const tool = {
@@ -647,6 +908,26 @@ describe("eval CLI command helpers", () => {
       toolCallId: result.toolCallId,
       runId: "evalrun_lookup",
       projectSlug: "support-app",
+    });
+  });
+
+  it("keeps evalTool execution independent from agent mockTools support", async () => {
+    const directTool = makeEvalTool("lookup_order");
+    const definition = evalTool({
+      id: "eval:lookup-tool-regression",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([{ id: "order-1", input: { query: "A1049" } }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: { tool: createToolAdapter(directTool) },
+    });
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(report.records[0]?.trace.toolCalls[0]?.name, "lookup_order");
+    assertEquals(report.records[0]?.output, {
+      source: "lookup_order",
+      input: { query: "A1049" },
     });
   });
 

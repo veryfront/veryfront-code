@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { datasets, evalAgent, evalTool, isEvalDefinition, metrics } from "veryfront/eval";
+import type { EvalMockToolsResolver } from "veryfront/eval";
+import type { ToolSet } from "veryfront/tool";
 
 describe("eval/factory", () => {
   it("creates a first-class agent eval definition", async () => {
@@ -82,6 +84,29 @@ describe("eval/factory", () => {
       }),
       { orderId: "A1049" },
     );
+  });
+
+  it("preserves static and resolver mock tools on agent eval definitions", () => {
+    const staticTools = { search_docs: {} } as unknown as ToolSet;
+    const resolver: EvalMockToolsResolver = () => staticTools;
+
+    const staticDefinition = evalAgent({
+      id: "eval:static-mocks",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+      mockTools: staticTools,
+    });
+    const resolverDefinition = evalAgent({
+      id: "eval:resolver-mocks",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+      mockTools: resolver,
+    });
+
+    assertEquals(staticDefinition.mockTools, staticTools);
+    assertEquals(resolverDefinition.mockTools, resolver);
+    assertEquals(isEvalDefinition(staticDefinition), true);
+    assertEquals(isEvalDefinition(resolverDefinition), true);
   });
 
   it("does not export unfinished target factories", async () => {

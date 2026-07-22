@@ -106,11 +106,14 @@ export function isRuntimeSkillVisibleTo(
 export function resolveRuntimeSkillsForAgent(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | string[] | undefined;
+  selector: true | false | string[] | undefined;
 }): RuntimeSkillDefinition[] {
   const visibleSkills = input.skills.filter((skill) =>
     isRuntimeSkillVisibleTo(skill, { agentId: input.agentId })
   );
+  if (input.selector === false) {
+    return [];
+  }
   if (input.selector === undefined || input.selector === true) {
     return visibleSkills;
   }

@@ -4,6 +4,8 @@
  * @module eval
  */
 
+import type { ToolSet } from "#veryfront/tool";
+
 /** Primitive kind an eval can execute. */
 export type EvalTargetKind = "agent" | "tool";
 
@@ -360,6 +362,21 @@ export interface EvalCheckContext {
   expect: EvalExpect;
 }
 
+/** Context passed to an agent eval mock tool resolver. */
+export interface EvalMockToolsResolverContext {
+  definition: EvalDefinition;
+  example: EvalExample;
+  repetition: number;
+}
+
+/** Request-scoped mock tool resolver for local `evalAgent` execution. */
+export type EvalMockToolsResolver = (
+  context: EvalMockToolsResolverContext,
+) => EvalMaybePromise<ToolSet>;
+
+/** Static or request-scoped mock tools for local `evalAgent` execution. */
+export type EvalMockTools = ToolSet | EvalMockToolsResolver;
+
 /** Source location for a discovered eval definition. */
 export interface EvalSource {
   filePath: string;
@@ -381,6 +398,7 @@ export interface EvalDefinition {
   metadata: Record<string, unknown>;
   source?: EvalSource;
   input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 
@@ -395,6 +413,7 @@ export interface EvalAgentInput {
   repetitions?: number;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 

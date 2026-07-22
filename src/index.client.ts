@@ -1,26 +1,18 @@
 /**
- * Client/SSR-safe mirror of the `veryfront` root barrel ({@link file://./index.ts}).
+ * Client and SSR safe mirror of the `veryfront` root barrel.
  *
- * The root barrel re-exports the server bootstrap surface (`createHandler`,
- * `startServer`, `toNodeHandler`) from `#veryfront/server`. Because the browser
- * and SSR pipelines transform modules per-file (no cross-module tree-shaking),
- * an ESM re-export eagerly loads its source module — so pulling the root barrel
- * into a client chunk drags the entire server graph in, including
- * `src/server/production-server.ts`, which has module top-level `await` and
- * cannot be transformed to the es2020 browser target (→ HTTP 500 on that chunk,
- * which aborts hydration).
+ * Use this import surface in code that can run in a browser bundle. It exposes
+ * the same browser-safe helpers as `veryfront` while omitting server bootstrap
+ * functions such as `createHandler`, `startServer`, and `toNodeHandler`.
  *
- * A client-reachable module doing a *used* value import from the barrel (e.g.
- * `import { getEnv } from "veryfront"`) is not dead-stripped, so it keeps the
- * barrel — and the leak. This barrel exposes exactly the same browser-safe
- * surface minus the server bootstrap functions, which no client/SSR page code
- * ever legitimately calls. The import rewriter redirects `veryfront` to this
- * module for the `browser` and `ssr` targets (see
- * `src/transforms/import-rewriter/strategies/veryfront-strategy.ts`), the same
- * mechanism `veryfront/workflow` already uses.
+ * @example
+ * ```ts
+ * import { getEnv, json } from "veryfront/index.client";
  *
- * Keep the exports below in sync with {@link file://./index.ts} — everything
- * except the `createHandler` / `startServer` / `toNodeHandler` value export.
+ * export function GET() {
+ *   return json({ mode: getEnv("MODE") ?? "development" });
+ * }
+ * ```
  *
  * @module veryfront
  */
