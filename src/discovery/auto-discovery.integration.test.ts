@@ -266,6 +266,28 @@ describe(
       assertEquals(result.errors[0]?.sourceKind, "schedule");
     });
 
+    it("rejects structurally incomplete source-defined schedules", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("/project/schedules", { recursive: true });
+      await adapter.fs.writeFile(
+        "/project/schedules/malformed.ts",
+        [
+          "export default {",
+          '  id: "daily-triage",',
+          '  schedule: "0 8 * * 1-5",',
+          "  target: {},",
+          "};",
+        ].join("\n"),
+      );
+
+      const result = await discoverSchedules({ projectDir: "/project", adapter });
+
+      assertEquals(result.items, []);
+      assertEquals(result.errors.length, 1);
+      assertEquals(result.errors[0]?.code, "invalid_definition");
+      assertEquals(result.errors[0]?.sourceKind, "schedule");
+    });
+
     it("reports duplicate source-defined webhook ids", async () => {
       const adapter = createMockAdapter();
       const webhookSource = (id: string) =>

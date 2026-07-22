@@ -29,8 +29,19 @@ describe("trigger validation", () => {
   it("rejects non-finite numbers and cyclic data with a structured error", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
+    const customSerialization = Object.defineProperty({}, "toJSON", {
+      value: () => 1n,
+    });
 
-    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, cyclic]) {
+    for (
+      const value of [
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+        cyclic,
+        customSerialization,
+      ]
+    ) {
       assertThrows(
         () => assertSerializable(value),
         VeryfrontError,
