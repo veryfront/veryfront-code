@@ -45,10 +45,38 @@ let transformFlight = new Singleflight<TransformCacheResult>();
 
 interface TransformProgressState {
   listeners: Set<TransformProgressListener>;
+  flights: number;
   lastEvent?: TransformProgressEvent;
 }
 
 const transformProgress = new Map<string, TransformProgressState>();
+
+function ensureTransformProgressState(key: string): TransformProgressState {
+  let state = transformProgress.get(key);
+  if (!state) {
+    state = { listeners: new Set(), flights: 0 };
+    transformProgress.set(key, state);
+  }
+  return state;
+}
+
+function deleteTransformProgressStateIfIdle(key: string, state: TransformProgressState): void {
+  if (state.flights === 0 && state.listeners.size === 0) {
+    transformProgress.delete(key);
+  }
+}
+
+function beginTransformProgressFlight(key: string): () => void {
+  const state = ensureTransformProgressState(key);
+  state.flights++;
+
+  return () => {
+    const current = transformProgress.get(key);
+    if (!current) return;
+    current.flights = Math.max(0, current.flights - 1);
+    deleteTransformProgressStateIfIdle(key, current);
+  };
+}
 
 function notifyTransformProgressListener(
   key: string,
@@ -68,11 +96,7 @@ function subscribeToTransformProgress(
 ): () => void {
   if (!listener) return () => {};
 
-  let state = transformProgress.get(key);
-  if (!state) {
-    state = { listeners: new Set() };
-    transformProgress.set(key, state);
-  }
+  const state = ensureTransformProgressState(key);
   state.listeners.add(listener);
   if (state.lastEvent) notifyTransformProgressListener(key, listener, state.lastEvent);
 
@@ -80,7 +104,7 @@ function subscribeToTransformProgress(
     const current = transformProgress.get(key);
     if (!current) return;
     current.listeners.delete(listener);
-    if (current.listeners.size === 0) transformProgress.delete(key);
+    deleteTransformProgressStateIfIdle(key, current);
   };
 }
 
@@ -387,36 +411,41 @@ export async function getOrComputeTransform(
 
   try {
     const flight = transformFlight.do(key, async () => {
-      const cached = await getCachedTransformAsync(key);
-      if (cached) {
-        // Validate cached code doesn't have unresolved _vf_modules imports.
-        // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
-        // If they're still present, the cache is stale and we need to recompute.
-        if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
-          const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
-          logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
-            key: key.slice(-60),
-            unresolvedImport: match?.[1]?.slice(0, 60),
-          });
-          // Fall through to recompute
-        } else {
-          logger.debug("Cache hit", { key });
-          reportProgress({ phase: "transform-cache:hit" });
-          return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+      const endProgressFlight = beginTransformProgressFlight(key);
+      try {
+        const cached = await getCachedTransformAsync(key);
+        if (cached) {
+          // Validate cached code doesn't have unresolved _vf_modules imports.
+          // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
+          // If they're still present, the cache is stale and we need to recompute.
+          if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
+            const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
+            logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
+              key: key.slice(-60),
+              unresolvedImport: match?.[1]?.slice(0, 60),
+            });
+            // Fall through to recompute
+          } else {
+            logger.debug("Cache hit", { key });
+            reportProgress({ phase: "transform-cache:hit" });
+            return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
+          }
         }
+
+        logger.debug("Cache miss, computing", { key });
+        reportProgress({ phase: "transform-cache:miss" });
+        const code = await computeFn(reportProgress);
+        reportProgress({ phase: "transform-cache:computed" });
+
+        const hash = hashCodeHex(code).slice(0, 16);
+        setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
+          logger.debug("Failed to cache computed transform", { key, error });
+        });
+
+        return { code, cacheHit: false };
+      } finally {
+        endProgressFlight();
       }
-
-      logger.debug("Cache miss, computing", { key });
-      reportProgress({ phase: "transform-cache:miss" });
-      const code = await computeFn(reportProgress);
-      reportProgress({ phase: "transform-cache:computed" });
-
-      const hash = hashCodeHex(code).slice(0, 16);
-      setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
-        logger.debug("Failed to cache computed transform", { key, error });
-      });
-
-      return { code, cacheHit: false };
     });
 
     if (!signal) return await flight;

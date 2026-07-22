@@ -24,7 +24,7 @@ import {
 } from "#veryfront/skill/tools.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { createError, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
@@ -37,6 +37,8 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
+import { bindRuntimeInvokeAgentTool, buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
+import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -105,9 +107,11 @@ export function agent(config: AgentConfig): Agent {
   }
 
   const id = config.id ?? generateAgentId();
+  const delegates = normalizeAgentDelegateIds(id, config.delegates);
 
   const publicConfig: ResolvedAgentConfig = {
     ...config,
+    ...(delegates === undefined ? {} : { delegates }),
     model: resolveConfiguredAgentModel(config.model),
   };
 
@@ -146,6 +150,29 @@ export function agent(config: AgentConfig): Agent {
       }
     }
     mergedToolsConfig = configuredTools;
+  }
+
+  mergedToolsConfig = bindRuntimeInvokeAgentTool({
+    agentId: id,
+    tools: mergedToolsConfig,
+    delegates: delegates ?? [],
+  });
+
+  if (delegates?.length) {
+    if (mergedToolsConfig === true) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Agent "${id}" cannot combine delegates with tools: true. ` +
+          "Declare the required tools by name so delegate capabilities remain explicit.",
+      });
+    }
+    const hasHostedStyleInvokeAgent = mergedToolsConfig &&
+      typeof mergedToolsConfig.invoke_agent === "object";
+    if (!hasHostedStyleInvokeAgent) {
+      mergedToolsConfig = {
+        ...(mergedToolsConfig ?? {}),
+        ...buildAgentDelegateTools({ delegates, selfId: id }),
+      };
+    }
   }
 
   // System prompt augmentation with skill manifest.

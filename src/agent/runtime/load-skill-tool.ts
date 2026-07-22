@@ -52,6 +52,8 @@ const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMe
 
 /** Context for runtime load skill tool. */
 export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
+  /** Agent identity used to enforce owner-scoped skill visibility. */
+  agentId?: string;
   availableSkillIds?: readonly string[];
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;

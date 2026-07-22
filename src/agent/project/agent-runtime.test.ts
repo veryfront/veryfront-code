@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { getMCPRegistry, registerPrompt, registerResource } from "#veryfront/mcp";
 import { nodeAdapter } from "#veryfront/platform/adapters/node.ts";
@@ -143,6 +143,65 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
   } finally {
     skillRegistry.clearAll();
   }
+});
+
+Deno.test("project agent runtime serializes scoped delegates and first-party MCP presets", async () => {
+  const coordinator = agent({
+    id: "coordinator",
+    system: "Delegate bounded specialist work.",
+    delegates: ["specialist"],
+    tools: {
+      get_file: true,
+    },
+    mcpServers: [
+      {
+        kind: "veryfront-api",
+        toolPolicy: { allow: ["get_file"] },
+      },
+    ],
+  });
+
+  const definition = await createRuntimeAgentDefinitionFromAgent(coordinator);
+
+  assertEquals(definition.tools, [
+    "execute_skill_script",
+    "get_file",
+    "load_skill",
+    "load_skill_reference",
+  ]);
+  assertEquals(definition.delegates, ["specialist"]);
+  assertEquals(definition.mcpServers, [{
+    kind: "veryfront-api",
+    toolPolicy: { allow: ["get_file"] },
+  }]);
+});
+
+Deno.test("project agent runtime rejects non-serializable HTTP MCP credentials", async () => {
+  const privateAgent = agent({
+    id: "private-agent",
+    system: "Use the private MCP server.",
+    mcpServers: [{
+      id: "private-mcp",
+      transport: { type: "http", url: "https://mcp.example.test" },
+      auth: { type: "bearer", token: "must-not-cross-hosted-boundary" },
+    }],
+  });
+
+  await assertRejects(
+    () => createRuntimeAgentDefinitionFromAgent(privateAgent),
+    Error,
+    'HTTP MCP server "private-mcp" cannot be serialized into a hosted agent definition',
+  );
+});
+
+Deno.test("project agent runtime preserves an explicitly empty MCP catalog", async () => {
+  const isolated = agent({
+    id: "isolated",
+    system: "Use no remote MCP servers.",
+    mcpServers: [],
+  });
+
+  assertEquals((await createRuntimeAgentDefinitionFromAgent(isolated)).mcpServers, []);
 });
 
 Deno.test("discoverProjectAgentRuntime clears stale runtime registries before rediscovery", async () => {

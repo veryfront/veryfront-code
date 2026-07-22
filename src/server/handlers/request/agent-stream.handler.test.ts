@@ -1315,6 +1315,113 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("fails closed when platform MCP is opted out or discovery fails", async () => {
+    const originalFetch = globalThis.fetch;
+
+    try {
+      for (
+        const testCase of [
+          {
+            id: "explicit-opt-out",
+            name: "explicit opt-out",
+            mcpServers: [] as const,
+            expectedFetchCalls: 0,
+          },
+          {
+            id: "failed-discovery",
+            name: "failed discovery",
+            mcpServers: undefined,
+            expectedFetchCalls: 1,
+          },
+        ]
+      ) {
+        let mcpFetchCalls = 0;
+        let capturedAllowedRemoteTools: string[] | undefined;
+        let capturedRemoteSourceCount = -1;
+        globalThis.fetch = ((url) => {
+          if (String(url).endsWith("/mcp")) {
+            mcpFetchCalls += 1;
+            return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
+          }
+          return Promise.resolve(new Response(null, { status: 503 }));
+        }) as typeof fetch;
+
+        const handler = new AgentStreamHandler({
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) =>
+            id === "assistant-1"
+              ? createAgentWithConfig("assistant-1", {
+                tools: { get_file: true },
+                ...(testCase.mcpServers === undefined
+                  ? {}
+                  : { mcpServers: [...testCase.mcpServers] }),
+              })
+              : undefined,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+            capturedRemoteSourceCount = runtimeConfig.__vfRemoteToolSources?.length ?? 0;
+            return {
+              stream: async (_messages, _context, callbacks) => {
+                callbacks?.onFinish?.({
+                  text: "ok",
+                  messages: [],
+                  toolCalls: [],
+                  status: "completed",
+                  usage: {
+                    promptTokens: 1,
+                    completionTokens: 1,
+                    totalTokens: 2,
+                  },
+                });
+                return new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                });
+              },
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({
+          runId: `run-${testCase.id}`,
+          credentials: { authToken: "request-scoped-user-token" },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          audience: "support-agent-fork",
+          requestId: `run-${testCase.id}`,
+        });
+        const result = await handler.handle(
+          new Request(`https://example.com/api/control-plane/runs/run-${testCase.id}/stream`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          {
+            ...createCtx(publicKeyPem),
+            proxyToken: "run-scoped-token",
+            projectSlug: "support-agent-fork",
+          },
+        );
+
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        assertEquals(mcpFetchCalls, testCase.expectedFetchCalls);
+        assertEquals(capturedAllowedRemoteTools, undefined);
+        assertEquals(capturedRemoteSourceCount, 0);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("exposes Veryfront API MCP tools requested through mcpServers policy", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];

@@ -3,7 +3,6 @@ import {
   createRemoteMCPToolSource,
   type RemoteToolSource,
   type ToolDefinition,
-  toolRegistry,
 } from "#veryfront/tool";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
@@ -14,7 +13,11 @@ import {
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
-import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import {
+  getRequestedUnresolvedBooleanToolNames,
+  type RuntimeRemoteToolConfig,
+  VERYFRONT_API_MCP_SOURCE_ID,
+} from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildStudioMcpHeaders } from "#veryfront/agent/project/live-studio-mcp-tools.ts";
 import {
   clientAllowsStudioMcp,
@@ -83,7 +86,6 @@ const defaultDeps: AgentStreamHandlerDeps = {
 };
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
-const VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID = "veryfront-platform-mcp";
 const VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID = "veryfront-studio-mcp";
 const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   [
@@ -95,7 +97,6 @@ const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
     "studio_capture_screenshot",
   ] as const,
 );
-const LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES = new Set(["bash"]);
 
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
@@ -152,27 +153,6 @@ async function _resolveProductionEnvironmentId(
     });
     return null;
   }
-}
-
-function getRequestedUnresolvedBooleanToolNames(input: {
-  agent: Agent;
-  availableToolNames?: string[];
-}): string[] {
-  const availableToolNames = new Set(input.availableToolNames ?? []);
-  const tools = input.agent.config.tools;
-  if (!tools || tools === true) {
-    return [];
-  }
-
-  return Object.entries(tools)
-    .filter(([toolName, entry]) =>
-      entry === true &&
-      !toolRegistry.get(toolName) &&
-      !availableToolNames.has(toolName) &&
-      !LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES.has(toolName)
-    )
-    .map(([toolName]) => toolName)
-    .sort();
 }
 
 function mergeAllowedRemoteTools(
@@ -349,7 +329,7 @@ function getVeryfrontApiMcpPolicy(agent: Agent): {
 function hasVeryfrontPlatformRemoteToolSource(
   remoteTools: RemoteToolSource[] | undefined,
 ): boolean {
-  return remoteTools?.some((source) => source.id === VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID) ??
+  return remoteTools?.some((source) => source.id === VERYFRONT_API_MCP_SOURCE_ID) ??
     false;
 }
 
@@ -392,17 +372,23 @@ async function withVeryfrontPlatformRemoteTools(input: {
   availableToolNames?: string[];
 }): Promise<Agent> {
   const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
-  const requestedToolNames = getRequestedUnresolvedBooleanToolNames({
-    agent: input.agent,
-    availableToolNames: input.availableToolNames,
-  }).concat(veryfrontApiMcpPolicy.requestedToolNames);
+  const implicitlyRequestedToolNames = input.agent.config.mcpServers === undefined
+    ? getRequestedUnresolvedBooleanToolNames({
+      tools: input.agent.config.tools,
+      agentId: input.agent.id,
+      availableToolNames: input.availableToolNames,
+    })
+    : [];
+  const requestedToolNames = implicitlyRequestedToolNames.concat(
+    veryfrontApiMcpPolicy.requestedToolNames,
+  );
   if ((!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0) || !input.token) {
     return input.agent;
   }
 
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   const platformRemoteToolSource = createRemoteMCPToolSource({
-    id: VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID,
+    id: VERYFRONT_API_MCP_SOURCE_ID,
     endpoint: `${apiUrl}/mcp`,
     headers: { Authorization: `Bearer ${input.token}` },
   });
@@ -418,14 +404,15 @@ async function withVeryfrontPlatformRemoteTools(input: {
     });
   }
 
-  const platformToolNames = platformToolDefinitions
-    ? new Set(platformToolDefinitions.map((tool) => tool.name))
-    : null;
-  const requestedPlatformToolNames = platformToolNames
-    ? (veryfrontApiMcpPolicy.allowAll ? [...platformToolNames] : requestedToolNames).filter((
+  if (!platformToolDefinitions) {
+    return input.agent;
+  }
+
+  const platformToolNames = new Set(platformToolDefinitions.map((tool) => tool.name));
+  const requestedPlatformToolNames =
+    (veryfrontApiMcpPolicy.allowAll ? [...platformToolNames] : requestedToolNames).filter((
       toolName,
-    ) => platformToolNames.has(toolName) && !veryfrontApiMcpPolicy.deniedToolNames.has(toolName))
-    : requestedToolNames.filter((toolName) => !veryfrontApiMcpPolicy.deniedToolNames.has(toolName));
+    ) => platformToolNames.has(toolName) && !veryfrontApiMcpPolicy.deniedToolNames.has(toolName));
   if (requestedPlatformToolNames.length === 0) {
     return input.agent;
   }
@@ -433,9 +420,7 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
-    platformToolDefinitions
-      ? createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions)
-      : platformRemoteToolSource,
+    createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions),
   ];
 
   const runtimeConfig: Agent["config"] & RuntimeRemoteToolConfig = {

@@ -30,6 +30,7 @@ import {
   MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_BATCH_SIZE,
+  TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
 import {
   getFromRedis,
@@ -68,6 +69,37 @@ import {
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
+
+class InProgressTransformWaitTimeoutError extends Error {
+  constructor(filePath: string) {
+    super(
+      `Timed out waiting for in-progress SSR transform after ${TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS}ms: ${
+        filePath.split("/").pop() || filePath
+      }`,
+    );
+    this.name = "InProgressTransformWaitTimeoutError";
+  }
+}
+
+async function waitForInProgressTransform(
+  transformPromise: Promise<void>,
+  filePath: string,
+): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      transformPromise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new InProgressTransformWaitTimeoutError(filePath)),
+          TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 /**
  * SSR Module Loader with Redis Support.
@@ -549,11 +581,21 @@ export class SSRModuleLoader {
       try {
         await withSpan(
           SpanNames.SSR_WAIT_IN_PROGRESS,
-          () => existingTransform,
+          () => waitForInProgressTransform(existingTransform, filePath),
           { "ssr.file": filePath.split("/").pop() || filePath },
         );
         return;
       } catch (error) {
+        if (error instanceof InProgressTransformWaitTimeoutError) {
+          if (globalInProgress.get(inProgressKey) === existingTransform) {
+            globalInProgress.delete(inProgressKey);
+          }
+          logger.warn("In-progress transform wait timed out", {
+            file: filePath.slice(-40),
+            error: error.message,
+          });
+          throw error;
+        }
         // Retry only after the leader actually rejects. A time-based retry can
         // delete live singleflight state and multiply one slow cold transform
         // into many competing transforms; the outer render deadline already

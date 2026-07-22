@@ -355,6 +355,50 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(followerPhases.includes("leader:finished"), true);
     });
 
+    it("replays early leader progress even when no leader listener was registered", async () => {
+      const followerPhases: string[] = [];
+      let computeCalls = 0;
+      let releaseCompute!: () => void;
+      let markComputeStarted!: () => void;
+      const computeGate = new Promise<void>((resolve) => {
+        releaseCompute = resolve;
+      });
+      const computeStarted = new Promise<void>((resolve) => {
+        markComputeStarted = resolve;
+      });
+
+      const leader = getOrComputeTransform(
+        "leader-only-progress-key",
+        async (reportProgress) => {
+          computeCalls++;
+          reportProgress?.({ phase: "leader:started" });
+          markComputeStarted();
+          await computeGate;
+          reportProgress?.({ phase: "leader:finished" });
+          return "shared-progress-code";
+        },
+      );
+
+      await computeStarted;
+
+      const follower = getOrComputeTransform(
+        "leader-only-progress-key",
+        async () => {
+          computeCalls++;
+          return "unexpected-code";
+        },
+        300,
+        (event) => followerPhases.push(event.phase),
+      );
+
+      assertEquals(followerPhases.includes("leader:started"), true);
+      releaseCompute();
+      await Promise.all([leader, follower]);
+
+      assertEquals(computeCalls, 1);
+      assertEquals(followerPhases.includes("leader:finished"), true);
+    });
+
     it("isolates a throwing listener during late progress replay", async () => {
       let computeCalls = 0;
       let listenerCalls = 0;

@@ -19,7 +19,7 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { readTextFile, realPath } from "#veryfront/compat/fs.ts";
-import { stripServerOnlyExports } from "../../../transforms/pipeline/stages/browser-server-exports-strip.ts";
+import { stripServerOnlyExports } from "#veryfront/transforms/pipeline/stages/browser-server-exports-strip.ts";
 
 const JAVASCRIPT_LOADERS = new Map<string, string>([
   [".js", "js"],

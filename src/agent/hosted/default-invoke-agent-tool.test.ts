@@ -6,6 +6,7 @@ import {
   createDefaultHostedInvokeAgentTool,
   type DefaultHostedInvokeAgentContext,
   defaultHostedInvokeAgentInputSchema,
+  defaultHostedInvokeAgentToolInternals,
   type DefaultHostedInvokeAgentToolOptions,
   type DefaultHostedInvokeAgentTraceAttributes,
   executeDefaultHostedInvokeAgentTool,
@@ -109,6 +110,37 @@ Deno.test("defaultHostedInvokeAgentInputSchema rejects invalid result mode", asy
     Error,
     "result_mode",
   );
+});
+
+Deno.test("fixed hosted delegates inherit project-agent settings without overriding explicit input", () => {
+  const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
+    {
+      description: "extract application",
+      prompt: "Extract the application.",
+      context: {},
+      agent_id: "extraction-agent",
+      model: "requested-model",
+    },
+    {
+      system: "Follow the extraction policy.",
+      model: "configured-model",
+      maxSteps: 12,
+      thinking: 800,
+      toolNames: ["get_file", "load_skill"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(configured, {
+    description: "extract application",
+    prompt: "Extract the application.",
+    context: {},
+    agent_id: "extraction-agent",
+    model: "requested-model",
+    max_steps: 12,
+    thinking: 800,
+    tools: ["get_file", "load_skill"],
+  });
 });
 
 Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {

@@ -9,7 +9,10 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearMCPRegistry } from "#veryfront/mcp";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { agentRegistry } from "../composition/index.ts";
-import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type {
+  RuntimeAgentMarkdownDefinition,
+  RuntimeAgentMcpServerConfig,
+} from "../runtime/agent-definition.ts";
 import {
   getRuntimeAgentMarkdownDefinition,
   isRuntimeAgentMarkdownAgent,
@@ -23,6 +26,8 @@ import {
   getActiveSourceIntegrationPolicy,
   runWithEffectiveSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy-context.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
+import { getRuntimeLocalToolExportName } from "../runtime/local-tool.ts";
 
 /** Public API contract for project agent runtime agent source. */
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";
@@ -72,11 +77,38 @@ function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | u
   }
 
   const names = Object.entries(tools)
-    .filter(([, value]) => value === true)
-    .map(([name]) => name)
+    .flatMap(([name, value]) => {
+      if (value === true) return [name];
+      const exportName = getRuntimeLocalToolExportName(value);
+      return exportName ? [exportName] : [];
+    })
     .sort();
 
   return names.length > 0 ? names : undefined;
+}
+
+function resolveSerializableMcpServers(
+  mcpServers: AgentConfig["mcpServers"],
+): RuntimeAgentMcpServerConfig[] | undefined {
+  if (mcpServers === undefined) {
+    return undefined;
+  }
+
+  return mcpServers.map((server) => {
+    if ("transport" in server) {
+      throw CONFIG_INVALID.create({
+        detail:
+          `HTTP MCP server "${server.id}" cannot be serialized into a hosted agent definition. ` +
+          "Configure it on the hosted agent service, or use a first-party MCP preset.",
+      });
+    }
+
+    return {
+      kind: server.kind,
+      ...(server.id === undefined ? {} : { id: server.id }),
+      ...(server.toolPolicy === undefined ? {} : { toolPolicy: server.toolPolicy }),
+    };
+  });
 }
 
 /** Clear project agent runtime registries. */
@@ -146,6 +178,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
     return markdownDefinition;
   }
   const toolNames = resolveAgentToolNames(runtimeAgent.config.tools);
+  const mcpServers = resolveSerializableMcpServers(runtimeAgent.config.mcpServers);
 
   return {
     id: runtimeAgent.id,
@@ -165,6 +198,10 @@ export async function createRuntimeAgentDefinitionFromAgent(
       : {}),
     ...(runtimeAgent.config.skills === undefined ? {} : { skills: runtimeAgent.config.skills }),
     ...(toolNames === undefined ? {} : { tools: toolNames }),
+    ...(runtimeAgent.config.delegates === undefined
+      ? {}
+      : { delegates: runtimeAgent.config.delegates }),
+    ...(mcpServers === undefined ? {} : { mcpServers }),
   };
 }
 

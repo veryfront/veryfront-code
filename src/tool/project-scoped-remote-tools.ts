@@ -42,7 +42,7 @@ export type ProjectScopedRemoteToolExecutionInput = {
 
 /** Public API contract for project scoped remote tool execution. */
 export type ProjectScopedRemoteToolExecution = ProjectScopedRemoteToolDefinitions & {
-  toolDefinition: ToolDefinition | undefined;
+  toolDefinition: ToolDefinition;
   toolInput: Record<string, unknown>;
   executeContext: ToolExecutionContext | undefined;
 };
@@ -312,6 +312,12 @@ export function createProjectScopedRemoteToolCatalog(
       const toolDefinition = toolDefinitions.find((definition) =>
         definition.name === executionInput.toolName
       );
+      if (!toolDefinition) {
+        throw PERMISSION_DENIED.create({
+          detail:
+            `Tool "${executionInput.toolName}" is not advertised by remote source "${input.source.id}"`,
+        });
+      }
       const toolInput = hydrateProjectScopedRemoteToolInput({
         toolDefinition,
         activeProjectId,

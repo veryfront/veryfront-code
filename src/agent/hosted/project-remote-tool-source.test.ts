@@ -497,7 +497,6 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }],
     clientProfile: {
       id: "veryfront-studio",
       type: "web",
@@ -527,6 +526,31 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
     (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
     ["studio_todo_write"],
   );
+});
+
+Deno.test("createHostedProjectRemoteToolSources preserves an explicit MCP opt-out", () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    allowedToolNames: new Set(["studio_todo_write"]),
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({ id: config.id, tools: [] });
+    },
+  });
+
+  assertEquals(sources, []);
+  assertEquals(configs, []);
 });
 
 Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists", async () => {
@@ -617,12 +641,12 @@ Deno.test("createHostedProjectRemoteToolSources applies custom MCP server tool p
   await assertRejects(
     () => source.executeTool("delete_docs", {}),
     Error,
-    'Tool "delete_docs" is not allowed for this MCP server',
+    'Tool "delete_docs" is not advertised by remote source "docs"',
   );
   await assertRejects(
     () => source.executeTool("archive_docs", {}),
     Error,
-    'Tool "archive_docs" is not allowed for this MCP server',
+    'Tool "archive_docs" is not advertised by remote source "docs"',
   );
 });
 

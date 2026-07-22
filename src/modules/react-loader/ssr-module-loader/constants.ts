@@ -62,5 +62,9 @@ export function resetCachedTransformLimits(): void {
 // dependency; this remains well below the module-load and render hard caps.
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 5_000;
 
+// Bound waits on a shared cold transform leader. If the leader promise never
+// settles, callers should detach and allow later requests to retry cleanly.
+export const TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS = 45_000;
+
 export const MAX_TRANSFORM_DEPTH = 15;
 export const TRANSFORM_BATCH_SIZE = 10;
