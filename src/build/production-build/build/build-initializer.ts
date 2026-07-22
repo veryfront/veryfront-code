@@ -50,7 +50,10 @@ export function normalizeBuildOptions(options: BuildOptions): BuildOptions {
     enableSplitting: options.enableSplitting ?? true,
     enableCompression: options.enableCompression ?? true,
     enablePrefetch: options.enablePrefetch ?? true,
-    ssg: options.ssg ?? false,
+    // Deliberately left undefined when the caller did not choose: the
+    // orchestrator resolves it against build.ssg from veryfront.config.ts
+    // (loaded in initializeBuildContext), then defaults to enabled.
+    ssg: options.ssg,
     include: options.include,
     exclude: options.exclude,
     dryRun: options.dryRun ?? false,
