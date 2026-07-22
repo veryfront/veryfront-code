@@ -1142,6 +1142,59 @@ describe("internal-agents/run-stream", () => {
     assertEquals(prompt.includes("- web_search"), false);
   });
 
+  it("keeps local tools required without protecting remote placeholders from provider caps", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const remoteToolNames = Array.from(
+      { length: 150 },
+      (_, index) => `remote_${String(index).padStart(3, "0")}`,
+    );
+    let runtimeSystem: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "openai/gpt-5.4-nano",
+        system: "test",
+        tools: Object.fromEntries([
+          ...remoteToolNames.map((toolName) => [toolName, true] as const),
+          ["zzz_local", { description: "Keep this local tool available" }],
+        ]),
+        __vfAllowedRemoteTools: [...remoteToolNames, "zzz_local"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertStringIncludes(prompt, "- zzz_local");
+    assertEquals(prompt.includes("- remote_127"), false);
+  });
+
   it("preserves invoke_agent delegation for skill-enabled agents under toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];

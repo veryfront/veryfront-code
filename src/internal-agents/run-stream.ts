@@ -486,6 +486,29 @@ function applyRuntimeToolAllowlist(
   );
 }
 
+function getRequiredLocalToolNames(input: {
+  mergedTools: Agent["config"]["tools"];
+  availableLocalTools: Record<string, Tool | boolean>;
+  agent: Agent;
+}): string[] {
+  if (!input.mergedTools || input.mergedTools === true) {
+    return [];
+  }
+
+  return Object.entries(input.mergedTools)
+    .filter(([toolName, entry]) => {
+      if (entry && typeof entry === "object") {
+        return true;
+      }
+      if (Object.hasOwn(input.availableLocalTools, toolName)) {
+        return true;
+      }
+      const registryTool = toolRegistry.get(toolName);
+      return Boolean(registryTool && isToolVisibleTo(registryTool, { agentId: input.agent.id }));
+    })
+    .map(([toolName]) => toolName);
+}
+
 function getServerResolvedProjectToolNames(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): Set<string> {
@@ -686,14 +709,19 @@ export async function createRuntimeAgentStreamResponse(
   const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
     modelSupportedProviderToolNames.has(toolName)
   );
-  const localToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
+  const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
   const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
   const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
     .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
+  const localToolNames = getRequiredLocalToolNames({
+    mergedTools,
+    availableLocalTools,
+    agent,
+  });
   const runtimeToolNames = selectProviderCompatibleToolNames(
     [
       ...new Set([
-        ...localToolNames,
+        ...mergedToolNames,
         ...providerToolNames,
         ...(allowedRemoteToolNames ?? []),
         ...forwardedToolNames,
