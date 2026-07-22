@@ -84,6 +84,35 @@ Use only the authored instructions.
   assertEquals(result.skills, []);
 });
 
+Deno.test("parseRuntimeAgentMarkdownDefinition preserves disabled skills", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "specialist",
+    content: `---
+skills: false
+---
+Use only the authored instructions.
+`,
+  });
+
+  assertEquals(result.skills, false);
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects disabled tools", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "specialist",
+        content: `---
+tools: false
+---
+Use only the authored instructions.
+`,
+      }),
+    Error,
+    'Agent frontmatter "tools" must be an array of non-empty strings.',
+  );
+});
+
 Deno.test("parseRuntimeAgentMarkdownDefinition rejects malformed capability selectors", () => {
   assertThrows(
     () =>

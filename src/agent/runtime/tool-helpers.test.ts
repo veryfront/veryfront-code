@@ -535,6 +535,21 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("strict replacement mode fails closed for integration-style registry references", async () => {
+      await assertRejects(
+        () =>
+          getAvailableTools(
+            { github__list_issues: true },
+            {
+              includeIntegrationTools: false,
+              strictConfiguredToolsOnly: true,
+            },
+          ),
+        Error,
+        'Unknown tool reference: github__list_issues. Tool names must exactly match tool({ id: "..." }). Available tools: (none)',
+      );
+    });
+
     it("only appends explicitly requested remote definitions for explicit tool maps", async () => {
       toolRegistry.clearAll();
 

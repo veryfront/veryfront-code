@@ -239,6 +239,9 @@ export function resolveConfiguredTool(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
   toolName: string,
   context?: ToolExecutionContext,
+  options?: {
+    allowIntegrationStyleConcreteTools?: boolean;
+  },
 ): Tool | null {
   if (!toolsConfig) {
     return null;
@@ -260,8 +263,10 @@ export function resolveConfiguredTool(
   }
 
   if (configuredEntry && typeof configuredEntry === "object") {
-    assertLocalToolId(toolName);
-    assertLocalToolId(configuredEntry.id);
+    if (options?.allowIntegrationStyleConcreteTools !== true) {
+      assertLocalToolId(toolName);
+      assertLocalToolId(configuredEntry.id);
+    }
     return configuredEntry;
   }
 
@@ -287,7 +292,9 @@ export async function executeConfiguredTool(
     throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
   }
 
-  const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context);
+  const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context, {
+    allowIntegrationStyleConcreteTools: options?.strictConfiguredToolsOnly,
+  });
   if (configuredTool) {
     return await configuredTool.execute(input, context);
   }
@@ -477,8 +484,10 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
-      assertLocalToolId(name);
-      assertLocalToolId(entry.id);
+      if (!strictConfiguredToolsOnly) {
+        assertLocalToolId(name);
+        assertLocalToolId(entry.id);
+      }
       addToolDefinition(tools, name, entry);
     }
   }

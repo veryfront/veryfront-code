@@ -150,6 +150,13 @@ function parseCapabilitySelector(value: unknown, field: string): true | string[]
   return parseStringArray(value, field);
 }
 
+function parseSkillSelector(value: unknown): true | false | string[] {
+  if (value === false) {
+    return false;
+  }
+  return parseCapabilitySelector(value, "skills");
+}
+
 function parseDelegates(value: unknown): string[] {
   return parseStringArray(value, "delegates");
 }
@@ -185,9 +192,7 @@ export function parseRuntimeAgentMarkdownDefinition(
   const providerTools = Object.hasOwn(attrs, "provider-tools")
     ? parseStringArray(attrs["provider-tools"], "provider-tools")
     : undefined;
-  const skills = Object.hasOwn(attrs, "skills")
-    ? parseCapabilitySelector(attrs.skills, "skills")
-    : undefined;
+  const skills = Object.hasOwn(attrs, "skills") ? parseSkillSelector(attrs.skills) : undefined;
   const tools = Object.hasOwn(attrs, "tools")
     ? parseCapabilitySelector(attrs.tools, "tools")
     : undefined;

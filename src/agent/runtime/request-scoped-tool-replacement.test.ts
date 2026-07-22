@@ -331,6 +331,61 @@ describe("request-scoped tool replacement for generate()", () => {
     );
   });
 
+  it("allows concrete request replacement tools with integration-style ids", async () => {
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/request-tools-integration-style",
+      async doGenerate(options: unknown) {
+        if (toolNamesFromGenerateOptions(options).includes("github__list_issues")) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "github-issues-1",
+              toolName: "github__list_issues",
+              input: '{"repo":"veryfront-code"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+
+    const assistant = agent({
+      model: "hosted/request-tools-integration-style",
+      system: "Use replacement tools.",
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({
+      input: "List issues",
+      tools: {
+        github__list_issues: tool({
+          id: "github__list_issues",
+          description: "Mock GitHub issue list.",
+          inputSchema: defineSchema((v) => v.object({ repo: v.string() }))(),
+          execute: async ({ repo }) => ({ repo, issues: ["release blocker"] }),
+        }),
+      },
+    });
+
+    assertEquals(result.toolCalls[0]?.status, "completed");
+    assertEquals(result.toolCalls[0]?.result, {
+      repo: "veryfront-code",
+      issues: ["release blocker"],
+    });
+  });
+
   it("keeps concurrent generate() replacement maps isolated on one agent", async () => {
     const model: ModelRuntime = {
       provider: "hosted",
