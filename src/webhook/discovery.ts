@@ -15,6 +15,7 @@ export interface WebhookDiscoveryOptions {
 
 export type WebhookDiscoveryResult = SourceTriggerDiscoveryResult<WebhookDefinition>;
 
+/** Discover and validate source-defined webhooks beneath the configured directory. */
 export async function discoverWebhooks(
   options: WebhookDiscoveryOptions,
 ): Promise<WebhookDiscoveryResult> {

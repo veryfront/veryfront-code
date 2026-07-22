@@ -290,6 +290,27 @@ describe(
       assertEquals(result.errors[0]?.sourceId, "ticket-created");
     });
 
+    it("rejects structurally incomplete source-defined webhooks", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("/project/webhooks", { recursive: true });
+      await adapter.fs.writeFile(
+        "/project/webhooks/malformed.ts",
+        [
+          "export default {",
+          '  id: "ticket-created",',
+          "  target: {},",
+          "};",
+        ].join("\n"),
+      );
+
+      const result = await discoverWebhooks({ projectDir: "/project", adapter });
+
+      assertEquals(result.items, []);
+      assertEquals(result.errors.length, 1);
+      assertEquals(result.errors[0]?.code, "invalid_definition");
+      assertEquals(result.errors[0]?.sourceKind, "webhook");
+    });
+
     it("should discover all valid named exports from a single tool file", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-multi-export-" });
 
