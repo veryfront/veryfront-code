@@ -578,7 +578,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           remoteFiles: mainFiles,
           source: { type: "main" } satisfies PullSource,
         };
-      const toDelete = target.remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
+      const toDelete = target.remoteFiles
+        .map((file) => file.path)
+        .filter((path) => !ignoreChecker.isIgnored(path) && !localPaths.has(path));
 
       if (ops.length === 0 && toDelete.length === 0) {
         try {
