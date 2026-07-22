@@ -683,6 +683,10 @@ export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSe
   // and matches MCP tools/list: project-level callers see only unowned tools.
   // Hosted per-agent runs pass their task context identity so owned colocated
   // tools are available to their owner and hidden from other agents.
+  // Shared skill tools use local registry and filesystem state. Hosted runs
+  // instead add the request-scoped load_skill tool below; its optional file
+  // input reads references with project, branch, auth, and owner context.
+  // Hosted runs do not execute skill scripts directly.
   return Object.fromEntries(
     [...toolRegistry.getAll()]
       .filter(([toolId, registryTool]) =>

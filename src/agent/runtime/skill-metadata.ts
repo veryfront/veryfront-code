@@ -97,6 +97,42 @@ export function isRuntimeSkillVisibleTo(
   return definition.ownerAgentId === undefined || definition.ownerAgentId === scope?.agentId;
 }
 
+/**
+ * Resolve the runtime skills advertised to an agent.
+ *
+ * Explicit selectors use the same rule as the local skill registry: resolve
+ * the agent's own short name first, then an exact visible skill id.
+ */
+export function resolveRuntimeSkillsForAgent(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | string[] | undefined;
+}): RuntimeSkillDefinition[] {
+  const visibleSkills = input.skills.filter((skill) =>
+    isRuntimeSkillVisibleTo(skill, { agentId: input.agentId })
+  );
+  if (input.selector === undefined || input.selector === true) {
+    return visibleSkills;
+  }
+
+  const byId = new Map(visibleSkills.map((skill) => [skill.id, skill]));
+  const ownByShortName = new Map(
+    visibleSkills
+      .filter((skill) => skill.ownerAgentId === input.agentId && skill.shortName !== undefined)
+      .map((skill) => [skill.shortName as string, skill]),
+  );
+  const selectedSkills = new Map<string, RuntimeSkillDefinition>();
+
+  for (const requested of input.selector) {
+    const skill = ownByShortName.get(requested) ?? byId.get(requested);
+    if (skill) {
+      selectedSkills.set(skill.id, skill);
+    }
+  }
+
+  return [...selectedSkills.values()];
+}
+
 /** Public API contract for runtime loaded skill response messages. */
 export type RuntimeLoadedSkillResponseMessages = {
   allowedToolsNote: string;

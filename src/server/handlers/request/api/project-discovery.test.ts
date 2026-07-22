@@ -662,7 +662,12 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("write-report"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, { "write-report": true });
+      assertEquals(discoveredAgent.config.tools, {
+        "write-report": true,
+        load_skill: true,
+        load_skill_reference: true,
+        execute_skill_script: true,
+      });
     });
 
     it("keeps explicit generated-looking tool ids available for request-time project-agent runs", async () => {
@@ -712,7 +717,12 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("tool_2024_01"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, { "tool_2024_01": true });
+      assertEquals(discoveredAgent.config.tools, {
+        tool_2024_01: true,
+        load_skill: true,
+        load_skill_reference: true,
+        execute_skill_script: true,
+      });
     });
 
     it("keeps object-spread overridden tool ids available for request-time project-agent runs", async () => {
@@ -763,7 +773,12 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("my-tool"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, { "my-tool": true });
+      assertEquals(discoveredAgent.config.tools, {
+        "my-tool": true,
+        load_skill: true,
+        load_skill_reference: true,
+        execute_skill_script: true,
+      });
     });
   },
 );

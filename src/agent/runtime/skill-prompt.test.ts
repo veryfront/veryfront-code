@@ -48,6 +48,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   const block = buildRuntimeAvailableSkillsPromptBlock([
     createSkill({
       id: "build-ui",
+      name: "Build UI guidance",
       description: "Build UI",
       allowedTools: ["bash", "writeFile"],
     }),
@@ -69,7 +70,19 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   );
   assertStringIncludes(block, "Pass through any returned model, thinking, or maxSteps overrides");
   assertStringIncludes(block, "Do not mention child agents, delegation, or tool/process narration");
-  assertStringIncludes(block, "- build-ui: Build UI (tools: bash, writeFile)");
+  assertStringIncludes(
+    block,
+    "- Build UI guidance (`build-ui`): Build UI (tools: bash, writeFile)",
+  );
+});
+
+Deno.test("buildRuntimeAvailableSkillsPromptBlock does not repeat an id-only name", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({ id: "code-review", description: "Review code" }),
+  ]);
+
+  assertStringIncludes(block, "- code-review: Review code");
+  assertEquals(block.includes("code-review (`code-review`)"), false);
 });
 
 Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", () => {
@@ -97,5 +110,9 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", (
     ),
     false,
   );
-  assertStringIncludes(block, "(2 more skills available — use load_skill to discover)");
+  assertStringIncludes(
+    block,
+    "(2 more skill summaries omitted from this prompt; use an ID from the load_skill tool schema)",
+  );
+  assertEquals(block.includes("use load_skill to discover"), false);
 });

@@ -1030,7 +1030,6 @@ export class AgentRuntime {
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
         let mustLoadSkillFirst = !activeSkillPolicy &&
-          Boolean(this.config.skills) &&
           response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
@@ -1535,7 +1534,6 @@ export class AgentRuntime {
       this.status = "tool_execution";
       const streamedToolCalls = Array.from(state.toolCalls.values());
       let mustLoadSkillFirst = !activeSkillPolicy &&
-        Boolean(this.config.skills) &&
         streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
       for (const tc of streamedToolCalls) {

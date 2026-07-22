@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { getMCPRegistry, registerPrompt, registerResource } from "#veryfront/mcp";
 import { nodeAdapter } from "#veryfront/platform/adapters/node.ts";
@@ -23,6 +23,8 @@ import {
   normalizeSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
@@ -96,7 +98,13 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "openai/gpt-5.4",
     maxSteps: 7,
     providerTools: ["web_search"],
-    tools: ["get_active_agent_run", "get_agent_run_events"],
+    tools: [
+      "execute_skill_script",
+      "get_active_agent_run",
+      "get_agent_run_events",
+      "load_skill",
+      "load_skill_reference",
+    ],
   });
   assertEquals(await createRuntimeAgentDefinitionFromAgent(markdownAgent), {
     id: "writer",
@@ -107,6 +115,34 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "anthropic/claude-sonnet-4-5",
     maxSteps: 4,
   });
+});
+
+Deno.test("project agent runtime keeps factory skill catalogs out of hosted instructions", async () => {
+  registerSkill("incident-response", {
+    id: "incident-response",
+    metadata: { name: "incident-response", description: "Respond to incidents" },
+    rootPath: "/test/skills/incident-response",
+  });
+
+  try {
+    const codeAgent = agent({
+      id: "incident-agent",
+      system: "Handle incidents carefully.",
+    });
+    const effectiveSystem = getEffectiveAgentSystem(codeAgent);
+    const localPrompt = typeof effectiveSystem === "function"
+      ? await effectiveSystem()
+      : effectiveSystem;
+
+    assertStringIncludes(localPrompt, "## Available Skills");
+    assertEquals(codeAgent.config.system, "Handle incidents carefully.");
+    assertEquals(
+      (await createRuntimeAgentDefinitionFromAgent(codeAgent)).instructions,
+      "Handle incidents carefully.",
+    );
+  } finally {
+    skillRegistry.clearAll();
+  }
 });
 
 Deno.test("discoverProjectAgentRuntime clears stale runtime registries before rediscovery", async () => {

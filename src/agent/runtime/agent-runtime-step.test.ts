@@ -62,7 +62,6 @@ describe("agent/runtime-step", () => {
       model: "auto",
       system: "Base system",
       tools: true,
-      skills: true,
     } as AgentConfig;
     const capturedContexts: ToolExecutionContext[] = [];
     const remoteSource = remoteToolSource("remote_source");

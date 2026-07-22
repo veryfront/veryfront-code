@@ -10,7 +10,10 @@ import type {
 } from "./default-chat-runtime.ts";
 import type { HostedChatRuntimePreparationSteering } from "./chat-preparation.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
-import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import {
+  resolveRuntimeSkillsForAgent,
+  type RuntimeSkillDefinition,
+} from "../runtime/skill-metadata.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
@@ -162,17 +165,6 @@ async function fetchSkillsWithFallback(input: {
   }
 }
 
-function filterVisibleSkills(input: {
-  skills: RuntimeSkillDefinition[];
-  allowedSkillIds?: string[];
-}): RuntimeSkillDefinition[] {
-  if (!input.allowedSkillIds) {
-    return input.skills;
-  }
-
-  return input.skills.filter((skill) => input.allowedSkillIds?.includes(skill.id));
-}
-
 /** Create default hosted project steering refresh. */
 export function createDefaultHostedProjectSteeringRefresh(
   options: CreateDefaultHostedProjectSteeringRefreshOptions,
@@ -208,9 +200,10 @@ export function createDefaultHostedProjectSteeringRefresh(
       }),
     ]);
 
-    const visibleSkills = filterVisibleSkills({
+    const advertisedSkills = resolveRuntimeSkillsForAgent({
       skills,
-      allowedSkillIds: input.taskContext.availableSkillIds,
+      agentId: input.liveProjectSteering.agent.id,
+      selector: input.liveProjectSteering.agent.skills,
     });
     const sourceAllowedRemoteToolNames = applySourceIntegrationPolicy(
       remoteToolNames,
@@ -235,7 +228,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       branchId,
       environmentContext: input.liveProjectSteering.environmentContext,
       instructions: projectInstructions,
-      skills: visibleSkills,
+      skills: advertisedSkills,
     });
 
     return flattenSystemInstructions(withRuntimeToolInventory(refreshedInstructions, toolNames));

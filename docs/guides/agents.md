@@ -92,7 +92,10 @@ tools: [fetch-paper] # own short names resolve first, then global tool ids
 Research the question and cite every claim.
 ```
 
-- `skills: true` / `tools: true` - every capability visible to the agent.
+- Omit `skills` or use `skills: true` to advertise every skill visible to the
+  agent. Use `skills: []` to advertise none. `load_skill` remains available in
+  either case.
+- `tools: true` - every tool visible to the agent.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.
@@ -183,10 +186,11 @@ export default agent({
 });
 ```
 
-## Enable skills
+## Use skills
 
 Skills are reusable instruction packs discovered from your project's `skills/`
-directory.
+directory. Every agent receives the visible skill catalog and `load_skill`
+automatically.
 
 ```ts
 // agents/assistant.ts
@@ -195,7 +199,6 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "assistant",
   system: "You are a support engineer. Use skills when they match the task.",
-  skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
   tools: {
     Read: true,
     github__list_issues: true,
@@ -203,23 +206,26 @@ export default agent({
 });
 ```
 
-When `skills` is enabled, the runtime automatically registers these skill tools:
+Use `skills: ["incident-response", "repo-maintainer"]` to advertise only those
+skills. Use `skills: []` to advertise no skills. This selector does not remove
+`load_skill` or restrict which visible skills it can load by ID.
 
-- `load_skill`
-- `load_skill_reference`
-- `execute_skill_script`
+Local and project runtimes also expose `load_skill_reference` and
+`execute_skill_script`. Hosted chat reads an advertised reference through
+`load_skill({ skillId, file })` and does not execute skill scripts directly.
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
 
 ## Skill execution flow
 
-For skill-aware agents, the flow is:
+When an agent uses a skill, the flow is:
 
 1. Call `load_skill({ skillId })` to load the skill instructions and policy.
-2. Optionally call `load_skill_reference(...)` to read files from
-   `references/`, `resources/`, or `assets/`.
-3. Optionally call `execute_skill_script(...)` to run scripts from `scripts/`.
+2. Read an advertised reference with `load_skill_reference(...)` on local and
+   project runtimes, or `load_skill({ skillId, file })` in hosted chat.
+3. On local and project runtimes, optionally call
+   `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
 The runtime enforces that non-skill tools cannot run before a successful
@@ -312,24 +318,24 @@ export default agent({
 
 ## Agent configuration
 
-| Property              | Type                                                                                                   | Description                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `id`                  | `string`                                                                                               | Unique identifier used with `getAgent()`                                     |
-| `name`                | `string`                                                                                               | Human-readable display name for listings                                     |
-| `description`         | `string`                                                                                               | Optional summary for listings                                                |
+| Property              | Type                                                                                                   | Description                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `id`                  | `string`                                                                                               | Unique identifier used with `getAgent()`                                                              |
+| `name`                | `string`                                                                                               | Human-readable display name for listings                                                              |
+| `description`         | `string`                                                                                               | Optional summary for listings                                                                         |
 | `model`               | `string`                                                                                               | Optional provider/model override. Omit for `openai/gpt-5.4-nano`; use `"auto"` for runtime selection. |
-| `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                |
-| `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run              |
-| `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                      |
-| `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                 |
-| `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                           |
-| `skills`              | `true \| string[]`                                                                                     | Enable all skills (`true`) or selected skill IDs                             |
-| `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                     |
-| `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                         |
-| `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                 |
-| `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                           |
-| `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                         |
-| `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings           |
+| `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
+| `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
+| `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                                               |
+| `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
+| `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |
+| `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                        |
+| `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                              |
+| `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                  |
+| `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                                          |
+| `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                                                    |
+| `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                  |
+| `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                    |
 
 ## Verify it worked
 

@@ -20,7 +20,7 @@ import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.
 import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
 import extEvalReportMlflow from "../../extensions/ext-eval-report-mlflow/src/index.ts";
 import extZod from "../../extensions/ext-schema-zod/src/index.ts";
-import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
 type BuiltinLLMProviderDefinition = {
   extensionName: string;
@@ -231,12 +231,6 @@ export function ensureBuiltinLLMProviders(): LLMProviderRegistry {
     registerBuiltinLLMProvider(registry, definition.provider());
   }
   return registry;
-}
-
-export function ensureBuiltinSchemaValidator(): void {
-  if (!tryResolve("SchemaValidator")) {
-    register("SchemaValidator", createZodAdapter());
-  }
 }
 
 function createBuiltinLLMProviderExtension(

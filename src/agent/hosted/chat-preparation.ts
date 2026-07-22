@@ -28,7 +28,10 @@ import {
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
-import { isRuntimeSkillVisibleTo, type RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import {
+  resolveRuntimeSkillsForAgent,
+  type RuntimeSkillDefinition,
+} from "../runtime/skill-metadata.ts";
 import {
   applyContextBudget,
   type ContextBudgetDiagnostics,
@@ -95,6 +98,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    skills?: true | string[];
   };
   projectId: string | null;
   authToken: string;
@@ -299,20 +303,26 @@ export async function prepareHostedChatRuntimeCreationOptions<
     authToken: input.authToken,
     branchId: input.branchId,
   });
-  // Owner-aware: the run only ever sees skills visible to its agent (unowned
-  // plus the agent's own). Filtering here scopes the prompt manifest, the
-  // per-run availableSkillIds gate used by hosted load_skill, its not-found
-  // enumeration, and the live steering payload in one place.
-  const visibleSkills = steering.skills.filter((skill) =>
-    isRuntimeSkillVisibleTo(skill, { agentId: input.agentConfig.id })
-  );
+  // The selector controls what the prompt advertises, not what load_skill can
+  // resolve. Keep the hosted execution gate aligned with the classic runtime:
+  // every owner-visible skill remains loadable by id.
+  const loadableSkills = resolveRuntimeSkillsForAgent({
+    skills: steering.skills,
+    agentId: input.agentConfig.id,
+    selector: true,
+  });
+  const advertisedSkills = resolveRuntimeSkillsForAgent({
+    skills: steering.skills,
+    agentId: input.agentConfig.id,
+    selector: input.agentConfig.skills,
+  });
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
-    skills: visibleSkills,
+    skills: advertisedSkills,
   });
   const runtimeConfig = resolveHostedRuntimeRequestConfig({
     request: input.request,
@@ -363,11 +373,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.effectiveParentMessageId
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
-      availableSkillIds: visibleSkills.map((skill) => skill.id),
-      ...(visibleSkills.some((skill) => skill.sourcePath)
+      availableSkillIds: loadableSkills.map((skill) => skill.id),
+      ...(loadableSkills.some((skill) => skill.sourcePath)
         ? {
           skillSourcePaths: Object.fromEntries(
-            visibleSkills
+            loadableSkills
               .filter((skill) => skill.sourcePath)
               .map((skill) => [skill.id, skill.sourcePath as string]),
           ),
@@ -381,12 +391,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
         agentConfig: input.agentConfig,
         environmentContext: input.environmentContext,
         instructions: steering.instructions,
-        skills: visibleSkills,
+        skills: advertisedSkills,
       }),
     },
     steering: {
       ...steering,
-      skills: visibleSkills,
+      skills: advertisedSkills,
       agentInstructions,
     },
     runtimeConfig,

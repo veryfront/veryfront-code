@@ -9,7 +9,7 @@
  * executing in and asked users for values the harness already knew.
  *
  * The composed prompt extends the agent's resolved base instructions (which
- * already include the factory's skill manifest for skill-enabled agents) with:
+ * already include the factory's visible skill catalog) with:
  * - the shared project-context block (project reference + branch)
  * - the requested model
  * - the caller-supplied environment context (`studio_context` context item)

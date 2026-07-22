@@ -29,7 +29,6 @@ import {
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
 import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import {
   createToolsFromHostDefinitions,
   isToolVisibleTo,
@@ -37,6 +36,7 @@ import {
   type ToolExecutionContext,
   toolRegistry,
 } from "#veryfront/tool";
+import { skillRegistry } from "#veryfront/skill/registry.ts";
 import {
   addSpanEvent,
   setSpanAttributes,
@@ -198,9 +198,6 @@ export function buildMergedTools(
   if (agent.config.tools === true) {
     const merged: Record<string, Tool | boolean> = {};
     for (const [toolId, registryTool] of toolRegistry.getAll()) {
-      if (!agent.config.skills && SKILL_TOOL_IDS.has(toolId)) {
-        continue;
-      }
       // Owner-aware: another agent's owned tool never enters this agent's
       // model tool definitions.
       if (!isToolVisibleTo(registryTool, { agentId: agent.id })) {
@@ -446,8 +443,9 @@ function getRuntimeToolAllowlist(
 
 /**
  * Intersects the merged run tool set with the restrictive tool allowlist.
- * Skill runtime/delegation tools are preserved for skill-enabled agents,
- * mirroring the hosted chat runtime's allowlist semantics.
+ * Skill runtime tools are preserved for every agent. Delegation tools are
+ * preserved only when the agent has at least one visible skill, mirroring
+ * the hosted chat runtime's allowlist semantics.
  *
  * The allowlist bounds this run's direct tool surface only: preserved skill
  * delegation tools (`invoke_agent`) can spawn child runs whose tool assembly
@@ -468,11 +466,8 @@ function applyRuntimeToolAllowlist(
     // rather than silently skipping enforcement.
     return {};
   }
-  const availableSkillIds = agent.config.skills === true
-    ? ["*"]
-    : Array.isArray(agent.config.skills)
-    ? agent.config.skills
-    : undefined;
+  const visibleSkills = skillRegistry.resolveForAgent(true, { agentId: agent.id });
+  const availableSkillIds = visibleSkills.size > 0 ? [...visibleSkills.keys()] : undefined;
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
     localToolNames: Object.keys(mergedTools),
