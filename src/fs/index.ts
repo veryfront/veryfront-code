@@ -7,9 +7,9 @@
  * ```ts
  * import { exists, mkdir, readTextFile, writeTextFile } from "veryfront/fs";
  *
- * const content = await readTextFile("./data/config.json");
- * await writeTextFile("./output/result.json", JSON.stringify(data));
+ * const data = JSON.parse(await readTextFile("./data/config.json"));
  * await mkdir("./output", { recursive: true });
+ * await writeTextFile("./output/result.json", JSON.stringify(data));
  * ```
  *
  * @example Path utilities
