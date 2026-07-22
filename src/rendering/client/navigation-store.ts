@@ -44,8 +44,15 @@ export interface NavigationStore {
   notify(): void;
   /** Navigate through the attached router, or a full page load if none is attached. */
   navigate(href: string, options?: NavigateOptions): Promise<void>;
-  /** Attach the real navigation implementation. Called by the router on boot. */
-  setNavigator(navigator: (href: string, options?: NavigateOptions) => Promise<void>): void;
+  /**
+   * Attach the real navigation implementation. Called by the router on boot.
+   * Current stores return an idempotent disposer that only releases this
+   * registration. The `void` branch preserves compatibility with stores made
+   * by older v1 bundles, whose method did not return a disposer.
+   */
+  setNavigator(
+    navigator: (href: string, options?: NavigateOptions) => Promise<void>,
+  ): void | (() => void);
 }
 
 const STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
@@ -57,7 +64,9 @@ export function getNavigationStore(): NavigationStore {
   if (existing) return existing;
 
   const listeners = new Set<() => void>();
-  let navigator: ((href: string, options?: NavigateOptions) => Promise<void>) | null = null;
+  const navigatorRegistrations: Array<{
+    navigate: (href: string, options?: NavigateOptions) => Promise<void>;
+  }> = [];
 
   const store: NavigationStore = {
     subscribe(listener) {
@@ -82,13 +91,29 @@ export function getNavigationStore(): NavigationStore {
       }
     },
     navigate(href, options) {
-      if (navigator) return navigator(href, options);
-      // No router attached yet: fall back to a full navigation so the link works.
-      globalThis.location?.assign(href);
+      const registration = navigatorRegistrations.at(-1);
+      if (registration) return registration.navigate(href, options);
+      // No router attached yet: honour the requested history contract. For
+      // `none`, the browser has already moved (for example during popstate), so
+      // mutating location again would create an incorrect second navigation.
+      const location = globalThis.location;
+      if (location && options?.history !== "none") {
+        if (options?.history === "replace") location.replace(href);
+        else location.assign(href);
+      }
       return Promise.resolve();
     },
     setNavigator(next) {
-      navigator = next;
+      const registration = { navigate: next };
+      navigatorRegistrations.push(registration);
+      let active = true;
+
+      return () => {
+        if (!active) return;
+        active = false;
+        const index = navigatorRegistrations.indexOf(registration);
+        if (index !== -1) navigatorRegistrations.splice(index, 1);
+      };
     },
   };
 

@@ -99,10 +99,12 @@ function installDom(url: string): () => void {
     "HTMLElement",
     "history",
     "location",
+    "addEventListener",
+    "removeEventListener",
   ] as const;
-  const previous: Record<string, unknown> = {};
-  for (const key of keys) previous[key] = (globalThis as Record<string, unknown>)[key];
-  Object.assign(globalThis, {
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of keys) previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  const replacements = {
     window,
     document: window.document,
     navigator: window.navigator,
@@ -112,10 +114,24 @@ function installDom(url: string): () => void {
     HTMLElement: window.HTMLElement,
     history: window.history,
     location: window.location,
-  });
+    addEventListener: window.addEventListener.bind(window),
+    removeEventListener: window.removeEventListener.bind(window),
+  };
+  for (const [key, value] of Object.entries(replacements)) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
   resetNavigationStore();
   return () => {
-    Object.assign(globalThis, previous);
+    for (const key of keys) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
     resetNavigationStore();
     dom.window.close();
   };
@@ -442,6 +458,55 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
       root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("a store created by RouterProvider preserves router disposal semantics", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(<RouterProvider router={seedRouter("/")}>ready</RouterProvider>);
+      });
+      root.unmount();
+
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const loads: string[] = [];
+      // deno-lint-ignore no-explicit-any
+      (router as any).loadPage = (path: string) => {
+        loads.push(path);
+        return Promise.resolve();
+      };
+      router.destroy();
+
+      let assigned = "";
+      let replaced = "";
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          assign(href: string) {
+            assigned = href;
+          },
+          replace(href: string) {
+            replaced = href;
+          },
+          hash: "",
+          hostname: "example.com",
+          pathname: "/",
+          search: "",
+        },
+        writable: true,
+      });
+
+      await getNavigationStore().navigate("/after-destroy");
+      assertEquals(loads, []);
+      assertEquals(assigned, "/after-destroy");
+
+      await getNavigationStore().navigate("/replace-after-destroy", { history: "replace" });
+      assertEquals(replaced, "/replace-after-destroy");
     } finally {
       restore();
     }

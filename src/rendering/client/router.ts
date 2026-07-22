@@ -31,6 +31,7 @@ declare global {
 
 interface GlobalWithRouter {
   veryFrontRouter?: VeryfrontRouter;
+  __VERYFRONT_SPA_NAVIGATE__?: SpaNavigationHandler;
 }
 
 export type { RouteData, SpaPageData };
@@ -94,8 +95,15 @@ export class VeryfrontRouter {
   private root: Root | null = null;
   private options: RouterOptions;
   private spaMode: boolean;
+  private readonly configuredSpaMode: boolean;
   private spaNavigationHandler: SpaNavigationHandler | null = null;
+  private readonly spaNavigationRegistrations: Array<{
+    handler: SpaNavigationHandler;
+  }> = [];
+  private readonly releaseNavigationStore: (() => void) | undefined;
   private navigationSequence = 0;
+  private initialized = false;
+  private destroyed = false;
 
   private pageLoader: PageLoader;
   private navigationHandlers: NavigationHandlers;
@@ -113,7 +121,8 @@ export class VeryfrontRouter {
     this.baseUrl = this.options.baseUrl || globalThis.location.origin;
     this.currentPath =
       `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`;
-    this.spaMode = this.options.spaMode ?? globalThis.__VERYFRONT_SPA_MODE__ ?? false;
+    this.configuredSpaMode = this.options.spaMode ?? globalThis.__VERYFRONT_SPA_MODE__ ?? false;
+    this.spaMode = this.configuredSpaMode;
 
     this.pageLoader = new PageLoader();
     this.navigationHandlers = new NavigationHandlers(
@@ -143,13 +152,35 @@ export class VeryfrontRouter {
     // Attach this router as the navigation implementation behind the shared
     // store, so `useRouter().push`/`replace` (in the React bundle) route through
     // real navigation. `navigate` accepts the store's options object directly.
-    getNavigationStore().setNavigator((href, options) => this.navigate(href, options));
+    const releaseNavigationStore = getNavigationStore().setNavigator((href, options) =>
+      this.navigate(href, options)
+    );
+    this.releaseNavigationStore = typeof releaseNavigationStore === "function"
+      ? releaseNavigationStore
+      : undefined;
   }
 
-  registerNavigationHandler(handler: SpaNavigationHandler): void {
+  registerNavigationHandler(handler: SpaNavigationHandler): () => void {
     logger.debug("Registering SPA navigation handler");
+    const registration = { handler };
+    this.spaNavigationRegistrations.push(registration);
     this.spaNavigationHandler = handler;
     this.spaMode = true;
+
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+
+      const registrationIndex = this.spaNavigationRegistrations.indexOf(registration);
+      if (registrationIndex === -1) return;
+      const wasCurrent = registrationIndex === this.spaNavigationRegistrations.length - 1;
+      this.spaNavigationRegistrations.splice(registrationIndex, 1);
+      if (!wasCurrent) return;
+
+      this.spaNavigationHandler = this.spaNavigationRegistrations.at(-1)?.handler ?? null;
+      this.spaMode = this.spaNavigationHandler ? true : this.configuredSpaMode;
+    };
   }
 
   /**
@@ -160,6 +191,17 @@ export class VeryfrontRouter {
    */
   private notify(): void {
     getNavigationStore().notify();
+  }
+
+  /** Resolve the newest SPA owner regardless of router/app evaluation order. */
+  private getSpaNavigationHandler(): SpaNavigationHandler | null {
+    if (this.spaNavigationHandler) return this.spaNavigationHandler;
+    const handler = (globalThis as GlobalWithRouter).__VERYFRONT_SPA_NAVIGATE__;
+    return typeof handler === "function" ? handler : null;
+  }
+
+  private isSpaModeActive(): boolean {
+    return this.spaMode || this.getSpaNavigationHandler() !== null;
   }
 
   private pathnameOf(url: string): string {
@@ -185,6 +227,8 @@ export class VeryfrontRouter {
   }
 
   init(): void {
+    if (this.destroyed || this.initialized) return;
+    cancelDeferredInitialization(this);
     logger.debug("Initializing client-side router");
 
     const rootElement = document.getElementById("root");
@@ -202,6 +246,7 @@ export class VeryfrontRouter {
 
     this.viewportPrefetch.setup(document);
     this.cacheCurrentPage();
+    this.initialized = true;
   }
 
   private cacheCurrentPage(): void {
@@ -216,7 +261,7 @@ export class VeryfrontRouter {
    * compatibility — `true` pushes, `false` maps to `"none"`.
    */
   async navigate(url: string, options?: boolean | NavigateOptions): Promise<void> {
-    logger.debug(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
+    logger.debug(`Navigating to ${url} (SPA mode: ${this.isSpaModeActive()})`);
 
     const navigationId = ++this.navigationSequence;
     this.pageTransition.setLoadingState(false);
@@ -242,7 +287,7 @@ export class VeryfrontRouter {
       return;
     }
 
-    if (this.spaMode && this.spaNavigationHandler) {
+    if (this.getSpaNavigationHandler()) {
       await this.loadSpaPage(url, navigationId);
     } else {
       await this.loadPage(url, true, navigationId);
@@ -274,7 +319,7 @@ export class VeryfrontRouter {
     try {
       const spaData = await this.pageLoader.loadSpaPageData(path);
       if (!this.isCurrentNavigation(navigationId)) return;
-      await this.spaNavigationHandler?.(spaData);
+      await this.getSpaNavigationHandler()?.(spaData);
       if (!this.isCurrentNavigation(navigationId)) return;
 
       this.currentPath = path;
@@ -341,7 +386,7 @@ export class VeryfrontRouter {
   }
 
   async prefetch(path: string): Promise<void> {
-    if (this.spaMode) {
+    if (this.isSpaModeActive()) {
       await this.pageLoader.prefetchSpaPageData(path);
       return;
     }
@@ -359,7 +404,16 @@ export class VeryfrontRouter {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.navigationSequence++;
+    cancelDeferredInitialization(this);
+    const globalWithRouter = globalThis as GlobalWithRouter;
+    if (globalWithRouter.veryFrontRouter === this) delete globalWithRouter.veryFrontRouter;
+    this.releaseNavigationStore?.();
+    this.spaNavigationRegistrations.length = 0;
+    this.spaNavigationHandler = null;
+    this.spaMode = this.configuredSpaMode;
     this.pageTransition.setLoadingState(false);
     document.removeEventListener("click", this.handleClick);
     globalThis.removeEventListener("popstate", this.handlePopState);
@@ -368,7 +422,32 @@ export class VeryfrontRouter {
     this.pageLoader.clearCache();
     this.navigationHandlers.clear();
     this.pageTransition.destroy();
+    this.initialized = false;
   }
+}
+
+interface PendingInitialization {
+  document: Document;
+  listener: EventListener;
+}
+
+const pendingInitializations = new WeakMap<VeryfrontRouter, PendingInitialization>();
+
+function deferInitialization(router: VeryfrontRouter): void {
+  const pendingDocument = globalThis.document;
+  const listener = (): void => {
+    pendingInitializations.delete(router);
+    router.init();
+  };
+  pendingInitializations.set(router, { document: pendingDocument, listener });
+  pendingDocument.addEventListener("DOMContentLoaded", listener, { once: true });
+}
+
+function cancelDeferredInitialization(router: VeryfrontRouter): void {
+  const pending = pendingInitializations.get(router);
+  if (!pending) return;
+  pending.document.removeEventListener("DOMContentLoaded", pending.listener);
+  pendingInitializations.delete(router);
 }
 
 export function boot(options: RouterBootOptions = {}): VeryfrontRouter | null {
@@ -381,7 +460,7 @@ export function boot(options: RouterBootOptions = {}): VeryfrontRouter | null {
   const router = new VeryfrontRouter(routerOptions);
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => router.init(), { once: true });
+    deferInitialization(router);
   } else {
     router.init();
   }
