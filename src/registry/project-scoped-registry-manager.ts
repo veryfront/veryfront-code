@@ -23,7 +23,10 @@
  * @module
  */
 
-import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
+import {
+  isRegistryScopeForProject,
+  tryGetRegistryScopeId,
+} from "#veryfront/cache/cache-key-builder.ts";
 import { agentLogger } from "#veryfront/utils";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -340,11 +343,15 @@ export class ProjectScopedRegistryManager<T> {
 
   /**
    * Get item for the current project.
-   * Falls back to shared registry for items not found in project registry.
+   * Falls back to the shared registry only when the project registry does not
+   * contain the id. A project registration whose value is `null` or
+   * `undefined` still shadows a shared item with the same id.
    */
   get(id: string): T | undefined {
     const scopeId = this.getCurrentScopeId();
-    return this.getActiveScopeRegistry(scopeId)?.get(id) ?? this.sharedRegistry.get(id);
+    const projectRegistry = this.getActiveScopeRegistry(scopeId);
+    if (projectRegistry?.has(id)) return projectRegistry.get(id);
+    return this.sharedRegistry.get(id);
   }
 
   /**
@@ -442,7 +449,14 @@ export class ProjectScopedRegistryManager<T> {
       stage.record({ type: "clear" });
       return;
     }
-    this.clearProject(scopeId);
+
+    const cleared = this.registriesByScope.delete(scopeId);
+    if (!cleared && !this.activeStagesByScope.has(scopeId)) return;
+
+    this.recordLiveMutation(scopeId, { type: "clear" });
+    if (cleared) {
+      agentLogger.debug(`[${this.registryName}] Cleared registry for scope ${scopeId}`);
+    }
   }
 
   /**
@@ -462,7 +476,7 @@ export class ProjectScopedRegistryManager<T> {
       ...this.activeStagesByScope.keys(),
     ]);
     for (const scopeId of scopeIds) {
-      if (scopeId === projectId || scopeId.startsWith(`${projectId}:`)) {
+      if (isRegistryScopeForProject(scopeId, projectId)) {
         cleared = this.registriesByScope.delete(scopeId) || cleared;
         this.recordLiveMutation(scopeId, { type: "clear" });
       }

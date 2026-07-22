@@ -95,6 +95,19 @@ describe("ProjectScopedRegistryManager", () => {
       assertEquals(manager.get("tool-x"), "project-version");
     });
 
+    it("treats nullish project items as explicit shared-item overrides", () => {
+      const manager = createManager<string | null | undefined>("tool");
+      manager.registerShared("null-item", "shared-null-fallback");
+      manager.registerShared("undefined-item", "shared-undefined-fallback");
+      manager.register("null-item", null);
+      manager.register("undefined-item", undefined);
+
+      assertEquals(manager.get("null-item"), null);
+      assertEquals(manager.get("undefined-item"), undefined);
+      assertEquals(manager.has("null-item"), true);
+      assertEquals(manager.has("undefined-item"), true);
+    });
+
     it("should fall back to shared when project item not found", () => {
       const manager = createManager<string>("tool");
       manager.registerShared("shared-only", "shared-value");
@@ -269,6 +282,75 @@ describe("ProjectScopedRegistryManager", () => {
 
       assertEquals(manager.get("shared-a"), "value");
       assertEquals(manager.get("proj-a"), undefined);
+    });
+  });
+
+  describe("clearProject", () => {
+    it("clears every encoded scope for one project without clearing a prefix neighbor", () => {
+      const manager = createManager<string>("tool");
+      const projectScope = (versionId: string) => ({
+        projectId: "project:alpha",
+        mode: "preview" as const,
+        versionId,
+      });
+      const neighboringScope = {
+        projectId: "project",
+        mode: "preview" as const,
+        versionId: "alpha:preview:main",
+      };
+
+      runWithCacheKeyContext(projectScope("main"), () => manager.register("item", "main"));
+      runWithCacheKeyContext(
+        projectScope("feature:branch"),
+        () => manager.register("item", "feature"),
+      );
+      runWithCacheKeyContext(neighboringScope, () => manager.register("item", "neighbor"));
+
+      manager.clearProject("project:alpha");
+
+      runWithCacheKeyContext(
+        projectScope("main"),
+        () => assertEquals(manager.get("item"), undefined),
+      );
+      runWithCacheKeyContext(
+        projectScope("feature:branch"),
+        () => assertEquals(manager.get("item"), undefined),
+      );
+      runWithCacheKeyContext(
+        neighboringScope,
+        () => assertEquals(manager.get("item"), "neighbor"),
+      );
+    });
+
+    it("does not treat a raw project ID as another project's complete scope ID", () => {
+      const manager = createManager<string>("tool");
+      const shortProjectScope = {
+        projectId: "a",
+        mode: "preview" as const,
+        versionId: "x",
+      };
+      const delimiterProjectScope = {
+        projectId: "a:preview:x",
+        mode: "preview" as const,
+        versionId: "main",
+      };
+
+      runWithCacheKeyContext(shortProjectScope, () => manager.register("item", "short"));
+      runWithCacheKeyContext(
+        delimiterProjectScope,
+        () => manager.register("item", "delimiter"),
+      );
+
+      manager.clearProject("a:preview:x");
+
+      runWithCacheKeyContext(
+        shortProjectScope,
+        () => assertEquals(manager.get("item"), "short"),
+      );
+      runWithCacheKeyContext(
+        delimiterProjectScope,
+        () => assertEquals(manager.get("item"), undefined),
+      );
     });
   });
 });
