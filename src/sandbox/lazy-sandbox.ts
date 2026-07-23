@@ -233,6 +233,7 @@ export class LazySandbox {
         }
       }
 
+      buffer += decoder.decode();
       if (buffer.trim()) {
         yield JSON.parse(buffer) as ExecStreamEvent;
       }

@@ -239,6 +239,7 @@ export class Sandbox {
         }
       }
 
+      buffer += decoder.decode();
       if (buffer.trim()) {
         try {
           yield JSON.parse(buffer) as ExecStreamEvent;

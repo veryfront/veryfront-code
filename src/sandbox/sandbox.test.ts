@@ -33,6 +33,27 @@ function mockFetch(responses: MockResponseEntry[]) {
   globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
 }
 
+async function countTextDecoderFlushes(action: () => Promise<void>): Promise<number> {
+  const originalDecode = TextDecoder.prototype.decode;
+  let flushCount = 0;
+
+  TextDecoder.prototype.decode = function (
+    ...args: Parameters<TextDecoder["decode"]>
+  ): string {
+    if (args.length === 0 || args[0] === undefined) {
+      flushCount += 1;
+    }
+    return Reflect.apply(originalDecode, this, args);
+  };
+
+  try {
+    await action();
+    return flushCount;
+  } finally {
+    TextDecoder.prototype.decode = originalDecode;
+  }
+}
+
 describe("Sandbox", () => {
   beforeEach(() => {
     fetchCalls = [];
@@ -491,6 +512,32 @@ describe("Sandbox", () => {
         fetchCalls[1]!.url,
         "https://api.test.com/sandbox-sessions/stream-cancel/commands/stream",
       );
+    });
+
+    it("flushes the decoder after the static command stream completes", async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('{"type":"exit","exitCode":0}'));
+          controller.close();
+        },
+      });
+
+      mockFetch([
+        jsonResponse({ id: "stream-flush", endpoint: "https://sb.test", status: "running" }),
+        new Response(stream, { status: 200 }),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const events: ExecStreamEvent[] = [];
+      const flushCount = await countTextDecoderFlushes(async () => {
+        for await (const event of sandbox.executeStream("cmd")) {
+          events.push(event);
+        }
+      });
+
+      assertEquals(flushCount, 1);
+      assertEquals(events, [{ type: "exit", exitCode: 0 }]);
     });
   });
 
@@ -1404,6 +1451,46 @@ describe("Sandbox", () => {
           fetchCalls[2]!.url,
           "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
         );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("flushes the decoder after the lazy command stream completes", async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('{"type":"exit","exitCode":0}'));
+          controller.close();
+        },
+      });
+
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        new Response(stream, { status: 200 }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      try {
+        const events: ExecStreamEvent[] = [];
+        const flushCount = await countTextDecoderFlushes(async () => {
+          for await (const event of sandbox.executeStream("echo ok")) {
+            events.push(event);
+          }
+        });
+
+        assertEquals(flushCount, 1);
+        assertEquals(events, [{ type: "exit", exitCode: 0 }]);
       } finally {
         await sandbox.close();
       }
