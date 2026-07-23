@@ -166,17 +166,18 @@ function createMcpToolPolicySource(
   };
 }
 
-/** Carry a runtime's remote-tool ceiling with sources inherited by nested agents. */
+/** Carry an explicit remote-tool ceiling into nested execution. */
 export function constrainRuntimeRemoteToolSources(
   sources: RemoteToolSource[] | undefined,
   allowedToolNames: string[] | undefined,
 ): RemoteToolSource[] | undefined {
-  if (sources === undefined || allowedToolNames === undefined) {
+  if (allowedToolNames === undefined) {
     return sources;
   }
 
   const policy = { allow: [...new Set(allowedToolNames)] };
-  return sources.map((source) => createMcpToolPolicySource(source, policy));
+  const sourcesToConstrain = sources ?? getActiveRuntimeRemoteToolSources() ?? [];
+  return sourcesToConstrain.map((source) => createMcpToolPolicySource(source, policy));
 }
 
 export type RuntimeMcpServerToolSourceDependencies = {
@@ -314,7 +315,7 @@ export function getRuntimeRemoteToolSources(
     : [];
   const injectedSources = configuredInjectedSources ?? inheritedSources;
   const configuredServers: AgentMcpServerConfig[] = config.mcpServers ??
-    (implicitToolNames.length > 0
+    (implicitToolNames.length > 0 && configuredInjectedSources === undefined
       ? [{ kind: "veryfront-api", toolPolicy: { allow: implicitToolNames } }]
       : []);
   const configuredFirstPartyServersBySourceId = new Map<string, AgentVeryfrontMcpServerConfig>();
