@@ -420,7 +420,7 @@ export class LazySandbox {
 
         if (!res.ok) {
           if (this.sessionId === currentSessionId) {
-            if (!this.hasActiveInternalBackgroundCommand()) {
+            if (this.activeBackgroundCommands.size === 0) {
               await this.deleteSession(currentSessionId);
               this.resetSessionState(currentSessionId);
             }

@@ -1853,6 +1853,83 @@ describe("Sandbox", () => {
       }
     });
 
+    it("preserves the proxy session when a heartbeat fails while an async command is active", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "command-1",
+          status: "running",
+          exit_code: null,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: null,
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+        textResponse("upstream timeout", 503),
+        jsonResponse({
+          id: "command-1",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:01:00Z",
+          heartbeat_status: "healthy",
+          last_heartbeat_at: "2026-01-01T00:00:30Z",
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+          stdout: "done\n",
+          stderr: "",
+          stdout_truncated: false,
+          stderr_truncated: false,
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      try {
+        await sandbox.startBackgroundCommand("npm test");
+
+        await assertRejects(
+          () => sandbox.heartbeat(true),
+          Error,
+          "Sandbox heartbeat failed: 503 upstream timeout",
+        );
+
+        assertEquals(sandbox.isActive, true);
+        const output = await sandbox.getBackgroundCommandOutput("command-1");
+        assertEquals(output.status, "completed");
+        assertEquals(output.stdout, "done\n");
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url ===
+              "https://api.test.com/sandbox-sessions/sandbox-1/commands/command-1/output"
+          ),
+          true,
+        );
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            call.init?.method === "DELETE"
+          ),
+          false,
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("attaches to a configured existing sandbox without deleting it on close", async () => {
       mockFetch([
         jsonResponse({
