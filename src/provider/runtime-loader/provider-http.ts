@@ -23,6 +23,11 @@ export class ProviderError extends Error {
   readonly status: number;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  /**
+   * Bounded structured provider response used by the internal error classifier.
+   * Kept non-enumerable so logs and JSON serialization retain the generic error.
+   */
+  declare readonly responseBody?: string;
 
   constructor(options: {
     provider: ProviderKind;
@@ -53,6 +58,19 @@ export class ProviderQuotaError extends ProviderError {}
 
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
+
+function preserveStructuredResponseBody<T extends ProviderError>(
+  error: T,
+  responseBody: string,
+): T {
+  Object.defineProperty(error, "responseBody", {
+    value: responseBody,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return error;
+}
 
 /** Parses retry after ms. */
 export function parseRetryAfterMs(header: string | null): number | undefined {
@@ -96,10 +114,11 @@ export async function buildProviderError(
     }
   })();
   const errorRecord = readRecord(parsedBody?.error);
+  const errorType = typeof errorRecord?.type === "string" ? errorRecord.type : undefined;
   const errorCode = typeof errorRecord?.code === "string"
     ? errorRecord.code
-    : typeof errorRecord?.type === "string"
-    ? errorRecord.type
+    : errorType !== undefined
+    ? errorType
     : typeof errorRecord?.status === "string"
     ? errorRecord.status
     : undefined;
@@ -208,12 +227,21 @@ export async function buildProviderError(
     });
   }
 
-  return new ProviderRequestError({
+  const requestError = new ProviderRequestError({
     provider,
     status,
     message,
     retryable: false,
   });
+
+  const isStructuredInvalidRequest = status === 400 &&
+    errorType === "invalid_request_error" &&
+    parsedBody !== undefined &&
+    !truncated;
+
+  return isStructuredInvalidRequest
+    ? preserveStructuredResponseBody(requestError, rawBody)
+    : requestError;
 }
 
 /** Request and parse a JSON response. */
