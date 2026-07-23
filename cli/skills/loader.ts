@@ -48,7 +48,7 @@ export async function listCoreSkills(): Promise<LoadedSkill[]> {
 }
 
 /**
- * Scan the current working directory for local skill directories.
+ * Scan the provided project directory for local skill directories.
  * A local skill is any skills/<id>/ directory containing a SKILL.md file.
  */
 export async function listLocalSkills(baseDir: string = cwd()): Promise<LoadedSkill[]> {
@@ -70,7 +70,7 @@ export async function listLocalSkills(baseDir: string = cwd()): Promise<LoadedSk
 }
 
 /**
- * List all skills: core (built-in) + local (in cwd).
+ * List all skills: core (built-in) + local (under baseDir).
  */
 export async function listAllSkills(baseDir: string = cwd()): Promise<LoadedSkill[]> {
   const [core, local] = await Promise.all([

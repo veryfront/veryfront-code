@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertNotStrictEquals, assertStrictEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   _resetCache,
@@ -65,8 +65,8 @@ describe("npm-import-rewrites", () => {
         const secondRules = getNpmRewriteRules(secondProject);
 
         assertNotStrictEquals(firstRules, secondRules);
-        assertEquals(getNpmRewriteRules(firstProject), firstRules);
-        assertEquals(getNpmRewriteRules(secondProject), secondRules);
+        assertStrictEquals(getNpmRewriteRules(firstProject), firstRules);
+        assertStrictEquals(getNpmRewriteRules(secondProject), secondRules);
       } finally {
         _resetCache();
         await Deno.remove(firstProject, { recursive: true });
