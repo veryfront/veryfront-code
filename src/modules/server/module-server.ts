@@ -3,7 +3,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
@@ -20,7 +20,6 @@ import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-s
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import {
-  applySSRImportRewritesAsync,
   resolveSSRImportTargetModulePath,
   type SSRImportRewriteTarget,
   stripSSRModuleJsExtension,
@@ -37,7 +36,6 @@ import { sha256Short } from "#veryfront/cache/hash.ts";
 import {
   getReleaseDependencyRewriteManifestState,
   hasReleaseDependencyImportSpecifiers,
-  rewriteReleaseDependencyImportsForModule,
 } from "#veryfront/release-assets/module-consumption.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
@@ -56,6 +54,8 @@ import {
   rememberReleaseModuleResponse,
 } from "./module-response-cache.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { classifyModuleRequest } from "./classify.ts";
+import { transformModuleToServable } from "./module-transform.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -129,12 +129,8 @@ export default {};
   "deno": `export default ${JSON.stringify({ version: VERSION })};\n`,
 };
 
+/** Prefix shared by all module URL shapes; used for path stripping in the dev-module handler. */
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
-const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
-// Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>
-const CROSS_PROJECT_VERSIONED_PREFIX =
-  /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
-const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
   if (
@@ -274,16 +270,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         userAgent: debugUserAgent.slice(0, 50),
       });
 
-      if (!DEV_MODULE_PREFIX.test(url.pathname)) {
+      const kind = classifyModuleRequest(url);
+
+      if (kind.kind === "not-module") {
         return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-cache",
         });
       }
 
-      const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
-      if (snippetMatch) {
-        const hash = snippetMatch[1];
+      if (kind.kind === "snippet") {
+        const { hash } = kind;
         if (!hash) {
           return createModuleResponse(method, "Missing snippet hash", HTTP_NOT_FOUND, {
             "Content-Type": "text/plain; charset=utf-8",
@@ -316,18 +313,14 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
 
         try {
-          let transformedCode = await profileModuleTransform(() =>
-            transformToESM(
-              snippetCode,
-              `_snippets/${hash}.tsx`,
-              projectDir,
-              adapter,
-              { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
-            )
-          );
-
-          if (isSSR) {
-            transformedCode = await applySSRImportRewritesAsync(transformedCode, {
+          const transformedCode = await transformModuleToServable({
+            source: snippetCode,
+            sourceFile: `_snippets/${hash}.tsx`,
+            projectDir,
+            adapter,
+            transformOpts: { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
+            isSSR,
+            ssrRewriteOptions: {
               projectSlug: snippetProjectSlug,
               branch: snippetBranch,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
@@ -340,13 +333,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 releaseId: options.releaseId,
                 reactVersion,
               }),
-            });
-          } else {
-            transformedCode = await rewriteReleaseDependencyImportsForModule(transformedCode, {
+            },
+            releaseRewriteOptions: {
               releaseId: options.releaseId,
               readDependencySource: (path) => platformFs.readTextFile(path),
-            });
-          }
+            },
+            profile: true,
+          });
 
           logger.debug("Snippet transformed", {
             hash,
@@ -373,13 +366,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
       }
 
-      const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
-      const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
-
-      if (versionedMatch || latestMatch) {
-        const crossProjectSlug = versionedMatch?.[1] ?? latestMatch?.[1];
-        const crossVersion = versionedMatch?.[2] ?? "latest";
-        const crossPath = versionedMatch?.[3] ?? latestMatch?.[2];
+      if (kind.kind === "cross-project-versioned" || kind.kind === "cross-project-latest") {
+        const crossProjectSlug = kind.slug;
+        const crossVersion = kind.kind === "cross-project-versioned" ? kind.version : "latest";
+        const crossPath = kind.path;
 
         if (!crossProjectSlug || !crossPath) {
           return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
@@ -414,18 +404,20 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
           const isSSR = isSSRModuleRequest(req, url);
 
-          let code = await profileModuleTransform(() =>
-            transformToESM(source, crossPath, projectDir, adapter, {
+          const code = await transformModuleToServable({
+            source,
+            sourceFile: crossPath,
+            projectDir,
+            adapter,
+            transformOpts: {
               projectId: effectiveProjectId,
               dev,
               ssr: isSSR,
               moduleServerUrl: `http://${url.host}`,
               reactVersion,
-            })
-          );
-
-          if (isSSR) {
-            code = await applySSRImportRewritesAsync(code, {
+            },
+            isSSR,
+            ssrRewriteOptions: {
               crossProjectRef: projectRef,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
@@ -436,13 +428,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 releaseId: options.releaseId,
                 reactVersion,
               }),
-            });
-          } else {
-            code = await rewriteReleaseDependencyImportsForModule(code, {
+            },
+            releaseRewriteOptions: {
               releaseId: options.releaseId,
               readDependencySource: (path) => platformFs.readTextFile(path),
-            });
-          }
+            },
+            profile: true,
+          });
 
           return createModuleResponse(method, code, HTTP_OK, {
             "Content-Type": "application/javascript; charset=utf-8",
@@ -456,6 +448,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         }
       }
+
+      // dev-module path (kind.kind === "dev-module")
 
       let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
       modulePath = modulePath.replace(/^\/+/, "");
@@ -603,13 +597,22 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             reactVersion,
           };
 
-          code = await profileModuleTransform(() =>
-            transformToESM(source, sourceFile, projectDir, adapter, transformOpts)
-          );
-          code = ensureFilenameDefaultExport(modulePath, code);
-
-          if (isSSR) {
-            code = await applySSRImportRewritesAsync(code, {
+          // The dev-module path has two steps interleaved with the shared
+          // transform sequence that cannot be cleanly moved inside
+          // transformModuleToServable without complicating its API:
+          //   - HMR timestamp injection (after SSR rewrite; before non-SSR release rewrite in
+          //     original ordering — safe to reorder since they touch disjoint specifiers)
+          //   - addReleaseVersionToFallbackImports (after non-SSR release rewrite)
+          // Both remain here as explicit post-steps.
+          code = await transformModuleToServable({
+            source,
+            sourceFile,
+            projectDir,
+            adapter,
+            transformOpts,
+            isSSR,
+            postTransform: (c) => ensureFilenameDefaultExport(modulePath, c),
+            ssrRewriteOptions: {
               projectSlug,
               branch,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
@@ -622,8 +625,15 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 releaseId: options.releaseId,
                 reactVersion,
               }),
-            });
-          }
+            },
+            releaseRewriteOptions: {
+              releaseId: options.releaseId,
+              manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
+              manifestReadOptions: { refreshCachedNull: true },
+              readDependencySource: (path) => platformFs.readTextFile(path),
+            },
+            profile: true,
+          });
 
           const hmrTimestamp = url.searchParams.get("t");
           if (hmrTimestamp) {
@@ -635,12 +645,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           }
 
           if (!isSSR) {
-            code = await rewriteReleaseDependencyImportsForModule(code, {
-              releaseId: options.releaseId,
-              manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
-              manifestReadOptions: { refreshCachedNull: true },
-              readDependencySource: (path) => platformFs.readTextFile(path),
-            });
             code = await addReleaseVersionToFallbackImports(code, modulePath, options.releaseId);
           }
         }
@@ -1050,7 +1054,7 @@ async function findSourceFile(
  */
 export function isModuleRequest(req: Request): boolean {
   const url = new URL(req.url);
-  return DEV_MODULE_PREFIX.test(url.pathname);
+  return classifyModuleRequest(url).kind !== "not-module";
 }
 
 function getModuleHeaders(
@@ -1118,15 +1122,6 @@ function createDevModuleErrorBody(modulePath: string, errorMessage: string): str
   }
 
   return `// Transform Error\nthrow new Error(${JSON.stringify(errorMessage)});`;
-}
-
-async function profileModuleTransform<T>(fn: () => Promise<T>): Promise<T> {
-  const startedAt = performance.now();
-  try {
-    return await profilePhase("module.transform", fn);
-  } finally {
-    metrics.recordModuleTransform(performance.now() - startedAt);
-  }
 }
 
 function classifyModuleServeStatus(status: number): ModuleServeStatus {
