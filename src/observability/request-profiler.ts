@@ -35,7 +35,8 @@ const records: RequestProfileRecord[] = [];
 const MAX_RECORDS = 200;
 let sequence = 0;
 
-function roundMs(value: number): number {
+/** Round to 2 decimal places (Server-Timing millisecond precision). */
+export function roundMs(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
@@ -171,14 +172,25 @@ function formatDuration(value: number): string {
   return Math.max(0, roundMs(value)).toFixed(2);
 }
 
-export function buildServerTimingHeader(record: RequestProfileRecord): string {
-  const metrics = [`total;dur=${formatDuration(record.totalMs)}`];
-
-  for (const [name, duration] of Object.entries(record.phases).slice(0, 20)) {
+/** Build a Server-Timing header value from a total plus named phase durations. */
+export function buildServerTimingValue(
+  totalLabel: string,
+  totalMs: number,
+  phases: Iterable<[string, number]>,
+): string {
+  const metrics = [`${totalLabel};dur=${formatDuration(totalMs)}`];
+  for (const [name, duration] of phases) {
     metrics.push(`${sanitizeMetricName(name)};dur=${formatDuration(duration)}`);
   }
-
   return metrics.join(", ");
+}
+
+export function buildServerTimingHeader(record: RequestProfileRecord): string {
+  return buildServerTimingValue(
+    "total",
+    record.totalMs,
+    Object.entries(record.phases).slice(0, 20),
+  );
 }
 
 export function withServerTimingHeader(

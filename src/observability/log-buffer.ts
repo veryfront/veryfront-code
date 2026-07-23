@@ -1,4 +1,5 @@
 import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
 
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -27,7 +28,7 @@ export type LogSubscriber = (entry: LogEntry) => void;
 /** Implement log buffer. */
 export class LogBuffer {
   private entries: LogEntry[] = [];
-  private subscribers = new Set<LogSubscriber>();
+  private subscribers = createSubscriberSet<[LogEntry]>();
   private idCounter = 0;
   private maxSize: number;
 
@@ -55,13 +56,7 @@ export class LogBuffer {
       this.entries.shift();
     }
 
-    for (const subscriber of this.subscribers) {
-      try {
-        subscriber(fullEntry);
-      } catch (_) {
-        /* expected: subscriber errors must not break log buffering */
-      }
-    }
+    this.subscribers.notify(fullEntry);
 
     return fullEntry;
   }
@@ -146,8 +141,7 @@ export class LogBuffer {
   }
 
   subscribe(callback: LogSubscriber): () => void {
-    this.subscribers.add(callback);
-    return () => this.subscribers.delete(callback);
+    return this.subscribers.subscribe(callback);
   }
 
   toJSON(): LogEntry[] {

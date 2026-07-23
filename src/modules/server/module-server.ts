@@ -55,6 +55,7 @@ import {
   getReleaseModuleResponse,
   rememberReleaseModuleResponse,
 } from "./module-response-cache.ts";
+import { findFirstExistingFile } from "./fs-probe.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 
 const logger = serverLogger.component("module-server");
@@ -791,42 +792,10 @@ async function findFrameworkPackageAssetFile(
 ): Promise<string | null> {
   if (hasUnsafePackageAssetPath(basePathWithoutExt)) return null;
 
-  return await findFirstPlatformFile(
+  return await findFirstExistingFile(
     fs,
     extensions.map((ext) => join(FRAMEWORK_ROOT, basePathWithoutExt + ext)),
   );
-}
-
-async function findFirstPlatformFile(
-  fs: ReturnType<typeof createFileSystem>,
-  paths: string[],
-): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
-    try {
-      const stat = await fs.stat(path);
-      return stat.isFile ? path : null;
-    } catch {
-      return null;
-    }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
-}
-
-async function findFirstSecureFile(
-  secureFs: ReturnType<typeof createSecureFs>,
-  paths: string[],
-): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
-    try {
-      const stat = await secureFs.stat(path);
-      return stat.isFile ? path : null;
-    } catch {
-      return null;
-    }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
 }
 
 async function findSourceFile(
@@ -970,7 +939,7 @@ async function findSourceFile(
     : extensions;
 
   // Project file lookups (using secureFs which may go through FSAdapter in proxy mode)
-  const projectFilePath = await findFirstSecureFile(
+  const projectFilePath = await findFirstExistingFile(
     secureFs,
     projectLookupExtensions.map((ext) => join(projectDir, basePathWithoutExt + ext)),
   );
@@ -984,7 +953,7 @@ async function findSourceFile(
     if (!basePathWithoutExt.startsWith(prefix)) continue;
 
     const strippedPath = basePathWithoutExt.slice(prefix.length);
-    const strippedFilePath = await findFirstSecureFile(
+    const strippedFilePath = await findFirstExistingFile(
       secureFs,
       projectLookupExtensions.map((ext) => join(projectDir, strippedPath + ext)),
     );
@@ -998,7 +967,7 @@ async function findSourceFile(
     }
   }
 
-  const indexFilePath = await findFirstSecureFile(
+  const indexFilePath = await findFirstExistingFile(
     secureFs,
     projectLookupExtensions.map((ext) => join(projectDir, basePathWithoutExt, `index${ext}`)),
   );
@@ -1013,7 +982,7 @@ async function findSourceFile(
   // Try looking in common project directories
   const commonDirs = ["components", "app", "pages", "lib", "src"];
   for (const dir of commonDirs) {
-    const commonDirFilePath = await findFirstSecureFile(
+    const commonDirFilePath = await findFirstExistingFile(
       secureFs,
       projectLookupExtensions.map((ext) => join(projectDir, dir, basePathWithoutExt + ext)),
     );

@@ -14,11 +14,8 @@ export function encodeBase64(value: string): string {
     try {
       return globalThis.btoa(value);
     } catch (_) {
-      /* expected: non-Latin1 string — fall back to TextEncoder */
-      const bytes = new TextEncoder().encode(value);
-      let binary = "";
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return globalThis.btoa(binary);
+      /* expected: non-Latin1 string — fall back to UTF-8 bytes */
+      return encodeBase64Bytes(new TextEncoder().encode(value));
     }
   }
 
@@ -29,6 +26,20 @@ export function encodeBase64(value: string): string {
   throw new Error("Base64 encoding is not supported in this runtime");
 }
 
+/** Encode raw bytes as standard base64. */
+export function encodeBase64Bytes(bytes: Uint8Array): string {
+  if (typeof globalThis.btoa === "function") {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return globalThis.btoa(binary);
+  }
+
+  const bufferCtor = (globalThis as { Buffer?: typeof Buffer }).Buffer;
+  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
+
+  throw new Error("Base64 encoding is not supported in this runtime");
+}
+
 /** Encode a string as unpadded base64url. */
 export function base64urlEncode(input: string): string {
   return toBase64Url(encodeBase64(input));
@@ -36,7 +47,5 @@ export function base64urlEncode(input: string): string {
 
 /** Encode raw bytes as unpadded base64url. */
 export function base64urlEncodeBytes(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return toBase64Url(btoa(binary));
+  return toBase64Url(encodeBase64Bytes(bytes));
 }

@@ -6,6 +6,7 @@
  **************************/
 
 import { type ErrorCategory, INVALID_ARGUMENT } from "#veryfront/errors";
+import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
 
 /** Public API contract for error type. */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
@@ -65,7 +66,7 @@ export type ErrorSubscriber = (error: DevError) => void;
 /** Implement error collector. */
 export class ErrorCollector {
   private errors = new Map<string, DevError>();
-  private subscribers = new Set<ErrorSubscriber>();
+  private subscribers = createSubscriberSet<[DevError]>();
   private idCounter = 0;
   private maxErrors: number;
 
@@ -99,13 +100,7 @@ export class ErrorCollector {
 
     this.errors.set(fullError.id, fullError);
 
-    for (const subscriber of this.subscribers) {
-      try {
-        subscriber(fullError);
-      } catch (_) {
-        /* expected: subscriber errors must not break error collection */
-      }
-    }
+    this.subscribers.notify(fullError);
 
     return fullError;
   }
@@ -320,8 +315,7 @@ export class ErrorCollector {
   }
 
   subscribe(callback: ErrorSubscriber): () => void {
-    this.subscribers.add(callback);
-    return () => this.subscribers.delete(callback);
+    return this.subscribers.subscribe(callback);
   }
 
   toJSON(): DevError[] {
