@@ -15,3 +15,11 @@ export function runWithExactRuntimeRemoteToolSources<T>(
 ): T {
   return remoteToolSourceStorage.run(sources, fn);
 }
+
+/** Preserve the active source boundary when this runtime has no boundary of its own. */
+export function runWithRuntimeRemoteToolSources<T>(
+  sources: RemoteToolSource[] | undefined,
+  fn: () => T,
+): T {
+  return sources === undefined ? fn() : remoteToolSourceStorage.run(sources, fn);
+}

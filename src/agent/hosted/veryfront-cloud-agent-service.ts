@@ -99,7 +99,6 @@ import {
 } from "../runtime/skill-metadata.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
-import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
@@ -1019,14 +1018,6 @@ function resolveHostedDelegationBinding(
 ): HostedDelegationBinding {
   if (agentConfig?.delegates !== undefined) {
     return { kind: "scoped", delegateIds: agentConfig.delegates };
-  }
-  if (agentConfig?.tools !== true) {
-    const delegateIds = agentConfig?.tools
-      ?.filter((toolName) => toolName.startsWith(AGENT_DELEGATE_TOOL_PREFIX))
-      .map((toolName) => toolName.slice(AGENT_DELEGATE_TOOL_PREFIX.length));
-    if (delegateIds?.length) {
-      return { kind: "scoped", delegateIds };
-    }
   }
   return { kind: "legacy" };
 }

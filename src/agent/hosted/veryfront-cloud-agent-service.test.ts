@@ -158,7 +158,7 @@ Deno.test("hosted child project agents request only materialized skill and deleg
   );
 });
 
-Deno.test("hosted scoped delegate tools replace legacy invoke_agent", () => {
+Deno.test("hosted generic invocation is only replaced by explicit delegates", () => {
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
       id: "job-submission-orchestrator",
@@ -167,6 +167,7 @@ Deno.test("hosted scoped delegate tools replace legacy invoke_agent", () => {
       instructions: "Coordinate the workflow.",
       skills: ["orchestrate-job-submission"],
       tools: [
+        "invoke_agent",
         "agent_ingestion-agent",
         "agent_extraction-agent",
         "agent_enrichment-agent",
@@ -174,15 +175,7 @@ Deno.test("hosted scoped delegate tools replace legacy invoke_agent", () => {
         "get_file",
       ],
     }),
-    {
-      kind: "scoped",
-      delegateIds: [
-        "ingestion-agent",
-        "extraction-agent",
-        "enrichment-agent",
-        "submission-agent",
-      ],
-    },
+    { kind: "legacy" },
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
@@ -194,6 +187,16 @@ Deno.test("hosted scoped delegate tools replace legacy invoke_agent", () => {
       tools: ["get_file"],
     }),
     { kind: "legacy" },
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
+      id: "scoped-agent",
+      name: "Scoped agent",
+      description: "Uses explicit delegates.",
+      instructions: "Delegate only to the specialist.",
+      delegates: ["specialist-agent"],
+    }),
+    { kind: "scoped", delegateIds: ["specialist-agent"] },
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({

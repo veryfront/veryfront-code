@@ -40,8 +40,11 @@ import {
 import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
-import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
-import { runWithExactRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+import {
+  constrainRuntimeRemoteToolSources,
+  getRuntimeRemoteToolSources,
+} from "./mcp-server-tool-sources.ts";
+import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import {
   createStreamState,
   processStream,
@@ -381,8 +384,12 @@ async function traceConfiguredToolExecution(input: {
         }),
       );
       try {
-        const result = await runWithExactRuntimeRemoteToolSources(
-          input.remoteToolSources ?? [],
+        const inheritedRemoteToolSources = constrainRuntimeRemoteToolSources(
+          input.remoteToolSources,
+          input.allowedRemoteToolNames,
+        );
+        const result = await runWithRuntimeRemoteToolSources(
+          inheritedRemoteToolSources,
           () =>
             executeConfiguredTool(
               input.toolName,

@@ -335,7 +335,7 @@ Deno.test("getRuntimeRemoteToolSources preserves explicit MCP opt-out", () => {
     },
   );
 
-  assertEquals(sources, undefined);
+  assertEquals(sources, []);
 });
 
 Deno.test("getRuntimeRemoteToolSources does not leak injected sources after explicit MCP opt-out", () => {
@@ -357,7 +357,7 @@ Deno.test("getRuntimeRemoteToolSources does not leak injected sources after expl
     } as Parameters<typeof getRuntimeRemoteToolSources>[0],
   );
 
-  assertEquals(sources, undefined);
+  assertEquals(sources, []);
 });
 
 Deno.test("getRuntimeRemoteToolSources does not leak inherited sources after explicit MCP opt-out", () => {
@@ -376,7 +376,7 @@ Deno.test("getRuntimeRemoteToolSources does not leak inherited sources after exp
       }),
   );
 
-  assertEquals(sources, undefined);
+  assertEquals(sources, []);
 });
 
 Deno.test("getRuntimeRemoteToolSources does not expose inherited sources to tools true", () => {
@@ -396,6 +396,49 @@ Deno.test("getRuntimeRemoteToolSources does not expose inherited sources to tool
   );
 
   assertEquals(sources, undefined);
+});
+
+Deno.test("getRuntimeRemoteToolSources constrains inherited sources to implicit named tools", async () => {
+  const executedToolNames: string[] = [];
+  const inheritedSource: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([
+        {
+          name: "get_file",
+          description: "Read a project file",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "delete_file",
+          description: "Delete a project file",
+          parameters: { type: "object", properties: {} },
+        },
+      ]),
+    executeTool(toolName) {
+      executedToolNames.push(toolName);
+      return Promise.resolve({ ok: true });
+    },
+  };
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [inheritedSource],
+    () =>
+      getRuntimeRemoteToolSources({
+        id: "implicit-project-tool-agent",
+        system: "Read project files.",
+        tools: { get_file: true },
+      }),
+  );
+
+  assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
+  await sources?.[0]?.executeTool("get_file", {});
+  assertThrows(
+    () => sources![0]!.executeTool("delete_file", {}),
+    Error,
+    'Tool "delete_file" is not allowed for MCP server "studio-mcp"',
+  );
+  assertEquals(executedToolNames, ["get_file"]);
 });
 
 Deno.test("getRuntimeRemoteToolSources skips the implicit source without server identity", () => {
