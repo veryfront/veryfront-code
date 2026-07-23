@@ -23,7 +23,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.tsx";
 import { Pill } from "../ui/pill.tsx";
 import { CheckIcon, ChevronDownIcon, SparklesIcon } from "../ui/icons/index.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../create-strict-context.ts";
 
 /** Provider slug for a model (explicit `provider`, else the `value` prefix). */
 function providerOf(model: ModelOption | undefined): string | undefined {
@@ -154,23 +154,11 @@ export interface ModelSelectorContextValue {
   disabled?: boolean;
 }
 
-const ModelSelectorContext = React.createContext<
-  ModelSelectorContextValue | null
->(null);
-
-/**
- * Read the enclosing `ModelSelector` selection + open state. Throws when used
- * outside a `<ModelSelector>`.
- */
-export function useModelSelector(): ModelSelectorContextValue {
-  const ctx = React.useContext(ModelSelectorContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useModelSelector must be used within a ModelSelector",
-    });
-  }
-  return ctx;
-}
+const [ModelSelectorContext, useModelSelector] = createStrictContext<ModelSelectorContextValue>(
+  "useModelSelector",
+  "a ModelSelector",
+);
+export { useModelSelector };
 
 /** Props for `ModelSelector.Trigger` — the pill/icon combobox button. */
 export interface ModelSelectorTriggerProps {

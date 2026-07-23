@@ -1,5 +1,4 @@
-import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../create-strict-context.ts";
 
 /** Shared selection and open state exposed to `AgentPicker.*` sub-parts. */
 export interface AgentPickerContextValue {
@@ -17,15 +16,8 @@ export interface AgentPickerContextValue {
   onManage?: () => void;
 }
 
-export const AgentPickerContext = React.createContext<AgentPickerContextValue | null>(null);
-
-/** Read the enclosing `AgentPicker` state. */
-export function useAgentPicker(): AgentPickerContextValue {
-  const context = React.useContext(AgentPickerContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useAgentPicker must be used within an AgentPicker",
-    });
-  }
-  return context;
-}
+const [AgentPickerContext, useAgentPicker] = createStrictContext<AgentPickerContextValue>(
+  "useAgentPicker",
+  "an AgentPicker",
+);
+export { AgentPickerContext, useAgentPicker };

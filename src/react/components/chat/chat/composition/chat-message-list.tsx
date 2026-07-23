@@ -16,7 +16,7 @@ import { cn } from "../../theme.ts";
 import type { Source } from "../components/sources.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import { useStickToBottom } from "../hooks/use-stick-to-bottom.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { PendingMessage } from "./pending-message.tsx";
 import { Message } from "./message.tsx";
 import { useChatContextOptional } from "../contexts/chat-context.tsx";
@@ -67,17 +67,12 @@ interface ChatMessageListContextValue {
   lastMessage?: ChatMessage;
 }
 
-const ChatMessageListContext = React.createContext<ChatMessageListContextValue | null>(null);
-
-function useChatMessageList(): ChatMessageListContextValue {
-  const context = React.useContext(ChatMessageListContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "ChatMessageList.Content must be used within a ChatMessageList",
-    });
-  }
-  return context;
-}
+const [ChatMessageListContext, useChatMessageList] = createStrictContext<
+  ChatMessageListContextValue
+>(
+  "ChatMessageList.Content",
+  "a ChatMessageList",
+);
 
 /** Props accepted by the centered transcript column. */
 export interface ChatMessageListContentProps extends React.HTMLAttributes<HTMLDivElement> {

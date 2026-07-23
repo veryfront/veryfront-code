@@ -38,7 +38,7 @@
  * @module react/components/chat/chat/components/sidebar
  */
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { cn, UI_SCOPE_ATTRS } from "../../theme.ts";
 import { PencilIcon, TrashIcon } from "../../../ui/icons/index.ts";
 import { Button } from "../../../ui/button.tsx";
@@ -121,19 +121,10 @@ interface ChatSidebarContextValue {
   ) => React.ReactNode;
 }
 
-const ChatSidebarContext = React.createContext<ChatSidebarContextValue | null>(
-  null,
+const [ChatSidebarContext, useChatSidebarContext] = createStrictContext<ChatSidebarContextValue>(
+  "ChatSidebar sub-components",
+  "<ChatSidebar.Root>",
 );
-
-function useChatSidebarContext(): ChatSidebarContextValue {
-  const context = React.useContext(ChatSidebarContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "ChatSidebar sub-components must be used within <ChatSidebar.Root>",
-    });
-  }
-  return context;
-}
 
 const noop = (): void => {};
 
@@ -318,20 +309,13 @@ export interface ChatSidebarItemContextValue {
   setMenuOpen: (open: boolean) => void;
 }
 
-const ChatSidebarItemContext = React.createContext<
-  ChatSidebarItemContextValue | null
->(null);
-
-/** Read the enclosing `ChatSidebar.Item` row state. Throws when used outside one. */
-export function useChatSidebarItem(): ChatSidebarItemContextValue {
-  const ctx = React.useContext(ChatSidebarItemContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "ChatSidebar.Item.* must be used within <ChatSidebar.Item>",
-    });
-  }
-  return ctx;
-}
+const [ChatSidebarItemContext, useChatSidebarItem] = createStrictContext<
+  ChatSidebarItemContextValue
+>(
+  "ChatSidebar.Item.*",
+  "<ChatSidebar.Item>",
+);
+export { useChatSidebarItem };
 
 export interface ChatSidebarItemProps {
   conversation: ConversationSummary;

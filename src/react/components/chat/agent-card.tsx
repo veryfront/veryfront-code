@@ -21,7 +21,7 @@
 import * as React from "react";
 import type { AgentMessage, AgentStatus, ToolCall } from "#veryfront/agent";
 import type { ChatToolPart } from "#veryfront/agent/react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../create-strict-context.ts";
 import { cn } from "./theme.ts";
 import { Avatar } from "../ui/avatar.tsx";
 import { Card } from "../ui/card.tsx";
@@ -113,20 +113,11 @@ export interface AgentCardContextValue {
   presentation: { color: StatusColor; label: string; pulse: boolean };
 }
 
-const AgentCardContext = React.createContext<AgentCardContextValue | null>(
-  null,
+const [AgentCardContext, useAgentCard] = createStrictContext<AgentCardContextValue>(
+  "useAgentCard",
+  "an AgentCard",
 );
-
-/** Read the enclosing `AgentCard` state. Throws when used outside an `AgentCard`. */
-export function useAgentCard(): AgentCardContextValue {
-  const ctx = React.useContext(AgentCardContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useAgentCard must be used within an AgentCard",
-    });
-  }
-  return ctx;
-}
+export { useAgentCard };
 
 /**
  * `AgentCard.Root` — context provider + the `Card` wrapper. No children renders

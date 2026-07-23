@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 
@@ -45,18 +45,10 @@ export interface ComposerContextValue {
   onModelChange?: (modelId: string) => void;
 }
 
-const ComposerContext = React.createContext<ComposerContextValue | null>(null);
-
-/** Context for use composer. */
-export function useComposerContext(): ComposerContextValue {
-  const context = React.useContext(ComposerContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useComposerContext must be used within a Composer or Chat component",
-    });
-  }
-  return context;
-}
+const [ComposerContext, useComposerContext] = createStrictContext<ComposerContextValue>(
+  "useComposerContext",
+  "a Composer or Chat component",
+);
 
 /** React hook for composer context optional. */
 export function useComposerContextOptional(): ComposerContextValue | null {
@@ -65,3 +57,4 @@ export function useComposerContextOptional(): ComposerContextValue | null {
 
 /** Render composer context provider. */
 export const ComposerContextProvider = ComposerContext.Provider;
+export { useComposerContext };

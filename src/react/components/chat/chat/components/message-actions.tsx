@@ -1,5 +1,5 @@
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { cn } from "../../theme.ts";
 import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { useClipboard } from "../hooks/use-clipboard.ts";
@@ -38,17 +38,12 @@ interface MessageActionBarContextValue {
   onRegenerate?: () => void;
 }
 
-const MessageActionBarContext = React.createContext<MessageActionBarContextValue | null>(null);
-
-function useMessageActionBar(): MessageActionBarContextValue {
-  const context = React.useContext(MessageActionBarContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "MessageActionBar.* must be used within <MessageActionBar>",
-    });
-  }
-  return context;
-}
+const [MessageActionBarContext, useMessageActionBar] = createStrictContext<
+  MessageActionBarContextValue
+>(
+  "MessageActionBar.*",
+  "<MessageActionBar>",
+);
 
 /** Copy action shown before the content has been copied. */
 function MessageActionBarCopy({

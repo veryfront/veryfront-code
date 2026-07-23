@@ -7,7 +7,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../create-strict-context.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 
 type ColorMode = "light" | "dark" | "system";
@@ -20,7 +20,11 @@ interface ColorModeContextValue {
   toggleMode: () => void;
 }
 
-const ColorModeContext = React.createContext<ColorModeContextValue | null>(null);
+const [ColorModeContext, useColorMode] = createStrictContext<ColorModeContextValue>(
+  "useColorMode",
+  "a ColorModeProvider",
+);
+export { useColorMode };
 
 function getSystemPreference(): ResolvedColorMode {
   if (typeof window === "undefined") return "light";
@@ -104,16 +108,6 @@ export function ColorModeProvider({
   );
 }
 ColorModeProvider.displayName = "ColorModeProvider";
-
-export function useColorMode(): ColorModeContextValue {
-  const context = React.useContext(ColorModeContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useColorMode must be used within a ColorModeProvider",
-    });
-  }
-  return context;
-}
 
 /**
  * Non-throwing variant — returns `null` when there is no `ColorModeProvider`.
