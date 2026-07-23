@@ -11,7 +11,7 @@ export interface SubscriberSet<Args extends unknown[] = []> {
 }
 
 /**
- * Create a subscriber set — the canonical subscribe/notify observable used
+ * Create a subscriber set: the canonical subscribe/notify observable used
  * across modules. Notification iterates a snapshot, so a listener that
  * unsubscribes (itself or others) mid-notify is safe, and listener errors are
  * isolated (routed to `onListenerError` when provided, otherwise swallowed).
