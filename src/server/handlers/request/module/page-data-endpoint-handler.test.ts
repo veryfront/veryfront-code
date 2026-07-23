@@ -212,6 +212,64 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(await first.text(), await second.text());
   });
 
+  it("keeps speculative prefetch work and cache state out of foreground page data", async () => {
+    const producers: string[] = [];
+    const prefetchGate = Promise.withResolvers<void>();
+    const prefetchStarted = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer(async (slug, _ctx, options) => {
+        const producer = options?.request?.headers.get("x-veryfront-prefetch") === "1"
+          ? "prefetch"
+          : "foreground";
+        producers.push(producer);
+        if (producers.length === 1) {
+          prefetchStarted.resolve();
+          await prefetchGate.promise;
+        }
+
+        return {
+          ...createPageData(slug, producers.length),
+          frontmatter: { producer },
+        };
+      }),
+    );
+
+    const ctx = makeCtx({
+      projectDir: "/tmp/prefetch-page-data",
+      projectSlug: "prefetch-page-data",
+      projectId: "proj-prefetch-page-data",
+      releaseId: "rel-prefetch-page-data",
+    });
+    const url = "http://localhost/_veryfront/page-data/index.json";
+    const prefetchResponsePromise = callPageDataEndpoint(
+      new Request(url, { headers: { "x-veryfront-prefetch": "1" } }),
+      ctx,
+    );
+    await prefetchStarted.promise;
+
+    const foregroundResponsePromise = callPageDataEndpoint(new Request(url), ctx);
+    prefetchGate.resolve();
+
+    const [prefetchResponse, foregroundResponse] = await Promise.all([
+      prefetchResponsePromise,
+      foregroundResponsePromise,
+    ]);
+    const cachedForegroundResponse = await callPageDataEndpoint(new Request(url), ctx);
+
+    assertEquals(producers, ["prefetch", "foreground"]);
+    assertEquals(JSON.parse(await prefetchResponse.text()).frontmatter.producer, "prefetch");
+    assertEquals(JSON.parse(await foregroundResponse.text()).frontmatter.producer, "foreground");
+    assertEquals(
+      JSON.parse(await cachedForegroundResponse.text()).frontmatter.producer,
+      "foreground",
+    );
+    assertEquals(
+      prefetchResponse.headers.get("cache-control"),
+      "no-cache, no-store, must-revalidate",
+    );
+  });
+
   it("shares page-data cache entries across tracking and cache-busting query params", async () => {
     let calls = 0;
     setRendererInitializer(
