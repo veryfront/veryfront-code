@@ -306,7 +306,7 @@ describe("agent/hosted-chat-request", () => {
       }),
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
-        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyProjectAccess: () => Promise.resolve({ success: true, projectSlug: "demo-project" }),
         runtimeSource,
       },
     );
@@ -318,6 +318,151 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.projectId, projectId);
     assertEquals(parsed.projectSlug, "demo-project");
     assertEquals(parsed.validatedContext.projectSlug, "demo-project");
+  });
+
+  it("does not trust a requested slug when project access omits a verified slug", async () => {
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(createRuntimeInvocation()),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.projectSlug, undefined);
+    assertEquals(parsed.validatedContext.projectSlug, undefined);
+  });
+
+  it("rejects whitespace-only project slugs before project access", async () => {
+    let projectAccessChecks = 0;
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId,
+            projectId,
+            projectSlug: "   ",
+            branchId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => {
+          projectAccessChecks++;
+          return Promise.resolve({ success: true, projectSlug: "canonical-project" });
+        },
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected validation response");
+    }
+
+    assertEquals(response.status, 400);
+    assertEquals(projectAccessChecks, 0);
+    assertEquals(await response.json(), {
+      errorCode: "VALIDATION_ERROR",
+      message: "Invalid request: context.projectSlug cannot be blank",
+    });
+  });
+
+  it("rejects project slugs without project ids when project access is configured", async () => {
+    let projectAccessChecks = 0;
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId,
+            projectId: null,
+            projectSlug: "requested-project",
+            branchId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => {
+          projectAccessChecks++;
+          return Promise.resolve({ success: true, projectSlug: "requested-project" });
+        },
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected validation response");
+    }
+
+    assertEquals(response.status, 400);
+    assertEquals(projectAccessChecks, 0);
+    assertEquals(await response.json(), {
+      errorCode: "VALIDATION_ERROR",
+      message: "Invalid request: context.projectSlug requires verified context.projectId",
+    });
+  });
+
+  it("uses the verified project slug when the request omits a slug", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId,
+            projectId,
+            branchId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () =>
+          Promise.resolve({ success: true, projectSlug: "canonical-project" }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.projectSlug, "canonical-project");
+    assertEquals(parsed.validatedContext.projectSlug, "canonical-project");
+  });
+
+  it("rejects runtime invocations whose requested slug does not match the verified slug", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(createRuntimeInvocation()),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true, projectSlug: "other-project" }),
+        runtimeSource,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected validation response");
+    }
+
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "FORBIDDEN",
+      message: "Project slug does not match verified project access",
+    });
   });
 
   it("preserves request-scoped project agent config from runtime invocations", async () => {
