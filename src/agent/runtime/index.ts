@@ -41,6 +41,7 @@ import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfro
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
+  bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
   getRuntimeRemoteToolSources,
 } from "./mcp-server-tool-sources.ts";
@@ -384,9 +385,12 @@ async function traceConfiguredToolExecution(input: {
         }),
       );
       try {
-        const inheritedRemoteToolSources = constrainRuntimeRemoteToolSources(
-          input.remoteToolSources,
-          input.allowedRemoteToolNames,
+        const inheritedRemoteToolSources = bindRuntimeRemoteToolSourcesToCredentialOwner(
+          constrainRuntimeRemoteToolSources(
+            input.remoteToolSources,
+            input.allowedRemoteToolNames,
+          ),
+          input.context,
         );
         const result = await runWithRuntimeRemoteToolSources(
           inheritedRemoteToolSources,

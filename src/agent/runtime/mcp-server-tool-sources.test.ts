@@ -6,6 +6,7 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import {
+  bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
   getRequestedUnresolvedBooleanToolNames,
   getRuntimeRemoteToolSources,
@@ -525,6 +526,59 @@ Deno.test("constrainRuntimeRemoteToolSources applies a narrower cap to active so
     Error,
     'Tool "delete_file" is not allowed for MCP server "studio-mcp"',
   );
+});
+
+Deno.test("nested remote source bindings keep the original credential identity", async () => {
+  const listContexts: Array<ToolExecutionContext | undefined> = [];
+  const executeContexts: Array<ToolExecutionContext | undefined> = [];
+  const source: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools(context) {
+      listContexts.push(context);
+      return Promise.resolve([]);
+    },
+    executeTool(_toolName, _args, context) {
+      executeContexts.push(context);
+      return Promise.resolve({ ok: true });
+    },
+  };
+
+  const parentBound = bindRuntimeRemoteToolSourcesToCredentialOwner([source], {
+    authToken: "parent-token",
+    runId: "parent-run",
+    agentId: "parent-agent",
+  });
+  const childBound = bindRuntimeRemoteToolSourcesToCredentialOwner(parentBound, {
+    authToken: "child-token",
+    runId: "child-run",
+    agentId: "child-agent",
+  });
+
+  await childBound?.[0]?.listTools({
+    authToken: "nested-token",
+    agentId: "nested-agent",
+    projectId: "project-1",
+  });
+  await childBound?.[0]?.executeTool("get_file", {}, {
+    authToken: "nested-token",
+    runId: "nested-run",
+    agentId: "nested-agent",
+    projectId: "project-1",
+    toolCallId: "tool-call-1",
+  });
+
+  assertEquals(listContexts, [{
+    authToken: "parent-token",
+    agentId: "nested-agent",
+    projectId: "project-1",
+  }]);
+  assertEquals(executeContexts, [{
+    authToken: "parent-token",
+    runId: "parent-run",
+    agentId: "parent-agent",
+    projectId: "project-1",
+    toolCallId: "tool-call-1",
+  }]);
 });
 
 Deno.test("getRuntimeRemoteToolSources skips the implicit source without server identity", () => {

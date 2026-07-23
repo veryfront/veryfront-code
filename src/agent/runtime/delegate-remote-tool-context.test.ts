@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ModelRuntime } from "#veryfront/provider";
-import type { RemoteToolSource } from "#veryfront/tool";
+import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
@@ -142,6 +142,140 @@ Deno.test("local delegates inherit the trusted request-scoped MCP source", async
     assertEquals(childRuntimeToolNames.includes("delete_file"), false);
     assertEquals(body.includes("root completed"), true);
     assertEquals(body.includes('"type":"error"'), false);
+  } finally {
+    agentRegistry.delete(childId);
+    agentRegistry.delete(rootId);
+  }
+});
+
+Deno.test("local delegates execute inherited MCP tools with the parent credential identity", async () => {
+  const childId = "request-scoped-auth-child";
+  const rootId = "request-scoped-auth-root";
+  let childModelCalls = 0;
+  let rootModelCalls = 0;
+  let executeContext: ToolExecutionContext | undefined;
+
+  const injectedStudioSource: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "get_file",
+        description: "Read a project file",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool(_toolName, _args, context) {
+      executeContext = context;
+      return Promise.resolve({ content: "project file" });
+    },
+  };
+
+  const childModel: ModelRuntime = {
+    provider: "test",
+    modelId: "test/delegate-auth-child",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream() {
+      childModelCalls++;
+      return Promise.resolve({
+        stream: createRuntimeStream(
+          childModelCalls === 1
+            ? [
+              {
+                type: "tool-call",
+                toolCallId: "get-file-call-1",
+                toolName: "get_file",
+                input: { path: "README.md" },
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]
+            : [
+              { type: "text-delta", text: "child completed" },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ],
+        ),
+      });
+    },
+  };
+  const rootModel: ModelRuntime = {
+    provider: "test",
+    modelId: "test/delegate-auth-root",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream() {
+      rootModelCalls++;
+      return Promise.resolve({
+        stream: createRuntimeStream(
+          rootModelCalls === 1
+            ? [
+              {
+                type: "tool-call",
+                toolCallId: "delegate-call-1",
+                toolName: `agent_${childId}`,
+                input: { input: "Read the project file" },
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]
+            : [
+              { type: "text-delta", text: "root completed" },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ],
+        ),
+      });
+    },
+  };
+
+  agent({
+    id: childId,
+    model: "test/delegate-auth-child",
+    system: "Use the project tool.",
+    tools: { get_file: true },
+    mcpServers: [{ kind: "veryfront-studio" }],
+    resolveModelTransport: () => ({ model: childModel }),
+  });
+  const root = agent(
+    {
+      id: rootId,
+      model: "test/delegate-auth-root",
+      system: "Delegate the task.",
+      delegates: [childId],
+      resolveModelTransport: () => ({ model: rootModel }),
+      __vfAllowedRemoteTools: ["get_file"],
+      __vfRemoteToolSources: [injectedStudioSource],
+    } as Parameters<typeof agent>[0] & RuntimeRemoteToolConfig,
+  );
+
+  try {
+    const body = await (await root.stream({
+      input: "Run the child",
+      context: {
+        authToken: "parent-token",
+        runId: "parent-run",
+        agentId: rootId,
+        projectId: "project-1",
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(childModelCalls, 2);
+    assertEquals(rootModelCalls, 2);
+    assertEquals(body.includes("root completed"), true);
+    assertEquals(executeContext?.authToken, "parent-token");
+    assertEquals(executeContext?.runId, "parent-run");
+    assertEquals(executeContext?.agentId, rootId);
+    assertEquals(executeContext?.toolCallId, "get-file-call-1");
   } finally {
     agentRegistry.delete(childId);
     agentRegistry.delete(rootId);
