@@ -99,6 +99,7 @@ import {
 } from "../runtime/skill-metadata.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
@@ -876,6 +877,7 @@ function buildHostedChildToolContext(
 /** Internal test seams for hosted project-agent materialization. */
 export const veryfrontCloudAgentServiceInternals = {
   buildHostedChildToolContext,
+  resolveHostedDelegationBinding,
   resolveHostedChildAgentExecutionConfig,
   resolveHostedChildToolNames,
   resolveMcpServers,
@@ -1008,16 +1010,25 @@ function buildHostedDelegateTools(
   });
 }
 
-function buildHostedDeclarativeDelegateTools(
-  context: NodeVeryfrontCloudAgentServiceContext,
-  agentConfig: RuntimeAgentMarkdownDefinition,
-  taskContext: DefaultHostedChatRuntimeTaskContext,
-): HostToolSet {
-  return buildHostedDelegateTools(context, {
-    delegates: agentConfig.delegates ?? [],
-    selfId: agentConfig.id,
-    taskContext,
-  });
+type HostedDelegationBinding =
+  | { kind: "scoped"; delegateIds: string[] }
+  | { kind: "legacy" };
+
+function resolveHostedDelegationBinding(
+  agentConfig: RuntimeAgentMarkdownDefinition | undefined,
+): HostedDelegationBinding {
+  if (agentConfig?.delegates !== undefined) {
+    return { kind: "scoped", delegateIds: agentConfig.delegates };
+  }
+  if (agentConfig?.tools !== true) {
+    const delegateIds = agentConfig?.tools
+      ?.filter((toolName) => toolName.startsWith(AGENT_DELEGATE_TOOL_PREFIX))
+      .map((toolName) => toolName.slice(AGENT_DELEGATE_TOOL_PREFIX.length));
+    if (delegateIds?.length) {
+      return { kind: "scoped", delegateIds };
+    }
+  }
+  return { kind: "legacy" };
 }
 
 function buildLocalTools(
@@ -1036,14 +1047,19 @@ function buildLocalTools(
 
   if (options.allowDelegation !== false) {
     const agentConfig = options.liveProjectSteering?.agent;
-    if (agentConfig?.delegates !== undefined) {
+    const binding = resolveHostedDelegationBinding(agentConfig);
+    if (binding.kind === "scoped") {
       Object.assign(
         tools,
-        buildHostedDeclarativeDelegateTools(context, agentConfig, taskContext),
+        buildHostedDelegateTools(context, {
+          delegates: binding.delegateIds,
+          selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
+          taskContext,
+        }),
       );
     } else {
       // Agents authored before declarative delegates retain the legacy hosted
-      // child-fork tool. An explicit empty list opts out.
+      // child-fork tool. Explicit scoped delegate bindings opt out.
       tools.invoke_agent = createInvokeAgentTool(context, taskContext);
     }
   }

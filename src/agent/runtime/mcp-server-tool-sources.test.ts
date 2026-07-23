@@ -12,6 +12,7 @@ import {
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "./mcp-server-tool-sources.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { runWithExactRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 
 Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local", () => {
   assertEquals(
@@ -354,6 +355,44 @@ Deno.test("getRuntimeRemoteToolSources does not leak injected sources after expl
       mcpServers: [],
       __vfRemoteToolSources: [injectedApiSource, injectedStudioSource],
     } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+  );
+
+  assertEquals(sources, undefined);
+});
+
+Deno.test("getRuntimeRemoteToolSources does not leak inherited sources after explicit MCP opt-out", () => {
+  const injectedSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [injectedSource],
+    () =>
+      getRuntimeRemoteToolSources({
+        system: "No remote MCP tools.",
+        mcpServers: [],
+      }),
+  );
+
+  assertEquals(sources, undefined);
+});
+
+Deno.test("getRuntimeRemoteToolSources does not expose inherited sources to tools true", () => {
+  const inheritedSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [inheritedSource],
+    () =>
+      getRuntimeRemoteToolSources({
+        system: "Use only explicitly granted tools.",
+        tools: true,
+      }),
   );
 
   assertEquals(sources, undefined);
