@@ -17,6 +17,7 @@ import {
 } from "./sandbox.test-helpers.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
@@ -357,6 +358,45 @@ describe("Sandbox", () => {
         "https://attach.api.test/sandbox-sessions/attached-env/file?path=%2Fworkspace%2Fenv.txt",
       );
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_attach_env");
+    });
+
+    it("normalizes a trailing slash in the API URL for proxy routes", async () => {
+      mockFetch([
+        textResponse("attached body"),
+      ]);
+
+      const sandbox = Sandbox.attach({
+        id: "attached-trailing-slash",
+        endpoint: "https://attached.example.com",
+        authToken: "attach-token",
+        apiUrl: "https://api.test.com/",
+      });
+
+      assertEquals(await sandbox.readFile("/workspace/note.txt"), "attached body");
+      assertEquals(
+        fetchCalls[0]!.url,
+        "https://api.test.com/sandbox-sessions/attached-trailing-slash/file?path=%2Fworkspace%2Fnote.txt",
+      );
+    });
+
+    it("uses the request error contract for invalid proxy file responses", async () => {
+      mockFetch([
+        jsonResponse({ path: "/workspace/note.txt" }),
+      ]);
+
+      const sandbox = Sandbox.attach({
+        id: "attached-invalid-file-response",
+        endpoint: "https://attached.example.com",
+        authToken: "attach-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      const error = await assertRejects(
+        () => sandbox.readFile("/workspace/note.txt"),
+        VeryfrontError,
+        "Sandbox file response missing content",
+      );
+      assertEquals((error as VeryfrontError).slug, "request-error");
     });
   });
 

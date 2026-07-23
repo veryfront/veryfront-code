@@ -1,9 +1,11 @@
+import { REQUEST_ERROR } from "#veryfront/errors";
+
 export function sandboxSessionRoute(
   apiUrl: string,
   sessionId: string,
   path = "",
 ): string {
-  const base = `${apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`;
+  const base = `${apiUrl.replace(/\/+$/, "")}/sandbox-sessions/${encodeURIComponent(sessionId)}`;
   return path ? `${base}${path}` : base;
 }
 
@@ -15,7 +17,7 @@ export async function readSandboxFileContent(res: Response): Promise<string> {
 
   const json = await res.json();
   if (typeof json?.content !== "string") {
-    throw new Error("Sandbox file response missing content");
+    throw REQUEST_ERROR.create({ detail: "Sandbox file response missing content" });
   }
 
   return json.content;
