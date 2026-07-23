@@ -6,6 +6,7 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import {
+  constrainRuntimeRemoteToolSources,
   getRequestedUnresolvedBooleanToolNames,
   getRuntimeRemoteToolSources,
   VERYFRONT_API_MCP_SOURCE_ID,
@@ -335,7 +336,33 @@ Deno.test("getRuntimeRemoteToolSources preserves explicit MCP opt-out", () => {
     },
   );
 
-  assertEquals(sources, undefined);
+  assertEquals(sources, []);
+});
+
+Deno.test("getRuntimeRemoteToolSources preserves an explicit empty injected-source boundary", () => {
+  let bootstrapCalls = 0;
+  const sources = getRuntimeRemoteToolSources(
+    {
+      system: "Use only injected project tools.",
+      tools: { get_file: true },
+      __vfRemoteToolSources: [],
+    } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+    {
+      getVeryfrontBootstrap() {
+        bootstrapCalls++;
+        return {
+          apiBaseUrl: "https://api.example/",
+          apiToken: "server-token",
+          projectSlug: "server-project",
+          hasRequestContext: false,
+          usesVeryfrontFs: false,
+        };
+      },
+    },
+  );
+
+  assertEquals(sources, []);
+  assertEquals(bootstrapCalls, 0);
 });
 
 Deno.test("getRuntimeRemoteToolSources does not leak injected sources after explicit MCP opt-out", () => {
@@ -357,7 +384,7 @@ Deno.test("getRuntimeRemoteToolSources does not leak injected sources after expl
     } as Parameters<typeof getRuntimeRemoteToolSources>[0],
   );
 
-  assertEquals(sources, undefined);
+  assertEquals(sources, []);
 });
 
 Deno.test("getRuntimeRemoteToolSources does not leak inherited sources after explicit MCP opt-out", () => {
@@ -376,7 +403,7 @@ Deno.test("getRuntimeRemoteToolSources does not leak inherited sources after exp
       }),
   );
 
-  assertEquals(sources, undefined);
+  assertEquals(sources, []);
 });
 
 Deno.test("getRuntimeRemoteToolSources does not expose inherited sources to tools true", () => {
@@ -396,6 +423,108 @@ Deno.test("getRuntimeRemoteToolSources does not expose inherited sources to tool
   );
 
   assertEquals(sources, undefined);
+});
+
+Deno.test("getRuntimeRemoteToolSources constrains inherited sources to implicit named tools", async () => {
+  const executedToolNames: string[] = [];
+  const inheritedSource: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([
+        {
+          name: "get_file",
+          description: "Read a project file",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "delete_file",
+          description: "Delete a project file",
+          parameters: { type: "object", properties: {} },
+        },
+      ]),
+    executeTool(toolName) {
+      executedToolNames.push(toolName);
+      return Promise.resolve({ ok: true });
+    },
+  };
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [inheritedSource],
+    () =>
+      getRuntimeRemoteToolSources({
+        id: "implicit-project-tool-agent",
+        system: "Read project files.",
+        tools: { get_file: true },
+      }),
+  );
+
+  assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
+  await sources?.[0]?.executeTool("get_file", {});
+  assertThrows(
+    () => sources![0]!.executeTool("delete_file", {}),
+    Error,
+    'Tool "delete_file" is not allowed for MCP server "studio-mcp"',
+  );
+  assertEquals(executedToolNames, ["get_file"]);
+});
+
+Deno.test("constrainRuntimeRemoteToolSources applies an explicit empty cap to active sources", async () => {
+  const activeSource: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "get_file",
+        description: "Read a project file",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+
+  assertEquals(constrainRuntimeRemoteToolSources(undefined, []), []);
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [activeSource],
+    () => constrainRuntimeRemoteToolSources(undefined, []),
+  );
+
+  assertEquals(await sources?.[0]?.listTools(), []);
+  assertThrows(
+    () => sources![0]!.executeTool("get_file", {}),
+    Error,
+    'Tool "get_file" is not allowed for MCP server "studio-mcp"',
+  );
+});
+
+Deno.test("constrainRuntimeRemoteToolSources applies a narrower cap to active sources", async () => {
+  const activeSource: RemoteToolSource = {
+    id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([
+        {
+          name: "get_file",
+          description: "Read a project file",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "delete_file",
+          description: "Delete a project file",
+          parameters: { type: "object", properties: {} },
+        },
+      ]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [activeSource],
+    () => constrainRuntimeRemoteToolSources(undefined, ["get_file"]),
+  );
+
+  assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
+  assertThrows(
+    () => sources![0]!.executeTool("delete_file", {}),
+    Error,
+    'Tool "delete_file" is not allowed for MCP server "studio-mcp"',
+  );
 });
 
 Deno.test("getRuntimeRemoteToolSources skips the implicit source without server identity", () => {

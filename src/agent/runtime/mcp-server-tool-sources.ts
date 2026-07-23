@@ -166,6 +166,20 @@ function createMcpToolPolicySource(
   };
 }
 
+/** Carry an explicit remote-tool ceiling into nested execution. */
+export function constrainRuntimeRemoteToolSources(
+  sources: RemoteToolSource[] | undefined,
+  allowedToolNames: string[] | undefined,
+): RemoteToolSource[] | undefined {
+  if (allowedToolNames === undefined) {
+    return sources;
+  }
+
+  const policy = { allow: [...new Set(allowedToolNames)] };
+  const sourcesToConstrain = sources ?? getActiveRuntimeRemoteToolSources() ?? [];
+  return sourcesToConstrain.map((source) => createMcpToolPolicySource(source, policy));
+}
+
 export type RuntimeMcpServerToolSourceDependencies = {
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   getVeryfrontBootstrap?: () => VeryfrontCloudBootstrap;
@@ -301,7 +315,7 @@ export function getRuntimeRemoteToolSources(
     : [];
   const injectedSources = configuredInjectedSources ?? inheritedSources;
   const configuredServers: AgentMcpServerConfig[] = config.mcpServers ??
-    (implicitToolNames.length > 0
+    (implicitToolNames.length > 0 && configuredInjectedSources === undefined
       ? [{ kind: "veryfront-api", toolPolicy: { allow: implicitToolNames } }]
       : []);
   const configuredFirstPartyServersBySourceId = new Map<string, AgentVeryfrontMcpServerConfig>();
@@ -315,7 +329,9 @@ export function getRuntimeRemoteToolSources(
     : injectedSources;
   const policyWrappedInjectedSources = selectedInjectedSources.map((source) => {
     const server = configuredFirstPartyServersBySourceId.get(source.id);
-    return server ? createMcpToolPolicySource(source, server.toolPolicy) : source;
+    const policy = server?.toolPolicy ??
+      (implicitToolNames.length > 0 ? { allow: implicitToolNames } : undefined);
+    return createMcpToolPolicySource(source, policy);
   });
   const configuredSources = configuredServers.flatMap((server) => {
     if (isHttpMcpServerConfig(server)) {
@@ -345,5 +361,9 @@ export function getRuntimeRemoteToolSources(
     ...configuredSources,
   ];
 
-  return remoteToolSources.length > 0 ? remoteToolSources : undefined;
+  if (remoteToolSources.length > 0) {
+    return remoteToolSources;
+  }
+
+  return configuredInjectedSources !== undefined || hasExplicitMcpServers ? [] : undefined;
 }
