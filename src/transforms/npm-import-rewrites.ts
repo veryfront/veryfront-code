@@ -72,7 +72,7 @@ function loadImportMapSync(baseDir: string = cwd()): Record<string, string> {
   }
 }
 
-function resolveCacheKey(baseDir: string): string {
+function resolveProjectDir(baseDir: string): string {
   const resolvedBaseDir = resolve(baseDir);
   let canonicalBaseDir = resolvedBaseDir;
   try {
@@ -88,10 +88,11 @@ function resolveCacheKey(baseDir: string): string {
  * Rules are cached per resolved project directory.
  */
 export function getNpmRewriteRules(baseDir: string = cwd()): RewriteRule[] {
-  const cacheKey = resolveCacheKey(baseDir);
+  const projectDir = resolveProjectDir(baseDir);
+  const cacheKey = projectDir;
   const cached = cachedRules.get(cacheKey);
   if (cached) return cached;
-  const importMap = loadImportMapSync(baseDir);
+  const importMap = loadImportMapSync(projectDir);
   const rules = buildRules(importMap);
   cachedRules.set(cacheKey, rules);
   return rules;

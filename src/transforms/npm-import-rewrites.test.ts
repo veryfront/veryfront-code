@@ -8,7 +8,7 @@ import {
   REWRITABLE_PACKAGES,
   rewriteNpmImports,
 } from "./npm-import-rewrites.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, resolve } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 
 describe("npm-import-rewrites", () => {
@@ -21,6 +21,9 @@ describe("npm-import-rewrites", () => {
       it(`"${pkg}" has a pinned npm: entry in deno.json`, () => {
         const value = importMap[pkg];
         assertEquals(typeof value, "string", `Missing import map entry for "${pkg}"`);
+        if (typeof value !== "string") {
+          throw new Error(`Missing import map entry for "${pkg}"`);
+        }
         assertEquals(
           value.startsWith("npm:"),
           true,
@@ -71,6 +74,36 @@ describe("npm-import-rewrites", () => {
         _resetCache();
         await Deno.remove(firstProject, { recursive: true });
         await Deno.remove(secondProject, { recursive: true });
+      }
+    });
+
+    it("loads deno.json from the same canonical directory used for relative baseDir caching", () => {
+      const relativeBaseDir = "relative-project";
+      const resolvedProjectDir = resolve(relativeBaseDir);
+      const canonicalProjectDir = "/canonical/project";
+      const originalRealPathSync = Deno.realPathSync;
+      const originalReadTextFileSync = Deno.readTextFileSync;
+      let readPath: string | undefined;
+
+      try {
+        _resetCache();
+        Deno.realPathSync = ((path: string | URL) => {
+          assertEquals(path, resolvedProjectDir);
+          return canonicalProjectDir;
+        }) as typeof Deno.realPathSync;
+        Deno.readTextFileSync = ((path: string | URL) => {
+          readPath = String(path);
+          return JSON.stringify({ imports: {} });
+        }) as typeof Deno.readTextFileSync;
+
+        const rules = getNpmRewriteRules(relativeBaseDir);
+
+        assertEquals(rules, []);
+        assertEquals(readPath, join(canonicalProjectDir, "deno.json"));
+      } finally {
+        Deno.realPathSync = originalRealPathSync;
+        Deno.readTextFileSync = originalReadTextFileSync;
+        _resetCache();
       }
     });
   });
