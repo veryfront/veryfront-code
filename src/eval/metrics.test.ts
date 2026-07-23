@@ -43,6 +43,117 @@ describe("eval/metrics", () => {
     );
   });
 
+  it("matches strict JSON emitted as agent text", async () => {
+    const jsonMatch = metrics.answer.jsonMatch().gate();
+    const reference = {
+      claimed_elsewhere: 2,
+      failed: 0,
+      succeeded: 1,
+    };
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: '{"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        },
+        reference,
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: JSON.stringify(reference, null, 2) },
+        reference,
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: '{"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        },
+        reference: JSON.stringify(reference),
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: '"not-json"' },
+        reference: "not-json",
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: '```json\n{"succeeded":1,"claimed_elsewhere":2,"failed":0}\n```',
+        },
+        reference,
+      }))).pass,
+      false,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: 'Result: {"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        },
+        reference,
+      }))).pass,
+      false,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: "not-json" },
+        reference: "not-json",
+      }))).pass,
+      false,
+    );
+
+    const explicitString = metrics.answer.jsonMatch({ expected: "null" }).gate();
+    assertEquals(
+      (await explicitString.evaluate(createRecord({ output: { json: "null" } }))).pass,
+      true,
+    );
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: "not-json",
+        reference: "not-json",
+      }))).pass,
+      true,
+    );
+  });
+
+  it("ignores inherited json adapter values", async () => {
+    const jsonMatch = metrics.answer.jsonMatch({ expected: { status: "ok" } }).gate();
+    const output = Object.assign(
+      Object.create({ json: { status: "ok" } }) as Record<string, unknown>,
+      { text: "not-json" },
+    );
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({ output }))).pass,
+      false,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: Object.create({ text: '{"status":"ok"}' }) as Record<string, unknown>,
+      }))).pass,
+      false,
+    );
+  });
+
+  it("preserves __proto__ keys during JSON comparison", async () => {
+    const jsonMatch = metrics.answer.jsonMatch({ expected: {} }).gate();
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: '{"__proto__":{"polluted":true}}' },
+      }))).pass,
+      false,
+    );
+  });
+
   it("evaluates agent and operations metrics", async () => {
     const noFailedTools = metrics.agent.noFailedTools().gate();
     const latency = metrics.ops.latency({ maxMs: 100 }).budget();

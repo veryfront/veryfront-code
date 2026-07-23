@@ -120,11 +120,25 @@ function getOutputText(output: unknown): string {
   return stableStringify(output);
 }
 
-function getOutputJson(output: unknown): unknown {
-  if (output && typeof output === "object" && "json" in output) {
-    return (output as { json: unknown }).json;
+const INVALID_JSON_TEXT = Symbol("invalid-json-text");
+
+function getOutputJson(output: unknown): { fromText: boolean; value: unknown } {
+  if (output && typeof output === "object") {
+    const record = output as Record<string, unknown>;
+    if (Object.hasOwn(record, "json")) return { fromText: false, value: record.json };
+    if (Object.hasOwn(record, "text") && typeof record.text === "string") {
+      return { fromText: true, value: parseJsonText(record.text) };
+    }
   }
-  return output;
+  return { fromText: false, value: output };
+}
+
+function parseJsonText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return INVALID_JSON_TEXT;
+  }
 }
 
 function stableStringify(value: unknown): string {
@@ -134,7 +148,7 @@ function stableStringify(value: unknown): string {
 function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonValue);
   if (!value || typeof value !== "object") return value;
-  const sorted: Record<string, unknown> = {};
+  const sorted = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(value).sort()) {
     sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
   }
@@ -720,11 +734,18 @@ export const metrics = {
       }, options);
     },
 
-    jsonMatch(options: { expected?: unknown }): EvalMetric {
+    jsonMatch(options: { expected?: unknown } = {}): EvalMetric {
       return createMetric("answer.jsonMatch", "answer", (record) => {
-        const expected = Object.hasOwn(options, "expected") ? options.expected : record.reference;
+        const hasExpectedOption = Object.hasOwn(options, "expected");
+        const expectedInput = hasExpectedOption ? options.expected : record.reference;
         const actual = getOutputJson(record.output);
-        const pass = stableStringify(actual) === stableStringify(expected);
+        let expected = expectedInput;
+        if (actual.fromText && !hasExpectedOption && typeof expectedInput === "string") {
+          const parsedReference = parseJsonText(expectedInput);
+          if (parsedReference !== INVALID_JSON_TEXT) expected = parsedReference;
+        }
+        const pass = actual.value !== INVALID_JSON_TEXT && expected !== INVALID_JSON_TEXT &&
+          stableStringify(actual.value) === stableStringify(expected);
         return scoreResult("answer.jsonMatch", "answer", "gate", pass);
       }, options as Record<string, unknown>);
     },
