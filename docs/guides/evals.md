@@ -282,6 +282,8 @@ metrics.answer.regex({ pattern: "Paris|paris" }).gate();
 metrics.answer.jsonMatch({ expected: { city: "Paris" } }).gate();
 ```
 
+`jsonMatch` compares JSON values, so object key order and insignificant whitespace do not affect the result. Agent text outputs and their string references are parsed only when the entire string is valid JSON; Markdown fences and surrounding prose are not accepted. Direct tool outputs are already values and are compared without reparsing.
+
 Use agent and operational metrics for tool and budget quality:
 
 ```ts
