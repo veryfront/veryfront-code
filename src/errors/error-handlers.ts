@@ -45,6 +45,11 @@ export function handleErrorWithFallbackSync<T>(
   }
 }
 
+/**
+ * Options for {@link retryWithBackoff}. Every `attempt` value passed to `fn`
+ * and the hooks below is 0-based (first try = 0), including
+ * `wrapFinalError`'s `lastAttempt`.
+ */
 export interface RetryWithBackoffOptions {
   /** Total number of attempts (first try included). */
   maxAttempts?: number;
@@ -55,7 +60,7 @@ export interface RetryWithBackoffOptions {
   timeoutMs?: number;
   /** Return false to rethrow immediately without further attempts (default: always retry). */
   shouldRetry?: (error: unknown, attempt: number) => boolean;
-  /** Override the exponential backoff delay for the wait after `attempt` (0-based). */
+  /** Override the exponential backoff delay for the wait after `attempt`. */
   computeDelay?: (attempt: number, error: unknown) => number;
   /** Called before each backoff wait; replaces the default warn log. */
   onRetry?: (info: { error: Error; attempt: number; delay: number; isTimeout: boolean }) => void;
