@@ -53,6 +53,8 @@ export interface ChatToolPart<NAME extends string = string, INPUT = unknown, OUT
   input?: INPUT;
   output?: OUTPUT;
   errorText?: string;
+  /** Whether the model provider executed the tool instead of the client/runtime. */
+  providerExecuted?: boolean;
 }
 
 /** Chat message part that carries a tool result. */
@@ -73,6 +75,8 @@ export interface ChatDynamicToolPart {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  /** Whether the model provider executed the tool instead of the client/runtime. */
+  providerExecuted?: boolean;
 }
 
 /** Public API contract for chat step part. */

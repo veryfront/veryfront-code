@@ -204,7 +204,7 @@ describe("use-chat streaming handler", () => {
         output: undefined,
         errorText: undefined,
         providerExecuted: true,
-      } as ChatMessagePart & { providerExecuted: true },
+      },
     ]);
   });
 
