@@ -180,6 +180,56 @@ export function constrainRuntimeRemoteToolSources(
   return sourcesToConstrain.map((source) => createMcpToolPolicySource(source, policy));
 }
 
+const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = ["authToken", "runId", "agentId"] as const;
+
+function withBoundRemoteToolContext(
+  context: ToolExecutionContext | undefined,
+  boundContext: ToolExecutionContext,
+  keys: readonly (typeof REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS)[number][],
+): ToolExecutionContext {
+  const mergedContext = { ...(context ?? {}) };
+  for (const key of keys) {
+    if (boundContext[key] !== undefined) {
+      mergedContext[key] = boundContext[key];
+    }
+  }
+  return mergedContext;
+}
+
+/**
+ * Keep inherited remote sources attached to the credential owner that
+ * introduced them while preserving nested call-local context.
+ *
+ * Remote authorization and nested runtime telemetry are intentionally
+ * separate: the remote call is attributed to the run-scoped credential
+ * owner, while the delegate continues to emit its own child-run lifecycle
+ * and tool-call events.
+ */
+export function bindRuntimeRemoteToolSourcesToCredentialOwner(
+  sources: RemoteToolSource[] | undefined,
+  context: ToolExecutionContext,
+): RemoteToolSource[] | undefined {
+  if (sources === undefined) {
+    return undefined;
+  }
+
+  return sources.map((source) => ({
+    id: source.id,
+    listTools: (nestedContext) =>
+      source.listTools(withBoundRemoteToolContext(nestedContext, context, ["authToken"])),
+    executeTool: (toolName, args, nestedContext) =>
+      source.executeTool(
+        toolName,
+        args,
+        withBoundRemoteToolContext(
+          nestedContext,
+          context,
+          REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS,
+        ),
+      ),
+  }));
+}
+
 export type RuntimeMcpServerToolSourceDependencies = {
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   getVeryfrontBootstrap?: () => VeryfrontCloudBootstrap;
