@@ -4,9 +4,29 @@ import type { CachePayload, CacheStore } from "./types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "./stores/index.ts";
 import { markRequestProfilePhase, metrics } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { cloneCachePayload, parseCachePayload } from "./cache-payload.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 
 /** Default TTL for cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+
+function validateDurations(ttlMs: number, staleMs: number): void {
+  if (!Number.isFinite(ttlMs) || ttlMs < 0 || ttlMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Cache coordinator ttlMs must be between 0 and ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+  if (!Number.isFinite(staleMs) || staleMs < 0 || staleMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Cache coordinator staleMs must be between 0 and ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+  if (ttlMs + staleMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Cache coordinator ttlMs + staleMs must not exceed ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+}
 
 export interface CacheCoordinatorOptions {
   store?: CacheStore;
@@ -45,29 +65,45 @@ export interface CacheLookupResult {
 
 export class CacheCoordinator {
   private store: CacheStore;
-  private ttlMs: number | undefined;
+  private ttlMs: number;
   private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
   private readonly projectId: string | undefined;
   private readonly contentSourceId: string | undefined;
+  private readonly projectPrefix: string;
   private readonly cachePrefix: string;
 
   constructor(options: CacheCoordinatorOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.staleMs = options.staleMs ?? 0;
+    validateDurations(this.ttlMs, this.staleMs);
+    if (
+      options.projectId !== undefined &&
+      (options.projectId.trim().length === 0 || options.projectId.trim() !== options.projectId)
+    ) {
+      throw new TypeError("Cache coordinator projectId must be a non-blank trimmed string");
+    }
+    if (
+      options.contentSourceId !== undefined &&
+      (options.contentSourceId.trim().length === 0 ||
+        options.contentSourceId.trim() !== options.contentSourceId)
+    ) {
+      throw new TypeError("Cache coordinator contentSourceId must be a non-blank trimmed string");
+    }
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
 
-    // Build cache prefix for tenant isolation
-    // Format: projectId:contentSourceId: (or empty if no projectId)
-    this.cachePrefix = this.projectId
-      ? `${this.projectId}:${this.contentSourceId ?? "draft"}:`
-      : "";
+    // Missing identity gets a coordinator-local namespace: safe isolation is
+    // more important than cross-instance reuse when callers omit tenancy.
+    const cacheProjectId = this.projectId ?? `anonymous-${crypto.randomUUID()}`;
+    this.projectPrefix = `${encodeURIComponent(cacheProjectId)}:`;
+    this.cachePrefix = this.projectPrefix +
+      `${encodeURIComponent(this.contentSourceId ?? "draft")}:`;
 
     if (!this.projectId) {
       logger.warn(
-        "[CacheCoordinator] No projectId provided - cache keys will not be tenant-isolated. " +
-          "This may cause cross-project cache pollution in multi-tenant deployments.",
+        "[CacheCoordinator] No projectId provided; using an ephemeral isolated namespace. " +
+          "Distributed cache reuse is disabled across coordinator instances.",
       );
     }
 
@@ -96,7 +132,12 @@ export class CacheCoordinator {
       "cache.checkCache",
       async () => {
         const lookupStart = performance.now();
-        const cached = await this.store.get(key);
+        const stored = await this.store.get(key);
+        const cached = stored === undefined ? undefined : parseCachePayload(stored);
+
+        if (stored !== undefined && cached === undefined) {
+          await this.store.delete(key);
+        }
 
         if (!cached) {
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -166,11 +207,11 @@ export class CacheCoordinator {
           },
           nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
           storedAt: now,
-          expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
-          staleUntil: this.ttlMs && this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
+          expiresAt: now + this.ttlMs,
+          staleUntil: this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
         };
 
-        await this.store.set(key, payload);
+        await this.store.set(key, cloneCachePayload(payload));
       },
       { "cache.slug": slug, "cache.key": key, "cache.projectId": this.projectId ?? "unknown" },
     );
@@ -184,7 +225,8 @@ export class CacheCoordinator {
     const prefixedSlug = this.buildCacheKey(slug);
 
     if (this.store.deleteByPrefix) {
-      await this.store.deleteByPrefix(prefixedSlug);
+      await this.store.delete(prefixedSlug);
+      await this.store.deleteByPrefix(`${prefixedSlug}:`);
     } else {
       await this.store.delete(prefixedSlug);
     }
@@ -195,12 +237,14 @@ export class CacheCoordinator {
    * Only clears entries with the current project prefix.
    */
   async clearForProject(): Promise<void> {
-    if (!this.projectId || !this.store.deleteByPrefix) {
-      await this.clearAll();
-      return;
+    if (!this.projectId) {
+      throw new TypeError("Project cache invalidation requires a projectId");
+    }
+    if (!this.store.deleteByPrefix) {
+      throw new TypeError("Cache store does not support project-scoped invalidation");
     }
 
-    await this.store.deleteByPrefix(this.cachePrefix);
+    await this.store.deleteByPrefix(this.projectPrefix);
   }
 
   async destroy(): Promise<void> {
@@ -208,7 +252,7 @@ export class CacheCoordinator {
   }
 
   private isExpired(entry: CachePayload): boolean {
-    return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
+    return typeof entry.expiresAt === "number" && Date.now() >= entry.expiresAt;
   }
 
   private isStaleUsable(entry: CachePayload): boolean {

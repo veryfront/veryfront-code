@@ -96,7 +96,10 @@ const WEB_FETCH_OUTPUT_SCHEMA: JsonSchema = {
       additionalProperties: true,
     },
     retrievedAt: {
-      type: "string",
+      anyOf: [
+        { type: "string" },
+        { type: "null" },
+      ],
     },
   },
   required: ["type", "url", "content", "retrievedAt"],

@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { matchRoute } from "./route-matcher.ts";
 import { parseRoute } from "./route-parser.ts";
+import type { Route } from "./types.ts";
 
 describe("route-matcher", () => {
   describe("matchRoute", () => {
@@ -36,6 +37,19 @@ describe("route-matcher", () => {
       assertEquals(match?.params.month, "01");
     });
 
+    it("extracts custom-regex captures with the route's public paramNames contract", () => {
+      const route: Route = {
+        pattern: "/legacy/:id",
+        page: "legacy.tsx",
+        regex: /^\/legacy\/([^/]+)$/,
+        paramNames: ["id"],
+      };
+
+      assertEquals(matchRoute("/legacy/hello%20world", route)?.params, {
+        id: "hello world",
+      });
+    });
+
     it("should decode URL-encoded params", () => {
       const route = parseRoute("/search/[query]", "search.tsx");
       const match = matchRoute("/search/hello%20world", route);
@@ -50,11 +64,41 @@ describe("route-matcher", () => {
       assertEquals(match?.params.slug, ["getting-started", "intro"]);
     });
 
+    it("preserves non-word parameter names and catch-all array types", () => {
+      const route = parseRoute(
+        "/users/[user-id]/files/[...file.parts]",
+        "files.tsx",
+      );
+      const match = matchRoute("/users/42/files/a/b", route);
+
+      assertEquals(match?.params["user-id"], "42");
+      assertEquals(match?.params["file.parts"], ["a", "b"]);
+    });
+
+    it("returns __proto__ as an own parameter without changing the result prototype", () => {
+      const route = parseRoute("/users/[__proto__]", "user.tsx");
+      const params = matchRoute("/users/42", route)?.params;
+
+      assertEquals(Object.hasOwn(params ?? {}, "__proto__"), true);
+      assertEquals(params?.["__proto__"], "42");
+      assertEquals(Object.getPrototypeOf(params), Object.prototype);
+    });
+
     it("should handle empty catch-all for optional routes", () => {
       const route = parseRoute("/shop/[[...category]]", "shop.tsx");
       const match = matchRoute("/shop", route);
 
       assertEquals(match?.params.category, []);
+    });
+
+    it("matches an empty optional catch-all before a suffix", () => {
+      const route = parseRoute("/docs/[[...slug]]/edit", "edit.tsx");
+
+      assertEquals(matchRoute("/docs/edit", route)?.params.slug, []);
+      assertEquals(
+        matchRoute("/docs/api/reference/edit", route)?.params.slug,
+        ["api", "reference"],
+      );
     });
 
     it("should decode catch-all segments", () => {

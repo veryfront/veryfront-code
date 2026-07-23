@@ -8,9 +8,18 @@
  * - Prompt/action loading
  */
 
-import { createFileSystem, join } from "veryfront/fs";
+import { createFileSystem, isNotFoundError, join } from "veryfront/fs";
+import { defineSchema } from "veryfront/schemas";
 import { filterVisibleIntegrations } from "../../src/integrations/feature-flags.ts";
-import { ALL_INTEGRATION_NAMES } from "../../src/integrations/schema.ts";
+import {
+  getIntegrationTemplateGenerationBlocker,
+  isIntegrationTemplateGeneratable,
+} from "../../src/integrations/generation-support.ts";
+import {
+  ALL_INTEGRATION_NAMES,
+  getEnvVarSchema,
+  IntegrationConfigSchema,
+} from "../../src/integrations/schema.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import {
   buildIntegrationDirectory,
@@ -40,14 +49,19 @@ export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
  * Default available integrations that can be added via --integrations flag.
  * Prefer getAvailableIntegrations() when runtime feature-flag changes matter.
  */
-export const AVAILABLE_INTEGRATIONS: IntegrationName[] = filterVisibleIntegrations(
-  ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
-).map((integration) => integration.id as IntegrationName);
+export const AVAILABLE_INTEGRATIONS: IntegrationName[] =
+  filterVisibleIntegrations(
+    ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
+  ).map((integration) => integration.id as IntegrationName).filter(
+    isIntegrationTemplateGeneratable,
+  );
 
 export function getAvailableIntegrations(): IntegrationName[] {
   return filterVisibleIntegrations(
     ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
-  ).map((integration) => integration.id as IntegrationName);
+  ).map((integration) => integration.id as IntegrationName).filter(
+    isIntegrationTemplateGeneratable,
+  );
 }
 
 /**
@@ -116,11 +130,128 @@ function getModuleDir(): string {
   return resolveIntegrationModuleDir(import.meta.url);
 }
 
+export type IntegrationConfigLoadFailure =
+  | "not-found"
+  | "read"
+  | "parse"
+  | "validate";
+
+/** A typed connector failure that preserves the failed stage and original cause. */
+export class IntegrationConfigLoadError extends Error {
+  override readonly name = "IntegrationConfigLoadError";
+
+  constructor(
+    readonly integrationName: string,
+    readonly configPath: string,
+    readonly failure: IntegrationConfigLoadFailure,
+    options?: ErrorOptions,
+  ) {
+    super(
+      `Failed to ${
+        failure === "not-found" ? "find" : failure
+      } integration config ` +
+        `${integrationName} at ${configPath}`,
+      options,
+    );
+  }
+}
+
+/** A selected connector whose manifest entry is absent must never generate partially. */
+export class IntegrationTemplateLoadError extends Error {
+  override readonly name = "IntegrationTemplateLoadError";
+
+  constructor(readonly integrationName: string) {
+    super(`Integration template is missing or empty: ${integrationName}`);
+  }
+}
+
+const getIntegrationBaseConfigSchema = defineSchema((v) =>
+  v.object({
+    name: v.literal("_base"),
+    displayName: v.string().min(1).max(256),
+    description: v.string().min(1).max(2048),
+    internal: v.literal(true),
+    auth: v.object({ type: v.literal("none") }).strict(),
+    envVars: v.array(getEnvVarSchema().strict()).max(100),
+    tools: v.array(v.unknown()).max(0),
+  }).strict()
+);
+
+type IntegrationBaseConfig = ReturnType<
+  typeof getIntegrationBaseConfigSchema
+>["_output"];
+
 /**
  * Get the directory path for an integration
  */
 export function getIntegrationDirectory(integrationName: string): string {
   return buildIntegrationDirectory(getModuleDir(), integrationName);
+}
+
+function parseConfigJson(
+  content: string,
+  integrationName: string,
+  configPath: string,
+): unknown {
+  try {
+    return JSON.parse(content);
+  } catch (cause) {
+    throw new IntegrationConfigLoadError(integrationName, configPath, "parse", {
+      cause,
+    });
+  }
+}
+
+export function parseIntegrationConfig(
+  content: string,
+  integrationName: string,
+  configPath = `${integrationName}/connector.json`,
+): IntegrationConfig {
+  const parsed = parseConfigJson(content, integrationName, configPath);
+
+  let config: IntegrationConfig;
+  try {
+    config = IntegrationConfigSchema.parse(parsed);
+  } catch (cause) {
+    throw new IntegrationConfigLoadError(
+      integrationName,
+      configPath,
+      "validate",
+      { cause },
+    );
+  }
+  if (config.name !== integrationName) {
+    throw new IntegrationConfigLoadError(
+      integrationName,
+      configPath,
+      "validate",
+      {
+        cause: new TypeError(
+          `connector name ${JSON.stringify(config.name)} does not match ${
+            JSON.stringify(integrationName)
+          }`,
+        ),
+      },
+    );
+  }
+  return config;
+}
+
+function parseIntegrationBaseConfig(
+  content: string,
+  configPath: string,
+): IntegrationBaseConfig {
+  const parsed = parseConfigJson(content, "_base", configPath);
+  try {
+    return getIntegrationBaseConfigSchema().parse(parsed);
+  } catch (cause) {
+    throw new IntegrationConfigLoadError(
+      "_base",
+      configPath,
+      "validate",
+      { cause },
+    );
+  }
 }
 
 /**
@@ -137,9 +268,13 @@ export async function loadIntegrationConfig(
 
   try {
     const content = await fs.readTextFile(configPath);
-    return JSON.parse(content) as IntegrationConfig;
-  } catch {
-    return null;
+    return parseIntegrationConfig(content, integrationName, configPath);
+  } catch (cause) {
+    if (cause instanceof IntegrationConfigLoadError) throw cause;
+    if (isNotFoundError(cause)) return null;
+    throw new IntegrationConfigLoadError(integrationName, configPath, "read", {
+      cause,
+    });
   }
 }
 
@@ -149,10 +284,17 @@ export async function loadIntegrationConfig(
 export async function loadIntegration(
   integrationName: IntegrationName,
 ): Promise<ResolvedIntegration | null> {
+  if (!isIntegrationTemplateGeneratable(integrationName)) return null;
+
   const config = await loadIntegrationConfig(integrationName);
   if (!config) return null;
 
-  const files = await loadTemplateFromDirectory(`integration:${integrationName}`);
+  const files = await loadTemplateFromDirectory(
+    `integration:${integrationName}`,
+  );
+  if (files.length === 0) {
+    throw new IntegrationTemplateLoadError(integrationName);
+  }
 
   return { config, files };
 }
@@ -164,7 +306,19 @@ export function validateIntegrations(integrations: IntegrationName[]): {
   valid: boolean;
   errors: string[];
 } {
-  const errors = buildUnknownIntegrationErrors(integrations, getAvailableIntegrations());
+  const blocked = integrations.flatMap((name) => {
+    const reason = getIntegrationTemplateGenerationBlocker(name);
+    return reason
+      ? [
+        `Integration ${name} requires a provider-specific adapter before generation: ${reason}`,
+      ]
+      : [];
+  });
+  const unblocked = integrations.filter(isIntegrationTemplateGeneratable);
+  const errors = [
+    ...blocked,
+    ...buildUnknownIntegrationErrors(unblocked, getAvailableIntegrations()),
+  ];
 
   return { valid: errors.length === 0, errors };
 }
@@ -182,6 +336,13 @@ export async function loadIntegrations(
   const integrations: ResolvedIntegration[] = [];
   const errors: string[] = [];
   for (const name of integrationNames) {
+    const blocker = getIntegrationTemplateGenerationBlocker(name);
+    if (blocker) {
+      errors.push(
+        `Integration ${name} requires a provider-specific adapter before generation: ${blocker}`,
+      );
+      continue;
+    }
     const integration = await loadIntegration(name);
     if (!integration) {
       errors.push(`Integration not found: ${name}`);
@@ -201,7 +362,9 @@ export async function loadIntegrations(
 /**
  * Check if an integration exists
  */
-export async function integrationExists(integrationName: string): Promise<boolean> {
+export async function integrationExists(
+  integrationName: string,
+): Promise<boolean> {
   const fs = createFileSystem();
   const integrationDir = getIntegrationDirectory(integrationName);
 
@@ -250,427 +413,37 @@ export async function getAvailablePrompts(
  * Load base files from the _base integration directory
  * These include setup guide page and status API
  */
-export function loadIntegrationBaseFilesFromDirectory(): Promise<TemplateFile[]> {
-  return loadTemplateFromDirectory("integration:_base");
+export async function loadIntegrationBaseFilesFromDirectory(): Promise<
+  TemplateFile[]
+> {
+  const files = await loadTemplateFromDirectory("integration:_base");
+  if (files.length === 0) throw new IntegrationTemplateLoadError("_base");
+  return files;
 }
 
 /**
  * Load the _base integration config to get shared env vars like APP_URL
  */
-export function loadIntegrationBaseConfig(): Promise<IntegrationConfig | null> {
-  return loadIntegrationConfig("_base" as IntegrationName);
-}
+export async function loadIntegrationBaseConfig(): Promise<
+  IntegrationBaseConfig
+> {
+  const fs = createFileSystem();
+  const configPath = join(getIntegrationDirectory("_base"), "connector.json");
 
-/**
- * Generate base files needed for any integration setup
- * These are shared across all integrations
- */
-export function getIntegrationBaseFiles(): TemplateFile[] {
-  return [
-    {
-      path: "lib/token-store.ts",
-      content: `/**
- * OAuth Token Store
- *
- * Manages OAuth tokens for service integrations.
- * Override this with a database implementation for production.
- */
-
-export interface OAuthToken {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt?: number;
-  tokenType?: string;
-  scope?: string;
-}
-
-export interface TokenStore {
-  getToken(userId: string, service: string): Promise<OAuthToken | null>;
-  setToken(userId: string, service: string, token: OAuthToken): Promise<void>;
-  deleteToken(userId: string, service: string): Promise<void>;
-}
-
-// In-memory store for development
-// Replace with database/KV store in production
-const tokens = new Map<string, OAuthToken>();
-
-function makeKey(userId: string, service: string): string {
-  return \`\${userId}:\${service}\`;
-}
-
-export const tokenStore: TokenStore = {
-  async getToken(userId: string, service: string): Promise<OAuthToken | null> {
-    const token = tokens.get(makeKey(userId, service));
-    if (!token) return null;
-
-    // Check if expired
-    if (token.expiresAt && Date.now() > token.expiresAt) {
-      // Token expired - in production, attempt refresh here
-      return null;
-    }
-
-    return token;
-  },
-
-  async setToken(userId: string, service: string, token: OAuthToken): Promise<void> {
-    tokens.set(makeKey(userId, service), token);
-  },
-
-  async deleteToken(userId: string, service: string): Promise<void> {
-    tokens.delete(makeKey(userId, service));
-  },
-};
-
-export default tokenStore;
-`,
-    },
-    {
-      path: "lib/oauth.ts",
-      content: `/**
- * OAuth utilities for service integrations
- */
-
-import { tokenStore, type OAuthToken } from "./token-store.ts";
-
-// Helper for Cross-Platform environment access
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  }
-  // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
-  return undefined;
-}
-
-export interface OAuthProvider {
-  name: string;
-  authorizationUrl: string;
-  tokenUrl: string;
-  clientId: string;
-  clientSecret: string;
-  scopes: string[];
-  callbackPath: string;
-}
-
-/**
- * Generate OAuth authorization URL
- */
-export function getAuthorizationUrl(
-  provider: OAuthProvider,
-  state: string,
-  redirectUri: string,
-): string {
-  const params = new URLSearchParams({
-    client_id: provider.clientId,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: provider.scopes.join(" "),
-    state,
-    access_type: "offline",
-    prompt: "consent",
-  });
-
-  return \`\${provider.authorizationUrl}?\${params.toString()}\`;
-}
-
-/**
- * Exchange authorization code for tokens
- */
-export async function exchangeCodeForTokens(
-  provider: OAuthProvider,
-  code: string,
-  redirectUri: string,
-): Promise<OAuthToken> {
-  const response = await fetch(provider.tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      client_id: provider.clientId,
-      client_secret: provider.clientSecret,
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(\`Token exchange failed: \${error}\`);
-  }
-
-  const data = await response.json();
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    scope: data.scope,
-    tokenType: data.token_type,
-  };
-}
-
-/**
- * Refresh an expired token
- */
-export async function refreshAccessToken(
-  provider: OAuthProvider,
-  refreshToken: string,
-): Promise<OAuthToken> {
-  const response = await fetch(provider.tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      client_id: provider.clientId,
-      client_secret: provider.clientSecret,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(\`Token refresh failed: \${error}\`);
-  }
-
-  const data = await response.json();
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token || refreshToken,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    scope: data.scope,
-    tokenType: data.token_type,
-  };
-}
-
-/**
- * Get a valid access token, refreshing if necessary
- */
-export async function getValidToken(
-  provider: OAuthProvider,
-  userId: string,
-  serviceName: string,
-): Promise<string | null> {
-  const token = await tokenStore.getToken(userId, serviceName);
-  if (!token) return null;
-
-  // Check if token needs refresh
-  if (token.expiresAt && Date.now() > token.expiresAt - 60000) {
-    if (!token.refreshToken) return null;
-
-    try {
-      const newToken = await refreshAccessToken(provider, token.refreshToken);
-      await tokenStore.setToken(userId, serviceName, newToken);
-      return newToken.accessToken;
-    } catch {
-      // Refresh failed, token is invalid
-      await tokenStore.deleteToken(userId, serviceName);
-      return null;
-    }
-  }
-
-  return token.accessToken;
-}
-`,
-    },
-    {
-      path: "components/ActionCards.tsx",
-      content: `"use client";
-
-import { useState } from "react";
-
-interface ActionCard {
-  id: string;
-  icon: React.ReactNode;
-  title: string;
-  description?: string;
-  prompt: string;
-  category?: string;
-  users?: string;
-}
-
-interface ActionCardsProps {
-  actions: ActionCard[];
-  onPrompt: (prompt: string) => void;
-  categories?: string[];
-}
-
-export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps) {
-  const [selectedCategory, setSelectedCategory] = useState<string>("featured");
-
-  const filteredActions =
-    selectedCategory === "featured"
-      ? actions
-      : actions.filter((a) => a.category === selectedCategory);
-
-  return (
-    <div className="space-y-6">
-      {categories?.length ? (
-        <div className="flex gap-2 flex-wrap">
-          <CategoryTab
-            label="Featured"
-            selected={selectedCategory === "featured"}
-            onClick={() => setSelectedCategory("featured")}
-          />
-          {categories.map((cat) => (
-            <CategoryTab
-              key={cat}
-              label={cat.charAt(0).toUpperCase() + cat.slice(1)}
-              selected={selectedCategory === cat}
-              onClick={() => setSelectedCategory(cat)}
-            />
-          ))}
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredActions.map((action) => (
-          <div
-            key={action.id}
-            className="bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 p-6 hover:shadow-lg transition-shadow"
-          >
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 flex items-center justify-center">
-                {action.icon}
-              </div>
-            </div>
-
-            <h3 className="font-semibold text-neutral-900 dark:text-white mb-2">
-              {action.title}
-            </h3>
-
-            {action.description ? (
-              <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
-                {action.description}
-              </p>
-            ) : null}
-
-            <div className="flex items-center justify-between mt-4">
-              <button
-                onClick={() => onPrompt(action.prompt)}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-100 dark:bg-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-600 rounded-xl text-sm font-medium text-neutral-900 dark:text-white transition-colors"
-              >
-                <span className="text-amber-500">⚡</span>
-                Try Prompt
-              </button>
-
-              {action.users ? (
-                <span className="text-sm text-orange-500 font-medium">
-                  {action.users} Users
-                </span>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CategoryTab({
-  label,
-  selected,
-  onClick,
-}: {
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const className = selected
-    ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
-    : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700";
-
-  return (
-    <button
-      onClick={onClick}
-      className={\`px-4 py-2 rounded-full text-sm font-medium transition-colors \${className}\`}
-    >
-      {label}
-    </button>
-  );
-}
-
-export default ActionCards;
-`,
-    },
-    {
-      path: "components/ServiceStatus.tsx",
-      content: `"use client";
-
-interface Service {
-  id: string;
-  name: string;
-  icon: React.ReactNode;
-  isConnected: boolean;
-  connectUrl: string;
-}
-
-interface ServiceStatusProps {
-  services: Service[];
-  onConnect?: (serviceId: string) => void;
-}
-
-export function ServiceStatus({ services, onConnect }: ServiceStatusProps) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {services.map((service) => (
-        <ServiceBadge key={service.id} service={service} onConnect={onConnect} />
-      ))}
-    </div>
-  );
-}
-
-function ServiceBadge({
-  service,
-  onConnect,
-}: {
-  service: Service;
-  onConnect?: (serviceId: string) => void;
-}) {
-  if (service.isConnected) {
-    return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-full">
-        <span className="w-5 h-5">{service.icon}</span>
-        <span className="text-sm font-medium text-green-700 dark:text-green-400">
-          {service.name}
-        </span>
-        <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-      </div>
+  try {
+    return parseIntegrationBaseConfig(
+      await fs.readTextFile(configPath),
+      configPath,
     );
-  }
-
-  function handleClick(): void {
-    if (onConnect) {
-      onConnect(service.id);
-      return;
+  } catch (cause) {
+    if (cause instanceof IntegrationConfigLoadError) throw cause;
+    if (isNotFoundError(cause)) {
+      throw new IntegrationConfigLoadError("_base", configPath, "not-found", {
+        cause,
+      });
     }
-    window.location.href = service.connectUrl;
+    throw new IntegrationConfigLoadError("_base", configPath, "read", {
+      cause,
+    });
   }
-
-  return (
-    <button
-      onClick={handleClick}
-      className="inline-flex items-center gap-2 px-3 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
-    >
-      <span className="w-5 h-5 opacity-50">{service.icon}</span>
-      <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-        Connect {service.name}
-      </span>
-    </button>
-  );
-}
-
-export default ServiceStatus;
-`,
-    },
-  ];
 }

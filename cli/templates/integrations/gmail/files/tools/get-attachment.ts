@@ -5,11 +5,14 @@ import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "get-attachment",
-  description: "Get a Gmail message attachment by message ID and attachment ID.",
-  inputSchema: defineSchema((v) => v.object({
-    messageId: v.string().min(1).describe("Gmail message ID"),
-    attachmentId: v.string().min(1).describe("Gmail attachment ID"),
-  }))(),
+  description:
+    "Get a Gmail message attachment by message ID and attachment ID.",
+  inputSchema: defineSchema((v) =>
+    v.object({
+      messageId: v.string().min(1).describe("Gmail message ID"),
+      attachmentId: v.string().min(1).describe("Gmail attachment ID"),
+    })
+  )(),
   execute: async ({ messageId, attachmentId }, context) => {
     const userId = resolveUserId(context);
 

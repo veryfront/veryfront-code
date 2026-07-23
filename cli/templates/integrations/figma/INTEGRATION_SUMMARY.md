@@ -19,8 +19,9 @@ A complete Figma integration for Veryfront following the established Notion inte
 
 ### Library Files
 - `lib/figma-client.ts` (353 lines) - Complete Figma API client with helpers
-- `lib/oauth.ts` (94 lines) - OAuth2 flow implementation
-- `lib/token-store.ts` (35 lines) - Token management
+- `lib/oauth.ts` - Adapter to the hardened `veryfront/oauth` service
+- `lib/oauth-store.ts` - Fail-closed application store binding
+- `lib/oauth-store-registry.ts` - Durable store injection contract
 - `lib/types.ts` (680+ lines) - Comprehensive TypeScript definitions
 
 ### Authentication Routes
@@ -224,43 +225,11 @@ Works seamlessly with:
 ✓ Token management infrastructure
 
 ### Production Considerations
-1. Replace in-memory token store with database
-2. Implement token refresh logic
+1. Install a durable OAuth store and verified identity resolver during application startup
+2. Report durable/encrypted capabilities from the installed store
 3. Add rate limiting and backoff
 4. Cache frequently accessed files
 5. Add webhook support for real-time updates
-
-### Example Database Token Store
-```typescript
-// lib/token-store.ts (production version)
-import { db } from '@/lib/db'
-
-export async function setTokens(userId: string, data: TokenData) {
-  await db.figmaTokens.upsert({
-    where: { userId },
-    data: {
-      userId,
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-      expiresAt: data.expiresAt,
-      updatedAt: new Date(),
-    }
-  })
-}
-
-export async function getAccessToken(userId: string) {
-  const token = await db.figmaTokens.findUnique({
-    where: { userId }
-  })
-
-  // Check expiration and refresh if needed
-  if (token?.expiresAt && token.expiresAt < Date.now()) {
-    return await refreshAndReturnToken(userId, token.refreshToken)
-  }
-
-  return token?.accessToken
-}
-```
 
 ## Testing Strategy
 
@@ -320,18 +289,17 @@ describe('Figma OAuth Flow', () => {
 ### Recommended
 - Store tokens encrypted at rest
 - Implement token rotation
-- Add user session management
+- Install and verify application session/JWT identity resolution
 - Audit API access logs
 - Rate limit per user/team
 
 ## Future Enhancements
 
 ### High Priority
-1. Token refresh automation
-2. Webhook support for file changes
-3. Real-time collaboration features
-4. Version history access
-5. Branch support
+1. Webhook support for file changes
+2. Real-time collaboration features
+3. Version history access
+4. Branch support
 
 ### Medium Priority
 1. Component publishing
@@ -409,4 +377,6 @@ describe('Figma OAuth Flow', () => {
 
 ## Conclusion
 
-This Figma integration provides a complete solution for AI-powered design tool interactions. It follows established patterns, includes typed interfaces, and covers core API use cases. It is intended as a reference implementation; adapt token storage and harden for production use.
+This Figma integration provides user-scoped OAuth clients and core design API
+tools. Production deployments must install the durable OAuth store and verified
+identity resolver described in the generated `SETUP.md`.

@@ -1,6 +1,7 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { ContentSource, PreviewStyleArtifactInfo, ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 const logger = baseLogger.component("ws-helpers");
 
@@ -42,6 +43,7 @@ export function buildReloadProjectContext(
   environment: "preview" | "production";
   branch: string | null;
   releaseId: string | null;
+  contentSourceId: string | undefined;
   styleArtifactHash: string | undefined;
   styleAssetPath: string | undefined;
 } {
@@ -55,6 +57,14 @@ export function buildReloadProjectContext(
     environment,
     branch: contentContext?.branch ?? null,
     releaseId: contentContext?.releaseId ?? null,
+    contentSourceId: environment === "preview" || contentContext?.releaseId
+      ? computeContentSourceId(
+        false,
+        environment,
+        contentContext?.branch,
+        contentContext?.releaseId,
+      )
+      : undefined,
     styleArtifactHash: preparedStyleArtifact?.hash,
     styleAssetPath: preparedStyleArtifact?.assetPath,
   };

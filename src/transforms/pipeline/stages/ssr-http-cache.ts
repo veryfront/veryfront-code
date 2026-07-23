@@ -11,8 +11,6 @@ import type { TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
-import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 
 const LOG_PREFIX = "[SSR-HTTP-CACHE]";
@@ -22,16 +20,13 @@ export const ssrHttpCachePlugin: TransformPlugin = {
   stage: TransformStage.FINALIZE - 1, // Run just before finalize
 
   async transform(ctx) {
-    const cachedMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;
-    const importMap = cachedMap ?? (await loadImportMap(ctx.projectDir));
-
-    if (!cachedMap) {
-      ctx.metadata.set("importMap", importMap);
+    if (!ctx.importMap) {
+      throw new Error("SSR transform context is missing its import-map snapshot");
     }
 
     const { code, bundleManifestId } = await cacheHttpImportsToLocal(ctx.code, {
       cacheDir: getHttpBundleCacheDir(),
-      importMap,
+      importMap: ctx.importMap,
       reactVersion: ctx.reactVersion,
     });
 

@@ -36,10 +36,15 @@ import {
   type OpenAICompatibleLanguageOptions,
 } from "./anthropic-request-builder.ts";
 import {
+  addAnthropicUsage,
+  type AnthropicStreamCompletion,
   extractAnthropicUsage,
   normalizeAnthropicFinishReason,
+  parseAnthropicServerToolResult,
   streamAnthropicCompatibleParts,
 } from "./anthropic-stream.ts";
+
+const MAX_PAUSE_TURN_CONTINUATIONS = 5;
 
 export {
   buildProviderError,
@@ -95,6 +100,29 @@ type AnthropicTextContent = {
   citations?: AnthropicCitation[];
 };
 
+type AnthropicToolCallContent = {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  input: string;
+  providerExecuted?: boolean;
+};
+
+type AnthropicToolResultContent = {
+  type: "tool-result";
+  toolCallId: string;
+  toolName: string;
+  result: unknown;
+  isError?: boolean;
+  providerExecuted?: boolean;
+};
+
+type AnthropicGenerateContent =
+  | AnthropicTextContent
+  | AnthropicReasoningContent
+  | AnthropicToolCallContent
+  | AnthropicToolResultContent;
+
 /**
  * Best-effort camelCase normalization of a single Anthropic citation
  * record. Handles the union of fields across web_search_result_location,
@@ -123,23 +151,13 @@ function normalizeAnthropicCitation(raw: unknown): AnthropicCitation | undefined
 }
 
 function buildAnthropicGenerateResult(payload: unknown): {
-  content: Array<
-    | AnthropicTextContent
-    | AnthropicReasoningContent
-    | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
-    | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
-  >;
+  content: AnthropicGenerateContent[];
   finishReason?: string | { unified: string; raw: string } | null;
   usage?: RuntimeUsage;
 } {
   const record = readRecord(payload);
   const content = Array.isArray(record?.content) ? record.content : [];
-  const normalized: Array<
-    | AnthropicTextContent
-    | AnthropicReasoningContent
-    | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
-    | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
-  > = [];
+  const normalized: AnthropicGenerateContent[] = [];
 
   for (const blockValue of content) {
     const block = readRecord(blockValue);
@@ -195,33 +213,21 @@ function buildAnthropicGenerateResult(payload: unknown): {
         toolCallId: block.id,
         toolName: block.name,
         input: stringifyJsonValue(block.input ?? {}),
+        ...(blockType === "server_tool_use" ? { providerExecuted: true } : {}),
       });
       continue;
     }
 
-    if (
-      blockType === "web_search_tool_result" &&
-      typeof block?.tool_use_id === "string" &&
-      Array.isArray(block?.content)
-    ) {
+    if (blockType === "web_search_tool_result" || blockType === "web_fetch_tool_result") {
+      const parsedResult = parseAnthropicServerToolResult(block);
+      if (!parsedResult) continue;
       normalized.push({
         type: "tool-result",
-        toolCallId: block.tool_use_id,
-        toolName: "web_search",
-        result: block.content,
-      });
-    }
-
-    if (
-      blockType === "web_fetch_tool_result" &&
-      typeof block?.tool_use_id === "string" &&
-      readRecord(block?.content)
-    ) {
-      normalized.push({
-        type: "tool-result",
-        toolCallId: block.tool_use_id,
-        toolName: "web_fetch",
-        result: block.content,
+        toolCallId: parsedResult.toolCallId,
+        toolName: parsedResult.toolName,
+        result: parsedResult.result,
+        ...(parsedResult.isError === true ? { isError: true } : {}),
+        providerExecuted: true,
       });
     }
   }
@@ -231,6 +237,151 @@ function buildAnthropicGenerateResult(payload: unknown): {
     finishReason: normalizeAnthropicFinishReason(record?.stop_reason),
     usage: extractAnthropicUsage(payload),
   };
+}
+
+type AnthropicRequestBody = Record<string, unknown> & {
+  messages?: unknown[];
+};
+
+function createPauseTurnContinuationBody(
+  baseBody: AnthropicRequestBody,
+  rawAssistantContent: unknown[],
+): AnthropicRequestBody {
+  return {
+    ...baseBody,
+    messages: [
+      ...(Array.isArray(baseBody.messages) ? baseBody.messages : []),
+      { role: "assistant", content: rawAssistantContent },
+    ],
+  };
+}
+
+function readRawAnthropicResponse(payload: unknown): {
+  rawContent: unknown[];
+  rawStopReason?: string;
+} {
+  const record = readRecord(payload);
+  return {
+    rawContent: Array.isArray(record?.content) ? record.content : [],
+    ...(typeof record?.stop_reason === "string" ? { rawStopReason: record.stop_reason } : {}),
+  };
+}
+
+function throwIfAnthropicRequestAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason !== undefined) throw signal.reason;
+  throw new DOMException("The Anthropic request was aborted", "AbortError");
+}
+
+function shouldPreserveAnthropicRawAssistantHistory(
+  prompt: OpenAICompatibleLanguageOptions["prompt"],
+  rawAssistantMessages: unknown[][],
+): boolean {
+  const hasPriorProviderCall = prompt.some((message) =>
+    message.role === "assistant" && (message.providerToolCalls?.length ?? 0) > 0
+  );
+  let hasServerToolContent = false;
+  let hasClientToolUse = false;
+  for (const content of rawAssistantMessages) {
+    for (const value of content) {
+      const block = readRecord(value);
+      if (block?.type === "tool_use") hasClientToolUse = true;
+      if (
+        block?.type === "server_tool_use" || block?.type === "web_search_tool_result" ||
+        block?.type === "web_fetch_tool_result"
+      ) {
+        hasServerToolContent = true;
+      }
+    }
+  }
+  return hasPriorProviderCall || hasServerToolContent && hasClientToolUse;
+}
+
+function createAnthropicRawAssistantMetadata(
+  prompt: OpenAICompatibleLanguageOptions["prompt"],
+  rawAssistantMessages: unknown[][],
+): Record<string, unknown> | undefined {
+  if (!shouldPreserveAnthropicRawAssistantHistory(prompt, rawAssistantMessages)) {
+    return undefined;
+  }
+  return { anthropic: { rawAssistantMessages } };
+}
+
+function createProviderAbortScope(callerSignal: AbortSignal | undefined): {
+  controller: AbortController;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+    return { controller, dispose() {} };
+  }
+
+  callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  return {
+    controller,
+    dispose() {
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
+function createCancelableProviderStream(
+  iterable: AsyncIterable<unknown>,
+  providerAbortController: AbortController,
+  disposeAbortScope: () => void,
+): ReadableStream<unknown> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  let consumerCanceled = false;
+  let disposed = false;
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    disposeAbortScope();
+  };
+
+  return new ReadableStream<unknown>(
+    {
+      async pull(controller) {
+        try {
+          const next = await iterator.next();
+          if (next.done) {
+            dispose();
+            controller.close();
+            return;
+          }
+          controller.enqueue(next.value);
+        } catch (error) {
+          dispose();
+          if (!consumerCanceled) {
+            controller.error(error);
+          }
+        }
+      },
+      async cancel(reason) {
+        consumerCanceled = true;
+        if (!providerAbortController.signal.aborted) {
+          providerAbortController.abort(reason);
+        }
+        try {
+          await iterator.return?.();
+        } catch (error) {
+          if (!providerAbortController.signal.aborted) {
+            throw error;
+          }
+        } finally {
+          dispose();
+        }
+      },
+    },
+    // Do not speculatively pull the nested async iterators. Keeping zero
+    // buffered parts lets cancel() reach their return/finally chain
+    // immediately after the consumer's last read.
+    { highWaterMark: 0 },
+  );
 }
 
 export function createAnthropicModelRuntime(
@@ -248,7 +399,7 @@ export function createAnthropicModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
-    doGenerate(optionsForRuntime: unknown) {
+    async doGenerate(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -258,28 +409,62 @@ export function createAnthropicModelRuntime(
         options,
         false,
         warnings,
+      ) as AnthropicRequestBody;
+      let requestBody = body;
+      let continuationCount = 0;
+      let aggregateUsage: RuntimeUsage | undefined;
+      const aggregateContent: AnthropicGenerateContent[] = [];
+      const rawAssistantMessages: unknown[][] = [];
+      let finalResult: ReturnType<typeof buildAnthropicGenerateResult> | undefined;
+
+      while (true) {
+        throwIfAnthropicRequestAborted(options.abortSignal);
+        const payload = await requestJson({
+          url,
+          fetchImpl,
+          providerLabel: config.name ?? "anthropic",
+          providerKind: "anthropic",
+          init: createAnthropicRequestInit({
+            apiKey: config.apiKey,
+            authToken: config.authToken,
+            extraHeaders: options.headers,
+            body: JSON.stringify(requestBody),
+            signal: options.abortSignal,
+          }),
+        });
+        const result = buildAnthropicGenerateResult(payload);
+        aggregateContent.push(...result.content);
+        aggregateUsage = addAnthropicUsage(aggregateUsage, result.usage);
+        finalResult = result;
+
+        const raw = readRawAnthropicResponse(payload);
+        if (raw.rawContent.length > 0) rawAssistantMessages.push(raw.rawContent);
+        if (
+          raw.rawStopReason !== "pause_turn" ||
+          raw.rawContent.length === 0 ||
+          continuationCount >= MAX_PAUSE_TURN_CONTINUATIONS
+        ) {
+          break;
+        }
+
+        continuationCount++;
+        requestBody = createPauseTurnContinuationBody(requestBody, raw.rawContent);
+      }
+
+      const drained = warnings.drain();
+      const providerMetadata = createAnthropicRawAssistantMetadata(
+        options.prompt,
+        rawAssistantMessages,
       );
-      return requestJson({
-        url,
-        fetchImpl,
-        providerLabel: config.name ?? "anthropic",
-        providerKind: "anthropic",
-        init: createAnthropicRequestInit({
-          apiKey: config.apiKey,
-          authToken: config.authToken,
-          extraHeaders: options.headers,
-          body: JSON.stringify(body),
-          signal: options.abortSignal,
-        }),
-      }).then((payload) => {
-        const drained = warnings.drain();
-        return {
-          ...buildAnthropicGenerateResult(payload),
-          ...(drained.length > 0 ? { warnings: drained } : {}),
-        };
-      });
+      return {
+        content: aggregateContent,
+        finishReason: finalResult?.finishReason ?? null,
+        ...(aggregateUsage ? { usage: aggregateUsage } : {}),
+        ...(providerMetadata ? { providerMetadata } : {}),
+        ...(drained.length > 0 ? { warnings: drained } : {}),
+      };
     },
-    doStream(optionsForRuntime: unknown) {
+    async doStream(optionsForRuntime: unknown) {
       const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -289,31 +474,106 @@ export function createAnthropicModelRuntime(
         options,
         true,
         warnings,
-      );
-      return requestStream({
-        url,
-        fetchImpl,
-        providerLabel: config.name ?? "anthropic",
-        providerKind: "anthropic",
-        init: createAnthropicRequestInit({
-          apiKey: config.apiKey,
-          authToken: config.authToken,
-          extraHeaders: options.headers,
-          enableFineGrainedToolStreaming: true,
-          body: JSON.stringify(body),
-          signal: options.abortSignal,
-        }),
-      }).then((responseStream) => {
-        const drained = warnings.drain();
-        return {
-          stream: ReadableStream.from(
-            withToolInputStatusTransitions(
-              streamAnthropicCompatibleParts(responseStream, streamOptions),
-            ),
-          ),
-          ...(drained.length > 0 ? { warnings: drained } : {}),
-        };
-      });
+      ) as AnthropicRequestBody;
+      throwIfAnthropicRequestAborted(options.abortSignal);
+      const providerAbortScope = createProviderAbortScope(options.abortSignal);
+      let firstResponseStream: ReadableStream<Uint8Array>;
+      try {
+        firstResponseStream = await requestStream({
+          url,
+          fetchImpl,
+          providerLabel: config.name ?? "anthropic",
+          providerKind: "anthropic",
+          init: createAnthropicRequestInit({
+            apiKey: config.apiKey,
+            authToken: config.authToken,
+            extraHeaders: options.headers,
+            enableFineGrainedToolStreaming: true,
+            body: JSON.stringify(body),
+            signal: providerAbortScope.controller.signal,
+          }),
+        });
+      } catch (error) {
+        providerAbortScope.dispose();
+        throw error;
+      }
+      const drained = warnings.drain();
+
+      const continuePausedStream = async function* (): AsyncIterable<unknown> {
+        let responseStream = firstResponseStream;
+        let continuationCount = 0;
+        let aggregateUsage: RuntimeUsage | undefined;
+        let requestBody = body;
+        const rawAssistantMessages: unknown[][] = [];
+
+        while (true) {
+          let completion: AnthropicStreamCompletion | undefined;
+          let finishPart: Record<string, unknown> | undefined;
+          for await (
+            const part of streamAnthropicCompatibleParts(responseStream, {
+              ...streamOptions,
+              onCompletion(value) {
+                completion = value;
+              },
+            })
+          ) {
+            const record = readRecord(part);
+            if (record?.type === "finish") {
+              finishPart = record;
+              continue;
+            }
+            yield part;
+          }
+
+          aggregateUsage = addAnthropicUsage(aggregateUsage, completion?.usage);
+          if (completion && completion.rawContent.length > 0) {
+            rawAssistantMessages.push(completion.rawContent);
+          }
+          if (
+            completion?.rawStopReason !== "pause_turn" ||
+            completion.rawContent.length === 0 ||
+            continuationCount >= MAX_PAUSE_TURN_CONTINUATIONS
+          ) {
+            const providerMetadata = createAnthropicRawAssistantMetadata(
+              options.prompt,
+              rawAssistantMessages,
+            );
+            yield {
+              ...(finishPart ?? { type: "finish", finishReason: completion?.finishReason ?? null }),
+              ...(aggregateUsage ? { usage: aggregateUsage } : {}),
+              ...(providerMetadata ? { providerMetadata } : {}),
+            };
+            return;
+          }
+
+          continuationCount++;
+          requestBody = createPauseTurnContinuationBody(requestBody, completion.rawContent);
+          throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
+          responseStream = await requestStream({
+            url,
+            fetchImpl,
+            providerLabel: config.name ?? "anthropic",
+            providerKind: "anthropic",
+            init: createAnthropicRequestInit({
+              apiKey: config.apiKey,
+              authToken: config.authToken,
+              extraHeaders: options.headers,
+              enableFineGrainedToolStreaming: true,
+              body: JSON.stringify(requestBody),
+              signal: providerAbortScope.controller.signal,
+            }),
+          });
+        }
+      };
+
+      return {
+        stream: createCancelableProviderStream(
+          withToolInputStatusTransitions(continuePausedStream()),
+          providerAbortScope.controller,
+          providerAbortScope.dispose,
+        ),
+        ...(drained.length > 0 ? { warnings: drained } : {}),
+      };
     },
   };
 }

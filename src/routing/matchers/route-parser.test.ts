@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertGreater } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getSpecificityScore, parseRoute } from "./route-parser.ts";
+import { compareRouteSpecificity, getSpecificityScore, parseRoute } from "./route-parser.ts";
 
 describe("route-parser", () => {
   describe("parseRoute", () => {
@@ -25,6 +25,16 @@ describe("route-parser", () => {
       const route = parseRoute("/blog/[year]/[month]", "archive.tsx");
       assertEquals(route.paramNames, ["year", "month"]);
       assertEquals(route.isCatchAll, false);
+    });
+
+    it("preserves hyphenated, dotted, and Unicode parameter names", () => {
+      const route = parseRoute(
+        "/users/[user-id]/[version.number]/[användare]",
+        "user.tsx",
+      );
+
+      assertEquals(route.paramNames, ["user-id", "version.number", "användare"]);
+      assertEquals(route.regex?.test("/users/42/1.0/anna"), true);
     });
 
     it("should parse catch-all route", () => {
@@ -92,6 +102,24 @@ describe("route-parser", () => {
       assertEquals(regex?.test("/shop/electronics"), true);
       assertEquals(regex?.test("/shop/electronics/phones"), true);
     });
+
+    it("matches optional catch-alls before a static suffix", () => {
+      const route = parseRoute("/docs/[[...slug]]/edit", "edit.tsx");
+
+      assertEquals(route.regex?.test("/docs/edit"), true);
+      assertEquals(route.regex?.test("/docs/api/reference/edit"), true);
+      assertEquals(route.regex?.test("/docs/api/reference/view"), false);
+    });
+
+    it("rejects ambiguous patterns with multiple catch-alls", () => {
+      const route = parseRoute(
+        "/[...first]/middle/[[...second]]",
+        "ambiguous.tsx",
+      );
+
+      assertEquals(route.paramNames, []);
+      assertEquals(route.regex?.test("/a/b/middle/c/d"), false);
+    });
   });
 
   describe("getSpecificityScore", () => {
@@ -133,6 +161,47 @@ describe("route-parser", () => {
         getSpecificityScore(longRoute),
         getSpecificityScore(shortRoute),
       );
+    });
+
+    it("ranks an exact route above an empty optional catch-all", () => {
+      const exact = parseRoute("/docs", "docs.tsx");
+      const optional = parseRoute("/docs/[[...slug]]", "optional.tsx");
+
+      assertGreater(
+        getSpecificityScore(exact),
+        getSpecificityScore(optional),
+      );
+    });
+
+    it("ranks the earliest static segment first", () => {
+      const earlierStatic = parseRoute("/a/fixed/[id]", "earlier.tsx");
+      const laterStatic = parseRoute("/a/[id]/fixed", "later.tsx");
+
+      assertGreater(
+        getSpecificityScore(earlierStatic),
+        getSpecificityScore(laterStatic),
+      );
+    });
+
+    it("ranks a static suffix after an optional catch-all over a dynamic segment", () => {
+      const staticSuffix = parseRoute(
+        "/foo/[[...slug]]/bar",
+        "static-suffix.tsx",
+      );
+      const dynamic = parseRoute("/foo/[id]", "dynamic.tsx");
+
+      assertGreater(
+        getSpecificityScore(staticSuffix),
+        getSpecificityScore(dynamic),
+      );
+    });
+
+    it("compares long route shapes without floating-point precision loss", () => {
+      const prefix = Array.from({ length: 18 }, (_, index) => `[part${index}]`);
+      const staticTail = parseRoute(`/${[...prefix, "fixed"].join("/")}`, "static.tsx");
+      const dynamicTail = parseRoute(`/${[...prefix, "[tail]"].join("/")}`, "dynamic.tsx");
+
+      assertGreater(compareRouteSpecificity(staticTail, dynamicTail), 0);
     });
   });
 });

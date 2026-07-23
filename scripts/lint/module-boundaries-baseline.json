@@ -78,10 +78,6 @@
     "cycle-sensitive:src/platform/compat/kv/factory.ts -> #veryfront/utils",
     "cycle-sensitive:src/types/entities/getEntityInfo.ts -> #veryfront/utils",
     "cycle-sensitive:src/types/global-guards.ts -> #veryfront/utils",
-    "cycle-sensitive:src/utils/cache-file-ops.ts -> #veryfront/utils",
-    "cycle-sensitive:src/utils/circuit-breaker.ts -> #veryfront/utils",
-    "cycle-sensitive:src/utils/lru-wrapper.ts -> #veryfront/utils",
-    "cycle-sensitive:src/utils/memory/profiler.ts -> #veryfront/utils",
     "cycle-sensitive:src/utils/redis-client.ts -> #veryfront/errors"
   ],
   "cycleEdges": [

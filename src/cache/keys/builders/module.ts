@@ -10,9 +10,22 @@
 import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix } from "../prefixes.ts";
 import { normalizeFilePath } from "../utils.ts";
+import { encodeCacheKeySegment } from "../segment-codec.ts";
+
+const MAX_COMPOSED_CACHE_KEY_LENGTH = 32 * 1024;
+
+function assertBoundedCacheKey(key: string, label: string): string {
+  if (key.length === 0 || key.length > MAX_COMPOSED_CACHE_KEY_LENGTH) {
+    throw new RangeError(`${label} must contain 1 to ${MAX_COMPOSED_CACHE_KEY_LENGTH} characters`);
+  }
+  return key;
+}
 
 export function buildSSRModuleProjectKey(projectDir: string, projectId: string): string {
-  return `${projectDir}:${projectId}`;
+  return assertBoundedCacheKey(
+    `module-project:v2:${encodeCacheKeySegment(projectDir)}:${encodeCacheKeySegment(projectId)}`,
+    "SSR module project key",
+  );
 }
 
 export function buildModuleTransformCacheKey(
@@ -20,11 +33,22 @@ export function buildModuleTransformCacheKey(
   modulePath: string,
   isSSR: boolean,
 ): string {
-  return `${projectKey}:${modulePath}:${isSSR}`;
+  return assertBoundedCacheKey(
+    `module-transform:v2:${encodeCacheKeySegment(projectKey)}:${
+      encodeCacheKeySegment(modulePath)
+    }:${isSSR ? "ssr" : "browser"}`,
+    "Module transform cache key",
+  );
 }
 
 export function buildModuleResolveCacheKey(specifier: string, referrer?: string): string {
-  return `${CacheKeyPrefix.MODULE_RESOLVE}:${specifier}:${referrer ?? "root"}`;
+  const referrerIdentity = referrer === undefined ? "undefined" : `value:${referrer}`;
+  return assertBoundedCacheKey(
+    `${CacheKeyPrefix.MODULE_RESOLVE}:v2:${encodeCacheKeySegment(specifier)}:${
+      encodeCacheKeySegment(referrerIdentity)
+    }`,
+    "Module resolution cache key",
+  );
 }
 
 export function buildSSRModuleCacheKey(
@@ -32,7 +56,12 @@ export function buildSSRModuleCacheKey(
   projectId: string,
   filePath: string,
 ): string {
-  return `${CacheKeyPrefix.SSR_VERSION}${version}:${projectId}:${filePath}`;
+  return assertBoundedCacheKey(
+    `${CacheKeyPrefix.SSR_VERSION}2:ssr:${encodeCacheKeySegment(String(version))}:${
+      encodeCacheKeySegment(projectId)
+    }:${encodeCacheKeySegment(filePath)}`,
+    "SSR module cache key",
+  );
 }
 
 export function buildRedisSSRModuleKey(key: string): string {
@@ -50,7 +79,8 @@ export function buildRedisTransformKey(key: string): string {
 /**
  * Build a transform cache key with full dependency tracking.
  *
- * Key format: v{VERSION}:{projectId}:{filePath}:{contentHash}:{depsHash}:{configHash}:{target}
+ * Variable fields use injective base64url segments so the composed key remains
+ * valid for API cache backends and cannot alias through delimiter injection.
  *
  * @param filePath - File path to build cache key for
  * @param contentHash - Hash of the file content
@@ -69,14 +99,40 @@ export function buildTransformCacheKey(
     projectId?: string;
   },
 ): string {
-  const target = ssr ? "ssr" : "browser";
-  const studioKey = studioEmbed ? ":studio" : "";
-  const depsKey = options?.depsHash ? `:deps:${options.depsHash.slice(0, 8)}` : "";
-  const configKey = options?.configHash ? `:cfg:${options.configHash.slice(0, 8)}` : "";
-  const projectKey = options?.projectId ? `${options.projectId}:` : "";
-  const normalizedPath = normalizeFilePath(filePath);
+  if (filePath.length === 0 || filePath.length > 16_384) {
+    throw new RangeError("Transform cache file path must contain 1 to 16384 characters");
+  }
+  if (contentHash.length === 0 || contentHash.length > 1_024) {
+    throw new RangeError("Transform cache content hash must contain 1 to 1024 characters");
+  }
+  if (options?.projectId !== undefined && options.projectId.length > 4_096) {
+    throw new RangeError("Transform cache project ID is too large");
+  }
+  if (options?.depsHash !== undefined && options.depsHash.length > 1_024) {
+    throw new RangeError("Transform cache dependency hash is too large");
+  }
+  if (options?.configHash !== undefined && options.configHash.length > 1_024) {
+    throw new RangeError("Transform cache configuration hash is too large");
+  }
 
-  return `v${VERSION}:${projectKey}${normalizedPath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
+  const target = ssr ? "ssr" : "browser";
+  const projectId = options?.projectId ?? "";
+  const normalizedPath = normalizeFilePath(filePath);
+  const depsHash = options?.depsHash === undefined
+    ? "none"
+    : `value:${options.depsHash}`;
+  const configHash = options?.configHash === undefined
+    ? "none"
+    : `value:${options.configHash}`;
+
+  return assertBoundedCacheKey(
+    `transform:v3:${encodeCacheKeySegment(String(VERSION))}:${
+      encodeCacheKeySegment(projectId)
+    }:${encodeCacheKeySegment(normalizedPath)}:${encodeCacheKeySegment(contentHash)}:${target}:${
+      studioEmbed ? "studio" : "standard"
+    }:${encodeCacheKeySegment(depsHash)}:${encodeCacheKeySegment(configHash)}`,
+    "Transform cache key",
+  );
 }
 
 export function buildContentHashCacheKey(
@@ -85,8 +141,13 @@ export function buildContentHashCacheKey(
   contentHash: string,
   suffix?: string,
 ): string {
-  const base = `${prefix}:${filePath}:${contentHash}`;
-  return suffix ? `${base}:${suffix}` : base;
+  const suffixIdentity = suffix === undefined ? "none" : `value:${suffix}`;
+  return assertBoundedCacheKey(
+    `content-hash:v2:${encodeCacheKeySegment(prefix)}:${encodeCacheKeySegment(filePath)}:${
+      encodeCacheKeySegment(contentHash)
+    }:${encodeCacheKeySegment(suffixIdentity)}`,
+    "Content-hash cache key",
+  );
 }
 
 export function buildBundleManifestCacheKey(manifestId: string): string {

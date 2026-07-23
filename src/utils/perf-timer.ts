@@ -1,4 +1,5 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { serverLogger } from "./logger/logger.ts";
 
 const logger = serverLogger.component("perf");
@@ -11,6 +12,11 @@ interface TimingEntry {
   parent?: string;
 }
 
+interface RequestTiming {
+  requestId: string;
+  entries: TimingEntry[];
+}
+
 let cachedEnabled: boolean | undefined;
 
 function getEnabled(): boolean {
@@ -21,33 +27,52 @@ function getEnabled(): boolean {
   cachedEnabled = getEnv("VERYFRONT_PERF") === "1";
   return cachedEnabled;
 }
-const timings = new Map<string, TimingEntry[]>();
-let currentRequestId: string | null = null;
+const requestTimingStorage = new AsyncLocalStorage<RequestTiming | null>();
+const activeTimings = new Set<RequestTiming>();
 
 function formatMs(value: number | undefined): number {
   return Number(value?.toFixed(1));
 }
 
 function formatPct(duration: number, total: number): string {
+  if (total <= 0) return "0.0";
   return ((duration / total) * 100).toFixed(1);
+}
+
+function getCurrentTiming(): RequestTiming | undefined {
+  const scoped = requestTimingStorage.getStore();
+  if (scoped && activeTimings.has(scoped)) return scoped;
+  return undefined;
+}
+
+function beginRequestTiming(requestId: string): RequestTiming {
+  const timing: RequestTiming = { requestId, entries: [] };
+  activeTimings.add(timing);
+  return timing;
 }
 
 /** Request payload for start. */
 export function startRequest(requestId: string): void {
   if (!getEnabled()) return;
 
-  currentRequestId = requestId;
-  timings.set(requestId, []);
+  const timing = beginRequestTiming(requestId);
+  requestTimingStorage.enterWith(timing);
 }
 
 /** Starts timer. */
 export function startTimer(label: string, parent?: string): () => void {
-  if (!getEnabled() || !currentRequestId) return () => {};
+  if (!getEnabled()) return () => {};
+
+  const timing = getCurrentTiming();
+  if (!timing) return () => {};
 
   const entry: TimingEntry = { label, startMs: performance.now(), parent };
-  timings.get(currentRequestId)?.push(entry);
+  timing.entries.push(entry);
+  let stopped = false;
 
   return () => {
+    if (stopped) return;
+    stopped = true;
     entry.endMs = performance.now();
     entry.durationMs = entry.endMs - entry.startMs;
   };
@@ -69,15 +94,41 @@ export async function timeAsync<T>(
   }
 }
 
+/** Run an operation in an isolated request-timing scope and always clean it up. */
+export async function runWithRequestTiming<T>(
+  requestId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!getEnabled()) return operation();
+
+  const timing = beginRequestTiming(requestId);
+  return requestTimingStorage.run(timing, async () => {
+    try {
+      return await operation();
+    } finally {
+      endRequest(requestId);
+    }
+  });
+}
+
 /** Request payload for end. */
 export function endRequest(requestId: string): void {
   if (!getEnabled()) return;
 
-  const entries = timings.get(requestId);
-  if (!entries?.length) {
-    currentRequestId = null;
-    return;
+  const scopedTiming = requestTimingStorage.getStore();
+  let timing = scopedTiming?.requestId === requestId && activeTimings.has(scopedTiming)
+    ? scopedTiming
+    : undefined;
+  if (!timing) {
+    timing = [...activeTimings].find((candidate) => candidate.requestId === requestId);
   }
+  if (!timing) return;
+
+  activeTimings.delete(timing);
+  if (scopedTiming === timing) requestTimingStorage.enterWith(null);
+
+  const entries = timing.entries;
+  if (entries.length === 0) return;
 
   const sorted = entries
     .filter((e) => e.durationMs !== undefined)
@@ -134,9 +185,6 @@ export function endRequest(requestId: string): void {
     totalMs: formatMs(total),
     breakdown,
   });
-
-  timings.delete(requestId);
-  currentRequestId = null;
 }
 
 /** Check whether request performance timing is enabled. */

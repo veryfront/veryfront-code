@@ -5,11 +5,58 @@ export interface RuntimeMetadata {
   readonly [key: string]: unknown;
 }
 
+/** Canonical provider-facing prompt message contract. */
+export type RuntimePromptMessage =
+  | { role: "system"; content: string }
+  | {
+    role: "user";
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image" | "file"; mediaType: string; url: string; filename?: string }
+    >;
+  }
+  | {
+    role: "assistant";
+    content: Array<
+      | { type: "text"; text: string }
+      | {
+        type: "tool-call";
+        toolCallId: string;
+        toolName: string;
+        input: unknown;
+        providerExecuted?: boolean;
+      }
+      | {
+        type: "reasoning";
+        text?: string;
+        signature?: string;
+        redactedData?: string;
+      }
+    >;
+    providerToolCalls?: Array<{
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      supportsDeferredResults?: boolean;
+    }>;
+    providerMetadata?: Record<string, unknown>;
+  }
+  | {
+    role: "tool";
+    content: Array<{
+      type: "tool-result";
+      toolCallId: string;
+      toolName: string;
+      output: { type: "json"; value: unknown };
+    }>;
+  };
+
 export interface ModelRuntimeGenerateResult {
   content?: unknown[];
   finishReason?: unknown;
   usage?: unknown;
   warnings?: unknown[];
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface ModelRuntimeStreamResult {

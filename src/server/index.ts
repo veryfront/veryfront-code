@@ -17,8 +17,8 @@
  * await server.fetch(new Request("https://example.com/health"));
  * ```
  *
- * @see docs/deployment.md
- * @see docs/security.md
+ * @see {@link https://github.com/veryfront/veryfront-code/blob/main/docs/architecture/04-server-runtime.md}
+ * @see {@link https://github.com/veryfront/veryfront-code/blob/main/docs/guides/deploying.md}
  */
 
 import {
@@ -35,13 +35,16 @@ import {
   type StartProductionServerOptions,
 } from "./production-server.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import { isWebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { bootstrapProd } from "./bootstrap.ts";
+import { bootstrapProd, createRetryableDisposer } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
 import { handleHmrClientMessage } from "./handlers/preview/hmr-client-message.ts";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
+import { HMRHandler } from "./handlers/preview/hmr.handler.ts";
+import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
 
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
@@ -76,6 +79,7 @@ export type {
   StartProductionServerOptions,
 };
 import { ReloadNotifier } from "./reload-notifier.ts";
+import { type NodeUpgradeEventSource, NodeUpgradeLifecycle } from "./node-upgrade-lifecycle.ts";
 export { ReloadNotifier };
 export { RouteDiscovery } from "./dev-server/route-discovery.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
@@ -153,6 +157,12 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
    * instead of `handler.upgrade(server)`.
    */
   connectHMR: (ws: WebSocket) => void;
+  /**
+   * Release upgrade listeners, file watchers, extensions, and other bootstrap
+   * resources. Concurrent calls share an attempt; call again to retry a
+   * rejected cleanup.
+   */
+  dispose: () => Promise<void>;
 };
 
 /**
@@ -171,6 +181,7 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
  * app.all("*", (c) => handler(c.req.raw))
  * const server = serve({ fetch: app.fetch, port: 3000 })
  * handler.upgrade(server)
+ * server.on("close", () => void handler.dispose())
  * ```
  */
 // Ensure responses use the native global Response class.
@@ -202,9 +213,54 @@ export async function createHandler(
   if (options.mode === "production") {
     const adapter = await runtime.get();
     const bootstrap = await bootstrapProd(projectDir, adapter);
-    const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, { projectDir });
-    const handler = async (req: Request) => toNativeResponse(await internalHandler(req));
-    return Object.assign(handler, { upgrade: () => {}, connectHMR: () => {} });
+    const releaseHmrLifecycleOwner = HMRHandler.registerLifecycleOwner();
+    let hmrLifecycleReleased = false;
+    let disposalStarted = false;
+    const runDispose = createRetryableDisposer(async () => {
+      if (!hmrLifecycleReleased) {
+        await releaseHmrLifecycleOwner();
+        hmrLifecycleReleased = true;
+      }
+      await bootstrap.dispose?.();
+    });
+    try {
+      const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, {
+        projectDir,
+        config: bootstrap.config,
+      });
+      await internalHandler.ready;
+      const handler = async (req: Request) => {
+        if (disposalStarted) {
+          return new _NativeResponse("Handler is shutting down", {
+            status: 503,
+            headers: { "cache-control": "no-store" },
+          });
+        }
+        return toNativeResponse(await internalHandler(req));
+      };
+      const dispose = (): Promise<void> => {
+        disposalStarted = true;
+        return runDispose();
+      };
+      return Object.assign(handler, {
+        upgrade: () => {},
+        connectHMR: () => {},
+        dispose,
+      });
+    } catch (error) {
+      try {
+        disposalStarted = true;
+        await runDispose();
+      } catch (disposeError) {
+        throw new ServerStartupCleanupError(
+          "Production handler initialization",
+          error,
+          disposeError,
+          runDispose,
+        );
+      }
+      throw error;
+    }
   }
 
   // Development mode (default), includes file watching, HMR, cache invalidation
@@ -222,48 +278,147 @@ export async function createHandler(
   // inside DevServer.start(), no additional subscription needed here.
 
   const internalFetch = devServer.handler;
-  const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
+  let disposalStarted = false;
+  const fetch = async (req: Request) => {
+    if (disposalStarted) {
+      return new _NativeResponse("Handler is shutting down", {
+        status: 503,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+    return toNativeResponse(await internalFetch(req));
+  };
   const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
+  const nodeUpgradeLifecycle = new NodeUpgradeLifecycle();
 
   const upgrade = (server: unknown) => {
+    if (disposalStarted) throw new Error("Veryfront handler is already shutting down");
     const httpServer = server as import("node:http").Server;
     let wsServer: import("ws").WebSocketServer | null = null;
 
-    httpServer.on("upgrade", async (request, socket, head) => {
+    const upgradeListener = (
+      request: import("node:http").IncomingMessage,
+      socket: import("node:stream").Duplex,
+      head: Uint8Array,
+    ): void => {
+      let releaseSocket: (() => void) | undefined;
       try {
-        const { WebSocketServer } = await import("ws");
-        if (!wsServer) wsServer = new WebSocketServer({ noServer: true });
-
-        const key = request.headers["sec-websocket-key"];
-        const requestId = typeof key === "string" ? key : Array.isArray(key) ? key[0] ?? "" : "";
-
-        // Run request through handler pipeline so HMRHandler registers the WebSocket client
-        const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-        const headersRecord: Record<string, string> = {};
-        for (const [key, value] of Object.entries(request.headers)) {
-          if (typeof value === "string") headersRecord[key] = value;
-          else if (Array.isArray(value)) headersRecord[key] = value[0] ?? "";
-        }
-        await fetch(new Request(url.toString(), { method: "GET", headers: headersRecord }));
-
-        // Complete transport-level WebSocket upgrade
-        const { resolveWebSocketUpgrade } = await import(
-          "#veryfront/platform/adapters/runtime/node/http-server.ts"
-        );
-
-        const server = wsServer;
-        server.handleUpgrade(request, socket, head, (ws: import("ws").WebSocket) => {
-          resolveWebSocketUpgrade(requestId, ws);
-          server.emit("connection", ws, request);
-        });
-      } catch (_error) {
+        releaseSocket = nodeUpgradeLifecycle.trackSocket(socket);
+      } catch {
         socket.destroy();
+        return;
       }
-    });
+      void (async () => {
+        let requestId = "";
+        let rejectWebSocketUpgrade:
+          | ((requestId: string, error: Error) => boolean)
+          | undefined;
+        try {
+          const { WebSocketServer } = await import("ws");
+          if (nodeUpgradeLifecycle.isDisposed) {
+            socket.destroy();
+            releaseSocket?.();
+            return;
+          }
+
+          const key = request.headers["sec-websocket-key"];
+          const webSocketKey = typeof key === "string"
+            ? key
+            : Array.isArray(key)
+            ? key[0] ?? ""
+            : "";
+          const upgradeRegistry = await import(
+            "#veryfront/platform/adapters/runtime/node/http-server.ts"
+          );
+          requestId = crypto.randomUUID();
+          rejectWebSocketUpgrade = upgradeRegistry.rejectWebSocketUpgrade;
+
+          // Run the request through the handler pipeline so HMRHandler
+          // registers the transport-level upgrade before it is completed.
+          const url = new URL(
+            request.url ?? "/",
+            `http://${request.headers.host ?? "localhost"}`,
+          );
+          const headersRecord: Record<string, string> = {};
+          for (const [key, value] of Object.entries(request.headers)) {
+            if (typeof value === "string") headersRecord[key] = value;
+            else if (Array.isArray(value)) headersRecord[key] = value[0] ?? "";
+          }
+          // Preserve the public handshake key while using a transport-owned
+          // correlation id so concurrent clients cannot collide by reusing a
+          // Sec-WebSocket-Key value.
+          if (webSocketKey) headersRecord["sec-websocket-key"] = webSocketKey;
+          headersRecord[upgradeRegistry.NODE_WEBSOCKET_UPGRADE_ID_HEADER] = requestId;
+          const upgradeResponse = await internalFetch(
+            new Request(url.toString(), { method: "GET", headers: headersRecord }),
+          );
+          // The request pipeline is the authorization boundary. Only its
+          // explicit upgrade sentinel permits the transport handshake; a 4xx,
+          // 404, or fall-through response must never be upgraded.
+          if (!isWebSocketUpgradeResponse(upgradeResponse)) {
+            rejectWebSocketUpgrade(
+              requestId,
+              new Error("Request handler did not authorize a WebSocket upgrade"),
+            );
+            socket.destroy();
+            releaseSocket();
+            return;
+          }
+          if (nodeUpgradeLifecycle.isDisposed) {
+            rejectWebSocketUpgrade(
+              requestId,
+              new Error("Veryfront handler stopped before WebSocket upgrade completed"),
+            );
+            socket.destroy();
+            releaseSocket();
+            return;
+          }
+
+          if (!wsServer) {
+            wsServer = new WebSocketServer({ noServer: true });
+            nodeUpgradeLifecycle.track(wsServer);
+          }
+
+          // Complete transport-level WebSocket upgrade.
+          const ownedServer = wsServer;
+          ownedServer.handleUpgrade(
+            request,
+            socket,
+            head,
+            (ws: import("ws").WebSocket) => {
+              releaseSocket?.();
+              if (!upgradeRegistry.resolveWebSocketUpgrade(requestId, ws)) {
+                ws.terminate();
+                return;
+              }
+              ownedServer.emit("connection", ws, request);
+            },
+          );
+        } catch (error) {
+          if (requestId) {
+            rejectWebSocketUpgrade?.(
+              requestId,
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
+          socket.destroy();
+          releaseSocket?.();
+        }
+      })();
+    };
+
+    nodeUpgradeLifecycle.attach(
+      httpServer as unknown as NodeUpgradeEventSource,
+      upgradeListener as unknown as (...args: unknown[]) => void,
+    );
   };
 
   const connectHMR = (ws: WebSocket) => {
-    const clientId = crypto.randomUUID().slice(0, 8);
+    if (disposalStarted) {
+      ws.close(1012, "Veryfront handler is shutting down");
+      return;
+    }
+    const clientId = crypto.randomUUID();
     addClient({
       id: clientId,
       socket: ws,
@@ -305,7 +460,28 @@ export async function createHandler(
     else ws.addEventListener("open", sendConnected, { once: true });
   };
 
-  return Object.assign(fetch, { upgrade, connectHMR });
+  let upgradeLifecycleDisposed = false;
+  let devServerDisposed = false;
+  const runDispose = createRetryableDisposer(async () => {
+    if (!upgradeLifecycleDisposed) {
+      await nodeUpgradeLifecycle.dispose();
+      upgradeLifecycleDisposed = true;
+    }
+    if (!devServerDisposed) {
+      await devServer.stop();
+      devServerDisposed = true;
+    }
+  });
+  const dispose = (): Promise<void> => {
+    disposalStarted = true;
+    return runDispose();
+  };
+
+  return Object.assign(fetch, {
+    upgrade,
+    connectHMR,
+    dispose,
+  });
 }
 
 /**
@@ -352,8 +528,8 @@ export async function startServer(
     return {
       ready: handle.ready,
       stop: () => handle.stop(),
-      port,
-      url: `http://${bindAddress}:${port}`,
+      port: handle.port,
+      url: `http://${bindAddress}:${handle.port}`,
     };
   }
 
@@ -377,8 +553,8 @@ export async function startServer(
   return {
     ready: devServer.ready,
     stop: () => devServer.stop(),
-    port,
-    url: `http://${bindAddress}:${port}`,
+    port: devServer.port,
+    url: `http://${bindAddress}:${devServer.port}`,
   };
 }
 

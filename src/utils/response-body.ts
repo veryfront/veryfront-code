@@ -9,10 +9,14 @@ export async function readResponseTextPrefix(
   response: Response,
   maxBytes: number,
 ): Promise<ResponseTextPrefix> {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("maxBytes must be a non-negative integer");
+  }
+
   const body = response.body;
   if (!body) return { text: "", truncated: false };
 
-  const limit = Math.max(0, Math.floor(maxBytes));
+  const limit = maxBytes;
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let remaining = limit;
@@ -43,5 +47,5 @@ export async function readResponseTextPrefix(
     reader.releaseLock();
   }
 
-  return { text: text + decoder.decode(), truncated };
+  return { text: truncated ? text : text + decoder.decode(), truncated };
 }

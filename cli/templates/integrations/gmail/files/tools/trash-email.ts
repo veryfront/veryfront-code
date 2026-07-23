@@ -6,9 +6,11 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "trash-email",
   description: "Move a Gmail message to trash.",
-  inputSchema: defineSchema((v) => v.object({
-    messageId: v.string().min(1).describe("Gmail message ID"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      messageId: v.string().min(1).describe("Gmail message ID"),
+    })
+  )(),
   execute: async ({ messageId }, context) => {
     const userId = resolveUserId(context);
 

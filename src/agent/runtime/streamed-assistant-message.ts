@@ -11,7 +11,10 @@ export interface StreamedAssistantMessageIdentity {
 }
 
 export function buildStreamedAssistantMessage(
-  state: Pick<ChatStreamState, "accumulatedText" | "reasoningParts" | "toolCalls">,
+  state: Pick<
+    ChatStreamState,
+    "accumulatedText" | "reasoningParts" | "toolCalls" | "providerMetadata"
+  >,
   identity: StreamedAssistantMessageIdentity,
 ): Message {
   const parts: MessagePart[] = [];
@@ -48,5 +51,6 @@ export function buildStreamedAssistantMessage(
     role: "assistant",
     parts,
     timestamp: identity.timestamp,
+    ...(state.providerMetadata ? { metadata: { providerMetadata: state.providerMetadata } } : {}),
   };
 }

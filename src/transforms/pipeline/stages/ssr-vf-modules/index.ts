@@ -112,6 +112,11 @@ export const ssrVfModulesPlugin: TransformPlugin = {
     });
 
     if (vfModuleImports.length === 0) return ctx.code;
+    const importMap = ctx.importMap;
+    const importMapFingerprint = ctx.importMapFingerprint;
+    if (!importMap || !importMapFingerprint) {
+      throw new Error("SSR VF modules stage requires the pipeline import-map snapshot");
+    }
 
     logger.debug(`${LOG_PREFIX} Found ${vfModuleImports.length} /_vf_modules/ imports`, {
       file: ctx.filePath?.slice(-60) ?? "<unknown>",
@@ -151,6 +156,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           reactVersion,
           ctx.projectDir,
           resolved.content,
+          importMapFingerprint,
         );
         const cachePath = await frameworkTransformFlight.do(transformKey, async () => {
           const transformed = await transformFrameworkSource(
@@ -159,6 +165,8 @@ export const ssrVfModulesPlugin: TransformPlugin = {
             reactVersion,
             ctx.projectDir,
             fs,
+            importMap,
+            importMapFingerprint,
           );
 
           // Skip cycle placeholders - don't cache or use them

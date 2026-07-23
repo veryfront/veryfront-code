@@ -29,6 +29,10 @@ export function getTransformCacheKey(
   );
 }
 
-export function getVersionedPathCacheKey(normalizedPath: string, reactVersion: string): string {
-  return buildMdxEsmPathCacheKey(normalizedPath, reactVersion);
+export function getVersionedPathCacheKey(
+  normalizedPath: string,
+  reactVersion: string,
+  sourceContentHash?: string,
+): string {
+  return buildMdxEsmPathCacheKey(normalizedPath, reactVersion, sourceContentHash);
 }

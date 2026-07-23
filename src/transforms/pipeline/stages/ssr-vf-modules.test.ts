@@ -32,6 +32,8 @@ import type { TransformContext } from "../types.ts";
 
 const { findVfModuleImports, findRelativeImports, FRAMEWORK_ROOT, EMBEDDED_SRC_DIR, EXTENSIONS } =
   _testExports;
+const TEST_IMPORT_MAP = { imports: {}, scopes: {} } as const;
+const TEST_IMPORT_MAP_FINGERPRINT = "f".repeat(64);
 
 describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("findVfModuleImports", () => {
@@ -199,6 +201,8 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
           target: "ssr",
           projectDir: "/tmp/test-project",
           reactVersion: REACT_DEFAULT_VERSION,
+          importMap: TEST_IMPORT_MAP,
+          importMapFingerprint: TEST_IMPORT_MAP_FINGERPRINT,
         }) as TransformContext;
 
       const [left, right] = await Promise.all([
@@ -412,6 +416,8 @@ describe("ssr-vf-modules relative import resolution", {
       target: "ssr",
       projectDir: "/tmp/test-project",
       reactVersion: REACT_DEFAULT_VERSION,
+      importMap: TEST_IMPORT_MAP,
+      importMapFingerprint: TEST_IMPORT_MAP_FINGERPRINT,
     } as TransformContext;
 
     const result = await ssrVfModulesPlugin.transform(ctx);
@@ -435,6 +441,8 @@ describe("ssr-vf-modules relative import resolution", {
       target: "ssr",
       projectDir: "/tmp/test-project",
       reactVersion: REACT_DEFAULT_VERSION,
+      importMap: TEST_IMPORT_MAP,
+      importMapFingerprint: TEST_IMPORT_MAP_FINGERPRINT,
     } as TransformContext;
 
     const result = await ssrVfModulesPlugin.transform(ctx);
@@ -482,6 +490,8 @@ describe("ssr-vf-modules relative import resolution", {
       REACT_DEFAULT_VERSION,
       "/tmp/test-project",
       fs,
+      TEST_IMPORT_MAP,
+      TEST_IMPORT_MAP_FINGERPRINT,
     );
     const cachePath = await cacheTransformedCode(transformed, sourcePath, fs);
     const transformedModule = await import(`file://${cachePath}`);

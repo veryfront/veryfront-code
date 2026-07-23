@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getIssueTransitions } from "../../lib/jira-client.ts";
+import { createJiraClient } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-transitions",
@@ -10,8 +11,10 @@ export default tool({
       issueKey: v.string().describe('The issue key (e.g., "PROJ-123") or ID'),
     })
   )(),
-  async execute({ issueKey }) {
-    const transitions = await getIssueTransitions(issueKey);
+  async execute({ issueKey }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createJiraClient(userId);
+    const transitions = await client.getIssueTransitions(issueKey);
 
     return {
       issueKey,

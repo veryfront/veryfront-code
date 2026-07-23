@@ -5,9 +5,10 @@
  */
 
 import type { Logger } from "#veryfront/utils";
-import { getLocalFs } from "../cache/index.ts";
+import { getLocalFs, isSafeModuleArtifactPath } from "../cache/index.ts";
 import { validateCachedModule } from "./framework-validator.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
+import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
 
 interface MdxRecoveryOptions {
   projectId: string;
@@ -16,6 +17,7 @@ interface MdxRecoveryOptions {
 
 export interface ReadValidCachedModulePathInput {
   normalizedPath: string;
+  cacheDir: string;
   pathCache: Map<string, string>;
   versionedKey: string;
   log: Logger;
@@ -31,10 +33,14 @@ export async function readValidCachedModulePath(
 ): Promise<string | null> {
   const cachedPath = input.pathCache.get(input.versionedKey);
   if (!cachedPath) return null;
+  if (!isSafeModuleArtifactPath(input.cacheDir, cachedPath)) {
+    input.pathCache.delete(input.versionedKey);
+    return null;
+  }
 
   try {
     const stat = await getLocalFs().stat(cachedPath);
-    if (!stat?.isFile) {
+    if (!stat?.isFile || (stat.size ?? 0) > MAX_MDX_MODULE_CODE_BYTES) {
       // The cached path exists but is no longer a regular file (e.g. replaced
       // by a directory). Drop the stale entry so we don't re-stat it on every
       // future lookup.
@@ -43,6 +49,10 @@ export async function readValidCachedModulePath(
     }
 
     const cachedCode = await getLocalFs().readTextFile(cachedPath);
+    if (utf8ByteLength(cachedCode) > MAX_MDX_MODULE_CODE_BYTES) {
+      input.pathCache.delete(input.versionedKey);
+      return null;
+    }
     if (
       await validateCachedModule(
         input.normalizedPath,

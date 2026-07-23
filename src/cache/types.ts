@@ -45,7 +45,9 @@ export interface CacheBackend {
    * Set a value in the cache.
    * @param key - Cache key
    * @param value - Value to store
-   * @param ttlSeconds - Time to live in seconds
+   * @param ttlSeconds - Finite time to live in seconds. A non-positive value
+   * expires immediately: implementations remove any existing entry and store
+   * nothing.
    */
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
 

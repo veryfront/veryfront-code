@@ -55,6 +55,7 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getRequestTokenProvenance } from "../../context/request-context.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
@@ -534,6 +535,7 @@ type SourceContextFsWrapper = {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenProvenance?: "project-bound" | "untrusted";
     },
   ) => Promise<R>;
 };
@@ -633,7 +635,10 @@ export class AgentStreamHandler extends BaseHandler {
       token,
       fn,
       ctx.projectId,
-      buildAgentSourceRunOptions(sourceContext),
+      {
+        ...buildAgentSourceRunOptions(sourceContext),
+        tokenProvenance: getRequestTokenProvenance(ctx.requestContext, token),
+      },
     );
   }
 
@@ -675,7 +680,11 @@ export class AgentStreamHandler extends BaseHandler {
         ...ctx,
         proxyToken: apiAuthToken || undefined,
         requestContext: ctx.requestContext
-          ? { ...ctx.requestContext, token: apiAuthToken }
+          ? {
+            ...ctx.requestContext,
+            token: apiAuthToken,
+            tokenProvenance: "untrusted" as const,
+          }
           : ctx.requestContext,
       };
       logger.info("Accepted internal agent stream request", {

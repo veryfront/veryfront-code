@@ -8,6 +8,8 @@ import { markServerShuttingDown } from "./shutdown-state.ts";
 export const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 /** Cleanup timeout keeps total shutdown below the default 30 second grace period. */
 export const DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS = 4_000;
+/** Largest delay accepted by JavaScript timers without overflow/clamping. */
+export const MAX_SHUTDOWN_TIMEOUT_MS = 2_147_483_647;
 
 interface GracefulShutdownRequestTracker {
   getInFlightCount(): number;
@@ -33,7 +35,10 @@ export interface GracefulProductionShutdownOptions {
   abort: () => void;
   /** Stops the production HTTP server. */
   stop: () => Promise<void>;
-  /** Releases optional bootstrap resources before the server closes. */
+  /**
+   * Releases optional bootstrap resources after the HTTP server closes. It is
+   * skipped if stopping the listener fails or exceeds the cleanup deadline.
+   */
   dispose?: () => void | Promise<void>;
   /** Logger used for shutdown progress and failures. */
   logger: {
@@ -70,12 +75,16 @@ function parseShutdownTimeoutMs(raw: string | undefined, fallback: number): numb
   if (raw === undefined || raw.trim() === "") return fallback;
 
   const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_SHUTDOWN_TIMEOUT_MS
+    ? parsed
+    : fallback;
 }
 
 function normalizeShutdownTimeoutMs(value: number | undefined, fallback: number): number {
   if (value === undefined) return fallback;
-  return Number.isInteger(value) && value >= 0 ? value : fallback;
+  return Number.isInteger(value) && value >= 0 && value <= MAX_SHUTDOWN_TIMEOUT_MS
+    ? value
+    : fallback;
 }
 
 async function runCleanupStep(
@@ -83,16 +92,16 @@ async function runCleanupStep(
   action: () => void | Promise<void>,
   logger: GracefulShutdownLogger,
   cleanupDeadlineMs: number,
-): Promise<void> {
+): Promise<"completed" | "failed" | "timeout"> {
   let result: void | Promise<void>;
   try {
     result = action();
   } catch (error) {
     logger.warn(`Failed to ${description} during graceful shutdown`, { error });
-    return;
+    return "failed";
   }
 
-  if (!result || typeof (result as PromiseLike<void>).then !== "function") return;
+  if (!result || typeof (result as PromiseLike<void>).then !== "function") return "completed";
 
   const actionPromise = Promise.resolve(result);
   const remainingMs = Math.max(0, cleanupDeadlineMs - Date.now());
@@ -101,7 +110,7 @@ async function runCleanupStep(
     void actionPromise.catch((error) => {
       logger.warn(`Failed to ${description} after cleanup deadline exceeded`, { error });
     });
-    return;
+    return "timeout";
   }
 
   type CleanupOutcome =
@@ -123,9 +132,12 @@ async function runCleanupStep(
 
   if (outcome.status === "failed") {
     logger.warn(`Failed to ${description} during graceful shutdown`, { error: outcome.error });
+    return "failed";
   } else if (outcome.status === "timeout") {
     logger.warn("Graceful shutdown cleanup deadline exceeded", { step: description });
+    return "timeout";
   }
+  return "completed";
 }
 
 /**
@@ -176,26 +188,35 @@ export async function gracefullyShutdownProductionServerWithDependencies(
     logger,
     cleanupDeadlineMs,
   );
-  if (options.dispose) {
-    await runCleanupStep(
-      "dispose the production bootstrap",
-      options.dispose,
-      logger,
-      cleanupDeadlineMs,
-    );
-  }
   await runCleanupStep(
     "abort the production server",
     options.abort,
     logger,
     cleanupDeadlineMs,
   );
-  await runCleanupStep(
+  const stopResult = await runCleanupStep(
     "stop the production server",
     options.stop,
     logger,
     cleanupDeadlineMs,
   );
+  if (options.dispose) {
+    if (stopResult === "completed") {
+      await runCleanupStep(
+        "dispose the production bootstrap",
+        options.dispose,
+        logger,
+        cleanupDeadlineMs,
+      );
+    } else {
+      logger.warn(
+        "Skipping production bootstrap disposal because the HTTP server may still be live",
+        {
+          stopResult,
+        },
+      );
+    }
+  }
   await runCleanupStep(
     "shut down telemetry",
     dependencies.shutdownTelemetry,

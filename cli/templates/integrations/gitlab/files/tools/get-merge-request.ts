@@ -1,9 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import {
-  formatMergeRequestForDisplay,
-  getMergeRequest,
-} from "../../lib/gitlab-client.ts";
+import { createGitLabClient } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-merge-request",
@@ -21,8 +19,10 @@ export default tool({
         ),
     })
   )(),
-  async execute({ projectId, mergeRequestIid }) {
-    const mr = await getMergeRequest(projectId, mergeRequestIid);
+  async execute({ projectId, mergeRequestIid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createGitLabClient(userId);
+    const mr = await client.getMergeRequest(projectId, mergeRequestIid);
 
     return {
       id: mr.id,
@@ -43,7 +43,7 @@ export default tool({
       mergedAt: mr.merged_at,
       closedAt: mr.closed_at,
       webUrl: mr.web_url,
-      summary: formatMergeRequestForDisplay(mr),
+      summary: client.formatMergeRequestForDisplay(mr),
     };
   },
 });

@@ -5,7 +5,6 @@
  * Uses the unified import rewriter for all import transformations.
  */
 
-import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { type RewriteContext, rewriteImports } from "../../import-rewriter/index.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -24,15 +23,10 @@ async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContex
 
   if (ctx.target !== "ssr") return rewriteCtx;
 
-  const cachedMap = ctx.metadata.get("importMap") as RewriteContext["importMap"] | undefined;
-  if (cachedMap) {
-    rewriteCtx.importMap = cachedMap;
-    return rewriteCtx;
+  if (!ctx.importMap) {
+    throw new Error("SSR transform context is missing its import-map snapshot");
   }
-
-  const importMap = await loadImportMap(ctx.projectDir);
-  ctx.metadata.set("importMap", importMap);
-  rewriteCtx.importMap = importMap;
+  rewriteCtx.importMap = ctx.importMap;
 
   return rewriteCtx;
 }

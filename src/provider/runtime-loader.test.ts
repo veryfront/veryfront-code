@@ -208,6 +208,26 @@ describe("provider/runtime-loader", () => {
     });
   });
 
+  it("closes the source iterator when the status-transition consumer returns", async () => {
+    let sourceClosed = false;
+    const source = async function* () {
+      try {
+        yield { type: "text-delta", delta: "first" };
+        await new Promise(() => {});
+      } finally {
+        sourceClosed = true;
+      }
+    };
+    const iterator = withToolInputStatusTransitions(source())[Symbol.asyncIterator]();
+
+    assertEquals(await iterator.next(), {
+      done: false,
+      value: { type: "text-delta", delta: "first" },
+    });
+    assertEquals(await iterator.return?.(), { done: true, value: undefined });
+    assertEquals(sourceClosed, true);
+  });
+
   describe("provider warnings (unsupported-setting drops)", () => {
     const userPrompt = {
       role: "user",

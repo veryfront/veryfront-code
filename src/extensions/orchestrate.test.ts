@@ -175,6 +175,181 @@ describe("orchestrateExtensions()", () => {
     );
   });
 
+  it("keeps the active generation when replacement preflight fails", async () => {
+    let teardownCount = 0;
+    let beforeActivateCount = 0;
+    const marker = { generation: "active" };
+    const active = stubExt("active", {
+      provides: { ActiveGeneration: marker },
+      teardown() {
+        teardownCount++;
+      },
+    });
+    const invalid = {
+      name: "invalid",
+      version: "1.0.0",
+      capabilities: [],
+      setup: "not-a-function",
+    } as unknown as Extension;
+    const activeLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [active] },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: { extensions: [invalid] },
+          logger: noopLogger,
+          discovery: emptyDiscovery(),
+          beforeActivate: () => {
+            beforeActivateCount++;
+          },
+        }),
+      Error,
+      'Extension "invalid" is invalid',
+    );
+
+    assertEquals(teardownCount, 0);
+    assertEquals(beforeActivateCount, 0);
+    assertEquals(tryResolve("ActiveGeneration"), marker);
+    await activeLoader.teardownAll();
+  });
+
+  it("keeps the active generation when replacement factory loading fails", async () => {
+    let teardownCount = 0;
+    const marker = { generation: "active" };
+    const activeLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("active", {
+          provides: { ActiveGeneration: marker },
+          teardown() {
+            teardownCount++;
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: {},
+          logger: noopLogger,
+          discovery: {
+            ...emptyDiscovery(),
+            discoverProjectExtensions: () => Promise.resolve(["/fake/extensions/broken.ts"]),
+          },
+          loadFactory: () => Promise.reject(new Error("factory loading failed")),
+        }),
+      Error,
+      "factory loading failed",
+    );
+
+    assertEquals(teardownCount, 0);
+    assertEquals(tryResolve("ActiveGeneration"), marker);
+    await activeLoader.teardownAll();
+  });
+
+  it("replaces the active generation and makes its stale disposer harmless", async () => {
+    let firstTeardownCount = 0;
+    const activationOrder: string[] = [];
+    const firstLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("first", {
+          provides: { ActiveGeneration: { generation: "first" } },
+          teardown() {
+            firstTeardownCount++;
+            activationOrder.push("first:teardown");
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+    const secondMarker = { generation: "second" };
+    const secondLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("second", {
+          provides: { ActiveGeneration: secondMarker },
+          setup() {
+            activationOrder.push("second:setup");
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      beforeActivate: () => {
+        activationOrder.push("before-activate");
+      },
+    });
+
+    assertEquals(firstTeardownCount, 1);
+    assertEquals(activationOrder, [
+      "first:teardown",
+      "before-activate",
+      "second:setup",
+    ]);
+    assertEquals(tryResolve("ActiveGeneration"), secondMarker);
+
+    await firstLoader.teardownAll();
+    assertEquals(tryResolve("ActiveGeneration"), secondMarker);
+
+    await secondLoader.teardownAll();
+  });
+
+  it("does not activate an orchestration retry while timed-out setup is still running", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    const retryStarted = Promise.withResolvers<void>();
+    const late = stubExt("late", {
+      async setup() {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      },
+    });
+    const replacement = stubExt("replacement", {
+      setup() {
+        retryStarted.resolve();
+      },
+    });
+
+    const first = orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [late] },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      setupTimeoutMs: 10,
+    });
+    await firstStarted.promise;
+    await assertRejects(() => first, Error, "late");
+
+    const retry = orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [replacement] },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+    const retryStartedBeforeLateSetupSettled = await Promise.race([
+      retryStarted.promise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
+    ]);
+
+    releaseFirst.resolve();
+    const retryLoader = await retry;
+    await retryLoader.teardownAll();
+
+    assertEquals(retryStartedBeforeLateSetupSettled, false);
+  });
+
   it("filters disable directives from config.extensions", async () => {
     const local = stubExt("local-ext", {
       setup: () => {

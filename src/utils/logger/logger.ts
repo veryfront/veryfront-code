@@ -5,6 +5,7 @@ import {
   colorize,
   formatContextText,
   formatTimestamp,
+  isRecord,
   LEVEL_COLORS,
   LEVEL_GLYPHS,
   type LogLevelName,
@@ -12,7 +13,12 @@ import {
   type SerializedError,
   serializeError,
 } from "./core.ts";
-import { redactSensitive, sanitizeSerializedError, sanitizeUrlCredentials } from "./redact.ts";
+import {
+  REDACTED,
+  redactForSerialization,
+  sanitizeSerializedError,
+  sanitizeUrlCredentials,
+} from "./redact.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -213,21 +219,66 @@ function extractContext(
   let error: LogEntry["error"] | undefined;
 
   for (const arg of args) {
-    if (arg instanceof Error) {
-      error = serializeError(arg);
+    let isError = false;
+    try {
+      isError = arg instanceof Error;
+    } catch {
+      context = { ...context, unreadable_context: REDACTED };
       continue;
     }
-    if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
-      const contextArg = arg as Record<string, unknown>;
-      if (contextArg.error instanceof Error) {
-        const { error: contextError, ...rest } = contextArg;
-        error = serializeError(contextError);
-        if (Object.keys(rest).length > 0) {
-          context = { ...context, ...rest };
-        }
+
+    if (isError) {
+      try {
+        error = serializeError(arg);
+      } catch {
+        error = { name: "Error", message: REDACTED };
+      }
+      continue;
+    }
+
+    if (typeof arg === "object" && arg !== null) {
+      let isArray: boolean;
+      try {
+        isArray = Array.isArray(arg);
+      } catch {
+        context = { ...context, unreadable_context: REDACTED };
         continue;
       }
-      context = { ...context, ...contextArg };
+      if (isArray) continue;
+
+      const contextArg = arg as Record<string, unknown>;
+      let contextError: unknown;
+      try {
+        contextError = contextArg.error;
+      } catch {
+        context = { ...context, unreadable_context: REDACTED };
+        continue;
+      }
+
+      const safeContext = redactForSerialization(contextArg) as unknown;
+      if (typeof safeContext !== "object" || safeContext === null || Array.isArray(safeContext)) {
+        context = { ...context, unreadable_context: REDACTED };
+        continue;
+      }
+
+      let isContextError = false;
+      try {
+        isContextError = contextError instanceof Error;
+      } catch {
+        // The serialization redactor has already replaced an unreadable
+        // nested proxy with REDACTED, so it is safe to leave that marker in
+        // the context rather than interrogating the revoked value again.
+      }
+      if (isContextError) {
+        try {
+          error = serializeError(contextError);
+          delete (safeContext as Record<string, unknown>).error;
+        } catch {
+          error = { name: "Error", message: REDACTED };
+          delete (safeContext as Record<string, unknown>).error;
+        }
+      }
+      context = { ...context, ...(safeContext as Record<string, unknown>) };
     }
   }
 
@@ -325,7 +376,7 @@ class ConsoleLogger implements Logger {
       level,
       service: this.prefix.toLowerCase(),
       veryfrontVersion: RUNTIME_VERSION,
-      message,
+      message: sanitizeUrlCredentials(message),
     };
 
     if (this.componentName) entry.component = this.componentName;
@@ -352,7 +403,7 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "span_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "project_slug", (v) => String(v));
     // request_url / domain are URL-shaped and lifted out of mergedContext
-    // *before* redactSensitive runs, so they bypass the key-based redactor.
+    // *before* the serialization redactor runs, so they bypass its key pass.
     // Scrub embedded credentials (userinfo, ?access_token=, …) here (#1989).
     extractToEntryField(
       entry,
@@ -413,13 +464,24 @@ class ConsoleLogger implements Logger {
     // Redact credential-like keys from the free-form context bag before
     // serialization (the deliberate top-level fields above are already
     // extracted out of mergedContext, so they are unaffected).
-    if (Object.keys(mergedContext).length > 0) entry.context = redactSensitive(mergedContext);
+    if (Object.keys(mergedContext).length > 0) {
+      const redactedContext = redactForSerialization(mergedContext);
+      entry.context = isRecord(redactedContext)
+        ? redactedContext
+        : { unreadable_context: REDACTED };
+    }
     // The serialized error (name/message/stack) bypasses the key-based
     // redactor; scrub credentials embedded in its message/stack (DSNs, Mongo
     // URIs, ?access_token= URLs, userinfo) before emission (#1989).
     if (error) entry.error = sanitizeSerializedError(error);
 
-    return entry;
+    // Apply one final value-level pass after lifting well-known fields so every
+    // structured string (including custom scalar `toJSON` values) follows the
+    // same credential-scrubbing contract as free-form context.
+    const redactedEntry = redactForSerialization(entry);
+    return isRecord(redactedEntry)
+      ? redactedEntry as unknown as LogEntry
+      : { ...entry, context: { unreadable_context: REDACTED } };
   }
 
   private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
@@ -438,13 +500,16 @@ class ConsoleLogger implements Logger {
     const componentTag = this.componentName
       ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
       : "";
+    const redactedContext = redactForSerialization(mergedContext);
     const contextText = formatContextText(
-      redactSensitive(mergedContext),
+      isRecord(redactedContext) ? redactedContext : { unreadable_context: REDACTED },
       sanitizeSerializedError(error),
       enableColor,
     );
 
-    return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
+    return `${timestamp}  ${tag} ${glyph}${componentTag} ${
+      sanitizeUrlCredentials(message)
+    }${contextText}`;
   }
 
   private log(

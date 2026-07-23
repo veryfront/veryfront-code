@@ -20,7 +20,11 @@ import {
   type OpenAPISpec,
   type WrappedHandler,
 } from "./types.ts";
-import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
+import {
+  analyzeOpenAPIPath,
+  generateOperationId,
+  type OpenAPIPathDescription,
+} from "./path-utils.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("open-api");
@@ -38,6 +42,17 @@ interface GenerateSpecOptions {
   description?: string;
   /** Server URLs to include */
   servers?: Array<{ url: string; description?: string }>;
+}
+
+export class OpenAPISpecGenerationError extends Error {
+  constructor(pattern: string, reason: string) {
+    super(
+      `Cannot generate a complete OpenAPI specification for route ${
+        JSON.stringify(pattern)
+      }: ${reason}.`,
+    );
+    this.name = "OpenAPISpecGenerationError";
+  }
 }
 
 export async function generateOpenAPISpec(
@@ -61,15 +76,38 @@ export async function generateOpenAPISpec(
   if (options?.servers?.length) spec.servers = options.servers;
 
   const tagSet = new Set<string>();
+  const routesToDocument: Array<{
+    pattern: string;
+    entry: RouteEntry;
+    openApiRoute: OpenAPIPathDescription;
+  }> = [];
 
-  for (const [pattern, entry] of router.routes) {
+  const registeredRoutes = [...router.routes].sort(([left], [right]) => left.localeCompare(right));
+  for (const [pattern, entry] of registeredRoutes) {
     if (!pattern.startsWith("/api") && !entry.route.page.includes("/api/")) continue;
+    const analysis = analyzeOpenAPIPath(pattern);
+    if (!analysis.description) {
+      throw new OpenAPISpecGenerationError(
+        pattern,
+        analysis.reason ?? "the route cannot be represented",
+      );
+    }
+    routesToDocument.push({ pattern, entry, openApiRoute: analysis.description });
+  }
 
+  for (const { pattern, entry, openApiRoute } of routesToDocument) {
     try {
-      const pathItem = await processRoute(pattern, entry, projectDir, adapter, config, tagSet);
+      const pathItem = await processRoute(
+        entry,
+        openApiRoute,
+        projectDir,
+        adapter,
+        config,
+        tagSet,
+      );
       if (!pathItem || Object.keys(pathItem).length === 0) continue;
 
-      spec.paths[toOpenAPIPath(pattern)] = pathItem;
+      spec.paths[openApiRoute.path] = pathItem;
     } catch (error) {
       logger.warn(`Failed to process route ${pattern}:`, { error: String(error) });
     }
@@ -83,8 +121,8 @@ export async function generateOpenAPISpec(
 }
 
 async function processRoute(
-  pattern: string,
   entry: RouteEntry,
+  openApiRoute: OpenAPIPathDescription,
   projectDir: string,
   adapter: RuntimeAdapter,
   config: VeryfrontConfig | undefined,
@@ -99,7 +137,6 @@ async function processRoute(
 
   if (!module) return null;
 
-  const pathParams = extractPathParams(pattern);
   const pathItem: OpenAPIPathItem = {};
 
   for (const method of HTTP_METHODS) {
@@ -111,9 +148,9 @@ async function processRoute(
 
     pathItem[method.toLowerCase() as HttpMethodLower] = buildOperation(
       method,
-      pattern,
+      openApiRoute.path,
       metadata,
-      pathParams,
+      openApiRoute.params,
     );
   }
 
@@ -127,7 +164,12 @@ async function processRoute(
     const methodKey = method.toLowerCase() as HttpMethodLower;
     if (pathItem[methodKey]) continue;
 
-    pathItem[methodKey] = buildOperation(method, pattern, defaultMetadata, pathParams);
+    pathItem[methodKey] = buildOperation(
+      method,
+      openApiRoute.path,
+      defaultMetadata,
+      openApiRoute.params,
+    );
   }
 
   return pathItem;
@@ -139,11 +181,10 @@ function addTags(metadata: OpenAPIRouteMetadata | undefined, tagSet: Set<string>
 
 function buildOperation(
   method: HttpMethod,
-  pattern: string,
+  openApiPath: string,
   metadata: OpenAPIRouteMetadata | undefined,
   pathParams: Array<{ name: string; required: boolean; catchAll: boolean }>,
 ): OpenAPIOperation {
-  const openApiPath = toOpenAPIPath(pattern);
   const supportsBody = method === "POST" || method === "PUT" || method === "PATCH";
 
   const parameters: OpenAPIParameter[] = [];

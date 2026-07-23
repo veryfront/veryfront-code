@@ -295,27 +295,24 @@ export function isProjectCSSInitialized(): boolean {
  * Invalidate project CSS cache for a specific project.
  */
 export function invalidateProjectCSS(projectSlug: string): void {
+  void invalidateProjectCSSAsync(projectSlug).catch((error) => {
+    tailwindLog.debug("Failed to invalidate project CSS cache", { projectSlug, error });
+  });
+}
+
+/**
+ * Invalidate local and distributed project CSS state. Distributed failures are
+ * propagated so freshness-sensitive callers can fail closed before reload.
+ */
+export async function invalidateProjectCSSAsync(projectSlug: string): Promise<void> {
   for (const key of projectCSSLocalFallback.keys()) {
     if (key.startsWith(`${projectSlug}:`)) {
       projectCSSLocalFallback.delete(key);
     }
   }
 
-  invalidateProjectCSSAsync(projectSlug).catch((error) => {
-    tailwindLog.debug("Failed to invalidate project CSS cache", { projectSlug, error });
-  });
-}
-
-/**
- * Invalidate project CSS cache for a specific project (async version).
- */
-export async function invalidateProjectCSSAsync(projectSlug: string): Promise<void> {
   if (!projectCSSBackend?.delByPattern) return;
 
-  try {
-    const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
-    tailwindLog.debug("Cleared project CSS cache", { projectSlug, deleted });
-  } catch (error) {
-    tailwindLog.debug("Failed to clear project CSS cache", { projectSlug, error });
-  }
+  const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
+  tailwindLog.debug("Cleared project CSS cache", { projectSlug, deleted });
 }

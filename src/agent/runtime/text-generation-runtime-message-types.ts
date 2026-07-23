@@ -25,6 +25,20 @@ export interface TextGenerationRuntimeToolCallPart {
   input: Record<string, unknown>;
 }
 
+export interface TextGenerationRuntimeReasoningPart {
+  type: "reasoning";
+  text?: string;
+  signature?: string;
+  redactedData?: string;
+}
+
+export interface TextGenerationRuntimeProviderToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  supportsDeferredResults?: boolean;
+}
+
 export interface TextGenerationRuntimeToolResultPart {
   type: "tool-result";
   toolCallId: string;
@@ -47,7 +61,15 @@ export interface TextGenerationRuntimeUserMessage {
 
 export interface TextGenerationRuntimeAssistantMessage {
   role: "assistant";
-  content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart>;
+  content: Array<
+    | TextGenerationRuntimeTextPart
+    | TextGenerationRuntimeReasoningPart
+    | TextGenerationRuntimeToolCallPart
+  >;
+  /** Provider-owned calls retained for result correlation but omitted from generic replay. */
+  providerToolCalls?: TextGenerationRuntimeProviderToolCall[];
+  /** Opaque provider-authored assistant blocks used by the owning provider for exact replay. */
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface TextGenerationRuntimeToolMessage {

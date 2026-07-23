@@ -11,6 +11,7 @@ import {
   type ExtendedFileSystemAdapter,
   isExtendedFSAdapter,
 } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { getRequestTokenProvenance } from "../../context/request-context.ts";
 
 const logger = baseLogger.component("open-api");
 
@@ -142,6 +143,7 @@ export class OpenAPIHandler extends BaseHandler {
           releaseId: ctx.releaseId,
           branch: ctx.parsedDomain?.branch ?? null,
           environmentName: ctx.environmentName,
+          tokenProvenance: getRequestTokenProvenance(ctx.requestContext, ctx.proxyToken!),
         },
       )
       : await discover();

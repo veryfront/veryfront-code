@@ -56,6 +56,42 @@ export function clearSourceMissCache(resolver?: ModuleSourceResolver): void {
   for (const cache of Object.values(sourceMissCaches)) cache.clear();
 }
 
+/**
+ * Clear source-miss entries for exactly one project identity without evicting
+ * unrelated tenants. The strongest available identity is used because cache
+ * keys always preserve project ID, slug, and directory as separate NUL-framed
+ * fields.
+ */
+export function clearSourceMissCacheForProject(identity: {
+  projectDir?: string;
+  projectId?: string;
+  projectSlug?: string;
+}): number {
+  const projectId = identity.projectId?.trim();
+  const projectSlug = identity.projectSlug?.trim();
+  const projectDir = identity.projectDir?.trim();
+  const matchField = projectId
+    ? { index: 2, value: projectId }
+    : projectSlug
+    ? { index: 3, value: projectSlug }
+    : projectDir
+    ? { index: 1, value: projectDir }
+    : undefined;
+
+  if (!matchField) {
+    throw new TypeError("A project ID, slug, or directory is required for scoped miss eviction");
+  }
+
+  let deleted = 0;
+  for (const cache of Object.values(sourceMissCaches)) {
+    for (const key of cache.keys()) {
+      const fields = key.split("\0");
+      if (fields[matchField.index] === matchField.value && cache.delete(key)) deleted++;
+    }
+  }
+  return deleted;
+}
+
 function getResolverFromCacheKey(cacheKey: string): ModuleSourceResolver {
   const resolver = cacheKey.split("\0", 1)[0];
   return resolver === "module-batch" ? "module-batch" : "module-server";

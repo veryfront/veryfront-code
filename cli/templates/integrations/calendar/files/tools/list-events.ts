@@ -1,7 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCalendarClient } from "../../lib/calendar-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createCalendarClient } from "../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type CalendarEvent = {
   id: string;
@@ -12,22 +12,31 @@ type CalendarEvent = {
   end: { dateTime?: string; date?: string };
   status: string;
   htmlLink: string;
-  attendees?: Array<{ email: string; displayName?: string; responseStatus?: string }>;
+  attendees?: Array<
+    { email: string; displayName?: string; responseStatus?: string }
+  >;
 };
 
 export default tool({
   id: "list-events",
-  description: "List upcoming calendar events. By default shows events from now onwards.",
-  inputSchema: defineSchema((v) => v.object({
-    maxResults: v
-      .number()
-      .min(1)
-      .max(100)
-      .default(10)
-      .describe("Maximum number of events to return"),
-    daysAhead: v.number().min(1).max(30).default(7).describe("Number of days to look ahead"),
-    todayOnly: v.boolean().default(false).describe("Only show events for today"),
-  }))(),
+  description:
+    "List upcoming calendar events. By default shows events from now onwards.",
+  inputSchema: defineSchema((v) =>
+    v.object({
+      maxResults: v
+        .number()
+        .min(1)
+        .max(100)
+        .default(10)
+        .describe("Maximum number of events to return"),
+      daysAhead: v.number().min(1).max(30).default(7).describe(
+        "Number of days to look ahead",
+      ),
+      todayOnly: v.boolean().default(false).describe(
+        "Only show events for today",
+      ),
+    })
+  )(),
   execute: async ({ maxResults, daysAhead, todayOnly }, context) => {
     const userId = requireUserIdFromContext(context);
 
@@ -37,10 +46,10 @@ export default tool({
       const events = todayOnly
         ? ((await calendar.getTodayEvents()) as CalendarEvent[])
         : ((await calendar.listEvents({
-            maxResults,
-            timeMin: new Date(),
-            timeMax: new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000),
-          })) as CalendarEvent[]);
+          maxResults,
+          timeMin: new Date(),
+          timeMax: new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000),
+        })) as CalendarEvent[]);
 
       return {
         events: events.map((event) => ({
@@ -53,12 +62,11 @@ export default tool({
           isAllDay: !event.start.dateTime,
           status: event.status,
           url: event.htmlLink,
-          attendees:
-            event.attendees?.map((a) => ({
-              email: a.email,
-              name: a.displayName,
-              status: a.responseStatus,
-            })) ?? [],
+          attendees: event.attendees?.map((a) => ({
+            email: a.email,
+            name: a.displayName,
+            status: a.responseStatus,
+          })) ?? [],
         })),
         count: events.length,
         message: todayOnly

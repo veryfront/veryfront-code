@@ -4,6 +4,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
+import { compileJsonSchemaValidator } from "./json-schema.ts";
+import { createRuntimeJsonSchema } from "#veryfront/agent/runtime/runtime-tool-builder.ts";
 import { lazySchema } from "./lazy.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
@@ -87,5 +89,32 @@ describe("defineSchema", () => {
     const getObjectSchema = defineSchema((v) => v.object({ name: nameSchema }));
 
     assertEquals(getObjectSchema().parse({ name: "Veryfront" }), { name: "Veryfront" });
+  });
+
+  it("fails clearly when the registered adapter cannot compile raw JSON Schema", () => {
+    reset();
+    const { compileJsonSchema: _unsupported, ...legacyAdapter } = createZodAdapter();
+    register<SchemaValidator>("SchemaValidator", legacyAdapter);
+
+    assertThrows(
+      () => compileJsonSchemaValidator({ type: "object" }),
+      Error,
+      "cannot compile JSON Schema",
+    );
+  });
+
+  it("does not require optional raw-schema compilation until validation is attempted", () => {
+    reset();
+    const { compileJsonSchema: _unsupported, ...legacyAdapter } = createZodAdapter();
+    register<SchemaValidator>("SchemaValidator", legacyAdapter);
+
+    const runtimeSchema = createRuntimeJsonSchema({ type: "object" });
+
+    assertEquals(runtimeSchema.jsonSchema, { type: "object" });
+    assertThrows(
+      () => runtimeSchema.validate({}),
+      Error,
+      "cannot compile JSON Schema",
+    );
   });
 });

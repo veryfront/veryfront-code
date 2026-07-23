@@ -1,6 +1,7 @@
-import { getAccessToken } from "./token-store.ts";
+import { fetchExternalBytes, fetchOAuthJson } from "./oauth.ts";
 
 const GRAPH_API_URL = "https://graph.microsoft.com/v1.0";
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 export interface DriveItem {
   id: string;
@@ -58,192 +59,193 @@ export interface SearchResult {
   "@odata.nextLink"?: string;
 }
 
-async function getTokenOrThrow(): Promise<string> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with OneDrive. Please connect your account.");
+export function createOneDriveClient(userId: string) {
+  function onedriveFetch<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const url = endpoint.startsWith("http")
+      ? endpoint
+      : `${GRAPH_API_URL}${endpoint}`;
+
+    return fetchOAuthJson<T>(userId, "onedrive", url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
   }
-  return token;
-}
 
-async function onedriveFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getTokenOrThrow();
-  const url = endpoint.startsWith("http") ? endpoint : `${GRAPH_API_URL}${endpoint}`;
-
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...options.headers,
+  function listFiles(
+    folderId: string = "root",
+    options?: {
+      orderBy?: string;
+      top?: number;
+      select?: string[];
     },
-  });
+  ): Promise<ListFilesResult> {
+    const params = new URLSearchParams();
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `OneDrive API error: ${response.status} ${error.error?.message ?? response.statusText}`,
+    if (options?.orderBy) params.set("$orderby", options.orderBy);
+    if (options?.top) params.set("$top", options.top.toString());
+    if (options?.select?.length) {
+      params.set("$select", options.select.join(","));
+    }
+
+    const queryString = params.toString();
+    const endpoint = `/me/drive/items/${folderId}/children${
+      queryString ? `?${queryString}` : ""
+    }`;
+
+    return onedriveFetch<ListFilesResult>(endpoint);
+  }
+
+  function getFile(itemId: string): Promise<DriveItem> {
+    return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`);
+  }
+
+  async function downloadFile(itemId: string): Promise<{
+    content: string;
+    metadata: FileMetadata;
+  }> {
+    const item = await getFile(itemId);
+
+    if (!item.file) throw new Error("Item is not a file");
+
+    const downloadUrl = item["@microsoft.graph.downloadUrl"];
+    if (!downloadUrl) throw new Error("Download URL not available");
+
+    const content = new TextDecoder().decode(
+      await fetchExternalBytes(downloadUrl, {}, MAX_FILE_BYTES),
+    );
+
+    return {
+      content,
+      metadata: {
+        id: item.id,
+        name: item.name,
+        size: item.size ?? 0,
+        mimeType: item.file.mimeType,
+        createdDateTime: item.createdDateTime,
+        lastModifiedDateTime: item.lastModifiedDateTime,
+        webUrl: item.webUrl,
+        downloadUrl,
+      },
+    };
+  }
+
+  async function uploadFile(
+    fileName: string,
+    content: string,
+    parentFolderId: string = "root",
+  ): Promise<DriveItem> {
+    if (new TextEncoder().encode(content).byteLength > MAX_FILE_BYTES) {
+      throw new RangeError(`Upload exceeds ${MAX_FILE_BYTES} bytes`);
+    }
+    const endpoint = `${GRAPH_API_URL}/me/drive/items/${parentFolderId}:/${
+      encodeURIComponent(fileName)
+    }:/content`;
+
+    return await fetchOAuthJson<DriveItem>(userId, "onedrive", endpoint, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+      },
+      body: content,
+    });
+  }
+
+  function createFolder(
+    folderName: string,
+    parentFolderId: string = "root",
+  ): Promise<DriveItem> {
+    return onedriveFetch<DriveItem>(
+      `/me/drive/items/${parentFolderId}/children`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name: folderName,
+          folder: {},
+          "@microsoft.graph.conflictBehavior": "rename",
+        }),
+      },
     );
   }
 
-  return response.json();
-}
+  function searchFiles(
+    query: string,
+    options?: {
+      top?: number;
+    },
+  ): Promise<SearchResult> {
+    const params = new URLSearchParams({ q: query });
+    if (options?.top) params.set("$top", options.top.toString());
 
-export function listFiles(
-  folderId: string = "root",
-  options?: {
-    orderBy?: string;
-    top?: number;
-    select?: string[];
-  },
-): Promise<ListFilesResult> {
-  const params = new URLSearchParams();
+    return onedriveFetch<SearchResult>(
+      `/me/drive/root/search(q='${
+        encodeURIComponent(query)
+      }')?${params.toString()}`,
+    );
+  }
 
-  if (options?.orderBy) params.set("$orderby", options.orderBy);
-  if (options?.top) params.set("$top", options.top.toString());
-  if (options?.select?.length) params.set("$select", options.select.join(","));
+  async function deleteFile(itemId: string): Promise<void> {
+    await fetchOAuthJson<void>(
+      userId,
+      "onedrive",
+      `${GRAPH_API_URL}/me/drive/items/${itemId}`,
+      { method: "DELETE" },
+    );
+  }
 
-  const queryString = params.toString();
-  const endpoint = `/me/drive/items/${folderId}/children${queryString ? `?${queryString}` : ""}`;
+  function moveFile(
+    itemId: string,
+    newParentId: string,
+    newName?: string,
+  ): Promise<DriveItem> {
+    const body: Record<string, unknown> = {
+      parentReference: { id: newParentId },
+      ...(newName ? { name: newName } : {}),
+    };
 
-  return onedriveFetch<ListFilesResult>(endpoint);
-}
+    return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
 
-export function getFile(itemId: string): Promise<DriveItem> {
-  return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`);
-}
+  function formatFileSize(bytes: number): string {
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let size = bytes;
+    let unitIndex = 0;
 
-export async function downloadFile(itemId: string): Promise<{
-  content: string;
-  metadata: FileMetadata;
-}> {
-  const item = await getFile(itemId);
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
 
-  if (!item.file) throw new Error("Item is not a file");
+    return `${size.toFixed(2)} ${units[unitIndex]}`;
+  }
 
-  const downloadUrl = item["@microsoft.graph.downloadUrl"];
-  if (!downloadUrl) throw new Error("Download URL not available");
+  function isFile(item: DriveItem): boolean {
+    return item.file !== undefined;
+  }
 
-  const response = await fetch(downloadUrl);
-  if (!response.ok) throw new Error(`Failed to download file: ${response.statusText}`);
-
-  const content = await response.text();
+  function isFolder(item: DriveItem): boolean {
+    return item.folder !== undefined;
+  }
 
   return {
-    content,
-    metadata: {
-      id: item.id,
-      name: item.name,
-      size: item.size ?? 0,
-      mimeType: item.file.mimeType,
-      createdDateTime: item.createdDateTime,
-      lastModifiedDateTime: item.lastModifiedDateTime,
-      webUrl: item.webUrl,
-      downloadUrl,
-    },
+    listFiles,
+    getFile,
+    downloadFile,
+    uploadFile,
+    createFolder,
+    searchFiles,
+    deleteFile,
+    moveFile,
+    formatFileSize,
+    isFile,
+    isFolder,
   };
-}
-
-export async function uploadFile(
-  fileName: string,
-  content: string,
-  parentFolderId: string = "root",
-): Promise<DriveItem> {
-  const token = await getTokenOrThrow();
-  const endpoint = `${GRAPH_API_URL}/me/drive/items/${parentFolderId}:/${fileName}:/content`;
-
-  const response = await fetch(endpoint, {
-    method: "PUT",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/octet-stream",
-    },
-    body: content,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(`Failed to upload file: ${error.error?.message ?? response.statusText}`);
-  }
-
-  return response.json();
-}
-
-export function createFolder(
-  folderName: string,
-  parentFolderId: string = "root",
-): Promise<DriveItem> {
-  return onedriveFetch<DriveItem>(`/me/drive/items/${parentFolderId}/children`, {
-    method: "POST",
-    body: JSON.stringify({
-      name: folderName,
-      folder: {},
-      "@microsoft.graph.conflictBehavior": "rename",
-    }),
-  });
-}
-
-export function searchFiles(
-  query: string,
-  options?: {
-    top?: number;
-  },
-): Promise<SearchResult> {
-  const params = new URLSearchParams({ q: query });
-  if (options?.top) params.set("$top", options.top.toString());
-
-  return onedriveFetch<SearchResult>(
-    `/me/drive/root/search(q='${encodeURIComponent(query)}')?${params.toString()}`,
-  );
-}
-
-export async function deleteFile(itemId: string): Promise<void> {
-  const token = await getTokenOrThrow();
-
-  const response = await fetch(`${GRAPH_API_URL}/me/drive/items/${itemId}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(`Failed to delete item: ${error.error?.message ?? response.statusText}`);
-  }
-}
-
-export function moveFile(
-  itemId: string,
-  newParentId: string,
-  newName?: string,
-): Promise<DriveItem> {
-  const body: Record<string, unknown> = {
-    parentReference: { id: newParentId },
-    ...(newName ? { name: newName } : {}),
-  };
-
-  return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-}
-
-export function formatFileSize(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = bytes;
-  let unitIndex = 0;
-
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex++;
-  }
-
-  return `${size.toFixed(2)} ${units[unitIndex]}`;
-}
-
-export function isFile(item: DriveItem): boolean {
-  return item.file !== undefined;
-}
-
-export function isFolder(item: DriveItem): boolean {
-  return item.folder !== undefined;
 }

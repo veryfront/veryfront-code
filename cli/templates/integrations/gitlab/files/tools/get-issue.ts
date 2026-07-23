@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getIssue } from "../../lib/gitlab-client.ts";
+import { createGitLabClient } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-issue",
@@ -18,8 +19,10 @@ export default tool({
         ),
     })
   )(),
-  async execute({ projectId, issueIid }) {
-    const issue = await getIssue(projectId, issueIid);
+  async execute({ projectId, issueIid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createGitLabClient(userId);
+    const issue = await client.getIssue(projectId, issueIid);
 
     return {
       id: issue.id,

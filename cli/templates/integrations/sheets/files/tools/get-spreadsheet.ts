@@ -1,20 +1,22 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSheetsClient } from "../../lib/sheets-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createSheetsClient } from "../lib/sheets-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-spreadsheet",
   description:
     "Get metadata about a Google Sheets spreadsheet including all sheet names, properties, and structure. Use this to discover available sheets and their dimensions.",
-  inputSchema: defineSchema((v) => v.object({
-    spreadsheetId: v
-      .string()
-      .describe("The ID of the spreadsheet (from URL or list-spreadsheets)"),
-  }))(),
-  async execute({ spreadsheetId }) {
-    const client = createSheetsClient(DEFAULT_USER_ID);
+  inputSchema: defineSchema((v) =>
+    v.object({
+      spreadsheetId: v
+        .string()
+        .describe("The ID of the spreadsheet (from URL or list-spreadsheets)"),
+    })
+  )(),
+  async execute({ spreadsheetId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createSheetsClient(userId);
     const spreadsheet = await client.getSpreadsheet(spreadsheetId);
 
     return {

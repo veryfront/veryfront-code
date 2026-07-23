@@ -430,6 +430,53 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.props, { loadedUserId: "42" });
   });
 
+  it("keeps Pages Router index and catch-all params aligned in rendering", async () => {
+    const cases: Array<{
+      pagePath: string;
+      slug: string;
+      params: Record<string, string | string[]>;
+    }> = [
+      {
+        pagePath: "/project/pages/blog/[slug]/index.tsx",
+        slug: "/blog/hello",
+        params: { slug: "hello" },
+      },
+      {
+        pagePath: "/project/pages/docs/[...slug]/index.tsx",
+        slug: "/docs/api/reference",
+        params: { slug: ["api", "reference"] },
+      },
+      {
+        pagePath: "/project/pages/docs/[[...slug]]/index.tsx",
+        slug: "/docs",
+        params: { slug: [] },
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const projectId = `proj-pages-index-${index}`;
+      const pipeline = createPipeline(testCase.pagePath);
+      primeCssCache(testCase.slug, projectId);
+
+      (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
+      (pipeline as any).dataFetcher = {
+        fetchData: async (
+          _module: unknown,
+          context: { params: Record<string, string | string[]> },
+        ) => ({ props: { capturedParams: context.params } }),
+      };
+
+      const pageData = await pipeline.resolvePageData(testCase.slug, {
+        projectId,
+        request: new Request(`http://localhost${testCase.slug}`),
+        url: new URL(`http://localhost${testCase.slug}`),
+      });
+
+      assertEquals(pageData.params, testCase.params);
+      assertEquals(pageData.props, { capturedParams: testCase.params });
+    }
+  });
+
   it("resolvePageData emits request-profiler timings for first-hit stages", async () => {
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
     const slug = "/behavior-profile-page-data";

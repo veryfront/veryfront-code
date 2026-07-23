@@ -7,6 +7,7 @@ import {
   getHydrationReactImportSpecifiers,
   resolveClientModuleStrategy,
 } from "./client-module-strategy.ts";
+import { fromBase64Url } from "#veryfront/utils/path-utils.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
   it("uses the fs strategy only for local projects", () => {
@@ -52,6 +53,14 @@ describe("rendering/rsc/client-module-strategy", () => {
       }),
       "/_veryfront/rsc/module?rel=app%2Fpage.tsx&v=abc123",
     );
+  });
+
+  it("preserves Unicode filesystem paths across the client-module transport", () => {
+    const path = "app/内容/über/👋.tsx";
+    const url = buildClientModuleUrl({ strategy: "fs", rel: path });
+    const encoded = url?.slice("/_veryfront/fs/".length, -".js".length) ?? "";
+
+    assertEquals(fromBase64Url(encoded), path);
   });
 
   it("reads the document import map instead of relying on failed imports", () => {

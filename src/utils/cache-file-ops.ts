@@ -6,7 +6,7 @@
  */
 
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils/logger/index.ts";
 
 /**
  * Safely write a cache file: mkdir parent dir → write file → verify file exists.

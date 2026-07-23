@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   type ModuleTransformCacheDeps,
   transformModuleCodeWithCache,
@@ -24,6 +24,7 @@ function createDeps(
     },
     getHttpBundleCacheDir: () => "/tmp/vf-http-bundles",
     setCachedTransformAsync: () => Promise.resolve(),
+    loadImportMap: () => Promise.resolve({ imports: {}, scopes: {} }),
     runPipeline: () => {
       throw new Error("runPipeline was not configured");
     },
@@ -68,6 +69,37 @@ describe("module-loader/module-transform-cache", () => {
     });
 
     assertEquals(new Set(cacheKeys).size, 3);
+  });
+
+  it("isolates outer transform cache keys by adapter-bound import-map content", async () => {
+    const cacheKeys: string[] = [];
+    let importTarget = "/vendor/one.ts";
+    const deps = createDeps({
+      loadImportMap: () => Promise.resolve({ imports: { vendor: importTarget } }),
+      getOrComputeTransform: async (key, compute) => {
+        cacheKeys.push(key);
+        return { code: await compute(), cacheHit: false };
+      },
+      transformToESM: (_code, _filePath, _projectDir, _adapter, options) =>
+        options.loadImportMap!().then((map) => `export default ${JSON.stringify(map.imports)};`),
+    });
+    const input = {
+      fileContent: 'import value from "vendor";',
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production" as const,
+      adapter: {} as RuntimeAdapter,
+      deps,
+    };
+
+    const first = await transformModuleCodeWithCache(input);
+    importTarget = "/vendor/two.ts";
+    const second = await transformModuleCodeWithCache(input);
+
+    assertEquals(first.cacheKey === second.cacheKey, false);
+    assertEquals(new Set(cacheKeys).size, 2);
+    assertEquals(first.contentHash, await computeHash(input.fileContent));
   });
 
   it("re-transforms cached code when HTTP bundle validation fails", async () => {
@@ -115,7 +147,7 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(transformCalls, 1);
     assertEquals(setCalls.length, 1);
     assertEquals(setCalls[0]!.code, "export const page = 1;");
-    assertEquals(setCalls[0]!.hash, hashCodeHex("export const page = 1;"));
+    assertEquals(setCalls[0]!.hash, await computeHash("export const page = 1;"));
     assertEquals(setCalls[0]!.ttl, 123);
   });
 
@@ -166,7 +198,7 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(pipelineCalls, 1);
     assertEquals(setCalls, [{
       code: retryCode,
-      hash: hashCodeHex(retryCode).slice(0, 16),
+      hash: await computeHash("export const page = 2;"),
     }]);
   });
 });

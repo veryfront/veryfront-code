@@ -1,7 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createGitHubClient } from "../../lib/github-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createGitHubClient } from "../lib/github-client.ts";
+import { optionalAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
 
 export default tool({
   id: "merge-pr",
@@ -44,11 +47,20 @@ export default tool({
 
     try {
       const github = createGitHubClient(userId);
-      const result = await github.mergePullRequest(owner, repoName, pull_number, {
-        merge_method,
-        commit_title,
-        commit_message,
-      });
+      const result = await github.mergePullRequest(
+        owner,
+        repoName,
+        pull_number,
+        {
+          merge_method: optionalAllowedValue(
+            merge_method,
+            MERGE_METHODS,
+            "merge_method",
+          ),
+          commit_title,
+          commit_message,
+        },
+      );
 
       return {
         success: result.merged,

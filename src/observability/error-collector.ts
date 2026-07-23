@@ -6,6 +6,8 @@
  **************************/
 
 import { type ErrorCategory, INVALID_ARGUMENT } from "#veryfront/errors";
+import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
 
 /** Public API contract for error type. */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
@@ -20,6 +22,10 @@ const ERROR_TYPE_TO_CATEGORY: Record<ErrorType, ErrorCategory> = {
   hmr: "DEV",
   module: "MODULE",
 };
+
+function isErrorType(value: unknown): value is ErrorType {
+  return typeof value === "string" && Object.hasOwn(ERROR_TYPE_TO_CATEGORY, value);
+}
 
 /** Error shape for dev. */
 export interface DevError {
@@ -62,6 +68,23 @@ export interface ErrorFilter {
 /** Public API contract for error subscriber. */
 export type ErrorSubscriber = (error: DevError) => void;
 
+function snapshotError(error: DevError): DevError {
+  return {
+    ...error,
+    context: error.context ? sanitizeStructuredTelemetryData(error.context) : error.context,
+  };
+}
+
+function matchesPattern(pattern: RegExp, value: string): boolean {
+  const initialLastIndex = pattern.lastIndex;
+  try {
+    pattern.lastIndex = 0;
+    return pattern.test(value);
+  } finally {
+    pattern.lastIndex = initialLastIndex;
+  }
+}
+
 /** Implement error collector. */
 export class ErrorCollector {
   private errors = new Map<string, DevError>();
@@ -70,7 +93,11 @@ export class ErrorCollector {
   private maxErrors: number;
 
   constructor(options: { maxErrors?: number } = {}) {
-    this.maxErrors = options.maxErrors ?? 100;
+    const maxErrors = options.maxErrors ?? 100;
+    if (!Number.isSafeInteger(maxErrors) || maxErrors < 0) {
+      throw new RangeError("ErrorCollector maxErrors must be a non-negative integer");
+    }
+    this.maxErrors = maxErrors;
   }
 
   private generateId(): string {
@@ -78,36 +105,55 @@ export class ErrorCollector {
   }
 
   add(error: Omit<DevError, "id" | "timestamp">): DevError {
-    const expectedCategory = ERROR_TYPE_TO_CATEGORY[error.type];
-    if (error.category !== expectedCategory) {
+    const type: unknown = error.type;
+    if (!isErrorType(type)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `ErrorCollector.add() received invalid error type: ${String(type)}`,
+      });
+    }
+
+    const category: unknown = error.category;
+    const expectedCategory = ERROR_TYPE_TO_CATEGORY[type];
+    if (category !== expectedCategory) {
       throw INVALID_ARGUMENT.create({
         detail:
-          `ErrorCollector.add() received mismatched type/category: ${error.type} must use ${expectedCategory}, got ${error.category}`,
+          `ErrorCollector.add() received mismatched type/category: ${type} must use ${expectedCategory}, got ${
+            String(category)
+          }`,
       });
     }
 
     const fullError: DevError = {
       ...error,
+      type,
+      category: expectedCategory,
+      message: sanitizeUrlCredentials(error.message),
+      file: error.file ? sanitizeUrlCredentials(error.file) : error.file,
+      stack: error.stack ? sanitizeUrlCredentials(error.stack) : error.stack,
+      context: error.context ? sanitizeStructuredTelemetryData(error.context) : error.context,
+      slug: error.slug ? sanitizeUrlCredentials(error.slug) : error.slug,
       id: this.generateId(),
       timestamp: Date.now(),
     };
 
-    if (this.errors.size >= this.maxErrors) {
-      const oldestId = this.errors.keys().next().value;
-      if (oldestId) this.errors.delete(oldestId);
-    }
+    if (this.maxErrors > 0) {
+      if (this.errors.size >= this.maxErrors) {
+        const oldestId = this.errors.keys().next().value;
+        if (oldestId) this.errors.delete(oldestId);
+      }
 
-    this.errors.set(fullError.id, fullError);
+      this.errors.set(fullError.id, fullError);
+    }
 
     for (const subscriber of this.subscribers) {
       try {
-        subscriber(fullError);
+        subscriber(snapshotError(fullError));
       } catch (_) {
         /* expected: subscriber errors must not break error collection */
       }
     }
 
-    return fullError;
+    return snapshotError(fullError);
   }
 
   private addTypedError(
@@ -214,7 +260,7 @@ export class ErrorCollector {
 
   getAll(filter?: ErrorFilter): DevError[] {
     const errors = Array.from(this.errors.values());
-    if (!filter) return errors;
+    if (!filter) return errors.map(snapshotError);
 
     const { type, category, slug, file, since } = filter;
 
@@ -240,7 +286,7 @@ export class ErrorCollector {
       if (file) {
         if (typeof file === "string") {
           if (e.file !== file) return false;
-        } else if (!e.file || !file.test(e.file)) {
+        } else if (!e.file || !matchesPattern(file, e.file)) {
           return false;
         }
       }
@@ -248,11 +294,12 @@ export class ErrorCollector {
       if (since && e.timestamp < since) return false;
 
       return true;
-    });
+    }).map(snapshotError);
   }
 
   get(id: string): DevError | undefined {
-    return this.errors.get(id);
+    const error = this.errors.get(id);
+    return error ? snapshotError(error) : undefined;
   }
 
   clearFile(file: string): number {
@@ -288,7 +335,7 @@ export class ErrorCollector {
     };
 
     for (const { type } of this.errors.values()) {
-      counts[type]++;
+      if (isErrorType(type)) counts[type] += 1;
     }
 
     return counts;
@@ -313,7 +360,9 @@ export class ErrorCollector {
     };
 
     for (const { category } of this.errors.values()) {
-      counts[category]++;
+      if (typeof category === "string" && Object.hasOwn(counts, category)) {
+        counts[category as ErrorCategory] += 1;
+      }
     }
 
     return counts;

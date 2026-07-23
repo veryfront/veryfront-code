@@ -112,6 +112,7 @@ export function clearMDXRendererCache(): void {
 }
 
 export {
+  cloneMDXCompilationResult,
   MDXCacheAdapter,
   type MDXCacheAdapterOptions,
   type MDXCompilationResult,

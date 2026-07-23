@@ -2,6 +2,9 @@ import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
+import { cloneCachePayload, parseCachePayload, serializeCachePayload } from "../cache-payload.ts";
+import { requirePositiveIntegerCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
+import { escapeRedisCacheGlobLiteral } from "#veryfront/cache/backends/redis-keyspace.ts";
 
 const logger = rendererLogger.component("api-cache-store");
 
@@ -19,29 +22,8 @@ export interface APICacheStoreOptions {
   localMaxEntries?: number;
   /** Disable local memory cache (no in-memory fallback) */
   enableLocalCache?: boolean;
-}
-
-/**
- * Serializable version of CachePayload for JSON storage
- */
-interface SerializedCachePayload {
-  result: {
-    html: string;
-    css?: string;
-    frontmatter: Record<string, unknown>;
-    headings?: Array<{ id: string; text: string; level: number }>;
-    // nodeMap serialized as array of [key, value] pairs
-    nodeMapEntries?: Array<[number, unknown]>;
-    pageModule?: {
-      slug: string;
-      code: string;
-      type: "mdx" | "component";
-    };
-    ssrHash?: string;
-  };
-  storedAt: number;
-  expiresAt?: number;
-  staleUntil?: number;
+  /** Optional authoritative backend provider for embedding and deterministic tests. */
+  backendFactory?: () => Promise<CacheBackend>;
 }
 
 export class APICacheStore implements CacheStore {
@@ -50,30 +32,68 @@ export class APICacheStore implements CacheStore {
   private readonly localCache: MemoryCacheStore | null;
   private readonly keyPrefix: string;
   private readonly ttlSeconds: number;
+  private readonly localMaxEntries: number;
+  private readonly localDeadlines = new Map<string, number>();
+  private readonly backendFactory: () => Promise<CacheBackend>;
+  private destroyed = false;
 
   constructor(options: APICacheStoreOptions = {}) {
     this.keyPrefix = options.keyPrefix ?? "render";
-    this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    if (
+      this.keyPrefix.trim() !== this.keyPrefix ||
+      this.keyPrefix.length === 0 ||
+      this.keyPrefix.length > 128 ||
+      /[\x00-\x1f\x7f*?\[\]\\]/.test(this.keyPrefix)
+    ) {
+      throw new TypeError(
+        "API render cache keyPrefix must be a non-blank, glob-free value of at most 128 characters",
+      );
+    }
+    this.ttlSeconds = requirePositiveIntegerCacheTtlSeconds(
+      options.ttlSeconds ?? DEFAULT_TTL_SECONDS,
+    );
+    const localMaxEntries = options.localMaxEntries ?? DEFAULT_LOCAL_MAX_ENTRIES;
+    if (!Number.isSafeInteger(localMaxEntries) || localMaxEntries <= 0) {
+      throw new RangeError("API render cache localMaxEntries must be a positive safe integer");
+    }
+    this.localMaxEntries = localMaxEntries;
+    this.backendFactory = options.backendFactory ?? (() =>
+      createCacheBackend({
+        keyPrefix: this.keyPrefix,
+        preferredBackend: "api",
+      }));
 
     const enableLocalCache = options.enableLocalCache ?? true;
     this.localCache = enableLocalCache
       ? new MemoryCacheStore({
-        maxEntries: options.localMaxEntries ?? DEFAULT_LOCAL_MAX_ENTRIES,
-        ttlMs: this.ttlSeconds * 1000,
+        maxEntries: localMaxEntries,
+        enforceStoreTtl: false,
       })
       : null;
   }
 
   private getBackend(): Promise<CacheBackend> {
+    if (this.destroyed) {
+      return Promise.reject(new Error("API render cache store has been destroyed"));
+    }
     if (this.backend) return Promise.resolve(this.backend);
     if (this.backendInitPromise) return this.backendInitPromise;
 
-    this.backendInitPromise = (async () => {
+    const initialization = (async () => {
       try {
-        const backend = await createCacheBackend({
-          keyPrefix: this.keyPrefix,
-          preferredBackend: "api",
-        });
+        const backend = await this.backendFactory();
+        if (
+          !backend ||
+          backend.type !== "api" ||
+          typeof backend.get !== "function" ||
+          typeof backend.set !== "function" ||
+          typeof backend.del !== "function"
+        ) {
+          throw new TypeError("API render cache backend factory returned an invalid backend");
+        }
+        if (this.destroyed) {
+          throw new Error("API render cache store was destroyed during initialization");
+        }
         this.backend = backend;
         logger.debug("Distributed cache initialized", {
           type: backend.type,
@@ -81,73 +101,105 @@ export class APICacheStore implements CacheStore {
         return backend;
       } catch (error) {
         logger.warn(
-          "[APICacheStore] Failed to init distributed cache, skipping fallback",
+          "[APICacheStore] Failed to initialize authoritative distributed cache",
           { error },
         );
         this.backend = null;
         throw error;
       }
     })();
+    this.backendInitPromise = initialization;
 
-    return this.backendInitPromise;
+    return initialization.finally(() => {
+      if (this.backendInitPromise === initialization) this.backendInitPromise = null;
+    });
   }
 
   private serialize(payload: CachePayload): string {
-    const serialized: SerializedCachePayload = {
-      result: {
-        html: payload.result.html,
-        css: payload.result.css,
-        frontmatter: payload.result.frontmatter as Record<string, unknown>,
-        headings: payload.result.headings,
-        nodeMapEntries: payload.result.nodeMap
-          ? Array.from(payload.result.nodeMap.entries())
-          : undefined,
-        pageModule: payload.result.pageModule,
-        ssrHash: payload.result.ssrHash,
-      },
-      storedAt: payload.storedAt,
-      expiresAt: payload.expiresAt,
-      staleUntil: payload.staleUntil,
-    };
-
-    return JSON.stringify(serialized);
+    return serializeCachePayload(payload);
   }
 
-  private deserialize(json: string): CachePayload {
-    const serialized = JSON.parse(json) as SerializedCachePayload;
+  private deserialize(json: string): CachePayload | undefined {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch (_) {
+      return undefined;
+    }
+    return parseCachePayload(parsed);
+  }
 
-    return {
-      result: {
-        html: serialized.result.html,
-        css: serialized.result.css,
-        frontmatter: serialized.result.frontmatter as CachePayload["result"]["frontmatter"],
-        headings: serialized.result.headings,
-        nodeMap: serialized.result.nodeMapEntries
-          ? new Map(serialized.result.nodeMapEntries)
-          : undefined,
-        stream: null, // Streams can't be serialized
-        pageModule: serialized.result.pageModule,
-        ssrHash: serialized.result.ssrHash,
-      },
-      storedAt: serialized.storedAt,
-      expiresAt: serialized.expiresAt,
-      staleUntil: serialized.staleUntil,
-    };
+  private resolveRetentionDeadline(value: CachePayload, now = Date.now()): number | null {
+    const retainUntil = value.staleUntil ?? value.expiresAt;
+    if (retainUntil !== undefined && retainUntil <= now) return null;
+    return Math.max(now + this.ttlSeconds * 1_000, retainUntil ?? 0);
+  }
+
+  private async getLocal(key: string): Promise<CachePayload | undefined> {
+    if (!this.localCache) return undefined;
+    const deadline = this.localDeadlines.get(key);
+    if (deadline === undefined || Date.now() >= deadline) {
+      this.localDeadlines.delete(key);
+      await this.localCache.delete(key);
+      return undefined;
+    }
+
+    const value = await this.localCache.get(key);
+    if (value === undefined) {
+      this.localDeadlines.delete(key);
+      return undefined;
+    }
+    this.localDeadlines.delete(key);
+    this.localDeadlines.set(key, deadline);
+    return value;
+  }
+
+  private async setLocal(key: string, value: CachePayload): Promise<void> {
+    if (!this.localCache) return;
+    const deadline = this.resolveRetentionDeadline(value);
+    if (deadline === null) {
+      await this.deleteLocal(key);
+      return;
+    }
+
+    await this.localCache.set(key, value);
+    this.localDeadlines.delete(key);
+    this.localDeadlines.set(key, deadline);
+    while (this.localDeadlines.size > this.localMaxEntries) {
+      const oldestKey = this.localDeadlines.keys().next().value as string | undefined;
+      if (oldestKey === undefined) break;
+      this.localDeadlines.delete(oldestKey);
+      await this.localCache.delete(oldestKey);
+    }
+  }
+
+  private async deleteLocal(key: string): Promise<void> {
+    this.localDeadlines.delete(key);
+    await this.localCache?.delete(key);
+  }
+
+  private async deleteLocalByPrefix(prefix: string): Promise<number> {
+    for (const key of [...this.localDeadlines.keys()]) {
+      if (key.startsWith(prefix)) this.localDeadlines.delete(key);
+    }
+    return (await this.localCache?.deleteByPrefix?.(prefix)) ?? 0;
+  }
+
+  private async clearLocal(): Promise<void> {
+    this.localDeadlines.clear();
+    await this.localCache?.clear();
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
-    const local = await this.localCache?.get(key);
+    if (this.destroyed) throw new Error("API render cache store has been destroyed");
+    const local = await this.getLocal(key);
     if (local) return local;
 
+    let backend: CacheBackend;
+    let json: string | null;
     try {
-      const backend = await this.getBackend();
-      const json = await backend.get(key);
-      if (!json) return undefined;
-
-      const payload = this.deserialize(json);
-      await this.localCache?.set(key, payload);
-      logger.debug("Distributed cache hit", { key });
-      return payload;
+      backend = await this.getBackend();
+      json = await backend.get(key);
     } catch (error) {
       logger.debug("Failed to read from distributed cache", {
         key,
@@ -155,59 +207,74 @@ export class APICacheStore implements CacheStore {
       });
       return undefined;
     }
+    if (!json) return undefined;
+
+    const payload = this.deserialize(json);
+    if (!payload || this.resolveRetentionDeadline(payload) === null) {
+      // Corruption/expiry cleanup is an attempted mutation. Do not misreport a
+      // successful eviction when the authoritative backend rejected it.
+      await backend.del(key);
+      await this.deleteLocal(key);
+      return undefined;
+    }
+    await this.setLocal(key, payload);
+    logger.debug("Distributed cache hit", { key });
+    return payload;
   }
 
   async set(key: string, value: CachePayload): Promise<void> {
-    if (value.result.stream) return;
-
-    await this.localCache?.set(key, value);
-
-    try {
-      const backend = await this.getBackend();
-      await backend.set(key, this.serialize(value), this.resolveBackendTtlSeconds(value));
-    } catch (error) {
-      logger.debug(
-        "[APICacheStore] Failed to store in distributed cache (no fallback)",
-        { key, error },
-      );
+    const snapshot = cloneCachePayload(value);
+    const now = Date.now();
+    if (this.resolveRetentionDeadline(snapshot, now) === null) {
+      await this.delete(key);
+      return;
     }
+    const backend = await this.getBackend();
+    await backend.set(
+      key,
+      this.serialize(snapshot),
+      this.resolveBackendTtlSeconds(snapshot, now),
+    );
+    await this.setLocal(key, snapshot);
   }
 
-  private resolveBackendTtlSeconds(value: CachePayload): number {
-    if (typeof value.staleUntil !== "number") return this.ttlSeconds;
+  private resolveBackendTtlSeconds(value: CachePayload, now = Date.now()): number {
+    const retainUntil = value.staleUntil ?? value.expiresAt;
+    if (retainUntil === undefined) return this.ttlSeconds;
 
-    const secondsUntilStaleExpiry = Math.ceil((value.staleUntil - Date.now()) / 1_000);
-    if (secondsUntilStaleExpiry <= 0) return this.ttlSeconds;
+    const secondsUntilStaleExpiry = Math.ceil((retainUntil - now) / 1_000);
+    if (secondsUntilStaleExpiry <= 0) {
+      throw new RangeError("API render cache payload retention has already expired");
+    }
     return Math.max(this.ttlSeconds, secondsUntilStaleExpiry);
   }
 
   async delete(key: string): Promise<void> {
-    await this.localCache?.delete(key);
-
     try {
       const backend = await this.getBackend();
       await backend.del(key);
     } catch (error) {
-      logger.debug("Failed to delete from distributed cache", {
-        key,
-        error,
-      });
+      await this.deleteLocal(key);
+      throw error;
     }
+    await this.deleteLocal(key);
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
-    const localDeleted = (await this.localCache?.deleteByPrefix?.(prefix)) ?? 0;
-
-    let distributedDeleted = 0;
+    let distributedDeleted: number;
     try {
       const backend = await this.getBackend();
-      distributedDeleted = (await backend.delByPattern?.(`${prefix}*`)) ?? 0;
+      if (!backend.delByPattern) {
+        throw new TypeError("API render cache backend does not support prefix invalidation");
+      }
+      distributedDeleted = await backend.delByPattern(
+        `${escapeRedisCacheGlobLiteral(prefix)}*`,
+      );
     } catch (error) {
-      logger.debug("Failed to delete from distributed cache", {
-        prefix,
-        error,
-      });
+      await this.deleteLocalByPrefix(prefix);
+      throw error;
     }
+    const localDeleted = await this.deleteLocalByPrefix(prefix);
 
     logger.debug("deleteByPrefix", {
       prefix,
@@ -219,11 +286,24 @@ export class APICacheStore implements CacheStore {
   }
 
   async clear(): Promise<void> {
-    await this.localCache?.clear();
-    logger.debug("Local cache cleared");
+    try {
+      const backend = await this.getBackend();
+      if (!backend.delByPattern) {
+        throw new TypeError("API render cache backend does not support clearing its namespace");
+      }
+      await backend.delByPattern("*");
+    } catch (error) {
+      await this.clearLocal();
+      throw error;
+    }
+    await this.clearLocal();
+    logger.debug("API and local caches cleared");
   }
 
   async destroy(): Promise<void> {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.localDeadlines.clear();
     await this.localCache?.destroy();
     this.backend = null;
     this.backendInitPromise = null;

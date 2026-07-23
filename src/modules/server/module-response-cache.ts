@@ -1,13 +1,20 @@
 import { registerLRUCache } from "#veryfront/cache";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
-import { hashString } from "#veryfront/cache/hash.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_ENTRIES = 10_000;
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const RELEASE_MODULE_RESPONSE_DISTRIBUTED_TTL_SEC = TRANSFORM_DISTRIBUTED_TTL_SEC;
+const RELEASE_MODULE_RESPONSE_FORMAT_VERSION = 1;
+const MAX_RELEASE_MODULE_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_RELEASE_MODULE_DISTRIBUTED_ENTRY_BYTES = 12 * 1024 * 1024;
+const MAX_RELEASE_MODULE_HEADERS = 128;
+const MAX_RELEASE_MODULE_HEADER_VALUE_BYTES = 8 * 1024;
+const MAX_RELEASE_MODULE_IDENTITY_BYTES = 32 * 1024;
+const encoder = new TextEncoder();
 
 export interface ReleaseModuleResponseCacheEntry {
   body: string;
@@ -46,26 +53,61 @@ const getDistributedModuleResponseCache = createDistributedCacheAccessor(
 
 let injectedDistributedCache: CacheBackend | null | undefined;
 
-function parseDistributedEntry(raw: string): ReleaseModuleResponseCacheEntry | null {
+interface DistributedReleaseModuleResponseEntry {
+  formatVersion: number;
+  cacheKey: string;
+  bodyHash: string;
+  entry: ReleaseModuleResponseCacheEntry;
+}
+
+function normalizeEntry(value: unknown): ReleaseModuleResponseCacheEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const parsed = value as Partial<ReleaseModuleResponseCacheEntry>;
+  const status = parsed.status;
+  if (
+    typeof parsed.body !== "string" ||
+    encoder.encode(parsed.body).byteLength > MAX_RELEASE_MODULE_BODY_BYTES ||
+    typeof status !== "number" ||
+    !Number.isSafeInteger(status) ||
+    status < 100 ||
+    status > 599 ||
+    !Array.isArray(parsed.headers) ||
+    parsed.headers.length > MAX_RELEASE_MODULE_HEADERS ||
+    !parsed.headers.every((entry) =>
+      Array.isArray(entry) &&
+      entry.length === 2 &&
+      typeof entry[0] === "string" &&
+      /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(entry[0]) &&
+      typeof entry[1] === "string" &&
+      !/[\r\n]/.test(entry[1]) &&
+      encoder.encode(entry[1]).byteLength <= MAX_RELEASE_MODULE_HEADER_VALUE_BYTES
+    )
+  ) return null;
+
+  return {
+    body: parsed.body,
+    status,
+    headers: parsed.headers.map(([name, value]) => [name, value]),
+  };
+}
+
+async function parseDistributedEntry(
+  raw: string,
+  expectedCacheKey: string,
+): Promise<ReleaseModuleResponseCacheEntry | null> {
+  if (encoder.encode(raw).byteLength > MAX_RELEASE_MODULE_DISTRIBUTED_ENTRY_BYTES) return null;
   try {
-    const parsed = JSON.parse(raw) as Partial<ReleaseModuleResponseCacheEntry>;
-    if (typeof parsed.body !== "string") return null;
-    if (typeof parsed.status !== "number") return null;
+    const parsed = JSON.parse(raw) as Partial<DistributedReleaseModuleResponseEntry>;
     if (
-      !Array.isArray(parsed.headers) ||
-      !parsed.headers.every((entry) =>
-        Array.isArray(entry) &&
-        entry.length === 2 &&
-        typeof entry[0] === "string" &&
-        typeof entry[1] === "string"
-      )
+      parsed.formatVersion !== RELEASE_MODULE_RESPONSE_FORMAT_VERSION ||
+      parsed.cacheKey !== expectedCacheKey ||
+      typeof parsed.bodyHash !== "string" ||
+      !/^[a-f0-9]{64}$/.test(parsed.bodyHash)
     ) return null;
 
-    return {
-      body: parsed.body,
-      status: parsed.status,
-      headers: parsed.headers as Array<[string, string]>,
-    };
+    const entry = normalizeEntry(parsed.entry);
+    if (!entry || await computeHash(entry.body) !== parsed.bodyHash) return null;
+    return entry;
   } catch {
     return null;
   }
@@ -79,46 +121,46 @@ async function getDistributedCache(): Promise<CacheBackend | null> {
   return cache.type === "api" || cache.type === "redis" ? cache : null;
 }
 
-/**
- * The distributed cache backend validates keys against a strict charset
- * (alphanumeric plus `_ : . - /`) and rejects anything else with HTTP 400.
- * Request module paths routinely contain characters outside that set — notably
- * `@` (e.g. `/@vite/env`) — so an unsanitized path makes the composed key
- * unstorable and the response is silently never cached.
- *
- * We prefix a hash of the exact path (collision resistance for two paths that
- * clamp to the same readable form) with a charset-clamped readable form (kept
- * for debuggability). `:` is deliberately excluded from the readable form so it
- * cannot be confused with the key's field separator.
- */
-function sanitizeModulePathForCacheKey(modulePath: string): string {
-  const readable = modulePath.replace(/[^a-zA-Z0-9_.\-/]/g, "-");
-  return `${hashString(modulePath)}-${readable}`;
+function assertBoundedIdentity(value: string, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    encoder.encode(value).byteLength > MAX_RELEASE_MODULE_IDENTITY_BYTES
+  ) {
+    throw new RangeError(`${label} is empty or exceeds its cache-identity limit`);
+  }
+  return value;
 }
 
-export function buildReleaseModuleResponseCacheKey(
-  options: ReleaseModuleResponseCacheKeyOptions,
-): string {
-  const projectScope = [
-    options.projectIdentity,
-    options.projectDir,
-    options.projectSlug ?? "",
-    options.branch ?? "",
-  ].join("\0");
+function normalizeOptionalIdentity(value: string | null | undefined, label: string): string | null {
+  return value == null ? null : assertBoundedIdentity(value, label);
+}
 
-  // Fields are joined with `:` (an allowed key character) rather than a NUL
-  // byte, which the distributed cache backend's key validator also rejects.
-  return [
-    "module-server-release-response",
-    hashString(projectScope),
-    options.releaseId,
-    options.runtimeVersion,
-    options.reactVersion ?? "",
-    options.releaseDependencyManifestVersion == null
-      ? ""
-      : `release-dependency-manifest:${options.releaseDependencyManifestVersion}`,
-    sanitizeModulePathForCacheKey(options.modulePath),
-  ].join(":");
+export async function buildReleaseModuleResponseCacheKey(
+  options: ReleaseModuleResponseCacheKeyOptions,
+): Promise<string> {
+  const manifestVersion = options.releaseDependencyManifestVersion;
+  if (
+    manifestVersion != null &&
+    (!Number.isSafeInteger(manifestVersion) || manifestVersion < 0)
+  ) {
+    throw new RangeError("Release dependency manifest version must be a non-negative integer");
+  }
+  const identity = JSON.stringify([
+    assertBoundedIdentity(options.projectIdentity, "Project identity"),
+    assertBoundedIdentity(options.projectDir, "Project directory"),
+    normalizeOptionalIdentity(options.projectSlug, "Project slug"),
+    normalizeOptionalIdentity(options.branch, "Branch"),
+    assertBoundedIdentity(options.releaseId, "Release identity"),
+    assertBoundedIdentity(options.runtimeVersion, "Runtime version"),
+    normalizeOptionalIdentity(options.reactVersion, "React version"),
+    manifestVersion ?? null,
+    assertBoundedIdentity(options.modulePath, "Module path"),
+  ]);
+  if (encoder.encode(identity).byteLength > MAX_RELEASE_MODULE_IDENTITY_BYTES) {
+    throw new RangeError("Release module response cache identity exceeds its limit");
+  }
+  return `module-server-release-response:v2:${await computeHash(identity)}`;
 }
 
 export async function getReleaseModuleResponse(
@@ -136,8 +178,11 @@ export async function getReleaseModuleResponse(
     const raw = await distributedCache.get(cacheKey);
     if (!raw) return undefined;
 
-    const entry = parseDistributedEntry(raw);
-    if (!entry) return undefined;
+    const entry = await parseDistributedEntry(raw, cacheKey);
+    if (!entry) {
+      await distributedCache.del(cacheKey).catch(() => {});
+      return undefined;
+    }
 
     releaseModuleResponseCache.set(cacheKey, entry);
     return { entry, source: "distributed" };
@@ -150,15 +195,27 @@ export async function rememberReleaseModuleResponse(
   cacheKey: string,
   entry: ReleaseModuleResponseCacheEntry,
 ): Promise<void> {
-  releaseModuleResponseCache.set(cacheKey, entry);
+  const normalizedEntry = normalizeEntry(entry);
+  if (!normalizedEntry) throw new TypeError("Invalid release module response cache entry");
+  releaseModuleResponseCache.set(cacheKey, normalizedEntry);
 
   const distributedCache = await getDistributedCache();
   if (!distributedCache) return;
 
   try {
+    const payload: DistributedReleaseModuleResponseEntry = {
+      formatVersion: RELEASE_MODULE_RESPONSE_FORMAT_VERSION,
+      cacheKey,
+      bodyHash: await computeHash(normalizedEntry.body),
+      entry: normalizedEntry,
+    };
+    const serialized = JSON.stringify(payload);
+    if (encoder.encode(serialized).byteLength > MAX_RELEASE_MODULE_DISTRIBUTED_ENTRY_BYTES) {
+      throw new RangeError("Release module response distributed entry exceeds its limit");
+    }
     await distributedCache.set(
       cacheKey,
-      JSON.stringify(entry),
+      serialized,
       RELEASE_MODULE_RESPONSE_DISTRIBUTED_TTL_SEC,
     );
   } catch {

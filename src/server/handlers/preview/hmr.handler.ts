@@ -10,25 +10,26 @@ import {
 } from "../types.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isLocalDevHost } from "../../utils/domain-parser.ts";
 import {
   addClient,
   clearAll,
   getClient,
   getClientCount,
+  getClientCountForProject,
   getClientDetails,
   removeClient,
 } from "./hmr-client-manager.ts";
 import { handleHmrClientMessage } from "./hmr-client-message.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
-import { getEffectiveRequestHost } from "../../utils/request-host.ts";
 import { isProxyTrusted } from "../../utils/proxy-trust.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("hmr-handler");
 const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
+const DEFAULT_HMR_GLOBAL_CLIENT_LIMIT = 500;
+const DEFAULT_HMR_PROJECT_CLIENT_LIMIT = 50;
+const MAX_CONFIGURED_HMR_CLIENT_LIMIT = 100_000;
 
 // Re-export the interface so external consumers can still access it from this module
 export type { HMRClientInfo } from "./hmr-client-manager.ts";
@@ -40,10 +41,31 @@ function getMessageEventData(event: Event): unknown {
   return "data" in event ? (event as { data: unknown }).data : undefined;
 }
 
+function getHmrClientLimit(name: string, fallback: number): number {
+  const raw = getHostEnv(name);
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_CONFIGURED_HMR_CLIENT_LIMIT
+    ? parsed
+    : fallback;
+}
+
 export class HMRHandler extends BaseHandler {
   private static rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   private static reloadUnsubscribe: (() => void) | null = null;
-  private static externalBroadcastSourceCount = 0;
+  private static lifecycleOwners = new Set<object>();
+  private static externalBroadcastSources = new Set<object>();
+  private static reloadTaskTail: Promise<void> = Promise.resolve();
+  private static reloadGeneration = 0;
+  private static acceptingReloads = true;
+  private static shutdownState: {
+    readonly retiringTail: Promise<void>;
+    unsubscribeComplete: boolean;
+    tailDrained: boolean;
+    pingStopped: boolean;
+    clientsCleared: boolean;
+  } | null = null;
+  private static shutdownInFlight: Promise<void> | null = null;
   private static initialized = false;
 
   metadata: HandlerMetadata = {
@@ -53,13 +75,13 @@ export class HMRHandler extends BaseHandler {
     enabled: () => true,
   };
 
-  private static initialize(): void {
-    if (HMRHandler.initialized) return;
-    HMRHandler.initialized = true;
-
+  private static ensureReloadSubscription(): void {
+    if (HMRHandler.reloadUnsubscribe) return;
     logger.info("Subscribing to ReloadNotifier");
 
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
+      if (!HMRHandler.acceptingReloads) return;
+
       logger.debug("ReloadNotifier callback triggered", {
         changedPaths,
         projectSlug: project?.projectSlug,
@@ -67,22 +89,49 @@ export class HMRHandler extends BaseHandler {
       });
 
       const projectSlug = project?.projectSlug ?? "preview";
-      invalidateProjectCaches(projectSlug, changedPaths, {
-        projectId: project?.projectId,
-        environment: project?.environment,
-        branchId: project?.branch ?? undefined,
-      });
+      const generation = HMRHandler.reloadGeneration;
 
-      if (HMRHandler.externalBroadcastSourceCount > 0) {
-        logger.debug("Skipping handler broadcast - external source active", {
+      // Keep invalidate -> broadcast sequences ordered. A slow Redis purge for
+      // one change must not let a later reload overtake it and reach clients
+      // first. The tail always recovers so one unexpected failure cannot poison
+      // subsequent reloads.
+      HMRHandler.reloadTaskTail = HMRHandler.reloadTaskTail.then(async () => {
+        if (generation !== HMRHandler.reloadGeneration) return;
+        try {
+          await invalidateProjectCaches(projectSlug, changedPaths, {
+            projectId: project?.projectId,
+            projectDir: project?.projectDir,
+            environment: project?.environment,
+            branchId: project?.branch ?? undefined,
+            releaseId: project?.releaseId,
+            contentSourceId: project?.contentSourceId,
+          });
+        } catch (error) {
+          logger.error("Project cache invalidation failed before HMR broadcast", {
+            projectSlug: project?.projectSlug,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+          // A reload broadcast asserts that the server can serve fresh state.
+          // Preserve the recovered task tail, but fail closed for this change.
+          return;
+        }
+
+        if (generation !== HMRHandler.reloadGeneration) return;
+        broadcastUpdate(changedPaths, project);
+      }).catch((error) => {
+        logger.error("Unexpected HMR reload task failure", {
           projectSlug: project?.projectSlug,
-          externalBroadcastSourceCount: HMRHandler.externalBroadcastSourceCount,
+          errorName: error instanceof Error ? error.name : typeof error,
         });
-        return;
-      }
-
-      broadcastUpdate(changedPaths, project);
+      });
     });
+  }
+
+  private static initialize(): void {
+    if (HMRHandler.initialized) return;
+    HMRHandler.initialized = true;
+
+    HMRHandler.ensureReloadSubscription();
 
     startPingInterval();
 
@@ -96,49 +145,53 @@ export class HMRHandler extends BaseHandler {
 
     const url = new URL(req.url);
     const queryEnv = url.searchParams.get("x-environment");
-    const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
+    // Preview authorization comes only from the server-resolved context. The
+    // browser-controlled query parameter is retained for compatibility and
+    // diagnostics, but cannot promote a production request into HMR access.
+    const isPreviewMode = ctx.resolvedEnvironment === "preview" ||
+      ctx.requestContext?.mode === "preview";
     const isLocal = !!ctx.isLocalProject;
-    // SECURITY: x-forwarded-host is client-controlled unless we trust the upstream proxy.
-    // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
-    // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
-    // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
-    // Proxy trust requires a verifiable dispatch JWS (or operator opt-in). Mere header
-    // presence is not enough, since `x-veryfront-dispatch-jws` is not stripped on ingress.
     const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
       getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    const host = (await isProxyTrusted(req, { publicKeyPem }))
-      ? getEffectiveRequestHost(req, url, true)
-      : (req.headers.get("host") ?? url.host);
-    const isLocalhost = isLocalDevHost(host);
+    const proxyTrusted = await isProxyTrusted(req, { publicKeyPem });
+    const hasCallerSuppliedProjectScope = [
+      "x-project-slug",
+      "x-project-id",
+      "x-branch-id",
+      "x-content-source-id",
+      "x-release-id",
+    ].some((header) => req.headers.has(header) || url.searchParams.has(header));
 
-    if (!isPreviewMode && !isLocal && !isLocalhost) {
-      logger.warn("Skipping /_ws - not preview, local dev, or localhost", {
+    if (
+      (!isLocal && !isPreviewMode) ||
+      (!isLocal && hasCallerSuppliedProjectScope && !proxyTrusted)
+    ) {
+      logger.warn("Skipping unauthorized /_ws request", {
         mode: ctx.requestContext?.mode,
+        resolvedEnvironment: ctx.resolvedEnvironment,
         queryEnv,
         isLocalProject: ctx.isLocalProject,
-        host,
         isPreviewMode,
-        isLocal,
-        isLocalhost,
+        proxyTrusted,
+        hasCallerSuppliedProjectScope,
       });
       return this.continue();
     }
 
-    HMRHandler.initialize();
-
-    // In proxy mode, ensure the adapter is initialized so WebSocketManager connects
-    // to receive poke notifications. Without this, pokes from API are never received
-    // because adapters are lazily created only when page requests come in.
-    if (ctx.projectSlug && ctx.proxyToken && ctx.adapter?.fs) {
-      this.ensureAdapterInitialized(ctx).catch((error) => {
-        logger.warn("Failed to ensure adapter initialization", {
-          projectSlug: ctx.projectSlug,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+    const clientProjectSlug = ctx.projectSlug?.trim() || undefined;
+    if (!isLocal && !clientProjectSlug) {
+      return this.respond(new Response("Preview HMR requires a resolved project", { status: 400 }));
     }
 
+    HMRHandler.initialize();
+
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      if (!isLocal) {
+        return this.respond(new Response("WebSocket upgrade required", {
+          status: 426,
+          headers: { "cache-control": "no-store" },
+        }));
+      }
       return this.respond(
         new Response(
           JSON.stringify({
@@ -160,6 +213,31 @@ export class HMRHandler extends BaseHandler {
       return this.respond(new Response("WebSocket not supported", { status: 501 }));
     }
 
+    const globalClientLimit = getHmrClientLimit(
+      "VERYFRONT_HMR_MAX_CLIENTS",
+      DEFAULT_HMR_GLOBAL_CLIENT_LIMIT,
+    );
+    const projectClientLimit = getHmrClientLimit(
+      "VERYFRONT_HMR_MAX_CLIENTS_PER_PROJECT",
+      DEFAULT_HMR_PROJECT_CLIENT_LIMIT,
+    );
+    if (
+      getClientCount() >= globalClientLimit ||
+      getClientCountForProject(clientProjectSlug) >= projectClientLimit
+    ) {
+      logger.warn("Rejecting HMR WebSocket connection at capacity", {
+        projectSlug: clientProjectSlug,
+        globalClients: getClientCount(),
+        projectClients: getClientCountForProject(clientProjectSlug),
+        globalClientLimit,
+        projectClientLimit,
+      });
+      return this.respond(new Response("HMR connection capacity reached", {
+        status: 503,
+        headers: { "retry-after": "5", "cache-control": "no-store" },
+      }));
+    }
+
     try {
       const { socket, response } = ctx.adapter.server.upgradeWebSocket(
         req,
@@ -167,13 +245,13 @@ export class HMRHandler extends BaseHandler {
       );
 
       const now = Date.now();
-      const clientId = crypto.randomUUID().slice(0, 8);
+      const clientId = crypto.randomUUID();
 
       addClient({
         id: clientId,
         socket,
         connectedAt: now,
-        projectSlug: ctx.projectSlug,
+        projectSlug: clientProjectSlug,
         userAgent: req.headers.get("user-agent") ?? undefined,
         lastActivity: now,
       });
@@ -234,51 +312,6 @@ export class HMRHandler extends BaseHandler {
     }
   }
 
-  /**
-   * Ensure the adapter is initialized so WebSocketManager connects to receive pokes.
-   * In proxy mode, adapters are lazily created per-project. If no page request has been
-   * made for the project yet, the WebSocketManager won't be connected and pokes from
-   * the API will never be received.
-   */
-  private async ensureAdapterInitialized(ctx: HandlerContext): Promise<void> {
-    const { projectSlug, proxyToken, adapter, resolvedEnvironment } = ctx;
-    if (!projectSlug || !proxyToken || !adapter?.fs) return;
-
-    const fs = adapter.fs;
-    if (!isExtendedFSAdapter(fs) || !fs.runWithContext) return;
-
-    const isPreview = resolvedEnvironment === "preview";
-    if (!isPreview) return;
-
-    logger.debug("Ensuring adapter initialized for preview HMR", {
-      projectSlug,
-      resolvedEnvironment,
-    });
-
-    try {
-      await fs.runWithContext(
-        projectSlug,
-        proxyToken,
-        async () => {
-          await fs.exists("veryfront.config.ts");
-          logger.info("Adapter initialized for poke reception", {
-            projectSlug,
-          });
-        },
-        ctx.projectId,
-        {
-          productionMode: false,
-          branch: ctx.requestContext?.branch ?? "main",
-        },
-      );
-    } catch (error) {
-      logger.warn("Adapter initialization failed (pokes may not be received)", {
-        projectSlug,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   static getClientCount(): number {
     return getClientCount();
   }
@@ -292,28 +325,134 @@ export class HMRHandler extends BaseHandler {
     return getMetrics();
   }
 
-  static registerExternalBroadcastSource(): () => void {
-    HMRHandler.externalBroadcastSourceCount++;
+  static registerExternalBroadcastSource(): () => Promise<void> {
+    const registration = {};
+    HMRHandler.externalBroadcastSources.add(registration);
+    const releaseLifecycleOwner = HMRHandler.registerLifecycleOwner();
+    // External sources (notably DevServer) are registered before the first
+    // WebSocket request, so eagerly install the one reload listener that owns
+    // invalidate -> broadcast ordering.
+    HMRHandler.ensureReloadSubscription();
 
+    let released = false;
+    let releaseInFlight: Promise<void> | null = null;
     return () => {
-      HMRHandler.externalBroadcastSourceCount = Math.max(
-        0,
-        HMRHandler.externalBroadcastSourceCount - 1,
-      );
+      if (released) return Promise.resolve();
+      if (releaseInFlight) return releaseInFlight;
+
+      const attempt = (async () => {
+        if (!HMRHandler.externalBroadcastSources.has(registration)) {
+          released = true;
+          return;
+        }
+        await releaseLifecycleOwner();
+        HMRHandler.externalBroadcastSources.delete(registration);
+        released = true;
+      })();
+      const trackedAttempt = attempt.finally(() => {
+        if (releaseInFlight === trackedAttempt) releaseInFlight = null;
+      });
+      releaseInFlight = trackedAttempt;
+      return trackedAttempt;
     };
   }
 
-  static shutdown(): void {
-    HMRHandler.reloadUnsubscribe?.();
-    HMRHandler.reloadUnsubscribe = null;
+  /**
+   * Retain the process-global HMR state for one live server generation.
+   * Generic owners do not change project filtering and only install the reload
+   * listener if an HMR request actually initializes the handler.
+   */
+  static registerLifecycleOwner(): () => Promise<void> {
+    if (HMRHandler.shutdownState) {
+      throw new Error("Cannot register an HMR lifecycle owner while shutdown is incomplete");
+    }
+    const owner = {};
+    HMRHandler.lifecycleOwners.add(owner);
+    let released = false;
+    let releaseInFlight: Promise<void> | null = null;
+    return () => {
+      if (released) return Promise.resolve();
+      if (releaseInFlight) return releaseInFlight;
 
-    stopPingInterval();
-    clearAll();
-    HMRHandler.rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
-    HMRHandler.externalBroadcastSourceCount = 0;
+      const attempt = (async () => {
+        if (!HMRHandler.lifecycleOwners.has(owner)) {
+          released = true;
+          return;
+        }
+        if (HMRHandler.lifecycleOwners.size === 1) {
+          // Keep the last ownership token until every global shutdown phase has
+          // succeeded. If unsubscribe or another cleanup hook throws, the same
+          // release function remains retryable and no replacement can assume the
+          // globals are gone.
+          await HMRHandler.shutdown();
+        } else {
+          HMRHandler.lifecycleOwners.delete(owner);
+        }
+        released = true;
+      })();
+      const trackedAttempt = attempt.finally(() => {
+        if (releaseInFlight === trackedAttempt) releaseInFlight = null;
+      });
+      releaseInFlight = trackedAttempt;
+      return trackedAttempt;
+    };
+  }
 
-    HMRHandler.initialized = false;
+  static shutdown(): Promise<void> {
+    if (HMRHandler.shutdownInFlight) return HMRHandler.shutdownInFlight;
 
-    logger.debug("Shutdown complete");
+    if (!HMRHandler.shutdownState) {
+      // Reject newly emitted reload work immediately, and invalidate the
+      // generation captured by every queued task before waiting for the tail.
+      // This prevents an old generation from broadcasting after shutdown has
+      // started while still allowing an in-flight cache purge to finish safely.
+      HMRHandler.acceptingReloads = false;
+      HMRHandler.reloadGeneration++;
+      HMRHandler.shutdownState = {
+        retiringTail: HMRHandler.reloadTaskTail,
+        unsubscribeComplete: false,
+        tailDrained: false,
+        pingStopped: false,
+        clientsCleared: false,
+      };
+    }
+
+    const state = HMRHandler.shutdownState;
+    const attempt = (async () => {
+      if (!state.unsubscribeComplete) {
+        HMRHandler.reloadUnsubscribe?.();
+        HMRHandler.reloadUnsubscribe = null;
+        state.unsubscribeComplete = true;
+      }
+
+      if (!state.tailDrained) {
+        await state.retiringTail;
+        state.tailDrained = true;
+      }
+
+      if (!state.pingStopped) {
+        stopPingInterval();
+        state.pingStopped = true;
+      }
+      if (!state.clientsCleared) {
+        clearAll();
+        state.clientsCleared = true;
+      }
+
+      HMRHandler.rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
+      HMRHandler.lifecycleOwners.clear();
+      HMRHandler.externalBroadcastSources.clear();
+      HMRHandler.reloadTaskTail = Promise.resolve();
+      HMRHandler.initialized = false;
+      HMRHandler.shutdownState = null;
+      HMRHandler.acceptingReloads = true;
+
+      logger.debug("Shutdown complete");
+    })();
+    const trackedAttempt = attempt.finally(() => {
+      if (HMRHandler.shutdownInFlight === trackedAttempt) HMRHandler.shutdownInFlight = null;
+    });
+    HMRHandler.shutdownInFlight = trackedAttempt;
+    return trackedAttempt;
   }
 }

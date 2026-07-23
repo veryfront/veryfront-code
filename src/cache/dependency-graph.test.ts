@@ -21,6 +21,18 @@ describe("DependencyGraph", () => {
       const graph = new DependencyGraph();
       expect(graph.getDirectDependencies("/unknown.ts")).toEqual([]);
     });
+
+    it("drops empty reverse-edge sets when a module replaces its dependencies", () => {
+      const graph = new DependencyGraph();
+      graph.addModule("/entry.ts", ["/old.ts"]);
+      graph.addModule("/entry.ts", ["/new.ts"]);
+
+      const internals = graph as unknown as {
+        dependents: Map<string, Set<string>>;
+      };
+      expect(internals.dependents.has("/old.ts")).toBe(false);
+      expect(internals.dependents.get("/new.ts")).toEqual(new Set(["/entry.ts"]));
+    });
   });
 
   describe("getTransitiveDependencies", () => {
@@ -175,6 +187,22 @@ describe("filterLocalImports", () => {
     expect(local).not.toContain("#veryfront/react/head-collector.ts");
     expect(local).toContain("@/components/Button.tsx");
   });
+
+  it("prefers a matching scoped prefix over a longer global prefix", () => {
+    const local = filterLocalImports(
+      ["pkg/deep/value.ts"],
+      {
+        imports: {
+          "pkg/deep/value.ts": "./global-exact.ts",
+          "pkg/deep/": "./global/",
+        },
+        scopes: { "/project/scoped/": { "pkg/": "./scoped/" } },
+      },
+      "/project/scoped/page.ts",
+    );
+
+    expect(local).toEqual(["./scoped/deep/value.ts"]);
+  });
 });
 
 describe("normalizeSpecifierToPath", () => {
@@ -211,18 +239,18 @@ describe("normalizeSpecifierToPath", () => {
       "/project/pages/index.tsx",
       "/project",
     );
-    expect(result).toBe("/absolute/path.js");
+    expect(result).toBe("/absolute/path.tsx");
   });
 
-  it("should normalize extensions to .js", () => {
+  it("preserves source extensions for dependency reads", () => {
     expect(
       normalizeSpecifierToPath("@/Button.tsx", "/project/pages/index.tsx", "/project"),
-    ).toMatch(/\.js$/);
+    ).toBe("/project/Button.tsx");
     expect(
       normalizeSpecifierToPath("@/Button.ts", "/project/pages/index.tsx", "/project"),
-    ).toMatch(/\.js$/);
+    ).toBe("/project/Button.ts");
     expect(
       normalizeSpecifierToPath("@/Button.jsx", "/project/pages/index.tsx", "/project"),
-    ).toMatch(/\.js$/);
+    ).toBe("/project/Button.jsx");
   });
 });

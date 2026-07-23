@@ -1,5 +1,5 @@
 import { isAbsolute, normalize } from "#veryfront/compat/path/resolution.ts";
-import { base64urlEncode } from "./base64url.ts";
+import { base64urlDecodeBytes, base64urlEncode } from "./base64url.ts";
 import { logger } from "./logger/logger.ts";
 
 function stripTrailingSlash(pathname: string): string {
@@ -33,7 +33,8 @@ export function isWithinDirectory(root: string, target: string): boolean {
  */
 export function getExtension(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) return "";
+  const lastSeparator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (lastDot <= lastSeparator || lastDot === path.length - 1) return "";
   return path.slice(lastDot);
 }
 
@@ -43,7 +44,8 @@ export function getExtension(path: string): string {
  */
 export function getExtensionName(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) return "";
+  const lastSeparator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (lastDot <= lastSeparator || lastDot === path.length - 1) return "";
   return path.slice(lastDot + 1).toLowerCase();
 }
 
@@ -78,27 +80,14 @@ export function toBase64Url(input: string): string {
   return base64urlEncode(input);
 }
 
-function getRequiredBase64Padding(length: number): string | undefined {
-  const remainder = length % 4;
-  if (remainder === 0) return "";
-  if (remainder === 2) return "==";
-  if (remainder === 3) return "=";
-  return undefined;
-}
-
 export function fromBase64Url(encoded: string): string {
-  const b64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
-  const padding = getRequiredBase64Padding(b64.length);
-
-  if (padding === undefined) {
-    logger.debug(`Failed to decode base64url string "${encoded}": invalid length`);
-    return "";
-  }
+  const bytes = base64urlDecodeBytes(encoded);
+  if (!bytes) return "";
 
   try {
-    return atob(b64 + padding);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (error) {
-    logger.debug(`Failed to decode base64url string "${encoded}":`, error);
+    logger.debug("Failed to decode base64url string as UTF-8", { error });
     return "";
   }
 }
@@ -139,7 +128,7 @@ const FRAMEWORK_SOURCE_PATH_RE = new RegExp(
  * Framework paths can appear in two forms:
  * 1. "_veryfront/..." - original framework module path prefix
  * 2. "src/react/...", "src/platform/...", etc. - framework source paths
- *    (after FSAdapter normalizes absolute paths like /Users/.../veryfront-server/src/...)
+ *    (after FSAdapter normalizes absolute paths like /opt/veryfront/src/...)
  */
 export function isFrameworkSourcePath(normalizedPath: string): boolean {
   // Check for _veryfront/ prefix (with or without embedded: prefix)

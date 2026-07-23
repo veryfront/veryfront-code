@@ -40,12 +40,15 @@ describe("veryfront adapter helpers", () => {
   });
 
   it("builds file cache options with overrides", () => {
-    assertEquals(buildFileCacheOptions({ enabled: false, ttl: 5000 }), {
-      enabled: false,
-      ttl: 5000,
-      maxSize: DEFAULT_CACHE_MAX_ENTRIES,
-      maxMemory: DEFAULT_CACHE_MAX_MEMORY_BYTES,
-    });
+    assertEquals(
+      buildFileCacheOptions({ enabled: false, ttl: 5000, maxSize: 25, maxMemory: 4096 }),
+      {
+        enabled: false,
+        ttl: 5000,
+        maxSize: 25,
+        maxMemory: 4096,
+      },
+    );
   });
 
   it("only background-pregenerates styles outside branch mode", () => {

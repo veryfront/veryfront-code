@@ -1,14 +1,4 @@
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
+import { fetchOAuthJson } from "./oauth.ts";
 
 const BITBUCKET_API_BASE = "https://api.bitbucket.org/2.0";
 
@@ -77,7 +67,15 @@ export interface Issue {
   content: {
     raw: string;
   } | null;
-  state: "new" | "open" | "resolved" | "on hold" | "invalid" | "duplicate" | "wontfix" | "closed";
+  state:
+    | "new"
+    | "open"
+    | "resolved"
+    | "on hold"
+    | "invalid"
+    | "duplicate"
+    | "wontfix"
+    | "closed";
   kind: "bug" | "enhancement" | "proposal" | "task";
   priority: "trivial" | "minor" | "major" | "critical" | "blocker";
   created_on: string;
@@ -95,16 +93,6 @@ export interface Issue {
   };
 }
 
-export const bitbucketOAuthProvider = {
-  name: "bitbucket",
-  authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
-  tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
-  clientId: getEnv("BITBUCKET_CLIENT_ID") ?? "",
-  clientSecret: getEnv("BITBUCKET_CLIENT_SECRET") ?? "",
-  scopes: ["repository", "pullrequest", "issue", "account"],
-  callbackPath: "/api/auth/bitbucket/callback",
-};
-
 function buildQuery(params: URLSearchParams): string {
   const query = params.toString();
   return query ? `?${query}` : "";
@@ -112,14 +100,23 @@ function buildQuery(params: URLSearchParams): string {
 
 export function createBitbucketClient(userId: string): {
   getCurrentUser(): Promise<BitbucketUser>;
-  listRepositories(options?: { role?: "owner" | "contributor" | "member"; perPage?: number }): Promise<Repository[]>;
+  listRepositories(
+    options?: { role?: "owner" | "contributor" | "member"; perPage?: number },
+  ): Promise<Repository[]>;
   getRepository(workspace: string, repoSlug: string): Promise<Repository>;
   listPullRequests(
     workspace: string,
     repoSlug: string,
-    options?: { state?: "OPEN" | "MERGED" | "DECLINED" | "SUPERSEDED"; perPage?: number },
+    options?: {
+      state?: "OPEN" | "MERGED" | "DECLINED" | "SUPERSEDED";
+      perPage?: number;
+    },
   ): Promise<PullRequest[]>;
-  getPullRequest(workspace: string, repoSlug: string, pullRequestId: number): Promise<PullRequest>;
+  getPullRequest(
+    workspace: string,
+    repoSlug: string,
+    pullRequestId: number,
+  ): Promise<PullRequest>;
   createPullRequest(
     workspace: string,
     repoSlug: string,
@@ -160,31 +157,23 @@ export function createBitbucketClient(userId: string): {
     },
   ): Promise<Issue>;
 } {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(bitbucketOAuthProvider, userId, "bitbucket");
-    if (!token) throw new Error("Bitbucket not connected. Please connect your Bitbucket account first.");
-    return token;
-  }
-
-  async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${BITBUCKET_API_BASE}${endpoint}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...options.headers,
+  function apiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    return fetchOAuthJson<T>(
+      userId,
+      "bitbucket",
+      `${BITBUCKET_API_BASE}${endpoint}`,
+      {
+        ...options,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
       },
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Bitbucket API error: ${response.status} - ${error}`);
-    }
-
-    return response.json();
+    );
   }
 
   return {
@@ -202,7 +191,9 @@ export function createBitbucketClient(userId: string): {
       if (options.role) params.set("role", options.role);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const { values } = await apiRequest<{ values: Repository[] }>(`/repositories${buildQuery(params)}`);
+      const { values } = await apiRequest<{ values: Repository[] }>(
+        `/repositories${buildQuery(params)}`,
+      );
       return values;
     },
 
@@ -223,13 +214,21 @@ export function createBitbucketClient(userId: string): {
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
       const { values } = await apiRequest<{ values: PullRequest[] }>(
-        `/repositories/${workspace}/${repoSlug}/pullrequests${buildQuery(params)}`,
+        `/repositories/${workspace}/${repoSlug}/pullrequests${
+          buildQuery(params)
+        }`,
       );
       return values;
     },
 
-    getPullRequest(workspace: string, repoSlug: string, pullRequestId: number): Promise<PullRequest> {
-      return apiRequest(`/repositories/${workspace}/${repoSlug}/pullrequests/${pullRequestId}`);
+    getPullRequest(
+      workspace: string,
+      repoSlug: string,
+      pullRequestId: number,
+    ): Promise<PullRequest> {
+      return apiRequest(
+        `/repositories/${workspace}/${repoSlug}/pullrequests/${pullRequestId}`,
+      );
     },
 
     createPullRequest(
@@ -299,7 +298,9 @@ export function createBitbucketClient(userId: string): {
         method: "POST",
         body: JSON.stringify({
           title: options.title,
-          content: options.description ? { raw: options.description } : undefined,
+          content: options.description
+            ? { raw: options.description }
+            : undefined,
           kind: options.kind ?? "bug",
           priority: options.priority ?? "major",
         }),

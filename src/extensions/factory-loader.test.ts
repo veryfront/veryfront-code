@@ -103,6 +103,20 @@ describe("loadExtensionFactory()", () => {
     );
   });
 
+  it("rejects an invalid factory result before source merging", async () => {
+    const path = join(tmp, "invalid-result.extension.ts");
+    await Deno.writeTextFile(
+      path,
+      "export default () => null;",
+    );
+
+    await assertRejects(
+      () => loadExtensionFactory(path, "local-file"),
+      Error,
+      "returned an invalid extension",
+    );
+  });
+
   it("throws EXTENSION_VALIDATION_ERROR when import fails (missing file)", async () => {
     const path = join(tmp, "does-not-exist.extension.ts");
 

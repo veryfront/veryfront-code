@@ -1,31 +1,33 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCalendarClient } from "../../lib/calendar-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createCalendarClient } from "../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type FreeSlot = { start: Date; end: Date };
 
 export default tool({
   id: "find-free-time",
   description: "Find available time slots in the calendar for scheduling",
-  inputSchema: defineSchema((v) => v.object({
-    durationMinutes: v
-      .number()
-      .min(15)
-      .max(480)
-      .default(60)
-      .describe("Duration needed in minutes"),
-    daysToSearch: v
-      .number()
-      .min(1)
-      .max(14)
-      .default(7)
-      .describe("Number of days to search ahead"),
-    workingHoursOnly: v
-      .boolean()
-      .default(true)
-      .describe("Only show slots during working hours (9 AM - 6 PM)"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      durationMinutes: v
+        .number()
+        .min(15)
+        .max(480)
+        .default(60)
+        .describe("Duration needed in minutes"),
+      daysToSearch: v
+        .number()
+        .min(1)
+        .max(14)
+        .default(7)
+        .describe("Number of days to search ahead"),
+      workingHoursOnly: v
+        .boolean()
+        .default(true)
+        .describe("Only show slots during working hours (9 AM - 6 PM)"),
+    })
+  )(),
   execute: async (
     { durationMinutes, daysToSearch, workingHoursOnly },
     context,
@@ -47,10 +49,10 @@ export default tool({
 
       const slots = workingHoursOnly
         ? freeSlots.filter(({ start, end }) => {
-            const startHour = start.getHours();
-            const endHour = end.getHours();
-            return startHour >= 9 && endHour <= 18;
-          })
+          const startHour = start.getHours();
+          const endHour = end.getHours();
+          return startHour >= 9 && endHour <= 18;
+        })
         : freeSlots;
 
       const formattedSlots = slots.slice(0, 10).map(({ start, end }) => {
@@ -65,13 +67,17 @@ export default tool({
             month: "short",
             day: "numeric",
           }),
-          timeRange: `${start.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-          })} - ${end.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-          })}`,
+          timeRange: `${
+            start.toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+            })
+          } - ${
+            end.toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+            })
+          }`,
         };
       });
 
@@ -85,10 +91,9 @@ export default tool({
           daysToSearch,
           workingHoursOnly,
         },
-        message:
-          count > 0
-            ? `Found ${count} available slot(s) of ${durationMinutes} minutes or more.`
-            : `No free slots of ${durationMinutes} minutes found in the next ${daysToSearch} days.`,
+        message: count > 0
+          ? `Found ${count} available slot(s) of ${durationMinutes} minutes or more.`
+          : `No free slots of ${durationMinutes} minutes found in the next ${daysToSearch} days.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

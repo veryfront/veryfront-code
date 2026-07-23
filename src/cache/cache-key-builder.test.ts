@@ -20,14 +20,14 @@ describe("cache-key-builder", () => {
     it("should build key without suffix", () => {
       assertEquals(
         getContentHashKey("prefix", "pages/index.tsx", "abc123"),
-        "prefix:pages/index.tsx:abc123",
+        "content-hash:v2:InByZWZpeCI:InBhZ2VzL2luZGV4LnRzeCI:ImFiYzEyMyI:Im5vbmUi",
       );
     });
 
     it("should build key with suffix", () => {
       assertEquals(
         getContentHashKey("prefix", "pages/index.tsx", "abc123", "ssr"),
-        "prefix:pages/index.tsx:abc123:ssr",
+        "content-hash:v2:InByZWZpeCI:InBhZ2VzL2luZGV4LnRzeCI:ImFiYzEyMyI:InZhbHVlOnNzciI",
       );
     });
   });

@@ -7,6 +7,7 @@ import type {
   WatchOptions,
 } from "../base.ts";
 import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
+import type { RequestTokenProvenance } from "./veryfront/request-context.ts";
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getUnderlyingAdapter(): FSAdapter;
@@ -30,6 +31,7 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenProvenance?: RequestTokenProvenance;
     },
   ): Promise<T>;
   readFileBytes(path: string): Promise<Uint8Array>;
@@ -160,6 +162,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenProvenance?: RequestTokenProvenance;
     },
   ): Promise<T> {
     return this.requireContextualMethod("runWithContext", "runWithContext")(

@@ -8,15 +8,15 @@
  * @module build/transforms/mdx/esm-module-loader/loader-helpers
  */
 
-import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { exists as fsExists } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
+import { getMdxEsmSsrCacheDir } from "./cache-paths.ts";
+import { hashString } from "./utils/hash.ts";
 import { createStubModule } from "./utils/stub-module.ts";
 import {
   findStaticImportFromSpans,
@@ -78,11 +78,9 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
   }
 
   const localFs = getLocalFs();
-  const baseCacheDir = getMdxEsmCacheDir();
-  // Use projectId consistently for stable cache keys (won't change if slug is renamed)
-  const projectKey = encodeURIComponent(context.projectId);
-  const sourceKey = encodeURIComponent(context.contentSourceId);
-  const persistentCacheDir = join(baseCacheDir, projectKey, sourceKey);
+  // Full SHA-256 path components provide stable tenant isolation without raw
+  // identifier path traversal or 32-bit hash collisions.
+  const persistentCacheDir = getMdxEsmSsrCacheDir(context.projectId, context.contentSourceId);
 
   try {
     await localFs.mkdir(persistentCacheDir, { recursive: true });
@@ -91,7 +89,8 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
     return persistentCacheDir;
   } catch (_) {
     /* expected: persistent cache dir may not be writable, fall through to temp dir */
-    const tempDir = await localFs.makeTempDir({ prefix: `veryfront-mdx-esm-${projectKey}-` });
+    const tenantKey = hashString(`${context.projectId}\0${context.contentSourceId}`).slice(0, 16);
+    const tempDir = await localFs.makeTempDir({ prefix: `veryfront-mdx-esm-${tenantKey}-` });
     context.esmCacheDir = tempDir;
     return tempDir;
   }

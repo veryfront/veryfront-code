@@ -2,8 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  bindRequestTokenToProject,
   createRequestContext,
   getCacheStrategy,
+  getRequestTokenProvenance,
   type RequestContext,
   shouldEnableCache,
   shouldUseNoCacheHeaders,
@@ -224,6 +226,70 @@ describe("createRequestContext", () => {
       });
       const ctx = createRequestContext(req);
       assertEquals(ctx.token, "my-secret-token");
+      assertEquals(ctx.tokenSource, "request-header");
+      assertEquals(ctx.tokenProvenance, "untrusted");
+    });
+
+    it("promotes a trusted request token only after resolving a concrete project", () => {
+      const ctx = createRequestContext(
+        makeRequest("https://example.com/page", { "x-token": "project-token" }),
+        { proxyTrusted: true },
+      );
+
+      const bound = bindRequestTokenToProject(ctx, {
+        proxyTrusted: true,
+        projectSlug: "project-a",
+      });
+
+      assertEquals(bound.tokenProvenance, "project-bound");
+      assertEquals(getRequestTokenProvenance(bound, "project-token"), "project-bound");
+    });
+
+    it("does not bind a request token without proxy trust or a resolved project", () => {
+      const ctx = createRequestContext(
+        makeRequest("https://example.com/page", { "x-token": "project-token" }),
+      );
+
+      assertEquals(
+        bindRequestTokenToProject(ctx, { proxyTrusted: false, projectSlug: "project-a" })
+          .tokenProvenance,
+        "untrusted",
+      );
+      assertEquals(
+        bindRequestTokenToProject(ctx, { proxyTrusted: true }).tokenProvenance,
+        "untrusted",
+      );
+    });
+
+    it("keeps host fallback credentials untrusted", () => {
+      const previous = Deno.env.get("VERYFRONT_API_TOKEN");
+      Deno.env.set("VERYFRONT_API_TOKEN", "host-token");
+      try {
+        const ctx = createRequestContext(makeRequest("https://example.com/page"), {
+          proxyTrusted: true,
+        });
+        const bound = bindRequestTokenToProject(ctx, {
+          proxyTrusted: true,
+          projectSlug: "project-a",
+        });
+
+        assertEquals(bound.tokenSource, "host-env");
+        assertEquals(bound.tokenProvenance, "untrusted");
+      } finally {
+        if (previous === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+        else Deno.env.set("VERYFRONT_API_TOKEN", previous);
+      }
+    });
+
+    it("fails closed when a bound request context is paired with a substituted token", () => {
+      const ctx = bindRequestTokenToProject(
+        createRequestContext(
+          makeRequest("https://example.com/page", { "x-token": "project-token" }),
+        ),
+        { proxyTrusted: true, projectSlug: "project-a" },
+      );
+
+      assertEquals(getRequestTokenProvenance(ctx, "different-token"), "untrusted");
     });
 
     it("reads x-project-slug from headers", () => {

@@ -9,6 +9,8 @@
 
 import { join } from "@std/path";
 import type { Capability, PackageContractMetadata, ResolvedExtension } from "./types.ts";
+import { EXTENSION_CONFLICT_ERROR } from "./errors.ts";
+import { SOURCE_PRIORITY } from "./validation.ts";
 
 /**
  * Metadata extracted from a package.json that declares itself
@@ -86,7 +88,8 @@ export function parsePackageMetadata(
  * Merge extensions from all four sources in priority order.
  *
  * Priority (highest first): config > package > project > local-file.
- * Duplicates are resolved by keeping the highest-priority entry.
+ * Duplicates from different priorities keep the highest-priority entry.
+ * Distinct duplicates at the same priority are rejected as ambiguous.
  * Disable directives (`{ name, enabled: false }`) remove matching
  * extensions regardless of source.
  */
@@ -104,9 +107,9 @@ export function mergeExtensions(
 
   const seen = new Map<string, ResolvedExtension>();
 
-  // Process sources in priority order -- first write wins.
-  // Builtin extensions have the lowest priority so project/package/config
-  // extensions can override them.
+  // Process every source in deterministic order. Distinct extensions at equal
+  // priority are ambiguous and must not be silently hidden before the
+  // lifecycle loader can validate them.
   const ordered: ResolvedExtension[] = [
     ...config,
     ...packages,
@@ -118,8 +121,23 @@ export function mergeExtensions(
   for (const resolved of ordered) {
     const name = resolved.extension.name;
     if (disabledNames.has(name)) continue;
-    if (!seen.has(name)) {
+    const current = seen.get(name);
+    if (!current) {
       seen.set(name, resolved);
+      continue;
+    }
+
+    const candidatePriority = SOURCE_PRIORITY[resolved.source];
+    const currentPriority = SOURCE_PRIORITY[current.source];
+    if (candidatePriority < currentPriority) {
+      seen.set(name, resolved);
+    } else if (
+      candidatePriority === currentPriority &&
+      current.extension !== resolved.extension
+    ) {
+      throw EXTENSION_CONFLICT_ERROR.create({
+        message: `Duplicate extension name "${name}" from source "${resolved.source}"`,
+      });
     }
   }
 

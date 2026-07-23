@@ -61,21 +61,24 @@ export default defineConfig({
 
 Omitting `integrations` applies no source-level restriction. An empty
 `integrations.allow` map denies every integration tool while leaving local
-project tools unchanged. A listed integration with no `allowedTools` value
-keeps all of its tools eligible; an empty array keeps none. Integration keys
-must be canonical connector names, and tool entries are exact connector-local
-IDs. The `integration__tool` namespace is reserved for integration tools, so
-restricted runs treat every name in that namespace as an integration even when
-the running framework build does not yet know its connector.
+project tools unchanged. A listed integration with no `allowedTools` value keeps
+all of its tools eligible; an empty array keeps none. Integration keys must be
+canonical connector names, and tool entries are exact connector-local IDs. The
+`integration__tool` namespace is reserved for integration tools, so restricted
+runs treat every name in that namespace as an integration even when the running
+framework build does not yet know its connector.
 
 This policy is source-qualified and monotonic. The runtime loads it from the
 same branch, release, or environment as the agent and intersects it with the
-agent declaration, connector catalog, and control-plane policy. It cannot
+agent declaration, connector catalog, and control-plane policy.
+
+Source configuration only narrows existing capabilities and therefore cannot
 enable an integration, select a credential scope, create a connection, or
 override a control-plane restriction. The removed `scope`, `perUser`, and
 `tools` fields are rejected rather than normalized or silently ignored. Source
-policy intentionally has no credential, provider-configuration, or execution-mode
-fields because those values do not have a generic monotonic merge rule.
+policy intentionally has no credential, provider-configuration, or
+execution-mode fields because those values do not have a generic monotonic merge
+rule.
 
 The project runtime establishes this restriction once per request. Direct
 `agent.generate`, `agent.stream`, and `agent.respond` calls made by project
@@ -86,15 +89,16 @@ project runtime has no project source configuration to load.
 
 ## Project policy and connection state
 
-Project integration policy is an optional control-plane guardrail. Use Studio
-or the integration policy API when a project must restrict an integration to a
+Project integration policy is an optional control-plane guardrail. Use Studio or
+the integration policy API when a project must restrict an integration to a
 scope or tool subset. An absent policy means there is no extra project-level
 override. Deleting a policy returns it to that absent state.
 
 These are four independent contracts:
 
 - Agent source controls which tools belong to an agent.
-- Source configuration can narrow integrations and tools for an exact source target.
+- Source configuration can narrow integrations and tools for an exact source
+  target.
 - Project policy can narrow scope, tools, configuration, or execution mode.
 - Connection inventory records which project or user has authenticated.
 
@@ -108,7 +112,8 @@ When an agent calls an OAuth integration tool and no valid connection exists:
 1. The tool returns an `authentication_required` result with a connect URL.
 2. The agent surfaces the connect action to the user.
 3. The user completes provider consent and the OAuth callback.
-4. The control plane stores the connection for the selected project or user scope.
+4. The control plane stores the connection for the selected project or user
+   scope.
 5. The run retries the tool with the new connection.
 6. Later calls reuse or refresh that connection according to provider policy.
 
@@ -131,9 +136,8 @@ overrides and reports whether managed OAuth is available.
 
 ### Credential-based integrations
 
-Some connectors use static credentials instead of interactive OAuth. Store
-those credentials in project environment variables named by the connector
-metadata:
+Some connectors use static credentials instead of interactive OAuth. Store those
+credentials in project environment variables named by the connector metadata:
 
 ```bash
 STRIPE_SECRET_KEY=<STRIPE_SECRET_KEY>
@@ -152,8 +156,8 @@ The built-in connector catalog contains 204 connectors. The supported set is
 visible by default in the CLI, MCP catalog tools, and runtime connector list:
 
 `airtable`, `asana`, `calendar`, `confluence`, `docs-google`, `drive`, `figma`,
-`github`, `gitlab`, `gmail`, `harvest`, `hubspot`, `jira`, `linear`, `notion`,
-`onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`, and `teams`.
+`github`, `gitlab`, `gmail`, `jira`, `linear`, `notion`, `onedrive`, `outlook`,
+`sentry`, `sharepoint`, `sheets`, `slack`, and `teams`.
 
 The rest of the catalog ships as feature-gated integrations: the connector
 templates are in the source tree but stay hidden until you expose them with the

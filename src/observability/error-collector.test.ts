@@ -5,6 +5,28 @@ import { ErrorCollector, parseCompileError } from "./error-collector.ts";
 
 describe("cli/mc./error-collector", () => {
   describe("ErrorCollector", () => {
+    it("should reject invalid maxErrors values", () => {
+      assertThrows(() => new ErrorCollector({ maxErrors: -1 }), RangeError, "maxErrors");
+      assertThrows(() => new ErrorCollector({ maxErrors: 1.5 }), RangeError, "maxErrors");
+      assertThrows(
+        () => new ErrorCollector({ maxErrors: Number.NaN }),
+        RangeError,
+        "maxErrors",
+      );
+    });
+
+    it("should support a zero-sized collector without retaining errors", () => {
+      const ec = new ErrorCollector({ maxErrors: 0 });
+      const received: string[] = [];
+      ec.subscribe((error) => received.push(error.message));
+
+      const error = ec.addRuntimeError("reported");
+
+      assertEquals(error.message, "reported");
+      assertEquals(received, ["reported"]);
+      assertEquals(ec.count, 0);
+    });
+
     it("should add and retrieve errors", () => {
       const ec = new ErrorCollector();
       ec.add({ type: "compile", category: "BUILD", message: "fail" });
@@ -128,6 +150,74 @@ describe("cli/mc./error-collector", () => {
       assertEquals(ec.getAll({ file: /^src\// }).length, 1);
     });
 
+    it("should filter deterministically with stateful file regex patterns", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a", "src/a.ts");
+      ec.addCompileError("b", "src/b.ts");
+      const pattern = /^src\//g;
+
+      assertEquals(ec.getAll({ file: pattern }).length, 2);
+      assertEquals(ec.getAll({ file: pattern }).length, 2);
+    });
+
+    it("should redact retained error details without mutating caller context", () => {
+      const ec = new ErrorCollector();
+      const context = { apiKey: "secret", safe: "value" };
+
+      const error = ec.addRuntimeError(
+        "failed https://user:password@example.test/path?access_token=secret",
+        "at https://example.test/path?token=secret",
+        context,
+      );
+
+      assertEquals(error.message.includes("secret"), false);
+      assertEquals(error.stack?.includes("secret"), false);
+      assertEquals(error.context, { apiKey: "[REDACTED]", safe: "value" });
+      assertEquals(context.apiKey, "secret");
+    });
+
+    it("should not expose retained errors to caller or subscriber mutation", () => {
+      const ec = new ErrorCollector();
+      ec.subscribe((error) => {
+        error.message = "subscriber mutation";
+        if (error.context) error.context.value = "subscriber mutation";
+      });
+
+      const returned = ec.addRuntimeError("original", undefined, { value: "original" });
+      returned.message = "caller mutation";
+      if (returned.context) returned.context.value = "caller mutation";
+
+      const retained = ec.get(returned.id);
+      assertExists(retained);
+      assertEquals(retained.message, "original");
+      assertEquals(retained.context?.value, "original");
+
+      retained.message = "query mutation";
+      assertEquals(ec.get(returned.id)?.message, "original");
+    });
+
+    it("detaches structured Date and URL context for every observer", () => {
+      const ec = new ErrorCollector();
+      const date = new Date("2025-01-02T03:04:05.000Z");
+      const url = new URL("https://user:password@example.test/path?token=secret");
+      let subscriberDate: Date | undefined;
+      ec.subscribe((error) => {
+        subscriberDate = error.context?.date as Date;
+        subscriberDate.setUTCFullYear(2030);
+      });
+
+      const returned = ec.addRuntimeError("structured", undefined, { date, url });
+      (returned.context?.date as Date).setUTCFullYear(2040);
+      (returned.context?.url as URL).pathname = "/mutated";
+
+      const retained = ec.get(returned.id)?.context;
+      assertEquals((retained?.date as Date).getUTCFullYear(), 2025);
+      assertEquals((retained?.url as URL).pathname, "/path");
+      assertEquals((retained?.url as URL).href.includes("secret"), false);
+      assertEquals(date.getUTCFullYear(), 2025);
+      assertEquals(subscriberDate?.getUTCFullYear(), 2030);
+    });
+
     it("should get by id", () => {
       const ec = new ErrorCollector();
       const err = ec.add({ type: "compile", category: "BUILD", message: "test" });
@@ -244,6 +334,41 @@ describe("cli/mc./error-collector", () => {
         Error,
         "mismatched type/category",
       );
+    });
+
+    it("rejects unknown runtime types before category lookup", () => {
+      const ec = new ErrorCollector();
+
+      assertThrows(
+        () =>
+          ec.add({
+            category: undefined,
+            type: "__proto__",
+            message: "invalid",
+          } as never),
+        Error,
+        "invalid error type",
+      );
+
+      assertEquals(ec.count, 0);
+    });
+
+    it("does not create NaN buckets from legacy malformed entries", () => {
+      const ec = new ErrorCollector();
+      const internal = ec as unknown as {
+        errors: Map<string, { type: string; category: string }>;
+      };
+      internal.errors.set("legacy-invalid", {
+        type: "unknown",
+        category: "unknown",
+      });
+
+      const typeCounts = ec.countByType();
+      const categoryCounts = ec.countByCategory();
+      assertEquals(Object.values(typeCounts).every(Number.isFinite), true);
+      assertEquals(Object.values(categoryCounts).every(Number.isFinite), true);
+      assertEquals(Object.hasOwn(typeCounts, "unknown"), false);
+      assertEquals(Object.hasOwn(categoryCounts, "unknown"), false);
     });
   });
 

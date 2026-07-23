@@ -59,9 +59,9 @@ describe("server/graceful-shutdown", () => {
       "info:Server marked as not ready, waiting for in-flight requests to drain...",
       "drain:290000",
       "tracker-shutdown",
-      "dispose",
       "abort",
       "stop",
+      "dispose",
       "telemetry-shutdown",
       "info:Graceful shutdown complete",
     ]);
@@ -145,13 +145,55 @@ describe("server/graceful-shutdown", () => {
     assertEquals(Date.now() - startedAt < 500, true);
     assertEquals(events, [
       "tracker-shutdown",
-      "dispose",
       "abort",
       "stop",
+      "dispose",
       "telemetry-shutdown",
     ]);
     assertEquals(
       warnings.includes("Graceful shutdown cleanup deadline exceeded"),
+      true,
+    );
+  });
+
+  it("keeps bootstrap resources live when the HTTP listener fails to stop", async () => {
+    const events: string[] = [];
+    const warnings: string[] = [];
+
+    await gracefullyShutdownProductionServerWithDependencies({
+      signal: "SIGTERM",
+      drainTimeoutMs: 0,
+      abort: () => events.push("abort"),
+      stop: () => {
+        events.push("stop");
+        return Promise.reject(new Error("listener still live"));
+      },
+      dispose: () => {
+        events.push("dispose");
+      },
+      logger: {
+        info: () => {},
+        warn: (message) => warnings.push(message),
+      },
+    }, {
+      markServerShuttingDown: () => {},
+      setServerInitialized: () => {},
+      requestTracker: {
+        getInFlightCount: () => 0,
+        waitForDrain: () => Promise.resolve(true),
+        shutdown: () => events.push("tracker-shutdown"),
+      },
+      shutdownTelemetry: () => {
+        events.push("telemetry-shutdown");
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(events, ["tracker-shutdown", "abort", "stop", "telemetry-shutdown"]);
+    assertEquals(
+      warnings.includes(
+        "Skipping production bootstrap disposal because the HTTP server may still be live",
+      ),
       true,
     );
   });

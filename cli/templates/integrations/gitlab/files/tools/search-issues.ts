@@ -1,9 +1,8 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import {
-  formatIssueForDisplay,
-  searchIssues,
-} from "../../lib/gitlab-client.ts";
+import { createGitLabClient } from "../lib/gitlab-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "search-issues",
@@ -34,10 +33,20 @@ export default tool({
       ),
     })
   )(),
-  async execute({ scope, state, search, labels, projectId, limit }) {
-    const issues = await searchIssues({
-      scope,
-      state,
+  async execute({ scope, state, search, labels, projectId, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createGitLabClient(userId);
+    const issues = await client.searchIssues({
+      scope: requireAllowedValue(
+        scope,
+        ["created_by_me", "assigned_to_me", "all"],
+        "issue scope",
+      ),
+      state: requireAllowedValue(
+        state,
+        ["opened", "closed", "all"],
+        "issue state",
+      ),
       search,
       labels,
       projectId,
@@ -81,7 +90,7 @@ export default tool({
           description: truncatedDescription,
         };
       }),
-      summary: issues.map(formatIssueForDisplay).join("\n\n"),
+      summary: issues.map(client.formatIssueForDisplay).join("\n\n"),
     };
   },
 });

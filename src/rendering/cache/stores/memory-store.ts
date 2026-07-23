@@ -10,6 +10,7 @@
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
+import { cloneCachePayload } from "../cache-payload.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 
@@ -49,11 +50,12 @@ export class MemoryCacheStore implements CacheStore {
   }
 
   get(key: string): Promise<CachePayload | undefined> {
-    return Promise.resolve(this.cache.get(key));
+    const value = this.cache.get(key);
+    return Promise.resolve(value === undefined ? undefined : cloneCachePayload(value));
   }
 
   set(key: string, value: CachePayload): Promise<void> {
-    this.cache.set(key, value);
+    this.cache.set(key, cloneCachePayload(value));
     return Promise.resolve();
   }
 

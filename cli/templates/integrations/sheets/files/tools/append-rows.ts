@@ -1,8 +1,11 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSheetsClient } from "../../lib/sheets-client.ts";
+import { createSheetsClient } from "../lib/sheets-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
-const DEFAULT_USER_ID = "demo-user";
+const VALUE_INPUT_OPTIONS = ["RAW", "USER_ENTERED"] as const;
+const INSERT_DATA_OPTIONS = ["OVERWRITE", "INSERT_ROWS"] as const;
 
 export default tool({
   id: "append-rows",
@@ -23,13 +26,23 @@ export default tool({
   )(),
   execute(
     { spreadsheetId, range, values, valueInputOption, insertDataOption },
+    context,
   ) {
-    return createSheetsClient(DEFAULT_USER_ID).appendRange({
+    const userId = requireUserIdFromContext(context);
+    return createSheetsClient(userId).appendRange({
       spreadsheetId,
       range,
       values,
-      valueInputOption,
-      insertDataOption,
+      valueInputOption: requireAllowedValue(
+        valueInputOption,
+        VALUE_INPUT_OPTIONS,
+        "valueInputOption",
+      ),
+      insertDataOption: requireAllowedValue(
+        insertDataOption,
+        INSERT_DATA_OPTIONS,
+        "insertDataOption",
+      ),
     });
   },
 });

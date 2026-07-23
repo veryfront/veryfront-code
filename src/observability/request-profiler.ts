@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  nonNegativeFiniteMeasure,
+  saturatingAdd,
+  saturatingAddMeasure,
+} from "./metrics/numeric.ts";
 
 export interface RequestProfileRecord {
   sequence: number;
@@ -36,7 +41,28 @@ const MAX_RECORDS = 200;
 let sequence = 0;
 
 function roundMs(value: number): number {
+  if (value >= Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER;
   return Math.round(value * 100) / 100;
+}
+
+function normalizeDuration(value: number): number {
+  return roundMs(nonNegativeFiniteMeasure(value));
+}
+
+function addPhaseDuration(session: RequestProfileSession, name: string, durationMs: number): void {
+  session.phases.set(
+    name,
+    normalizeDuration(
+      saturatingAddMeasure(session.phases.get(name) ?? 0, normalizeDuration(durationMs)),
+    ),
+  );
+}
+
+function snapshotRecord(record: RequestProfileRecord): RequestProfileRecord {
+  return {
+    ...record,
+    phases: { ...record.phases },
+  };
 }
 
 function shouldEnableProfiling(): boolean {
@@ -107,7 +133,7 @@ export async function profilePhase<T>(name: string, fn: () => Promise<T>): Promi
     return await fn();
   } finally {
     const duration = performance.now() - startedAt;
-    session.phases.set(name, roundMs((session.phases.get(name) ?? 0) + duration));
+    addPhaseDuration(session, name, duration);
   }
 }
 
@@ -115,7 +141,7 @@ export function markRequestProfilePhase(name: string, durationMs = 0): void {
   const session = storage.getStore();
   if (!session) return;
 
-  session.phases.set(name, roundMs((session.phases.get(name) ?? 0) + durationMs));
+  addPhaseDuration(session, name, durationMs);
 }
 
 export function profileSyncPhase<T>(name: string, fn: () => T): T {
@@ -127,7 +153,7 @@ export function profileSyncPhase<T>(name: string, fn: () => T): T {
     return fn();
   } finally {
     const duration = performance.now() - startedAt;
-    session.phases.set(name, roundMs((session.phases.get(name) ?? 0) + duration));
+    addPhaseDuration(session, name, duration);
   }
 }
 
@@ -142,9 +168,10 @@ export function updateRequestProfileContext(update: RequestProfileContextUpdate)
 export function finalizeRequestProfiling(status?: number): RequestProfileRecord | null {
   const session = storage.getStore();
   if (!session) return null;
+  sequence = saturatingAdd(sequence);
 
   const record: RequestProfileRecord = {
-    sequence: ++sequence,
+    sequence,
     category: session.category,
     method: session.method,
     pathname: session.pathname,
@@ -153,14 +180,14 @@ export function finalizeRequestProfiling(status?: number): RequestProfileRecord 
     status,
     startedAt: new Date(Date.now() - (performance.now() - session.startedAt)).toISOString(),
     completedAt: new Date().toISOString(),
-    totalMs: roundMs(performance.now() - session.startedAt),
+    totalMs: normalizeDuration(performance.now() - session.startedAt),
     phases: Object.fromEntries(session.phases.entries()),
   };
 
   records.push(record);
   while (records.length > MAX_RECORDS) records.shift();
 
-  return record;
+  return snapshotRecord(record);
 }
 
 function sanitizeMetricName(name: string): string {
@@ -168,7 +195,7 @@ function sanitizeMetricName(name: string): string {
 }
 
 function formatDuration(value: number): string {
-  return Math.max(0, roundMs(value)).toFixed(2);
+  return normalizeDuration(value).toFixed(2);
 }
 
 export function buildServerTimingHeader(record: RequestProfileRecord): string {
@@ -212,7 +239,7 @@ export function snapshotRequestProfiles(): {
     enabled: shouldEnableProfiling() || shouldEnableServerTiming() ||
       shouldEnableSlowRequestProfiling(),
     last_sequence: sequence,
-    records: [...records],
+    records: records.map(snapshotRecord),
   };
 }
 

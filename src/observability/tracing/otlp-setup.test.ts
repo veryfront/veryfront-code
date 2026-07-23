@@ -1,15 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "npm:@opentelemetry/sdk-trace-base@2.8.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
 import {
   _resetShimForTests,
   type AttributeValue,
   type Context,
+  propagation,
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalTracerProvider,
@@ -133,6 +134,105 @@ describe("observability/tracing/otlp-setup", () => {
     }
   });
 
+  it("withSpan preserves callback outcomes when span completion fails", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    const applicationError = new Error("application failed");
+    const span = createTestSpan({
+      setStatus: () => {
+        throw new Error("telemetry status failed");
+      },
+      end: () => {
+        throw new Error("telemetry end failed");
+      },
+    });
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan: () => span,
+        startActiveSpan: (() => span) as never,
+      }),
+    });
+
+    assertEquals(await withSpan("success", async () => "application result"), "application result");
+    await assertRejects(
+      () =>
+        withSpan("failure", async () => {
+          throw applicationError;
+        }),
+      Error,
+      "application failed",
+    );
+  });
+
+  it("withSpan invokes its callback once with an inert span when tracer setup fails", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+
+    for (const failure of ["getTracer", "startSpan"] as const) {
+      _resetShimForTests();
+      setGlobalTracerProvider({
+        getTracer() {
+          if (failure === "getTracer") throw new Error("getTracer failed");
+          return {
+            startSpan() {
+              throw new Error("startSpan failed");
+            },
+            startActiveSpan: (() => undefined) as never,
+          };
+        },
+      });
+      let calls = 0;
+
+      const result = await withSpan("fallback", async (span) => {
+        calls++;
+        span.setAttribute("safe", true).addEvent("still-safe").end();
+        return `application-${failure}`;
+      });
+
+      assertEquals(result, `application-${failure}`);
+      assertEquals(calls, 1);
+    }
+  });
+
+  it("withSpanSync invokes its callback once when tracer setup fails", async () => {
+    const { withSpanSync } = await import("./otlp-setup.ts");
+    setGlobalTracerProvider({
+      getTracer() {
+        throw new Error("getTracer failed");
+      },
+    });
+    let calls = 0;
+
+    const result = withSpanSync("fallback", () => {
+      calls++;
+      return "application result";
+    });
+
+    assertEquals(result, "application result");
+    assertEquals(calls, 1);
+  });
+
+  it("withSpan preserves callback outcomes when context access and activation fail", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    setGlobalContextAccessor({
+      active() {
+        throw new Error("active context failed");
+      },
+      with(_context, callback) {
+        callback();
+        callback();
+        throw new Error("context activation failed");
+      },
+    });
+    let calls = 0;
+
+    const result = await withSpan("context-fallback", async () => {
+      calls++;
+      return "application result";
+    });
+
+    assertEquals(result, "application result");
+    assertEquals(calls, 1);
+  });
+
   it("withSpanSync should execute the callback when OTLP is unavailable", async () => {
     const { withSpanSync } = await import("./otlp-setup.ts");
 
@@ -158,12 +258,53 @@ describe("observability/tracing/otlp-setup", () => {
     assertEquals(Array.from(headers.entries()), [["x-test", "1"]]);
   });
 
+  it("context propagation helpers fail open when a propagator throws", async () => {
+    const { extractContext, injectContext } = await import("./otlp-setup.ts");
+    propagation.setGlobalPropagator({
+      extract() {
+        throw new Error("extract failed");
+      },
+      inject() {
+        throw new Error("inject failed");
+      },
+      fields: () => [],
+    });
+    const headers = new Headers([["x-test", "1"]]);
+
+    assertEquals(extractContext(headers), undefined);
+    injectContext(headers);
+
+    assertEquals(Array.from(headers.entries()), [["x-test", "1"]]);
+  });
+
   it("withContext should execute the callback when APIs are unavailable", async () => {
     const { withContext } = await import("./otlp-setup.ts");
 
     const result = await withContext({ trace: "ctx" }, async () => "ok");
 
     assertEquals(result, "ok");
+  });
+
+  it("withContext invokes application code once when context activation misbehaves", async () => {
+    const { withContext } = await import("./otlp-setup.ts");
+    const context = createTestContext();
+    setGlobalContextAccessor({
+      active: () => context,
+      with: (_context, fn) => {
+        fn();
+        fn();
+        throw new Error("context provider failed");
+      },
+    });
+    let calls = 0;
+
+    const result = await withContext(context, async () => {
+      calls++;
+      return "application result";
+    });
+
+    assertEquals(result, "application result");
+    assertEquals(calls, 1);
   });
 
   it("getTraceContext should return an empty object when no span is active", async () => {
@@ -246,6 +387,43 @@ describe("observability/tracing/otlp-setup", () => {
     await withSpan("test.after-provider-swap", async () => "ok");
 
     assertEquals(getTracerCalls, 2);
+  });
+
+  it("startServerSpan removes query data from its name and target", async () => {
+    const { startServerSpan } = await import("./otlp-setup.ts");
+    let startedName = "";
+    const attributes: Record<string, AttributeValue> = {};
+    const span = createTestSpan({
+      setAttribute(key, value) {
+        attributes[key] = value;
+        return span;
+      },
+    });
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan(name) {
+          startedName = name;
+          return span;
+        },
+        startActiveSpan: (() => span) as never,
+      }),
+    });
+
+    startServerSpan("GET", "/items?access_token=secret");
+
+    assertEquals(startedName, "GET /items");
+    assertEquals(attributes["http.target"], "/items");
+  });
+
+  it("startServerSpan returns null when tracer setup fails", async () => {
+    const { startServerSpan } = await import("./otlp-setup.ts");
+    setGlobalTracerProvider({
+      getTracer() {
+        throw new Error("getTracer failed");
+      },
+    });
+
+    assertEquals(startServerSpan("GET", "/items"), null);
   });
 
   it("withSpan starts nested spans with the active parent context", async () => {
@@ -374,4 +552,94 @@ describe("observability/tracing/otlp-setup", () => {
     assertEquals(childStart.name, "child");
     assertEquals(childStart.parentSpan, spansByName.get("parent"));
   });
+
+  it("withSpanSync starts nested spans with the active parent context", async () => {
+    const { withSpanSync } = await import("./otlp-setup.ts");
+    const rootContext = createTestContext();
+    let activeContext = rootContext;
+    const contextSpans = new WeakMap<Context, Span>();
+    const starts: Array<{ name: string; parentSpan: Span | undefined; span: Span }> = [];
+
+    setGlobalContextAccessor({
+      active: () => activeContext,
+      with: (context, fn) => {
+        const previous = activeContext;
+        activeContext = context;
+        try {
+          return fn();
+        } finally {
+          activeContext = previous;
+        }
+      },
+    });
+    setGlobalActiveSpanAccessor({
+      getActiveSpan: () => contextSpans.get(activeContext),
+      getSpan: (context) => contextSpans.get(context),
+      setSpan: (_context, span) => {
+        const next = createTestContext();
+        contextSpans.set(next, span);
+        return next;
+      },
+    });
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan(name, _options, parentContext) {
+          const span = createTestSpan({
+            spanContext: () => ({
+              traceId: "00000000000000000000000000000001",
+              spanId: `000000000000000${starts.length + 1}`,
+              traceFlags: 1,
+            }),
+          });
+          starts.push({
+            name,
+            parentSpan: parentContext ? contextSpans.get(parentContext) : undefined,
+            span,
+          });
+          return span;
+        },
+        startActiveSpan: (() => createTestSpan()) as never,
+      }),
+    });
+
+    withSpanSync("parent", () => withSpanSync("child", () => "ok"));
+
+    assertEquals(starts.length, 2);
+    assertEquals(starts[1]?.parentSpan, starts[0]?.span);
+  });
 });
+
+function createTestSpan(overrides: Partial<Span> = {}): Span {
+  const spanContext: SpanContext = {
+    traceId: "00000000000000000000000000000000",
+    spanId: "0000000000000000",
+    traceFlags: 0,
+  };
+  const span: Span = {
+    setAttribute: () => span,
+    setAttributes: () => span,
+    setStatus: () => span,
+    recordException: () => {},
+    addEvent: () => span,
+    end: () => {},
+    spanContext: () => spanContext,
+    updateName: () => {},
+    ...overrides,
+  };
+  return span;
+}
+
+function createTestContext(): Context {
+  const values = new Map<symbol, unknown>();
+  return {
+    getValue: (key) => values.get(key),
+    setValue(key, value) {
+      values.set(key, value);
+      return this;
+    },
+    deleteValue(key) {
+      values.delete(key);
+      return this;
+    },
+  };
+}

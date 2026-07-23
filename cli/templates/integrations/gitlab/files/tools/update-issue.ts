@@ -1,6 +1,8 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateIssue } from "../../lib/gitlab-client.ts";
+import { createGitLabClient } from "../lib/gitlab-client.ts";
+import { optionalAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "update-issue",
@@ -26,11 +28,14 @@ export default tool({
   )(),
   async execute(
     { projectId, issueIid, title, description, state, labels, assigneeIds },
+    context,
   ) {
-    const issue = await updateIssue(projectId, issueIid, {
+    const userId = requireUserIdFromContext(context);
+    const client = createGitLabClient(userId);
+    const issue = await client.updateIssue(projectId, issueIid, {
       title,
       description,
-      state,
+      state: optionalAllowedValue(state, ["opened", "closed"], "issue state"),
       labels,
       assigneeIds,
     });

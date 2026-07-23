@@ -1,11 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import {
-  getIssue,
-  getIssueTransitions,
-  transitionIssue,
-  updateIssue,
-} from "../../lib/jira-client.ts";
+import { createJiraClient } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "update-issue",
@@ -50,7 +46,9 @@ export default tool({
     assigneeId,
     labels,
     status,
-  }) {
+  }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createJiraClient(userId);
     if (
       summary !== undefined ||
       description !== undefined ||
@@ -58,7 +56,7 @@ export default tool({
       assigneeId !== undefined ||
       labels !== undefined
     ) {
-      await updateIssue(issueKey, {
+      await client.updateIssue(issueKey, {
         summary,
         description,
         priority,
@@ -68,7 +66,7 @@ export default tool({
     }
 
     if (status) {
-      const transitions = await getIssueTransitions(issueKey);
+      const transitions = await client.getIssueTransitions(issueKey);
       const normalizedStatus = status.toLowerCase();
 
       const targetTransition = transitions.find((t) => {
@@ -85,10 +83,10 @@ export default tool({
         );
       }
 
-      await transitionIssue(issueKey, targetTransition.id);
+      await client.transitionIssue(issueKey, targetTransition.id);
     }
 
-    const updatedIssue = await getIssue(issueKey);
+    const updatedIssue = await client.getIssue(issueKey);
 
     return {
       key: updatedIssue.key,

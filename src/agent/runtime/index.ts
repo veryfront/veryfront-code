@@ -63,6 +63,7 @@ import {
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
+  shouldContinueAfterToolStep,
 } from "./tool-result-continuation.ts";
 import {
   enforceSkillPolicy,
@@ -166,6 +167,15 @@ function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
       return undefined;
   }
 }
+
+function upsertToolCall(toolCalls: ToolCall[], toolCall: ToolCall): void {
+  const existing = toolCalls.find((candidate) => candidate.id === toolCall.id);
+  if (existing) {
+    Object.assign(existing, toolCall);
+    return;
+  }
+  toolCalls.push(toolCall);
+}
 export {
   enforceSkillPolicy,
   extractSkillPolicy,
@@ -184,6 +194,7 @@ import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import { createMissingToolResultError } from "./runtime-tool-errors.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import {
   applySkillDelegationOverridesToToolInput,
@@ -981,6 +992,8 @@ export class AgentRuntime {
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
             args: tc.input as Record<string, unknown>,
+            ...(tc.providerExecuted === true ? { providerExecuted: true } : {}),
+            ...(tc.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
           });
         }
 
@@ -989,11 +1002,19 @@ export class AgentRuntime {
           role: "assistant",
           parts: assistantParts,
           timestamp: Date.now(),
+          ...(response.providerMetadata
+            ? { metadata: { providerMetadata: response.providerMetadata } }
+            : {}),
         };
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
         throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
+        const continueAfterToolStep = shouldContinueAfterToolStep({
+          finishReason: response.finishReason,
+          toolCalls: response.toolCalls ?? [],
+          toolResultIds: new Set(generatedToolResults.keys()),
+        });
 
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
@@ -1011,10 +1032,31 @@ export class AgentRuntime {
           throwIfAborted(abortSignal);
         };
 
+        const applyGeneratedToolResultToExistingCall = (
+          generatedToolResult: RuntimeGenerateToolResult,
+        ): void => {
+          const existingToolCall = toolCalls.find(
+            (candidate) => candidate.id === generatedToolResult.toolCallId,
+          );
+          if (!existingToolCall) return;
+
+          existingToolCall.status = generatedToolResult.isError === true ? "error" : "completed";
+          existingToolCall.result = generatedToolResult.result;
+          existingToolCall.error = generatedToolResult.isError === true
+            ? stringifyToolError(generatedToolResult.result)
+            : undefined;
+        };
+
+        const currentResponseToolCallIds = new Set(
+          (response.toolCalls ?? []).map((toolCall) => toolCall.toolCallId),
+        );
+        for (const generatedToolResult of generatedToolResults.values()) {
+          if (currentResponseToolCallIds.has(generatedToolResult.toolCallId)) continue;
+          await persistGeneratedToolResult(generatedToolResult);
+          applyGeneratedToolResultToExistingCall(generatedToolResult);
+        }
+
         if (!response.toolCalls?.length) {
-          for (const generatedToolResult of generatedToolResults.values()) {
-            await persistGeneratedToolResult(generatedToolResult);
-          }
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
@@ -1106,7 +1148,61 @@ export class AgentRuntime {
                     : {}),
                 }),
               );
-              toolCalls.push(toolCall);
+              upsertToolCall(toolCalls, toolCall);
+              return;
+            }
+
+            if (
+              tc.providerExecuted === true &&
+              tc.supportsDeferredResults === true
+            ) {
+              setSpanAttributes(toolSpan, {
+                "tool.status": "pending",
+                "tool.provider_executed": true,
+              });
+              upsertToolCall(toolCalls, toolCall);
+              return;
+            }
+
+            if (tc.providerExecuted === true) {
+              const missingResultError = createMissingToolResultError({
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+              });
+              await traceProviderExecutedTool({
+                mode: "generate",
+                agentId: this.id,
+                toolName: tc.toolName,
+                toolCallId: tc.toolCallId,
+                context: {
+                  toolCallId: tc.toolCallId,
+                  ...toolContext,
+                  agentId: this.id,
+                },
+                args: tc.input,
+                result: missingResultError,
+                isError: true,
+              });
+              await persistGeneratedToolResult({
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                result: missingResultError,
+                isError: true,
+                providerExecuted: true,
+                ...(tc.dynamic === true ? { dynamic: true } : {}),
+              });
+              toolCall.status = "error";
+              toolCall.result = missingResultError;
+              toolCall.error = missingResultError.message;
+              setOtelActiveSpanErrorStatus(toolCall.error);
+              setSpanAttributes(toolSpan, {
+                "tool.status": "failed",
+                "tool.provider_executed": true,
+                error: true,
+                "error.type": missingResultError.name,
+                "error.message": missingResultError.message,
+              });
+              upsertToolCall(toolCalls, toolCall);
               return;
             }
 
@@ -1142,7 +1238,7 @@ export class AgentRuntime {
               };
               currentMessages.push(errorMessage);
               await this.memory.add(errorMessage);
-              toolCalls.push(toolCall);
+              upsertToolCall(toolCalls, toolCall);
               return;
             }
 
@@ -1262,9 +1358,22 @@ export class AgentRuntime {
               await this.memory.add(errorMessage);
             }
 
-            toolCalls.push(toolCall);
+            upsertToolCall(toolCalls, toolCall);
           });
           throwIfAborted(abortSignal);
+        }
+
+        if (!continueAfterToolStep) {
+          this.status = "completed";
+          addSpanEvent(loopSpan, "loop_complete");
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
+          return {
+            text: response.text,
+            messages: currentMessages,
+            toolCalls,
+            status: this.status,
+            usage: totalUsage,
+          };
         }
       }
 
@@ -1523,7 +1632,66 @@ export class AgentRuntime {
         );
       };
 
+      const consumeFinalToolResult = async (
+        toolResult: StreamingToolResult,
+      ): Promise<void> => {
+        await persistToolResult(toolResult);
+        finalToolResults.delete(toolResult.toolCallId);
+      };
+
       if (!shouldContinueAfterStreamStep(state)) {
+        // Preserve provider-owned call state in the final response. A later
+        // correlated result updates the same call rather than appending a
+        // duplicate lifecycle entry.
+        for (const tc of state.toolCalls.values()) {
+          if (tc.providerExecuted !== true) continue;
+          const matchingResult = finalToolResults.get(tc.id);
+          if (!matchingResult) {
+            if (tc.supportsDeferredResults === true) {
+              const capturedInput = captureStreamedToolCallInput(tc);
+              upsertToolCall(toolCalls, {
+                id: tc.id,
+                name: tc.name,
+                args: capturedInput.args,
+                ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+                status: "pending",
+              });
+            }
+            continue;
+          }
+
+          const capturedInput = captureStreamedToolCallInput(tc);
+          const result = matchingResult.error === undefined
+            ? matchingResult.output
+            : matchingResult.error;
+          const error = matchingResult.error === undefined
+            ? undefined
+            : stringifyToolError(matchingResult.error);
+          await traceProviderExecutedTool({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            context: {
+              toolCallId: tc.id,
+              ...toolContext,
+              agentId: this.id,
+            },
+            args: capturedInput.args,
+            result,
+            isError: matchingResult.error !== undefined,
+          });
+          await consumeFinalToolResult(matchingResult);
+          upsertToolCall(toolCalls, {
+            id: tc.id,
+            name: tc.name,
+            args: capturedInput.args,
+            ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+            status: matchingResult.error === undefined ? "completed" : "error",
+            result,
+            error,
+          });
+        }
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
         }
@@ -1583,13 +1751,13 @@ export class AgentRuntime {
         const persistedResult = currentStepToolResults.get(tc.id);
 
         if (matchingResult) {
-          await persistToolResult(matchingResult);
+          await consumeFinalToolResult(matchingResult);
           toolCall.status = matchingResult.error === undefined ? "completed" : "error";
           toolCall.result = matchingResult.output;
           toolCall.error = matchingResult.error === undefined
             ? undefined
             : stringifyToolError(matchingResult.error);
-          toolCalls.push(toolCall);
+          upsertToolCall(toolCalls, toolCall);
 
           if (matchingResult.error === undefined) {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
@@ -1624,7 +1792,7 @@ export class AgentRuntime {
           toolCall.status = persistedError === undefined ? "completed" : "error";
           toolCall.result = persistedResult.result;
           toolCall.error = persistedError;
-          toolCalls.push(toolCall);
+          upsertToolCall(toolCalls, toolCall);
           if (persistedError === undefined) {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
@@ -1653,7 +1821,19 @@ export class AgentRuntime {
           continue;
         }
 
+        if (
+          tc.providerExecuted === true &&
+          tc.supportsDeferredResults === true
+        ) {
+          upsertToolCall(toolCalls, toolCall);
+          continue;
+        }
+
         if (tc.providerExecuted === true) {
+          const missingResultError = createMissingToolResultError({
+            toolCallId: tc.id,
+            toolName: tc.name,
+          });
           await traceProviderExecutedTool({
             mode: "stream",
             agentId: this.id,
@@ -1665,9 +1845,20 @@ export class AgentRuntime {
               agentId: this.id,
             },
             args: toolCall.args,
+            result: missingResultError,
+            isError: true,
           });
-          toolCall.status = "completed";
-          toolCalls.push(toolCall);
+          await persistToolResult({
+            toolCallId: tc.id,
+            toolName: tc.name,
+            error: missingResultError,
+            providerExecuted: true,
+            ...(tc.dynamic === true ? { dynamic: true } : {}),
+          });
+          toolCall.status = "error";
+          toolCall.result = missingResultError;
+          toolCall.error = missingResultError.message;
+          upsertToolCall(toolCalls, toolCall);
           continue;
         }
 
@@ -1762,7 +1953,7 @@ export class AgentRuntime {
           toolCall.result = result;
           toolCall.error = resultError;
           toolCall.executionTime = Date.now() - startTime;
-          toolCalls.push(toolCall);
+          upsertToolCall(toolCalls, toolCall);
 
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
@@ -1858,7 +2049,7 @@ export class AgentRuntime {
   ): Promise<void> {
     toolCall.status = "error";
     toolCall.error = errorStr;
-    toolCalls.push(toolCall);
+    upsertToolCall(toolCalls, toolCall);
 
     if (options.emitSse !== false) {
       const dynamic = isDynamicTool(toolCall.name);
