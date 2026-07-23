@@ -1,5 +1,6 @@
 import { RunResumeSessionManager } from "../runtime/resume-session.ts";
 import { AGENT_TIMEOUT } from "#veryfront/errors";
+import { sleep } from "#veryfront/utils";
 
 /** Result returned from detached run drain. */
 export interface DetachedRunDrainResult {
@@ -50,12 +51,6 @@ export interface DetachedRunShutdownLifecycleOptions<TResumeValue> {
 const DEFAULT_DETACHED_RUN_DRAIN_TIMEOUT_MS = 15_000;
 const DETACHED_RUN_DRAIN_TIMEOUT_MESSAGE =
   "Detached durable runs did not drain before shutdown timeout";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 /** Create detached run tracker. */
 export function createDetachedRunTracker<TResumeValue = unknown>(

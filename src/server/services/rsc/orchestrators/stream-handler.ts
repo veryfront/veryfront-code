@@ -1,4 +1,4 @@
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger, sleep } from "#veryfront/utils";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
@@ -78,10 +78,6 @@ export class StreamHandler {
       },
     });
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms)); // no cleanup needed: one-shot
 }
 
 function enqueueSlot(

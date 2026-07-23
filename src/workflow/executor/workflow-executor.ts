@@ -4,7 +4,7 @@
  * Main orchestrator for executing durable workflows
  **************************/
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
   ensureError,
   INVALID_ARGUMENT,
@@ -1011,8 +1011,7 @@ export class WorkflowExecutor {
         });
       }
 
-      // no cleanup needed: one-shot
-      await new Promise((resolve) => setTimeout(resolve, Math.min(pollInterval, remaining)));
+      await sleep(Math.min(pollInterval, remaining));
     }
   }
 

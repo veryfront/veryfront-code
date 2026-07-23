@@ -1,5 +1,6 @@
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { API_CLIENT_ERROR, INVALID_ARGUMENT, TIMEOUT_ERROR } from "#veryfront/errors";
+import { sleep } from "#veryfront/utils";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { LiveEvalProjectFile } from "./runner.ts";
@@ -218,10 +219,8 @@ function getResponseText(response: Response): Promise<string> {
   return response.text();
 }
 
-async function wait(input: { ms: number }): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, input.ms);
-  });
+function wait(input: { ms: number }): Promise<void> {
+  return sleep(input.ms);
 }
 
 async function waitForProjectUploadFixture(

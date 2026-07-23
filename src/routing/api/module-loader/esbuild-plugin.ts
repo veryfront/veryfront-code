@@ -6,6 +6,7 @@ import {
   HTTP_NETWORK_CONNECT_TIMEOUT,
   type LockfileManager,
   serverLogger,
+  sleep,
 } from "#veryfront/utils";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
@@ -165,10 +166,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         return status === 429 || status >= 500 || status === HTTP_NETWORK_CONNECT_TIMEOUT;
       }
 
-      function delay(ms: number): Promise<void> {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-      }
-
       function describePersistenceError(error: unknown): string {
         if (!(error instanceof Error)) return typeof error;
 
@@ -228,7 +225,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           logger.warn(
             `[http] fetch attempt ${attempt} failed ${url} ${response.status}; retrying`,
           );
-          await delay(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
+          await sleep(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
         }
 
         return new Response("Remote module fetch failed", {

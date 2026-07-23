@@ -7,7 +7,7 @@
  * @module html/styles-builder/plugin-loader
  */
 
-import { serverLogger } from "#veryfront/utils";
+import { encodeBase64, serverLogger } from "#veryfront/utils";
 import {
   type ErrorSlug,
   getErrorBySlug,
@@ -73,23 +73,6 @@ try {
 // by the `@veryfront/ext-css-tailwind` extension's `setup()` hook — they depend on
 // tailwindcss imports that live in the extension package, not in core.
 
-function encodeToBase64(source: string): string {
-  const bufferCtor = (globalThis as {
-    Buffer?: {
-      from: (input: string, encoding: string) => { toString: (encoding: string) => string };
-    };
-  }).Buffer;
-
-  if (bufferCtor?.from) {
-    return bufferCtor.from(source, "utf8").toString("base64");
-  }
-
-  const bytes = new TextEncoder().encode(source);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 /**
  * esm.sh bundles can contain root-relative nested imports. Once the bundle is
  * written to a temp file, Deno resolves those as local file paths unless they
@@ -116,7 +99,7 @@ export function rewriteEsmShRootRelativeImports(code: string): string {
 
 async function importBundledModule(code: string): Promise<unknown> {
   if (!isDeno) {
-    const dataUrl = `data:text/javascript;base64,${encodeToBase64(code)}`;
+    const dataUrl = `data:text/javascript;base64,${encodeBase64(code)}`;
     return await import(dataUrl);
   }
 

@@ -16,7 +16,7 @@ import {
   type ReleaseAssetTransform,
 } from "#veryfront/release-assets/build-executor.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { sha256HexBytes } from "#veryfront/release-assets/hash.ts";
+import { computeHashBytes } from "#veryfront/utils";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -90,7 +90,7 @@ export async function generateLocalReleaseAssetManifest(
         assetsByHash.set(asset.contentHash, asset);
       }
       const gaps = [...cached.gaps, ...built.gaps, ...framework.gaps];
-      const sourceContentHash = await sha256HexBytes(
+      const sourceContentHash = await computeHashBytes(
         new TextEncoder().encode(
           [
             options.projectDir,

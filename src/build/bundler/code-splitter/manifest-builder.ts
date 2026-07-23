@@ -8,6 +8,7 @@ import { join, relative } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { computeHashBytes } from "#veryfront/utils";
 
 const fs = createFileSystem();
 
@@ -43,10 +44,7 @@ export function extractChunkName(file: string): string {
 
 /** Calculates SHA-256 hash of file content (returns first 8 hex chars) */
 export async function calculateFileHash(content: Uint8Array): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest("SHA-256", content.slice());
-  return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 8);
+  return (await computeHashBytes(content.slice())).slice(0, 8);
 }
 
 /** Determines which imports are critical and should be preloaded */

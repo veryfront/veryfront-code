@@ -22,6 +22,7 @@ import {
 } from "#veryfront/observability";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { encodeBase64 } from "#veryfront/utils";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
@@ -196,7 +197,7 @@ function resolveInternalMetricsUrl(): string | null {
 
 function buildBasicAuth(username: string, password: string): string {
   const credentials = `${username}:${password}`;
-  return `Basic ${globalThis.btoa(credentials)}`;
+  return `Basic ${encodeBase64(credentials)}`;
 }
 
 function parseHeaders(headerInput: string | undefined): Record<string, string> {

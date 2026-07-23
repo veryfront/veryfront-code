@@ -4,7 +4,7 @@ import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { RetryConfig, WorkflowNode } from "../../types.ts";
 import { parseDuration, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
-import { sleep } from "./utils.ts";
+import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
 
 const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;

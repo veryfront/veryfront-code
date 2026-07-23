@@ -5,6 +5,7 @@
  * Provides per-project vendor bundle management with automatic invalidation.
  **************************************************/
 
+import { computeHash } from "#veryfront/utils";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 
 function buildVendorCacheConfig(
@@ -38,12 +39,7 @@ export async function generateVendorCacheKey(
     ...buildVendorCacheConfig(reactVersion, dependencies),
   });
 
-  const data = new TextEncoder().encode(configStr);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hash = Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 16);
+  const hash = (await computeHash(configStr)).slice(0, 16);
 
   return `vendor:${projectId}:${hash}`;
 }
