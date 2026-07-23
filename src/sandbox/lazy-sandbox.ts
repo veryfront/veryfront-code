@@ -97,6 +97,10 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
   return `http://sandbox.veryfront-sandbox-${shortId}.svc.cluster.local`;
 }
 
+function normalizeDataPlaneBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
 export class LazySandbox {
   private readonly apiUrl: string;
@@ -854,8 +858,10 @@ export class LazySandbox {
     const endpoint = this.requireEndpoint();
     const sessionId = this.requireSessionId();
     const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
-    if (runtimeEndpoint !== endpoint) {
-      return { baseUrl: runtimeEndpoint, kind: "internal" };
+    const normalizedEndpoint = normalizeDataPlaneBaseUrl(endpoint);
+    const normalizedRuntimeEndpoint = normalizeDataPlaneBaseUrl(runtimeEndpoint);
+    if (normalizedRuntimeEndpoint !== normalizedEndpoint) {
+      return { baseUrl: normalizedRuntimeEndpoint, kind: "internal" };
     }
 
     return {

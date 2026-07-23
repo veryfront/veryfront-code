@@ -398,6 +398,28 @@ describe("Sandbox", () => {
       );
       assertEquals((error as VeryfrontError).slug, "request-error");
     });
+
+    it("uses the request error contract for malformed proxy file JSON", async () => {
+      mockFetch([
+        new Response("{not json", {
+          headers: { "Content-Type": "application/json" },
+        }),
+      ]);
+
+      const sandbox = Sandbox.attach({
+        id: "attached-malformed-file-response",
+        endpoint: "https://attached.example.com",
+        authToken: "attach-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      const error = await assertRejects(
+        () => sandbox.readFile("/workspace/note.txt"),
+        VeryfrontError,
+        "Sandbox file response is not valid JSON",
+      );
+      assertEquals((error as VeryfrontError).slug, "request-error");
+    });
   });
 
   describe("executeCommand()", () => {
@@ -1238,7 +1260,7 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
         resolveRuntimeEndpoint: ({ sessionId }) =>
-          `http://sandbox.veryfront-sandbox-${sessionId}.svc.cluster.local`,
+          `http://sandbox.veryfront-sandbox-${sessionId}.svc.cluster.local/`,
       });
 
       try {
@@ -1252,6 +1274,39 @@ describe("Sandbox", () => {
         assertEquals(
           fetchCalls[3]!.url,
           "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/commands",
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("keeps proxy routing when the runtime endpoint resolver only changes trailing slashes", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) => `${endpoint}/`,
+      });
+
+      try {
+        await sandbox.executeCommand("echo ok");
+
+        assertEquals(
+          fetchCalls[2]!.url,
+          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
         );
       } finally {
         await sandbox.close();

@@ -15,10 +15,22 @@ export async function readSandboxFileContent(res: Response): Promise<string> {
     return await res.text();
   }
 
-  const json = await res.json();
-  if (typeof json?.content !== "string") {
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch (cause) {
+    throw REQUEST_ERROR.create({
+      detail: "Sandbox file response is not valid JSON",
+      cause,
+    });
+  }
+
+  const content = json && typeof json === "object"
+    ? (json as { content?: unknown }).content
+    : undefined;
+  if (typeof content !== "string") {
     throw REQUEST_ERROR.create({ detail: "Sandbox file response missing content" });
   }
 
-  return json.content;
+  return content;
 }
