@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { createError, retryWithBackoff, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { ResolvedGitHubConfig } from "./types.ts";
 import {
@@ -81,12 +81,11 @@ export class GitHubApiClient {
     return this.rateLimitInfo;
   }
 
-  private async request(endpoint: string): Promise<unknown> {
+  private request(endpoint: string): Promise<unknown> {
     const url = `${this.baseUrl}${endpoint}`;
-    let lastError: Error | null = null;
 
-    for (let attempt = 1; attempt <= this.config.retry.maxRetries; attempt++) {
-      try {
+    return retryWithBackoff(
+      async () => {
         const response = await fetch(url, {
           headers: {
             Authorization: `Bearer ${this.config.token}`,
@@ -103,27 +102,32 @@ export class GitHubApiClient {
           throw this.createAPIError(response.status, errorBody, endpoint);
         }
 
-        return await response.json();
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        if (this.isClientError(lastError) && !this.isRateLimitError(lastError)) {
-          throw lastError;
-        }
-
-        if (attempt >= this.config.retry.maxRetries) break;
-
-        const delay = this.calculateRetryDelay(attempt, lastError);
-        logger.warn(`${LOG_PREFIX} Request failed, retrying`, {
-          attempt,
-          delay,
-          error: lastError.message,
-        });
-        await this.sleep(delay);
-      }
-    }
-
-    throw lastError ?? new Error("Request failed after retries");
+        return response.json();
+      },
+      {
+        // This client's config.retry.maxRetries has always meant TOTAL attempts
+        // (the old loop ran `attempt = 1..maxRetries`), unlike the veryfront-api
+        // clients where maxRetries means retries after the first try.
+        maxAttempts: this.config.retry.maxRetries,
+        initialDelay: this.config.retry.initialDelay,
+        maxDelay: this.config.retry.maxDelay,
+        shouldRetry: (error) => {
+          const err = error instanceof Error ? error : new Error(String(error));
+          return !(this.isClientError(err) && !this.isRateLimitError(err));
+        },
+        computeDelay: (attempt, error) => {
+          const err = error instanceof Error ? error : new Error(String(error));
+          return this.calculateRetryDelay(attempt + 1, err);
+        },
+        onRetry: ({ error, attempt, delay }) => {
+          logger.warn(`${LOG_PREFIX} Request failed, retrying`, {
+            attempt: attempt + 1,
+            delay,
+            error: error.message,
+          });
+        },
+      },
+    );
   }
 
   private updateRateLimitInfo(response: Response): void {
@@ -220,10 +224,5 @@ export class GitHubApiClient {
     );
 
     return delay + Math.random() * RETRY_JITTER_MAX_MS;
-  }
-
-  // no cleanup needed: one-shot
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

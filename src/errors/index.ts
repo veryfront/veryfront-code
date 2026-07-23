@@ -160,6 +160,7 @@ export {
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
   retryWithBackoff,
+  type RetryWithBackoffOptions,
 } from "./error-handlers.ts";
 
 export {

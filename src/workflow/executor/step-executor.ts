@@ -12,11 +12,17 @@ import {
   ensureError,
   INITIALIZATION_ERROR,
   INVALID_ARGUMENT,
-  isVeryfrontError,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
 } from "#veryfront/errors";
+import { sleep } from "#veryfront/utils";
+import {
+  calculateRetryDelay,
+  DEFAULT_RETRY_INITIAL_DELAY_MS,
+  DEFAULT_RETRY_MAX_DELAY_MS,
+  isRetryableWorkflowError,
+} from "./retry-policy.ts";
 import type {
   CapturedTenantContext,
   NodeState,
@@ -95,12 +101,6 @@ export function runWithWorkflowTenant<T>(
       ),
   );
 }
-
-/** Default initial delay before first retry attempt */
-const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
-
-/** Default maximum delay between retry attempts */
-const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
 
 const DEFAULT_RETRY: RetryConfig = {
   maxAttempts: 1,
@@ -212,7 +212,7 @@ export class StepExecutor {
         lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
-          await this.sleep(this.calculateRetryDelay(attempt, retryConfig), abortSignal);
+          await sleep(calculateRetryDelay(attempt, retryConfig), abortSignal);
           continue;
         }
 
@@ -233,66 +233,12 @@ export class StepExecutor {
     };
   }
 
-  /** HTTP-style statuses worth retrying: timeout, rate limit, and transient 5xx. */
-  private static readonly RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-
-  /**
-   * Node/Deno transient network error codes. Matched as whole tokens against
-   * error.code (or, when a plain Error carries no code, its message). Unlike
-   * "429"/"503"/"timeout", these tokens are specific enough not to appear
-   * incidentally in unrelated error text.
-   */
-  private static readonly RETRYABLE_CODE_RE =
-    /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
-
+  /** Shared transient classification (HTTP statuses + network error codes) via retry-policy. */
   private isRetryableError(error: Error, config: RetryConfig): boolean {
     // Starting another attempt while the timed-out operation is still active
     // would violate step isolation and allow concurrent external side effects.
     if (this.nonCooperativeErrors.has(error)) return false;
-    if (config.retryIf) return config.retryIf(error);
-
-    // Prefer structured signals over substring-matching the message: an error
-    // whose text merely contains "429" or "timeout" (e.g. "Found 429 items")
-    // must NOT be retried. VeryfrontError carries an HTTP-style status, so HTTP
-    // conditions (429/503/timeout) are classified by status, not text.
-    if (isVeryfrontError(error)) {
-      return StepExecutor.RETRYABLE_STATUSES.has(error.status);
-    }
-
-    // System/network errors: use the stable `code` when present, else fall back
-    // to the message but only for the specific code tokens above.
-    const code = (error as { code?: unknown }).code;
-    const subject = typeof code === "string" ? code : error.message;
-    return StepExecutor.RETRYABLE_CODE_RE.test(subject);
-  }
-
-  private calculateRetryDelay(attempt: number, config: RetryConfig): number {
-    const initialDelay = config.initialDelay ?? DEFAULT_RETRY_INITIAL_DELAY_MS;
-    const maxDelay = config.maxDelay ?? DEFAULT_RETRY_MAX_DELAY_MS;
-
-    let baseDelay = initialDelay;
-    if (config.backoff === "exponential") baseDelay = initialDelay * Math.pow(2, attempt - 1);
-    else if (config.backoff === "linear") baseDelay = initialDelay * attempt;
-
-    const jitter = baseDelay * 0.1 * (Math.random() * 2 - 1);
-    return Math.floor(Math.min(baseDelay + jitter, maxDelay));
-  }
-
-  private sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
-    abortSignal?.throwIfAborted();
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        abortSignal?.removeEventListener("abort", onAbort);
-        resolve();
-      }, ms);
-      const onAbort = () => {
-        clearTimeout(timeoutId);
-        abortSignal?.removeEventListener("abort", onAbort);
-        reject(abortSignal?.reason);
-      };
-      abortSignal?.addEventListener("abort", onAbort, { once: true });
-      if (abortSignal?.aborted) onAbort();
-    });
+    return isRetryableWorkflowError(error, config);
   }
 
   private async resolveInput(
