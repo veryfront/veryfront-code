@@ -374,7 +374,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
             loadedIds.join(", ")
           }`,
         ),
-      })
+      }).strict()
     )();
   }
 
@@ -429,7 +429,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
   return defineSchema((v) =>
     v.object({
       skillId: v.enum(enumValues).describe(
-        `The skill ID to load. Available skill IDs: ${unloadedIds.join(", ")}`,
+        `Unloaded skill ID to load. Available unloaded skill IDs: ${unloadedIds.join(", ")}`,
       ),
       file: v.string().optional().describe(
         "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
@@ -519,7 +519,9 @@ export function createRuntimeLoadSkillTool(
   async function execute({ skillId, file }: RuntimeLoadSkillToolInput) {
     let parsed: RuntimeLoadSkillToolInput;
     try {
-      parsed = buildRuntimeLoadSkillInputSchema(options).parse({ skillId, file });
+      parsed = buildRuntimeLoadSkillInputSchema(options).parse(
+        file === undefined ? { skillId } : { skillId, file },
+      );
     } catch (error) {
       throw INPUT_VALIDATION_FAILED.create({
         detail: `Tool "load_skill" input validation failed: ${

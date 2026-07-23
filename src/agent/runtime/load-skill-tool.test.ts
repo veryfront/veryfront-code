@@ -327,7 +327,7 @@ Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skil
       skillId: {
         type: "string",
         enum: ["veryfront"],
-        description: "The skill ID to load. Available skill IDs: veryfront",
+        description: "Unloaded skill ID to load. Available unloaded skill IDs: veryfront",
       },
       file: {
         type: "string",
@@ -426,6 +426,7 @@ Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loadi
 
   assertEquals(toolToProviderDefinition(tool).parameters, {
     type: "object",
+    additionalProperties: false,
     properties: {
       skillId: {
         type: "string",
@@ -439,6 +440,14 @@ Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loadi
 
   const reloadResult = expectLoadedSkillResponse(await tool.execute({ skillId: "veryfront" }));
   assertStringIncludes(reloadResult.instructions, 'Skill "veryfront" is already loaded');
+  let rejectedUnexpectedFile = false;
+  try {
+    await tool.execute({ skillId: "veryfront", file: "references/foo.md" });
+  } catch (error) {
+    rejectedUnexpectedFile = true;
+    assertStringIncludes(String(error), "input validation failed");
+  }
+  assertEquals(rejectedUnexpectedFile, true);
 });
 
 Deno.test("createRuntimeLoadSkillTool exposes only referenceable skills when every skill is loaded", async () => {
@@ -584,7 +593,7 @@ Deno.test("createRuntimeLoadSkillTool schema ignores stale loaded skills outside
       skillId: {
         type: "string",
         enum: ["veryfront"],
-        description: "The skill ID to load. Available skill IDs: veryfront",
+        description: "Unloaded skill ID to load. Available unloaded skill IDs: veryfront",
       },
       file: {
         type: "string",
