@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
+import type { RenderOptions } from "./types.ts";
 import { markBuildFailure } from "./module-loader/build-failure.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
@@ -835,6 +836,115 @@ describe("RenderPipeline behavior", () => {
       },
       pageData.layoutProps,
     );
+  });
+
+  it("resolvePageData reuses resolved page and layout data for CSS SSR", async () => {
+    const slug = "/behavior-css-data-reuse";
+    const projectId = "proj-css-data-reuse";
+    const pagePath = "/project/pages/behavior-css-data-reuse.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const cssHash = "cssdata1";
+    const expectedCss = ".from-data{color:blue}";
+    let pageDataCalls = 0;
+    let layoutDataCalls = 0;
+    let ssrOptions: Record<string, unknown> | undefined;
+    let appliedLayoutProps: Map<string, Record<string, unknown>> | undefined;
+    const pipeline = createPipeline(pagePath, {
+      pageRenderer: {
+        preparePageBundles: async () => ({
+          pageElement: {},
+          pageBundle: {},
+        }),
+      } as any,
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (
+          element: unknown,
+          _pageInfo: unknown,
+          _layoutBundle: unknown,
+          _nestedLayouts: unknown,
+          layoutProps: Map<string, Record<string, unknown>>,
+        ) => {
+          appliedLayoutProps = layoutProps;
+          return element;
+        },
+      } as any,
+      ssrOrchestrator: {
+        performSSRRendering: async (
+          _element: unknown,
+          _context: unknown,
+          options: RenderOptions,
+        ) => {
+          ssrOptions = options as Record<string, unknown>;
+          return {
+            fullHtml:
+              `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/css/${cssHash}.css"></head><body><div class="from-data">ok</div></body></html>`,
+            finalStream: null,
+            ssrHash: "test-hash",
+          };
+        },
+      } as any,
+    });
+
+    await cacheCSSAsync(expectedCss, cssHash, {
+      candidates: ["from-data"],
+      stylesheet: '@import "tailwindcss";',
+    });
+
+    (pipeline as any).loadModule = async (path: string) => {
+      if (path === pagePath) {
+        return {
+          getServerData: () => {
+            pageDataCalls++;
+            return { props: { title: "from-page" } };
+          },
+        };
+      }
+      if (path === layoutPath) {
+        return {
+          getServerData: () => {
+            layoutDataCalls++;
+            return { props: { theme: "from-layout" } };
+          },
+        };
+      }
+      return {};
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    assertEquals(pageDataCalls, 1);
+    assertEquals(layoutDataCalls, 1);
+    assertEquals(pageData.props, { title: "from-page" });
+    assertEquals(pageData.layoutProps, {
+      "layouts/root.tsx": { theme: "from-layout" },
+    });
+    assertEquals(pageData.css, expectedCss);
+    assertEquals(ssrOptions?.props, { title: "from-page" });
+    assertEquals(ssrOptions?.layoutProps, {
+      "layouts/root.tsx": { theme: "from-layout" },
+    });
+    assertEquals(Object.getOwnPropertySymbols(ssrOptions ?? {}).length, 0);
+    assertEquals(appliedLayoutProps?.get(layoutPath), { theme: "from-layout" });
   });
 
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {

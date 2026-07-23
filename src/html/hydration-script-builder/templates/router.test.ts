@@ -148,7 +148,7 @@ describe("hydration-script-builder/templates/router", () => {
     it("should skip page-data prefetches while navigation is active", () => {
       const result = getRouterScript();
       assertIncludes(result, "let isNavigating = false;");
-      assertIncludes(result, "function prefetchPage(href) {\n      if (isNavigating) return;");
+      assertIncludes(result, "if (isNavigating) return;");
     });
 
     it("should emit route transition timing events", () => {
@@ -305,6 +305,7 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "IDLE_PREFETCH_DELAY_MS = 1200");
       assertIncludes(result, "IDLE_PREFETCH_MAX_LINKS = 4");
       assertIncludes(result, "VIEWPORT_PREFETCH_MAX_LINKS = 8");
+      assertIncludes(result, "PAGE_DATA_PREFETCH_CONCURRENCY = 2");
       assertIncludes(result, "VIEWPORT_PREFETCH_ROOT_MARGIN = '200px'");
       assertIncludes(result, "link.getAttribute('data-prefetch') === 'false'");
       assertIncludes(result, "document.querySelectorAll('a[href]')");
@@ -445,6 +446,11 @@ describe("hydration-script-builder/templates/router", () => {
       query: Record<string, string>;
       navigate(path: string): Promise<void>;
       push(path: string): void;
+      prefetch(path: string): void;
+    }
+    interface RuntimeFetchCall {
+      url: string;
+      options: { headers?: Record<string, string>; signal?: AbortSignal };
     }
     interface RuntimeWindow {
       location: RuntimeLocation;
@@ -462,6 +468,7 @@ describe("hydration-script-builder/templates/router", () => {
       win: RuntimeWindow;
       listeners: Record<string, Array<(e: unknown) => void>>;
       setNextPageData: (data: unknown) => void;
+      fetchCalls: RuntimeFetchCall[];
       // The router.params snapshot captured the moment renderPageFromData built
       // the RouterProvider element — i.e. what the new page renders with. This is
       // what the ordering bug (mutating params after render) would get wrong.
@@ -476,6 +483,10 @@ describe("hydration-script-builder/templates/router", () => {
         pathname?: string;
         search?: string;
         hydrationParams?: Record<string, string | string[]>;
+        fetchImpl?: (
+          url: string,
+          options: { headers?: Record<string, string>; signal?: AbortSignal },
+        ) => Promise<unknown>;
       } = {},
     ): RuntimeHandle {
       const hydrationJson = JSON.stringify({ params: opts.hydrationParams ?? {} });
@@ -532,14 +543,22 @@ describe("hydration-script-builder/templates/router", () => {
       };
 
       let nextPageData: unknown = { pagePath: "page", params: {} };
-      const fetchStub = () =>
-        Promise.resolve({
+      const fetchCalls: RuntimeFetchCall[] = [];
+      const fetchStub = (
+        url: string,
+        options: { headers?: Record<string, string>; signal?: AbortSignal },
+      ) => {
+        fetchCalls.push({ url, options });
+        if (opts.fetchImpl) return opts.fetchImpl(url, options);
+
+        return Promise.resolve({
           ok: true,
           status: 200,
           url: "/_veryfront/page-data/page.json",
           headers: { get: () => null },
           json: () => Promise.resolve(nextPageData),
         });
+      };
 
       const RouterProvider = () => ({});
       const PageContextProvider = () => ({});
@@ -598,9 +617,31 @@ describe("hydration-script-builder/templates/router", () => {
         setNextPageData: (data: unknown) => {
           nextPageData = data;
         },
+        fetchCalls,
         getRenderedParams: () => renderedRouterParams,
         getRenderedPageParams: () => renderedPageParams,
       };
+    }
+
+    function pageDataResponse(path = "page"): unknown {
+      return {
+        ok: true,
+        status: 200,
+        url: "/_veryfront/page-data/" + path + ".json",
+        headers: { get: () => null },
+        json: () => Promise.resolve({ pagePath: path, params: {} }),
+      };
+    }
+
+    function flushMicrotasks(): Promise<void> {
+      return Promise.resolve().then(() => {});
+    }
+
+    async function flushUntil(check: () => boolean): Promise<void> {
+      for (let i = 0; i < 10; i++) {
+        if (check()) return;
+        await flushMicrotasks();
+      }
     }
 
     it("seeds router params from hydration data, joining catch-all segments", () => {
@@ -672,6 +713,125 @@ describe("hydration-script-builder/templates/router", () => {
 
       assertEquals(runtime.router.params, { id: "7" });
       assertEquals(runtime.getRenderedParams(), { id: "7" });
+    });
+
+    it("limits generated page-data prefetches to two active requests", async () => {
+      const pendingResolvers: Array<(value: unknown) => void> = [];
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: () =>
+          new Promise((resolve) => {
+            pendingResolvers.push(resolve);
+          }),
+      });
+
+      runtime.router.prefetch("/a");
+      runtime.router.prefetch("/b");
+      runtime.router.prefetch("/c");
+      runtime.router.prefetch("/d");
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/a.json",
+        "/_veryfront/page-data/b.json",
+      ]);
+
+      const resolveFirst = pendingResolvers[0];
+      if (!resolveFirst) throw new Error("first prefetch did not start");
+      resolveFirst(pageDataResponse("a"));
+      await flushUntil(() => runtime.fetchCalls.length === 3);
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/a.json",
+        "/_veryfront/page-data/b.json",
+        "/_veryfront/page-data/c.json",
+      ]);
+    });
+
+    it("marks speculative page-data prefetches and does not retry them", async () => {
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: () =>
+          Promise.resolve({
+            ok: false,
+            status: 500,
+            url: "/_veryfront/page-data/fail.json",
+            headers: { get: () => null },
+            json: () => Promise.resolve({}),
+          }),
+      });
+
+      runtime.router.prefetch("/fail");
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      assertEquals(runtime.fetchCalls.length, 1);
+      const call = runtime.fetchCalls[0];
+      if (!call) throw new Error("prefetch fetch did not start");
+      assertEquals(call.options.headers, { "X-Veryfront-Prefetch": "1" });
+    });
+
+    it("allows a failed speculative prefetch to be requested again later", async () => {
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: () => {
+          if (runtime.fetchCalls.length === 1) {
+            return Promise.resolve({
+              ok: false,
+              status: 500,
+              url: "/_veryfront/page-data/retry.json",
+              headers: { get: () => null },
+              json: () => Promise.resolve({}),
+            });
+          }
+
+          return Promise.resolve(pageDataResponse("retry"));
+        },
+      });
+
+      runtime.router.prefetch("/retry");
+
+      for (let i = 0; i < 10 && runtime.fetchCalls.length < 2; i++) {
+        await flushMicrotasks();
+        runtime.router.prefetch("/retry");
+      }
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/retry.json",
+        "/_veryfront/page-data/retry.json",
+      ]);
+    });
+
+    it("aborts active speculative prefetches and starts foreground navigation independently", async () => {
+      const abortedPrefetches: string[] = [];
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: (url, options) => {
+          if (options.headers?.["X-Veryfront-Prefetch"] === "1") {
+            return new Promise((_, reject) => {
+              options.signal?.addEventListener("abort", () => {
+                abortedPrefetches.push(url);
+                reject(new DOMException("Aborted", "AbortError"));
+              });
+            });
+          }
+
+          return Promise.resolve(pageDataResponse("target"));
+        },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      runtime.router.prefetch("/target");
+      runtime.router.prefetch("/other");
+      runtime.router.prefetch("/queued");
+      assertEquals(runtime.fetchCalls.length, 2);
+
+      await runtime.navigateSPA("/target", true);
+
+      assertEquals(abortedPrefetches.sort(), [
+        "/_veryfront/page-data/other.json",
+        "/_veryfront/page-data/target.json",
+      ]);
+      const navigationCall = runtime.fetchCalls[2];
+      if (!navigationCall) throw new Error("foreground navigation fetch did not start");
+      assertEquals(navigationCall.url, "/_veryfront/page-data/target.json");
+      assertEquals(navigationCall.options.headers, { "X-Veryfront-Navigation": "spa" });
+      assertEquals(runtime.router.pathname, "/target");
     });
   });
 });

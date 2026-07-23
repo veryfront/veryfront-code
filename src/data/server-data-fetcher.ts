@@ -34,8 +34,10 @@ export class ServerDataFetcher {
 
     const pathname = context.url?.pathname ?? "unknown";
     const projectId = context.request?.headers?.get("x-project-id") ?? "default";
+    const isPrefetch = context.request?.headers?.get("x-veryfront-prefetch") === "1";
+    const breakerNamespace = isPrefetch ? "data-prefetch" : "data-fetch";
 
-    const circuitBreaker = getCircuitBreaker(`data-fetch:${projectId}`, {
+    const circuitBreaker = getCircuitBreaker(`${breakerNamespace}:${projectId}`, {
       failureThreshold: 5,
       resetTimeoutMs: 30_000,
       successThreshold: 2,
@@ -82,6 +84,7 @@ export class ServerDataFetcher {
             serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
               pathname,
               projectId,
+              breakerNamespace,
               retryAfterMs: error.nextAttemptMs,
             });
             throw error;
@@ -109,6 +112,7 @@ export class ServerDataFetcher {
         "data.pathname": pathname,
         "data.timeout_ms": DATA_FETCH_TIMEOUT_MS,
         "data.project_id": projectId,
+        "data.prefetch": isPrefetch,
         "data.isolated": useIsolation,
       },
     );
