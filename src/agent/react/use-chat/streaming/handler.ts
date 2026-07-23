@@ -459,6 +459,10 @@ function isRenderableDataPartType(type: string): boolean {
     type !== "data-messages-snapshot";
 }
 
+function getProviderExecuted(parsed: Record<string, unknown>): boolean | undefined {
+  return typeof parsed.providerExecuted === "boolean" ? parsed.providerExecuted : undefined;
+}
+
 function handleToolInputStart(
   parsed: Record<string, unknown>,
   state: StreamingState,
@@ -470,12 +474,14 @@ function handleToolInputStart(
   }
 
   const toolCallId = (parsed.toolCallId as string) || generateClientId("tool");
+  const providerExecuted = getProviderExecuted(parsed);
   const toolCall: OrderedToolCall = {
     toolCallId,
     toolName: (parsed.toolName as string) || "unknown",
     inputText: "",
     state: "input-streaming",
     dynamic: parsed.dynamic === true,
+    ...(providerExecuted !== undefined ? { providerExecuted } : {}),
     order: state.partOrderCounter++,
   };
 
@@ -511,6 +517,7 @@ function handleToolInputAvailable(
   }
 
   let toolCall = state.toolCalls.get(toolCallId);
+  const providerExecuted = getProviderExecuted(parsed);
   if (!toolCall) {
     toolCall = {
       toolCallId,
@@ -518,6 +525,7 @@ function handleToolInputAvailable(
       inputText: "",
       state: "input-available",
       dynamic: parsed.dynamic === true,
+      ...(providerExecuted !== undefined ? { providerExecuted } : {}),
       order: state.partOrderCounter++,
     };
     state.toolCalls.set(toolCallId, toolCall);
@@ -527,6 +535,7 @@ function handleToolInputAvailable(
   toolCall.toolName = (parsed.toolName as string) || toolCall.toolName;
   toolCall.state = "input-available";
   if (parsed.dynamic === true) toolCall.dynamic = true;
+  if (providerExecuted !== undefined) toolCall.providerExecuted = providerExecuted;
 
   onToolCall?.({
     toolCall: {
@@ -544,6 +553,9 @@ function handleToolInputAvailable(
       toolName: toolCall.toolName,
       state: "input-available",
       input: toolCall.input,
+      ...(toolCall.providerExecuted !== undefined
+        ? { providerExecuted: toolCall.providerExecuted }
+        : {}),
     });
   } else {
     state.messageParts.push({
@@ -552,6 +564,9 @@ function handleToolInputAvailable(
       toolName: toolCall.toolName,
       state: "input-available",
       input: toolCall.input,
+      ...(toolCall.providerExecuted !== undefined
+        ? { providerExecuted: toolCall.providerExecuted }
+        : {}),
     } as ChatToolPart);
   }
 
@@ -570,6 +585,8 @@ function handleToolOutputAvailable(
 
   toolCall.output = parsed.output;
   toolCall.state = "output-available";
+  const providerExecuted = getProviderExecuted(parsed);
+  if (providerExecuted !== undefined) toolCall.providerExecuted = providerExecuted;
 
   state.messageParts.push({
     type: "tool-result",
@@ -594,6 +611,8 @@ function handleToolError(
   toolCall.state = "output-error";
   toolCall.error = parsed.errorText as string;
   if (parsed.dynamic === true) toolCall.dynamic = true;
+  const providerExecuted = getProviderExecuted(parsed);
+  if (providerExecuted !== undefined) toolCall.providerExecuted = providerExecuted;
 
   emitUpdate(state, onUpdate, getBuildParts);
 }

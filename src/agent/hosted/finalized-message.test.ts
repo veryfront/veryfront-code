@@ -59,7 +59,7 @@ Deno.test("buildFinalizedMessageState does not fail provider-owned input-availab
   ]);
 });
 
-Deno.test("buildFinalizedMessageState does not fail provider-native web tools when providerExecuted is omitted", () => {
+Deno.test("buildFinalizedMessageState fails local web_fetch input-available tools without providerExecuted", () => {
   const result = buildFinalizedMessageState({
     responseMessage: {
       id: "assistant-1",
@@ -79,14 +79,15 @@ Deno.test("buildFinalizedMessageState does not fail provider-native web tools wh
     incompleteToolCallsPartErrorText: "tool error",
   });
 
-  assertEquals(result.hasIncompleteFinalizedToolParts, false);
+  assertEquals(result.hasIncompleteFinalizedToolParts, true);
   assertEquals(result.sanitizedFinalizedMessage.parts, [
     { type: "text", text: "Done" },
     {
       type: "tool-web_fetch",
       toolCallId: "srvtoolu-fetch",
       input: { url: "https://veryfront.com/docs/agent/create-agent" },
-      state: "input-available",
+      state: "output-error",
+      errorText: "tool error",
     },
   ]);
 });

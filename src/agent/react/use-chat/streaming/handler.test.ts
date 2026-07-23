@@ -163,6 +163,51 @@ describe("use-chat streaming handler", () => {
     assertEquals(rec.toolCalls[0]!.toolCall.dynamic, true);
   });
 
+  it("preserves providerExecuted on provider-owned input-only tool parts", async () => {
+    const rec = recorder();
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-provider-tool" },
+        {
+          type: "tool-input-start",
+          toolCallId: "provider-fetch",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "provider-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://example.com/docs" },
+          providerExecuted: true,
+        },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.toolCalls[0]!.toolCall, {
+      toolCallId: "provider-fetch",
+      toolName: "web_fetch",
+      input: { url: "https://example.com/docs" },
+      dynamic: false,
+    });
+    const message = rec.messages[0];
+    assertExists(message);
+    assertEquals(message.parts, [
+      {
+        type: "tool-web_fetch",
+        toolCallId: "provider-fetch",
+        toolName: "web_fetch",
+        state: "input-available",
+        input: { url: "https://example.com/docs" },
+        output: undefined,
+        errorText: undefined,
+        providerExecuted: true,
+      },
+    ]);
+  });
+
   it("assembles reasoning blocks across deltas", async () => {
     const rec = recorder();
     await handleStreamingResponse(
@@ -303,6 +348,7 @@ describe("use-chat streaming handler", () => {
         input: { query: "agents" },
         output: { count: 2 },
         errorText: undefined,
+        providerExecuted: true,
       },
     ]);
   });

@@ -553,6 +553,167 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps source provider tools insi
   assertStringIncludes(toolAssembly.systemInstructions, "- sleep");
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly falls back to local web_fetch when OpenAI lacks provider-native web_fetch", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      sleep: localTool("Sleep"),
+      web_fetch: localTool("Fetch a URL"),
+      write_file: localTool("Write a file"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep", "write_file"],
+    allowedProviderToolNames: ["web_fetch"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep", "web_fetch", "write_file"]);
+  assertEquals(toolAssembly.providerToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch", "write_file"]);
+  assertExists(toolAssembly.runtimeTools.web_fetch);
+  assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly does not re-read selected local web_fetch as OpenAI fallback", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+  const webFetchTool = localTool("Fetch a URL");
+  const localTools = {
+    sleep: localTool("Sleep"),
+  } as Record<string, ReturnType<typeof localTool>>;
+  let webFetchAccessCount = 0;
+  Object.defineProperty(localTools, "web_fetch", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      webFetchAccessCount += 1;
+      return webFetchTool;
+    },
+  });
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep", "web_fetch"],
+    allowedProviderToolNames: ["web_fetch"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(webFetchAccessCount, 1);
+  assertEquals(toolAssembly.localToolNames, ["sleep", "web_fetch"]);
+  assertEquals(toolAssembly.providerToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch"]);
+  assertExists(toolAssembly.runtimeTools.web_fetch);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly denies OpenAI local web_fetch fallback when direct allowed tools exclude it", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      sleep: localTool("Sleep"),
+      web_fetch: localTool("Fetch a URL"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    sourceProviderToolNames: ["web_fetch"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(toolAssembly.providerToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["sleep"]);
+  assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty provider allowlist as local web_fetch fallback denial", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      sleep: localTool("Sleep"),
+      web_fetch: localTool("Fetch a URL"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    allowedProviderToolNames: [],
+    sourceProviderToolNames: ["web_fetch"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(toolAssembly.providerToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["sleep"]);
+  assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly does not duplicate Anthropic provider-native web_fetch with the local fallback", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      sleep: localTool("Sleep"),
+      web_fetch: localTool("Fetch a URL"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    allowedProviderToolNames: ["web_fetch"],
+    sourceProviderToolNames: ["web_fetch"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(toolAssembly.providerToolNames, ["web_fetch"]);
+  assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch"]);
+  assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
+  assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifacts", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>
