@@ -77,7 +77,9 @@ describe("hydration-script-builder/templates/router", () => {
     it("should log non-blocking background page-data fetch failures", () => {
       const result = getRouterScript();
       assertIncludes(result, "function logBackgroundFetchFailure(reason, path, error)");
+      assertIncludes(result, "function isAbortError(error)");
       assertIncludes(result, "logBackgroundFetchFailure('Stale page data refresh', path, error)");
+      assertIncludes(result, "if (!isAbortError(error)) {");
       assertIncludes(result, "logBackgroundFetchFailure('Page data prefetch', path, error)");
     });
 
@@ -459,6 +461,7 @@ describe("hydration-script-builder/templates/router", () => {
       dispatchEvent(): boolean;
       scrollTo(): void;
       scrollY: number;
+      __VERYFRONT_DEBUG__?: boolean;
       __veryfrontRouter?: RuntimeRouter;
       __veryfrontHydrationComplete?: () => void;
     }
@@ -487,6 +490,7 @@ describe("hydration-script-builder/templates/router", () => {
           url: string,
           options: { headers?: Record<string, string>; signal?: AbortSignal },
         ) => Promise<unknown>;
+        debug?: boolean;
       } = {},
     ): RuntimeHandle {
       const hydrationJson = JSON.stringify({ params: opts.hydrationParams ?? {} });
@@ -540,6 +544,7 @@ describe("hydration-script-builder/templates/router", () => {
         },
         scrollTo() {},
         scrollY: 0,
+        __VERYFRONT_DEBUG__: opts.debug,
       };
 
       let nextPageData: unknown = { pagePath: "page", params: {} };
@@ -800,7 +805,18 @@ describe("hydration-script-builder/templates/router", () => {
 
     it("aborts active speculative prefetches and starts foreground navigation independently", async () => {
       const abortedPrefetches: string[] = [];
+      const debugLogs: unknown[][] = [];
+      const errorLogs: unknown[][] = [];
+      const originalConsoleLog = console.log;
+      const originalConsoleError = console.error;
+      console.log = (...args: unknown[]) => {
+        debugLogs.push(args);
+      };
+      console.error = (...args: unknown[]) => {
+        errorLogs.push(args);
+      };
       const runtime = evaluateRouterRuntime({
+        debug: true,
         fetchImpl: (url, options) => {
           if (options.headers?.["X-Veryfront-Prefetch"] === "1") {
             return new Promise((_, reject) => {
@@ -814,24 +830,34 @@ describe("hydration-script-builder/templates/router", () => {
           return Promise.resolve(pageDataResponse("target"));
         },
       });
-      runtime.win.__veryfrontHydrationComplete?.();
+      try {
+        runtime.win.__veryfrontHydrationComplete?.();
 
-      runtime.router.prefetch("/target");
-      runtime.router.prefetch("/other");
-      runtime.router.prefetch("/queued");
-      assertEquals(runtime.fetchCalls.length, 2);
+        runtime.router.prefetch("/target");
+        runtime.router.prefetch("/other");
+        runtime.router.prefetch("/queued");
+        assertEquals(runtime.fetchCalls.length, 2);
 
-      await runtime.navigateSPA("/target", true);
+        await runtime.navigateSPA("/target", true);
 
-      assertEquals(abortedPrefetches.sort(), [
-        "/_veryfront/page-data/other.json",
-        "/_veryfront/page-data/target.json",
-      ]);
-      const navigationCall = runtime.fetchCalls[2];
-      if (!navigationCall) throw new Error("foreground navigation fetch did not start");
-      assertEquals(navigationCall.url, "/_veryfront/page-data/target.json");
-      assertEquals(navigationCall.options.headers, { "X-Veryfront-Navigation": "spa" });
-      assertEquals(runtime.router.pathname, "/target");
+        assertEquals(abortedPrefetches.sort(), [
+          "/_veryfront/page-data/other.json",
+          "/_veryfront/page-data/target.json",
+        ]);
+        assertEquals(
+          debugLogs.some((args) => String(args.join(" ")).includes("Page data prefetch failed")),
+          false,
+        );
+        assertEquals(errorLogs, []);
+        const navigationCall = runtime.fetchCalls[2];
+        if (!navigationCall) throw new Error("foreground navigation fetch did not start");
+        assertEquals(navigationCall.url, "/_veryfront/page-data/target.json");
+        assertEquals(navigationCall.options.headers, { "X-Veryfront-Navigation": "spa" });
+        assertEquals(runtime.router.pathname, "/target");
+      } finally {
+        console.log = originalConsoleLog;
+        console.error = originalConsoleError;
+      }
     });
   });
 });

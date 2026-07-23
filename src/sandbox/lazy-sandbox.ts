@@ -868,9 +868,17 @@ export class LazySandbox {
   private resolveDataPlaneRoute(): DataPlaneRoute {
     const endpoint = this.requireEndpoint();
     const sessionId = this.requireSessionId();
-    if (this.shouldUseInternalDataPlane(endpoint, sessionId)) {
+    if (!this.resolveRuntimeEndpointOption) {
       return {
-        baseUrl: normalizeDataPlaneBaseUrl(this.resolveRuntimeEndpointFor(endpoint, sessionId)),
+        baseUrl: sandboxSessionRoute(this.apiUrl, sessionId),
+        kind: "proxy",
+      };
+    }
+
+    const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
+    if (normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint)) {
+      return {
+        baseUrl: normalizeDataPlaneBaseUrl(runtimeEndpoint),
         kind: "internal",
       };
     }

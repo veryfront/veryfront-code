@@ -2203,14 +2203,20 @@ describe("Sandbox", () => {
         jsonResponse({ ok: true }),
       ]);
 
+      let resolverCalls = 0;
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
-        resolveRuntimeEndpoint: ({ endpoint }) =>
-          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
+        resolveRuntimeEndpoint: ({ endpoint }) => {
+          resolverCalls++;
+          return resolveDefaultSandboxRuntimeEndpoint({ endpoint });
+        },
       });
 
       try {
+        await sandbox.ensure();
+        resolverCalls = 0;
+
         assertEquals((await sandbox.getBackgroundCommand("command-1")).status, "running");
         assertEquals((await sandbox.getBackgroundCommandOutput("command-1")).stdout, "done\n");
         assertEquals((await sandbox.cancelBackgroundCommand("command-1")).status, "canceled");
@@ -2220,6 +2226,7 @@ describe("Sandbox", () => {
 
       const internalCommandsUrl =
         "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/commands";
+      assertEquals(resolverCalls, 2);
       assertEquals(fetchCalls.map((call) => [call.url, call.init?.method ?? "GET"]), [
         ["https://api.test.com/sandbox-sessions", "POST"],
         ["http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/readyz", "GET"],

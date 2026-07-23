@@ -55,6 +55,10 @@ export const getRouterScript = () => `
       log(reason + ' failed:', path, message);
     }
 
+    function isAbortError(error) {
+      return error?.name === 'AbortError';
+    }
+
     function getDocumentNonce() {
       const element = document.querySelector('script[nonce], style[nonce], link[nonce]');
       if (!element) return undefined;
@@ -572,7 +576,9 @@ export const getRouterScript = () => `
       return startPageDataFetch(path, signal, { prefetch: true, trackPending: false })
         .then((data) => preloadModulesForPageData(data, path))
         .catch((error) => {
-          logBackgroundFetchFailure('Page data prefetch', path, error);
+          if (!isAbortError(error)) {
+            logBackgroundFetchFailure('Page data prefetch', path, error);
+          }
           throw error;
         });
     }
