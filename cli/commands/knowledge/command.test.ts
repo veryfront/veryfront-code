@@ -210,9 +210,6 @@ describe("collectKnowledgeSources", () => {
     const shadowPath = join(shadowDir, "q1.pdf");
     const remotePath = shadowPath.replaceAll("\\", "/");
     const downloadedPath = `/workspace/${remotePath}`;
-    const hadUploadsDir = await Deno.stat("uploads").then((stat) => stat.isDirectory).catch(() =>
-      false
-    );
     const calls: string[] = [];
 
     try {
@@ -247,11 +244,7 @@ describe("collectKnowledgeSources", () => {
       );
       assertEquals(collection.skipped, []);
     } finally {
-      await Deno.remove(shadowPath).catch(() => undefined);
-      await Deno.remove(shadowDir).catch(() => undefined);
-      if (!hadUploadsDir) {
-        await Deno.remove("uploads").catch(() => undefined);
-      }
+      await Deno.remove(shadowDir, { recursive: true }).catch(() => undefined);
     }
   });
 

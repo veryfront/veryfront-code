@@ -150,7 +150,7 @@ describe("hydration-script-builder/templates/router", () => {
     it("should skip page-data prefetches while navigation is active", () => {
       const result = getRouterScript();
       assertIncludes(result, "let isNavigating = false;");
-      assertIncludes(result, "if (isNavigating) return;");
+      assertIncludes(result, "function prefetchPage(href) {\n      if (isNavigating) return;");
     });
 
     it("should emit route transition timing events", () => {
