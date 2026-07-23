@@ -50,6 +50,16 @@ export const globalTmpDirs = new LRUCache<string, string>({
 
 export const failedComponents = new Map<string, FailureRecord>();
 
+export interface ClearSSRModuleCacheForProjectOptions {
+  /**
+   * Preserve live transform ownership and per-project capacity waiters while
+   * clearing request-visible cache entries. Dev SSR request starts use this so
+   * concurrent cold requests do not delete another request's transform leader
+   * before it can publish its completed cache entry.
+   */
+  preserveActiveTransforms?: boolean;
+}
+
 let _transformSemaphore: Semaphore | undefined;
 export function getTransformSemaphore(): Semaphore {
   if (!_transformSemaphore) {
@@ -308,9 +318,13 @@ export function clearSSRModuleCache(): void {
   });
 }
 
-export function clearSSRModuleCacheForProject(projectId: string): void {
+export function clearSSRModuleCacheForProject(
+  projectId: string,
+  options: ClearSSRModuleCacheForProjectOptions = {},
+): void {
   let cleared = 0;
   const encodedProjectId = hashCodeHex(projectId);
+  const preserveActiveTransforms = options.preserveActiveTransforms === true;
 
   for (const key of globalModuleCache.keys()) {
     if (!isKeyForProject(key, projectId)) continue;
@@ -323,9 +337,11 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     globalCrossProjectCache.delete(key);
   }
 
-  for (const key of globalInProgress.keys()) {
-    if (!isKeyForProject(key, projectId)) continue;
-    globalInProgress.delete(key);
+  if (!preserveActiveTransforms) {
+    for (const key of globalInProgress.keys()) {
+      if (!isKeyForProject(key, projectId)) continue;
+      globalInProgress.delete(key);
+    }
   }
 
   for (const key of failedComponents.keys()) {
@@ -335,7 +351,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
 
   for (const key of globalTmpDirs.keys()) {
     const parts = key.split("|");
-    if (parts.length >= 3 && parts[1] === encodedProjectId) {
+    if (parts[2] === encodedProjectId || parts[1] === encodedProjectId) {
       globalTmpDirs.delete(key);
       continue;
     }
@@ -346,8 +362,10 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     }
   }
 
-  projectTransformCounts.delete(projectId);
-  rejectProjectTransformWaiters(projectId);
+  if (!preserveActiveTransforms) {
+    projectTransformCounts.delete(projectId);
+    rejectProjectTransformWaiters(projectId);
+  }
 
   // Clear verified HTTP bundle paths — keys are tempPath:contentHash (not project-scoped),
   // so full clear is needed. This just forces re-verification on next access.
@@ -356,6 +374,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   logger.debug("✓ Project cache cleared", {
     projectId,
     entriesCleared: cleared,
+    activeTransformsPreserved: preserveActiveTransforms,
     remainingModules: globalModuleCache.size,
   });
 }

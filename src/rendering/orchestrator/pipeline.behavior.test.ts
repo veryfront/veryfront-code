@@ -18,6 +18,11 @@ import {
   resetRequestProfiles,
   runWithRequestProfiling,
 } from "#veryfront/observability/request-profiler.ts";
+import {
+  clearSSRModuleCache,
+  globalInProgress,
+  globalModuleCache,
+} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -201,6 +206,58 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+  });
+
+  it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {
+    clearSSRModuleCache();
+    const projectId = "project-dev-render-active-transform";
+    const moduleKey = `prefix:${projectId}:module`;
+    const inProgressKey = `prefix:${projectId}:in-progress`;
+    const leader = Promise.resolve();
+    globalModuleCache.set(moduleKey, { tempPath: "/tmp/dev-render.mjs", contentHash: "a" });
+    globalInProgress.set(inProgressKey, leader);
+
+    const pipeline = createPipeline("/project/pages/dev-render.tsx", {
+      mode: "development",
+      projectId,
+    });
+
+    try {
+      await pipeline.renderPage("/dev-render", { delivery: "string" });
+
+      assertEquals(globalModuleCache.has(moduleKey), false);
+      assertEquals(globalInProgress.get(inProgressKey), leader);
+    } finally {
+      clearSSRModuleCache();
+    }
+  });
+
+  it("resolvePageData preserves active SSR transforms during development cache freshness clears", async () => {
+    clearSSRModuleCache();
+    const projectId = "project-dev-page-data-active-transform";
+    const moduleKey = `prefix:${projectId}:module`;
+    const inProgressKey = `prefix:${projectId}:in-progress`;
+    const leader = Promise.resolve();
+    globalModuleCache.set(moduleKey, { tempPath: "/tmp/dev-page-data.mjs", contentHash: "a" });
+    globalInProgress.set(inProgressKey, leader);
+
+    const pipeline = createPipeline("/project/pages/dev-page-data.tsx", {
+      mode: "development",
+      projectId,
+    });
+    (pipeline as any).loadModule = async () => ({});
+
+    try {
+      await pipeline.resolvePageData("/dev-page-data", {
+        request: new Request("http://localhost/dev-page-data"),
+        url: new URL("http://localhost/dev-page-data"),
+      });
+
+      assertEquals(globalModuleCache.has(moduleKey), false);
+      assertEquals(globalInProgress.get(inProgressKey), leader);
+    } finally {
+      clearSSRModuleCache();
+    }
   });
 
   it("renderPage forwards project-relative layout props to HTML hydration", async () => {

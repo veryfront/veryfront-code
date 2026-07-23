@@ -19,6 +19,8 @@ export {
   tryAcquireTransformSlot,
 } from "./memory.ts";
 
+export type { ClearSSRModuleCacheForProjectOptions } from "./memory.ts";
+
 export {
   getFromRedis,
   initializeSSRDistributedCache,
