@@ -76,8 +76,11 @@ function normalizeProjectSlug(projectSlug: string | undefined): string | undefin
 }
 
 function resolveRequestProjectSlug(): string | undefined {
-  const requestProjectSlug = normalizeProjectSlug(getCurrentRequestContext()?.projectSlug);
-  return requestProjectSlug ?? normalizeProjectSlug(getEnvironmentConfig().projectSlug);
+  const requestContext = getCurrentRequestContext();
+  if (requestContext) {
+    return normalizeProjectSlug(requestContext.projectSlug);
+  }
+  return normalizeProjectSlug(getEnvironmentConfig().projectSlug);
 }
 
 // ---------------------------------------------------------------------------

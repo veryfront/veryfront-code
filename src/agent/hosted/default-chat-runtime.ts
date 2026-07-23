@@ -4,6 +4,7 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
+import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -76,6 +77,7 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   runId?: string;
   agentId?: string;
   projectId: string;
+  projectSlug?: string;
   branchId: string | null;
   runtimeTargetKind?: DefaultHostedChatRuntimeCreationOptions["runtimeTargetKind"];
   runtimeTargetEnvironmentId?: string | null;
@@ -155,6 +157,7 @@ function createDefaultTaskContext(
     runId: input.options.runId,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
+    projectSlug: input.options.projectSlug,
     branchId: input.options.branchId ?? null,
     runtimeTargetKind: input.options.runtimeTargetKind ?? null,
     runtimeTargetEnvironmentId: input.options.runtimeTargetEnvironmentId ?? null,
@@ -291,6 +294,7 @@ function createCloudContext(input: {
   return {
     apiBaseUrl: input.config.apiUrl,
     apiToken: input.options.authToken,
+    projectSlug: input.options.projectSlug,
     serviceLayer: "cloud",
   };
 }
@@ -310,13 +314,29 @@ function runWithDefaultHostedRequestContext<TResult>(
     }),
     requestId: crypto.randomUUID(),
     projectId: input.taskContext.projectId || undefined,
+    projectSlug: input.taskContext.projectSlug,
     userId: input.taskContext.userId,
     conversationId: input.taskContext.conversationId,
   };
 
   return runWithRequestContextAsync(
     requestContext,
-    () => runWithVeryfrontCloudContextAsync(input.cloudContext, input.operation),
+    () => {
+      const runWithCloudContext = () =>
+        runWithVeryfrontCloudContextAsync(input.cloudContext, input.operation);
+      if (!input.taskContext.projectSlug) {
+        return runWithCloudContext();
+      }
+      return runWithProjectRequestContext(
+        {
+          projectSlug: input.taskContext.projectSlug,
+          projectId: input.taskContext.projectId || undefined,
+          token: input.taskContext.authToken,
+          productionMode: false,
+        },
+        runWithCloudContext,
+      );
+    },
   );
 }
 

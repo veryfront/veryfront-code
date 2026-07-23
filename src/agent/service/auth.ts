@@ -61,7 +61,7 @@ export type HostedServiceProjectAccessError = {
 
 /** Result returned from hosted service project access. */
 export type HostedServiceProjectAccessResult =
-  | { success: true; projectId: string }
+  | { success: true; projectId: string; projectSlug?: string }
   | { success: false; error: HostedServiceProjectAccessError };
 
 /** Configuration used by hosted service auth. */
@@ -205,6 +205,17 @@ function decodeBase64Url(input: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readProjectSlugFromAccessResponse(response: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await response.json();
+    if (!isRecord(body)) return undefined;
+    const slug = typeof body.slug === "string" ? body.slug.trim() : "";
+    return slug || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseJsonObject(json: string): Record<string, unknown> | null {
@@ -431,9 +442,11 @@ export function createHostedServiceAuth(
           };
         }
 
+        const projectSlug = await readProjectSlugFromAccessResponse(response);
         return {
           success: true,
           projectId,
+          ...(projectSlug ? { projectSlug } : {}),
         };
       } catch (error) {
         options.logger?.error?.("Project access check failed", { error, projectId });

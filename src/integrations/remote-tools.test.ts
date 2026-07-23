@@ -276,6 +276,31 @@ describe("integrations/remote-tools", () => {
     assertEquals(definitions, []);
   });
 
+  it("does not fall back to the environment project slug when request context has an empty slug", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    let projectSlugHeader: string | null = "unexpected";
+    const definitions = await runWithRequestContext(
+      { projectSlug: "   ", token: "request-token" },
+      async () =>
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+            return Response.json({ tools: [] });
+          },
+          async () => await getRemoteIntegrationToolDefinitions(),
+        ),
+    );
+
+    assertEquals(projectSlugHeader, null);
+    assertEquals(definitions, []);
+  });
+
   it("omits the project slug header when no project context is configured", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
