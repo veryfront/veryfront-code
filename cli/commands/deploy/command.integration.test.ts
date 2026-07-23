@@ -14,7 +14,6 @@ const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 
 it("uses canonical production read-back in human and JSON modes", async () => {
-  const originalCwd = Deno.cwd();
   const projectDir = await Deno.makeTempDir();
   const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
@@ -73,7 +72,6 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
     _resetEnvironmentConfig();
-    Deno.chdir(projectDir);
 
     let releaseSourceContent = "export const value = 1;\n";
     let routingConvergence: DeploymentRoutingConvergence = {
@@ -152,6 +150,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
 
     const runDeploy = () =>
       deployCommand({
+        projectDir,
         branch: "main",
         env: "production",
         releaseName: `github-main-${actualSha}`,
@@ -207,7 +206,6 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
     ]);
   } finally {
-    Deno.chdir(originalCwd);
     envKeys.forEach((key, index) => {
       const value = savedEnv[index];
       if (value === undefined) Deno.env.delete(key);

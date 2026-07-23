@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { relative } from "#veryfront/compat/path/index.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
@@ -465,7 +466,6 @@ describe("discovery/import-rewriter", () => {
 
   it("resolves project-local veryfront exports when projectDir is relative", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
-    const originalCwd = Deno.cwd();
     const veryfrontDir = `${projectDir}/node_modules/veryfront`;
     await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
     await Deno.writeTextFile(
@@ -480,10 +480,9 @@ describe("discovery/import-rewriter", () => {
     await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
 
     try {
-      Deno.chdir(projectDir);
       const transformed = await rewriteDiscoveryImports(
         'import { defineSchema } from "veryfront/schemas";',
-        ".",
+        relative(Deno.cwd(), projectDir),
         createFileSystem(),
         `${projectDir}/app`,
       );
@@ -492,7 +491,6 @@ describe("discovery/import-rewriter", () => {
       assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
       assertEquals(transformed.includes('from "veryfront/schemas"'), false);
     } finally {
-      Deno.chdir(originalCwd);
       await Deno.remove(projectDir, { recursive: true });
     }
   });

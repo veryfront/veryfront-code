@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   _resetCache,
@@ -54,25 +54,40 @@ describe("npm-import-rewrites", () => {
       const result = rewriteNpmImports(input);
       assertEquals(result, input);
     });
+
+    it("keeps cached rewrite rules isolated by canonical project directory", async () => {
+      const firstProject = await Deno.makeTempDir();
+      const secondProject = await Deno.makeTempDir();
+
+      try {
+        _resetCache();
+        const firstRules = getNpmRewriteRules(firstProject);
+        const secondRules = getNpmRewriteRules(secondProject);
+
+        assertNotStrictEquals(firstRules, secondRules);
+        assertEquals(getNpmRewriteRules(firstProject), firstRules);
+        assertEquals(getNpmRewriteRules(secondProject), secondRules);
+      } finally {
+        _resetCache();
+        await Deno.remove(firstProject, { recursive: true });
+        await Deno.remove(secondProject, { recursive: true });
+      }
+    });
   });
 
   describe("missing deno.json fallback", () => {
     it("returns no rules when deno.json is missing", () => {
-      const originalCwd = Deno.cwd();
       const tmpDir = Deno.makeTempDirSync();
       try {
-        // Move to a directory without deno.json
-        Deno.chdir(tmpDir);
         _resetCache();
 
-        const rules = getNpmRewriteRules();
+        const rules = getNpmRewriteRules(tmpDir);
         assertEquals(rules.length, 0);
 
         // rewriteNpmImports should be a no-op
         const input = 'import { z } from "zod"';
-        assertEquals(rewriteNpmImports(input), input);
+        assertEquals(rewriteNpmImports(input, tmpDir), input);
       } finally {
-        Deno.chdir(originalCwd);
         _resetCache();
         Deno.removeSync(tmpDir);
       }

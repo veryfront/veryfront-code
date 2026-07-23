@@ -10,7 +10,7 @@
  */
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, resolve } from "#veryfront/compat/path/index.ts";
 
 /**
  * Bare specifiers that should be rewritten to their pinned npm: versions.
@@ -23,7 +23,7 @@ interface RewriteRule {
   replacement: string;
 }
 
-let cachedRules: RewriteRule[] | undefined;
+let cachedRules = new Map<string, RewriteRule[]>();
 
 function escapeForRegex(pkg: string): string {
   return pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -60,9 +60,9 @@ function buildRules(importMap: Record<string, string>): RewriteRule[] {
   return rules;
 }
 
-function loadImportMapSync(): Record<string, string> {
+function loadImportMapSync(baseDir: string = cwd()): Record<string, string> {
   try {
-    const denoJsonPath = join(cwd(), "deno.json");
+    const denoJsonPath = join(baseDir, "deno.json");
     const content = Deno.readTextFileSync(denoJsonPath);
     const config = JSON.parse(content);
     return config.imports ?? {};
@@ -72,15 +72,29 @@ function loadImportMapSync(): Record<string, string> {
   }
 }
 
+function resolveCacheKey(baseDir: string): string {
+  const resolvedBaseDir = resolve(baseDir);
+  let canonicalBaseDir = resolvedBaseDir;
+  try {
+    canonicalBaseDir = Deno.realPathSync(resolvedBaseDir);
+  } catch {
+    // expected: user projects may not exist yet in some compiled-binary paths
+  }
+  return canonicalBaseDir;
+}
+
 /**
  * Returns rewrite rules derived from deno.json's import map.
- * Rules are cached after first call.
+ * Rules are cached per resolved project directory.
  */
-export function getNpmRewriteRules(): RewriteRule[] {
-  if (cachedRules) return cachedRules;
-  const importMap = loadImportMapSync();
-  cachedRules = buildRules(importMap);
-  return cachedRules;
+export function getNpmRewriteRules(baseDir: string = cwd()): RewriteRule[] {
+  const cacheKey = resolveCacheKey(baseDir);
+  const cached = cachedRules.get(cacheKey);
+  if (cached) return cached;
+  const importMap = loadImportMapSync(baseDir);
+  const rules = buildRules(importMap);
+  cachedRules.set(cacheKey, rules);
+  return rules;
 }
 
 const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
@@ -90,10 +104,10 @@ const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
  * Rewrites bare specifiers to pinned npm: versions from deno.json.
  * No-op on Node.js where bare specifiers resolve via node_modules.
  */
-export function rewriteNpmImports(source: string): string {
+export function rewriteNpmImports(source: string, baseDir: string = cwd()): string {
   if (!isDeno) return source;
   let result = source;
-  for (const { pattern, replacement } of getNpmRewriteRules()) {
+  for (const { pattern, replacement } of getNpmRewriteRules(baseDir)) {
     result = result.replace(pattern, replacement);
   }
   return result;
@@ -104,5 +118,5 @@ export { buildRules, REWRITABLE_PACKAGES };
 
 /** @internal Reset cached rules — only for testing */
 export function _resetCache(): void {
-  cachedRules = undefined;
+  cachedRules = new Map();
 }

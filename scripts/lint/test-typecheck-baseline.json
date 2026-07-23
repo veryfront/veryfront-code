@@ -22,7 +22,6 @@
   "src/agent/hosted/child-stream-watchdog.test.ts",
   "src/agent/hosted/form-input-tool.test.ts",
   "src/agent/hosted/response-stream.test.ts",
-  "src/agent/hosted/root-sandbox-tool-source.test.ts",
   "src/agent/memory/memory.test.ts",
   "src/agent/middleware/cost-tracking/tracker.test.ts",
   "src/agent/runtime/load-tools-tool.test.ts",

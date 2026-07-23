@@ -205,18 +205,23 @@ describe("collectKnowledgeSources", () => {
     });
   });
 
-  it("treats uploads/ paths as remote even if a local uploads folder exists", async () => {
-    const originalCwd = Deno.cwd();
-    const tempDir = await Deno.makeTempDir();
-    await Deno.mkdir(`${tempDir}/uploads/contracts`, { recursive: true });
-    await Deno.writeTextFile(`${tempDir}/uploads/contracts/q1.pdf`, "local shadow copy");
+  it("treats uploads/ paths as remote upload references", async () => {
+    const shadowDir = join("uploads", `veryfront-knowledge-shadow-${crypto.randomUUID()}`);
+    const shadowPath = join(shadowDir, "q1.pdf");
+    const remotePath = shadowPath.replaceAll("\\", "/");
+    const downloadedPath = `/workspace/${remotePath}`;
+    const hadUploadsDir = await Deno.stat("uploads").then((stat) => stat.isDirectory).catch(() =>
+      false
+    );
+    const calls: string[] = [];
 
     try {
-      Deno.chdir(tempDir);
-      const calls: string[] = [];
+      await Deno.mkdir(shadowDir, { recursive: true });
+      await Deno.writeTextFile(shadowPath, "local shadow");
+
       const collection = await collectKnowledgeSources(
         {
-          sources: ["uploads/contracts/q1.pdf"],
+          sources: [remotePath],
           path: undefined,
           all: false,
           recursive: false,
@@ -227,19 +232,26 @@ describe("collectKnowledgeSources", () => {
           downloadUploads: async (uploadPaths) => {
             calls.push(...uploadPaths);
             return [{
-              uploadPath: "uploads/contracts/q1.pdf",
-              localPath: "/workspace/uploads/contracts/q1.pdf",
+              uploadPath: remotePath,
+              localPath: downloadedPath,
             }];
           },
         },
       );
 
-      assertEquals(calls, ["uploads/contracts/q1.pdf"]);
+      assertEquals(calls, [remotePath]);
       assertEquals(collection.sources[0]?.kind, "upload");
+      assertEquals(
+        collection.sources[0]?.localPath,
+        downloadedPath,
+      );
       assertEquals(collection.skipped, []);
     } finally {
-      Deno.chdir(originalCwd);
-      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(shadowPath).catch(() => undefined);
+      await Deno.remove(shadowDir).catch(() => undefined);
+      if (!hadUploadsDir) {
+        await Deno.remove("uploads").catch(() => undefined);
+      }
     }
   });
 

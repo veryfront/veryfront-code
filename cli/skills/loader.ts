@@ -51,10 +51,10 @@ export async function listCoreSkills(): Promise<LoadedSkill[]> {
  * Scan the current working directory for local skill directories.
  * A local skill is any skills/<id>/ directory containing a SKILL.md file.
  */
-export async function listLocalSkills(): Promise<LoadedSkill[]> {
+export async function listLocalSkills(baseDir: string = cwd()): Promise<LoadedSkill[]> {
   const fs = createFileSystem();
   const skills: LoadedSkill[] = [];
-  const skillsDir = `${cwd()}/skills`;
+  const skillsDir = `${baseDir}/skills`;
 
   try {
     for await (const entry of fs.readDir(skillsDir)) {
@@ -72,10 +72,10 @@ export async function listLocalSkills(): Promise<LoadedSkill[]> {
 /**
  * List all skills: core (built-in) + local (in cwd).
  */
-export async function listAllSkills(): Promise<LoadedSkill[]> {
+export async function listAllSkills(baseDir: string = cwd()): Promise<LoadedSkill[]> {
   const [core, local] = await Promise.all([
     listCoreSkills(),
-    listLocalSkills(),
+    listLocalSkills(baseDir),
   ]);
 
   // Deduplicate by name, local skills override core
