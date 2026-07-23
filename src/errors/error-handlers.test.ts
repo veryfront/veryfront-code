@@ -103,6 +103,14 @@ describe("error-handlers", () => {
       assertEquals(attempts, 2);
     });
 
+    it("should reject invalid maxAttempts with a RangeError", async () => {
+      await assertRejects(
+        () => retryWithBackoff(() => Promise.resolve("never"), { maxAttempts: 0 }),
+        RangeError,
+        "maxAttempts",
+      );
+    });
+
     it("should rethrow the original error immediately when shouldRetry returns false", async () => {
       let attempts = 0;
       const original = new Error("fatal");

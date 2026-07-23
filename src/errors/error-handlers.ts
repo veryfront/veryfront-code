@@ -79,6 +79,12 @@ export async function retryWithBackoff<T>(
     wrapFinalError,
   } = options;
 
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new RangeError(
+      `retryWithBackoff requires an integer maxAttempts >= 1, got ${maxAttempts}`,
+    );
+  }
+
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
