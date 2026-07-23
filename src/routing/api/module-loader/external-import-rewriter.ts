@@ -564,7 +564,7 @@ export async function rewriteExternalImports(
   }
 
   if (isDeno) {
-    transformed = rewriteNpmImports(transformed);
+    transformed = rewriteNpmImports(transformed, projectDir);
     transformed = rewriteDenoNodeBuiltinImports(transformed);
 
     // Rewrite user-installed npm dependencies.

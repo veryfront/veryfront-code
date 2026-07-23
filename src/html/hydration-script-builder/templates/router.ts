@@ -39,6 +39,7 @@ export const getRouterScript = () => `
     const IDLE_PREFETCH_DELAY_MS = 1200;
     const IDLE_PREFETCH_MAX_LINKS = 4;
     const VIEWPORT_PREFETCH_MAX_LINKS = 8;
+    const PAGE_DATA_PREFETCH_CONCURRENCY = 2;
     const VIEWPORT_PREFETCH_ROOT_MARGIN = '200px';
     const MAX_ROUTE_TIMINGS = 100;
     const MAX_SERVER_TIMING_LENGTH = 1024;
@@ -52,6 +53,10 @@ export const getRouterScript = () => `
     function logBackgroundFetchFailure(reason, path, error) {
       const message = error?.message ?? String(error);
       log(reason + ' failed:', path, message);
+    }
+
+    function isAbortError(error) {
+      return error?.name === 'AbortError';
     }
 
     function getDocumentNonce() {
@@ -407,11 +412,16 @@ export const getRouterScript = () => `
     async function fetchWithRetry(url, options, maxRetries = MAX_RETRIES) {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         const controller = new AbortController();
+        const callerSignal = options.signal;
+        const abortFromCaller = () => controller.abort();
+        if (callerSignal?.aborted) controller.abort();
+        callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
         const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
         try {
           const response = await fetch(url, { ...options, signal: controller.signal });
           clearTimeout(timeout);
+          callerSignal?.removeEventListener('abort', abortFromCaller);
 
           if (response.ok) return response;
 
@@ -424,8 +434,9 @@ export const getRouterScript = () => `
           return response;
         } catch (error) {
           clearTimeout(timeout);
+          callerSignal?.removeEventListener('abort', abortFromCaller);
 
-          if (error.name === 'AbortError' && options.signal?.aborted) throw error;
+          if (error.name === 'AbortError' && callerSignal?.aborted) throw error;
           if (attempt === maxRetries) throw error;
 
           log('Fetch failed, retrying...', error.message);
@@ -450,10 +461,13 @@ export const getRouterScript = () => `
       log('Fetching page data:', path);
       perfStart('fetch:' + path);
 
+      const headers = options.prefetch
+        ? { 'X-Veryfront-Prefetch': '1' }
+        : { 'X-Veryfront-Navigation': 'spa' };
       const response = await fetchWithRetry(endpoint, {
-        headers: { 'X-Veryfront-Navigation': 'spa' },
+        headers,
         signal
-      });
+      }, options.prefetch ? 0 : MAX_RETRIES);
 
       if (!response.ok) {
         perfEnd('fetch:' + path);
@@ -504,11 +518,13 @@ export const getRouterScript = () => `
 
     function startPageDataFetch(path, signal, options = {}) {
       const request = fetchPageDataFresh(path, signal, options).finally(() => {
-        if (pendingPageDataFetches.get(path) === request) {
+        if (options.trackPending !== false && pendingPageDataFetches.get(path) === request) {
           pendingPageDataFetches.delete(path);
         }
       });
-      pendingPageDataFetches.set(path, request);
+      if (options.trackPending !== false) {
+        pendingPageDataFetches.set(path, request);
+      }
       return request;
     }
 
@@ -555,12 +571,15 @@ export const getRouterScript = () => `
       });
     }
 
-    async function fetchPageDataForPrefetch(path) {
+    async function fetchPageDataForPrefetch(path, signal) {
       if (getCachedPageData(path)) return;
-      return fetchPageDataDeduped(path)
+      return startPageDataFetch(path, signal, { prefetch: true, trackPending: false })
         .then((data) => preloadModulesForPageData(data, path))
         .catch((error) => {
-          logBackgroundFetchFailure('Page data prefetch', path, error);
+          if (!isAbortError(error)) {
+            logBackgroundFetchFailure('Page data prefetch', path, error);
+          }
+          throw error;
         });
     }
 
@@ -578,6 +597,9 @@ export const getRouterScript = () => `
 
       if (isNavigating) return;
       isNavigating = true;
+      const [navigationPath] = href.split('#');
+      removeQueuedPrefetch(navigationPath || href);
+      abortActiveSpeculativePrefetches();
 
       currentAbortController = new AbortController();
       const signal = currentAbortController.signal;
@@ -654,6 +676,7 @@ export const getRouterScript = () => `
       } finally {
         isNavigating = false;
         currentAbortController = null;
+        processPageDataPrefetchQueue();
       }
     }
 
@@ -810,6 +833,9 @@ export const getRouterScript = () => `
     const observedPrefetchLinks = new WeakSet();
     const prefetchedPaths = new Set();
     const inFlightPrefetches = new Set();
+    const queuedPrefetchPaths = new Set();
+    const pageDataPrefetchQueue = [];
+    const activePageDataPrefetchControllers = new Map();
 
     function cancelScheduledPrefetch() {
       if (prefetchTimeout) {
@@ -895,9 +921,58 @@ export const getRouterScript = () => `
       }
     }
 
+    function removeQueuedPrefetch(path) {
+      queuedPrefetchPaths.delete(path);
+      for (let i = pageDataPrefetchQueue.length - 1; i >= 0; i--) {
+        if (pageDataPrefetchQueue[i] === path) pageDataPrefetchQueue.splice(i, 1);
+      }
+    }
+
+    function abortActiveSpeculativePrefetches() {
+      for (const controller of activePageDataPrefetchControllers.values()) {
+        controller.abort();
+      }
+    }
+
+    function processPageDataPrefetchQueue() {
+      if (isNavigating) return;
+
+      while (
+        activePageDataPrefetchControllers.size < PAGE_DATA_PREFETCH_CONCURRENCY &&
+        pageDataPrefetchQueue.length > 0
+      ) {
+        const href = pageDataPrefetchQueue.shift();
+        queuedPrefetchPaths.delete(href);
+
+        if (prefetchedPaths.has(href) || inFlightPrefetches.has(href) || getCachedPageData(href)) {
+          continue;
+        }
+
+        if (prefetchedPaths.size >= MAX_PREFETCH_PATHS) {
+          const oldest = prefetchedPaths.values().next().value;
+          if (oldest) prefetchedPaths.delete(oldest);
+        }
+
+        const controller = new AbortController();
+        prefetchedPaths.add(href);
+        inFlightPrefetches.add(href);
+        activePageDataPrefetchControllers.set(href, controller);
+
+        fetchPageDataForPrefetch(href, controller.signal)
+          .catch(() => {
+            prefetchedPaths.delete(href);
+          })
+          .finally(() => {
+            inFlightPrefetches.delete(href);
+            activePageDataPrefetchControllers.delete(href);
+            processPageDataPrefetchQueue();
+          });
+      }
+    }
+
     function prefetchPage(href) {
       if (isNavigating) return;
-      if (prefetchedPaths.has(href) || inFlightPrefetches.has(href)) return;
+      if (prefetchedPaths.has(href) || inFlightPrefetches.has(href) || queuedPrefetchPaths.has(href)) return;
 
       const cachedPageData = getCachedPageData(href);
       if (cachedPageData) {
@@ -907,21 +982,9 @@ export const getRouterScript = () => `
         return;
       }
 
-      if (prefetchedPaths.size >= MAX_PREFETCH_PATHS) {
-        const oldest = prefetchedPaths.values().next().value;
-        if (oldest) prefetchedPaths.delete(oldest);
-      }
-
-      prefetchedPaths.add(href);
-      inFlightPrefetches.add(href);
-
-      fetchPageDataForPrefetch(href)
-        .catch(() => {
-          prefetchedPaths.delete(href);
-        })
-        .finally(() => {
-          inFlightPrefetches.delete(href);
-        });
+      queuedPrefetchPaths.add(href);
+      pageDataPrefetchQueue.push(href);
+      processPageDataPrefetchQueue();
     }
 
     function prefetchEligibleRouteLinks(limit) {

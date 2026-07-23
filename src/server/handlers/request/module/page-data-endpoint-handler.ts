@@ -100,9 +100,12 @@ export function handlePageDataEndpoint(
 
         const url = new URL(req.url);
         const renderer = await getRendererForProject(ctx);
-        const cacheKey = !isPageDataCacheEnabled() || requestHasCacheSensitiveState(req)
-          ? null
-          : buildPageDataCacheKey(ctx, slug, url);
+        const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";
+        // The request reaches server-data hooks, so prefetch work cannot safely
+        // populate or join the foreground response cache/singleflight.
+        const canUsePageDataCache = isPageDataCacheEnabled() &&
+          !requestHasCacheSensitiveState(req) && !isSpeculativePrefetch;
+        const cacheKey = canUsePageDataCache ? buildPageDataCacheKey(ctx, slug, url) : null;
         const cachePolicy = cacheKey ? getPageDataCachePolicy(ctx) : null;
 
         const payload = cacheKey

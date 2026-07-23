@@ -447,6 +447,43 @@ describe("ServerDataFetcher", () => {
       }
     });
 
+    it("keeps marked prefetch failures out of the foreground circuit breaker", async () => {
+      const fetcher = new ServerDataFetcher();
+      const projectId = `prefetch-breaker-isolation-${crypto.randomUUID()}`;
+      const prefetchContext = createContext({
+        request: new Request("http://localhost/test", {
+          headers: {
+            "x-project-id": projectId,
+            "x-veryfront-prefetch": "1",
+          },
+        }),
+      });
+      const foregroundContext = createContext({
+        request: new Request("http://localhost/test", {
+          headers: { "x-project-id": projectId },
+        }),
+      });
+
+      const failingPage: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          throw new Error("intentional prefetch failure");
+        },
+      };
+
+      for (let i = 0; i < 5; i++) {
+        await assertRejects(() => fetcher.fetch(failingPage, prefetchContext));
+      }
+
+      const okPage: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: { ok: true } }),
+      };
+
+      const result = await fetcher.fetch(okPage, foregroundContext);
+      assertEquals(result.props, { ok: true });
+    });
+
     // Worker isolation is the configuration operators are told to use for
     // untrusted project code, so the in-process path alone is not enough. A
     // control result thrown inside the worker is a plain object, and the worker

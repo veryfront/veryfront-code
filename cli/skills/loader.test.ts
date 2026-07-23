@@ -5,11 +5,10 @@ import { join } from "#std/path.ts";
 import { CORE_SKILLS } from "./core-skills.ts";
 import { listAllSkills, listCoreSkills, listLocalSkills, loadSkill } from "./loader.ts";
 
-async function withTempCwd(
+async function withTempDir(
   files: Record<string, string>,
   fn: (dir: string) => Promise<void>,
 ): Promise<void> {
-  const original = Deno.cwd();
   const dir = await Deno.makeTempDir({ prefix: "vf-skill-loader-" });
   try {
     for (const [path, content] of Object.entries(files)) {
@@ -17,10 +16,8 @@ async function withTempCwd(
       await Deno.mkdir(join(target, ".."), { recursive: true });
       await Deno.writeTextFile(target, content);
     }
-    Deno.chdir(dir);
     await fn(dir);
   } finally {
-    Deno.chdir(original);
     await Deno.remove(dir, { recursive: true });
   }
 }
@@ -60,7 +57,7 @@ describe("Core Skills Embedded Data", () => {
 
 describe("Skill Loader", () => {
   it("loads a skill from SKILL.md frontmatter", async () => {
-    await withTempCwd({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async (dir) => {
+    await withTempDir({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async (dir) => {
       const skill = await loadSkill(join(dir, "skills", "code-review"));
 
       assertEquals(skill?.metadata.name, "code-review");
@@ -72,8 +69,8 @@ describe("Skill Loader", () => {
   });
 
   it("lists project-local skills from skills/<id>/SKILL.md", async () => {
-    await withTempCwd({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async () => {
-      const skills = await listLocalSkills();
+    await withTempDir({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async (dir) => {
+      const skills = await listLocalSkills(dir);
 
       assertEquals(skills.map((skill) => skill.metadata.name), ["code-review"]);
     });
@@ -94,7 +91,7 @@ describe("Skill Loader", () => {
   });
 
   it("listAllSkills deduplicates by name with local skills overriding core", async () => {
-    await withTempCwd({
+    await withTempDir({
       "skills/deploy-safely/SKILL.md": `---
 name: deploy-safely
 description: Local deploy skill.
@@ -102,8 +99,8 @@ description: Local deploy skill.
 
 # Local Deploy
 `,
-    }, async () => {
-      const all = await listAllSkills();
+    }, async (dir) => {
+      const all = await listAllSkills(dir);
       const matches = all.filter((skill) => skill.metadata.name === "deploy-safely");
 
       assertEquals(matches.length, 1);

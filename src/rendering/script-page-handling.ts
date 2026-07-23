@@ -389,5 +389,5 @@ async function loadScriptModule(
   const transpiled = await transpileWithEsbuild(source, modulePath, resolveDir);
   logger.debug(`Transpiled ${modulePath}`);
 
-  return importFromTempFile(fs, rewriteNpmImports(transpiled));
+  return importFromTempFile(fs, rewriteNpmImports(transpiled, projectDir));
 }

@@ -562,7 +562,9 @@ export class LazySandbox {
       ? session
       : await this.waitForReadySession(session.id);
 
-    await this.waitForRuntimeDataPlaneReady(readySession);
+    if (this.shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
+      await this.waitForRuntimeDataPlaneReady(readySession);
+    }
     return readySession.endpoint;
   }
 
@@ -854,14 +856,31 @@ export class LazySandbox {
       resolveDefaultSandboxRuntimeEndpoint({ endpoint });
   }
 
+  private shouldUseInternalDataPlane(endpoint: string, sessionId: string): boolean {
+    if (!this.resolveRuntimeEndpointOption) {
+      return false;
+    }
+
+    const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
+    return normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint);
+  }
+
   private resolveDataPlaneRoute(): DataPlaneRoute {
     const endpoint = this.requireEndpoint();
     const sessionId = this.requireSessionId();
+    if (!this.resolveRuntimeEndpointOption) {
+      return {
+        baseUrl: sandboxSessionRoute(this.apiUrl, sessionId),
+        kind: "proxy",
+      };
+    }
+
     const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
-    const normalizedEndpoint = normalizeDataPlaneBaseUrl(endpoint);
-    const normalizedRuntimeEndpoint = normalizeDataPlaneBaseUrl(runtimeEndpoint);
-    if (normalizedRuntimeEndpoint !== normalizedEndpoint) {
-      return { baseUrl: normalizedRuntimeEndpoint, kind: "internal" };
+    if (normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint)) {
+      return {
+        baseUrl: normalizeDataPlaneBaseUrl(runtimeEndpoint),
+        kind: "internal",
+      };
     }
 
     return {

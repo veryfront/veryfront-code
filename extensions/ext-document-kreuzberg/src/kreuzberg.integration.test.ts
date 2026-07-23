@@ -13,6 +13,10 @@ import { loadUpload } from "veryfront/embedding";
 import { ExtensionLoader } from "../../../src/extensions/loader.ts";
 import { createBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import {
+  createEvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+} from "../../../src/extensions/eval/index.ts";
+import {
   createLLMProviderRegistry,
   LLMProviderRegistryName,
 } from "../../../src/extensions/llm/index.ts";
@@ -65,12 +69,16 @@ describe("ext-document-kreuzberg integration", () => {
   it("extracts uploads through the built-in DocumentExtractor registration", opts, async () => {
     const logs: string[] = [];
     const logger = {
+      debug: (...args: unknown[]) => logs.push(args.join(" ")),
       info: (...args: unknown[]) => logs.push(args.join(" ")),
       warn: (...args: unknown[]) => logs.push(args.join(" ")),
       error: (...args: unknown[]) => logs.push(args.join(" ")),
     };
     const loader = new ExtensionLoader(logger);
-    loader.primeContracts({ [LLMProviderRegistryName]: createLLMProviderRegistry() });
+    loader.primeContracts({
+      [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
+    });
 
     try {
       await loader.setupAll(createBuiltinExtensions(), {});

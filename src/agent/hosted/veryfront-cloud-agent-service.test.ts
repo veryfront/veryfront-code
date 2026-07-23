@@ -525,29 +525,24 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime requires agentId for mult
   });
 });
 
-Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults discovery to cwd", async () => {
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime accepts baseDir for discovery", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir);
-    const previousCwd = Deno.cwd();
-    Deno.chdir(rootDir);
-    try {
-      const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
-        serviceName: "cwd-agent-test",
-        agentId: "veryfront",
-        signals: [],
-        env: {
-          NODE_ENV: "test",
-          VERYFRONT_API_URL: "https://api.example.com",
-          PORT: "3144",
-          ALLOWED_ORIGINS: "https://studio.example.com",
-        },
-      });
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      serviceName: "base-dir-agent-test",
+      agentId: "veryfront",
+      baseDir: rootDir,
+      signals: [],
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        PORT: "3144",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
 
-      assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
-      assertEquals(getRuntimeAgent(bundle, "veryfront").config.model, "openai/gpt-5.4");
-    } finally {
-      Deno.chdir(previousCwd);
-    }
+    assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
+    assertEquals(getRuntimeAgent(bundle, "veryfront").config.model, "openai/gpt-5.4");
   });
 });
 

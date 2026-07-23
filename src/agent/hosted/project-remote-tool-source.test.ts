@@ -94,16 +94,22 @@ Deno.test("hosted remote tool sources do not carry legacy end-user identity plum
     ["end", "user", "id"].join("_"),
   ];
   const productionFiles = [
-    "src/agent/hosted/project-remote-tool-source.ts",
-    "src/agent/hosted/chat-runtime-tool-assembly.ts",
+    {
+      label: "src/agent/hosted/project-remote-tool-source.ts",
+      url: new URL("./project-remote-tool-source.ts", import.meta.url),
+    },
+    {
+      label: "src/agent/hosted/chat-runtime-tool-assembly.ts",
+      url: new URL("./chat-runtime-tool-assembly.ts", import.meta.url),
+    },
   ];
   const offenders: string[] = [];
 
   for (const file of productionFiles) {
-    const source = await Deno.readTextFile(file);
+    const source = await Deno.readTextFile(file.url);
     for (const token of forbidden) {
       if (source.includes(token)) {
-        offenders.push(`${file}:${token}`);
+        offenders.push(`${file.label}:${token}`);
       }
     }
   }

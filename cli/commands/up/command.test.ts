@@ -79,7 +79,6 @@ describe("Up Command", () => {
 
   describe("upCommand", () => {
     it("uses VERYFRONT_API_BASE_URL when creating a project", async () => {
-      const originalCwd = Deno.cwd();
       const originalFetch = globalThis.fetch;
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
@@ -89,7 +88,6 @@ describe("Up Command", () => {
 
       try {
         await Deno.writeTextFile(join(tempDir, "package.json"), "{}");
-        Deno.chdir(tempDir);
         Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
         Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.from-env.test");
         Deno.env.delete("VERYFRONT_API_URL");
@@ -183,7 +181,7 @@ describe("Up Command", () => {
           );
         }) as typeof fetch;
 
-        await upCommand({ force: true, dryRun: false });
+        await upCommand({ projectDir: tempDir, force: true, dryRun: false });
 
         assertEquals(
           requestedUrls.some((url) => url.startsWith("https://api.from-env.test/projects")),
@@ -195,7 +193,6 @@ describe("Up Command", () => {
         );
       } finally {
         globalThis.fetch = originalFetch;
-        Deno.chdir(originalCwd);
         restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
         restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
         restoreEnv("VERYFRONT_API_URL", originalApiUrl);

@@ -1141,7 +1141,7 @@ export class AgentRuntime {
 
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
-        let mustLoadSkillFirst = !activeSkillPolicy &&
+        const mustLoadSkillFirstForStep = !activeSkillPolicy &&
           response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
@@ -1225,7 +1225,7 @@ export class AgentRuntime {
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
               activeSkillPolicy,
-              mustLoadSkillFirst,
+              mustLoadSkillFirstForStep,
               {
                 hasSubmittedFormInput: hasSubmittedFormInputInLoop,
                 skillToolAvailability: activeSkillToolAvailability,
@@ -1332,7 +1332,6 @@ export class AgentRuntime {
                   activeSkillToolAvailability = extractSkillToolAvailability(result) ??
                     INACTIVE_SKILL_TOOL_AVAILABILITY;
                   activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
-                  mustLoadSkillFirst = false;
                 }
                 activeSkillPolicy = removeFormInputAfterSubmission(
                   tc.toolName,
@@ -1646,7 +1645,7 @@ export class AgentRuntime {
 
       this.status = "tool_execution";
       const streamedToolCalls = Array.from(state.toolCalls.values());
-      let mustLoadSkillFirst = !activeSkillPolicy &&
+      const mustLoadSkillFirstForStep = !activeSkillPolicy &&
         streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
       for (const tc of streamedToolCalls) {
@@ -1716,7 +1715,6 @@ export class AgentRuntime {
               activeSkillDelegationOverrides = extractSkillDelegationOverrides(
                 matchingResult.output,
               );
-              mustLoadSkillFirst = false;
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
@@ -1750,7 +1748,6 @@ export class AgentRuntime {
               activeSkillDelegationOverrides = extractSkillDelegationOverrides(
                 persistedResult.result,
               );
-              mustLoadSkillFirst = false;
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
@@ -1812,7 +1809,7 @@ export class AgentRuntime {
         const policyCheck = enforceSkillPolicy(
           tc.name,
           activeSkillPolicy,
-          mustLoadSkillFirst,
+          mustLoadSkillFirstForStep,
           {
             hasSubmittedFormInput: hasSubmittedFormInputInLoop,
             skillToolAvailability: activeSkillToolAvailability,
@@ -1885,7 +1882,6 @@ export class AgentRuntime {
               activeSkillToolAvailability = extractSkillToolAvailability(result) ??
                 INACTIVE_SKILL_TOOL_AVAILABILITY;
               activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
-              mustLoadSkillFirst = false;
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,

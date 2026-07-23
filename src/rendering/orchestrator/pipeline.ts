@@ -163,6 +163,17 @@ interface FetchedDataResult {
   error: Error | null;
 }
 
+const PRE_RESOLVED_DATA = Symbol("veryfront.preResolvedData");
+
+type InternalRenderOptions = RenderOptions & {
+  [PRE_RESOLVED_DATA]?: DataResolutionResult;
+};
+
+function stripInternalRenderOptions(options: InternalRenderOptions): RenderOptions {
+  const { [PRE_RESOLVED_DATA]: _preResolvedData, ...publicOptions } = options;
+  return publicOptions;
+}
+
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
@@ -580,7 +591,19 @@ export class RenderPipeline {
               let layoutDataMap = new Map<string, Record<string, unknown>>();
 
               const dataFetchStart = performance.now();
-              if (options?.url && (options.request || options.staticDataOnly)) {
+              const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
+                PRE_RESOLVED_DATA
+              ];
+              const renderInputOptions = internalPreResolvedData && options
+                ? stripInternalRenderOptions(options as InternalRenderOptions)
+                : options;
+              if (internalPreResolvedData) {
+                resolvedParams = internalPreResolvedData.params;
+                dataFetchingProps = Object.keys(internalPreResolvedData.pageProps).length > 0
+                  ? internalPreResolvedData.pageProps
+                  : undefined;
+                layoutDataMap = internalPreResolvedData.layoutProps;
+              } else if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
                   () =>
@@ -618,13 +641,13 @@ export class RenderPipeline {
               const hasResolvedParams = Object.keys(resolvedParams).length > 0;
               const mergedOptions = (dataFetchingProps || hasResolvedParams)
                 ? {
-                  ...options,
+                  ...renderInputOptions,
                   ...(hasResolvedParams ? { params: resolvedParams } : {}),
                   ...(dataFetchingProps
-                    ? { props: { ...options?.props, ...dataFetchingProps } }
+                    ? { props: { ...renderInputOptions?.props, ...dataFetchingProps } }
                     : {}),
                 }
-                : options;
+                : renderInputOptions;
 
               const bundlePrepStart = performance.now();
               const pageBundleResult = await profilePhase(
@@ -895,7 +918,7 @@ export class RenderPipeline {
 
     const { css, cssAction, cssError } = await profilePhase(
       "page_data.resolve_css",
-      () => this.resolvePageDataCss(slug, options, projectUpdatedAt),
+      () => this.resolvePageDataCss(slug, options, projectUpdatedAt, dataResolution),
     );
 
     resolvePageDataLog.debug("Resolved page data", {
@@ -1005,6 +1028,7 @@ export class RenderPipeline {
     slug: string,
     options: RenderOptions | undefined,
     projectUpdatedAt: string | undefined,
+    dataResolution: DataResolutionResult,
   ): Promise<PageCssResult> {
     if (this.hasReadyReleaseCss(options)) {
       return { css: undefined, cssAction: "clear", cssError: undefined };
@@ -1024,16 +1048,19 @@ export class RenderPipeline {
     }
 
     try {
+      const cssRenderOptions: InternalRenderOptions = {
+        ...options,
+        delivery: "string",
+        skipCacheCheck: true,
+        skipCachePersist: true,
+        [PRE_RESOLVED_DATA]: dataResolution,
+      };
+
       const renderResult = await profilePhase(
         "page_data.css.render_html",
         () =>
           withTimeout(
-            this.renderPage(slug, {
-              ...options,
-              delivery: "string",
-              skipCacheCheck: true,
-              skipCachePersist: true,
-            }),
+            this.renderPage(slug, cssRenderOptions),
             CSS_SSR_TIMEOUT_MS,
             `CSS SSR for ${slug}`,
           ),

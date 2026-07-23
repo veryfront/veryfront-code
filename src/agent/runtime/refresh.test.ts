@@ -109,6 +109,12 @@ describe("agent runtime refresh hooks", () => {
                 toolName: "load_skill",
                 input: '{"skillId":"read-only-review"}',
               },
+              {
+                type: "tool-call",
+                toolCallId: "write-after-skill",
+                toolName: "write_report",
+                input: '{"path":"second-report.md"}',
+              },
             ],
             finishReason: "tool-calls",
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
@@ -137,14 +143,14 @@ describe("agent runtime refresh hooks", () => {
     try {
       await Deno.writeTextFile(
         `${rootPath}/SKILL.md`,
-        "---\nname: read-only-review\ndescription: Review without writes\nallowed-tools: []\n---\nReview the code without modifying files.\n",
+        "---\nname: review\ndescription: Review one report\nallowed-tools: [write_report]\n---\nRead the input before deciding whether to write the report.\n",
       );
       registerSkill("read-only-review", {
         id: "read-only-review",
         metadata: {
-          name: "read-only-review",
-          description: "Review without writes",
-          allowedTools: [],
+          name: "review",
+          description: "Review one report",
+          allowedTools: ["write_report"],
         },
         rootPath,
       });
@@ -161,8 +167,10 @@ describe("agent runtime refresh hooks", () => {
 
       assertEquals(writeExecutions, 0);
       assertEquals(
-        response.toolCalls.find((call) => call.name === "write_report")?.status,
-        "error",
+        response.toolCalls.filter((call) => call.name === "write_report").map((call) =>
+          call.status
+        ),
+        ["error", "error"],
       );
     } finally {
       skillRegistry.clearAll();
