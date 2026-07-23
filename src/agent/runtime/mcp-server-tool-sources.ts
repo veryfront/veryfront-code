@@ -21,6 +21,7 @@ import {
   type VeryfrontCloudBootstrap,
 } from "#veryfront/platform/cloud/resolver.ts";
 import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.ts";
+import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 
 export type RuntimeRemoteToolConfig = {
   __vfRemoteToolSources?: RemoteToolSource[];
@@ -288,11 +289,17 @@ export function getRuntimeRemoteToolSources(
   agentId = config.id,
 ): RemoteToolSource[] | undefined {
   const runtimeConfig = config as AgentConfig & RuntimeRemoteToolConfig;
-  const injectedSources = runtimeConfig.__vfRemoteToolSources ?? [];
+  const configuredInjectedSources = Object.hasOwn(runtimeConfig, "__vfRemoteToolSources")
+    ? runtimeConfig.__vfRemoteToolSources ?? []
+    : undefined;
   const hasExplicitMcpServers = config.mcpServers !== undefined;
   const implicitToolNames = hasExplicitMcpServers
     ? []
     : getRequestedUnresolvedBooleanToolNames({ tools: config.tools, agentId });
+  const inheritedSources = hasExplicitMcpServers || implicitToolNames.length > 0
+    ? getActiveRuntimeRemoteToolSources() ?? []
+    : [];
+  const injectedSources = configuredInjectedSources ?? inheritedSources;
   const configuredServers: AgentMcpServerConfig[] = config.mcpServers ??
     (implicitToolNames.length > 0
       ? [{ kind: "veryfront-api", toolPolicy: { allow: implicitToolNames } }]
