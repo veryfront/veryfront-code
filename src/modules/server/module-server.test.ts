@@ -265,6 +265,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     const text = await response.text();
     assertEquals(text.includes("#deno-config"), false);
     assertEquals(text.includes("./version-constant.js"), true);
+    assertEquals(/with\s*\{\s*type\s*:\s*["']json["']\s*\}/.test(text), false);
   });
 
   it("should serve browser React shims imported by npm framework modules", async () => {
