@@ -1,5 +1,5 @@
 /**
- * Stream Outcome — the single place that interprets how a provider stream ended.
+ * Stream Outcome: the single place that interprets how a provider stream ended.
  *
  * Both the runtime layer (which starts streams) and the hosted layer (which
  * finishes them) need to answer the same questions: what error message does a
@@ -33,7 +33,7 @@ export function getStreamErrorMessage(error: unknown): string {
 
 /**
  * True for the "error reading a body from connection" failure some providers
- * raise after all output has already streamed — treated as a completed stream
+ * raise after all output has already streamed. Treated as a completed stream
  * when output and a completion signal are present.
  */
 export function isLateProviderBodyReadError(error: unknown): boolean {

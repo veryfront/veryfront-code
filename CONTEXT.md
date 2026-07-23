@@ -12,5 +12,5 @@ from whatever a provider throws, recognizing the late "body read" failure
 (which counts as completion when output already streamed), classifying finish
 reasons as completed steps, and mapping thrown errors to known terminal
 provider errors. The agent **runtime** layer starts streams and the **hosted**
-layer finishes them — both consult this module rather than re-deriving the
+layer finishes them; both consult this module rather than re-deriving the
 interpretation, so provider behavior changes land in one file.
