@@ -529,7 +529,7 @@ export class RenderPipeline {
     setupSSRGlobals();
 
     if (this.config.mode === "development") {
-      clearSSRModuleCacheForProject(projectId);
+      clearSSRModuleCacheForProject(projectId, { preserveActiveTransforms: true });
     }
 
     const renderOnce = () =>
@@ -823,7 +823,7 @@ export class RenderPipeline {
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
 
     if (this.config.mode === "development") {
-      clearSSRModuleCacheForProject(projectId);
+      clearSSRModuleCacheForProject(projectId, { preserveActiveTransforms: true });
     }
 
     const pageInfo = await profilePhase(
