@@ -118,5 +118,5 @@ export { buildRules, REWRITABLE_PACKAGES };
 
 /** @internal Reset cached rules — only for testing */
 export function _resetCache(): void {
-  cachedRules = new Map();
+  cachedRules = new Map<string, RewriteRule[]>();
 }
