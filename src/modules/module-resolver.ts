@@ -4,7 +4,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { buildModuleResolveCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "#veryfront/cache";
 import { CACHE_MAX_ENTRIES_LARGE } from "#veryfront/utils/constants/limits.ts";
 
 export interface ResolvedModule {
@@ -37,9 +36,6 @@ export class ModuleResolver {
     this.cache = new LRUCache<string, ResolvedModule>({
       maxEntries: options.cacheSize ?? CACHE_MAX_ENTRIES_LARGE,
     });
-
-    // Register cache for monitoring
-    registerLRUCache(`module-resolver:${options.projectDir}`, this.cache);
   }
 
   private cacheAndReturn(cacheKey: string, resolved: ResolvedModule): ResolvedModule {

@@ -58,9 +58,11 @@ outlook/
 ├── files/
 │   ├── _env.example                 # Example environment variables
 │   ├── lib/
-│   │   ├── oauth.ts                 # OAuth flow utilities
+│   │   ├── oauth.ts                 # Hardened veryfront/oauth adapter
+│   │   ├── oauth-store.ts           # Fail-closed application store binding
+│   │   ├── oauth-store-registry.ts  # Durable store injection contract
 │   │   ├── outlook-client.ts        # Microsoft Graph API client
-│   │   └── token-store.ts           # Token storage (in-memory)
+│   │   └── user-id.ts               # Verified identity resolver binding
 │   ├── app/api/auth/outlook/
 │   │   ├── route.ts                 # OAuth initiation
 │   │   └── callback/route.ts        # OAuth callback handler
@@ -223,38 +225,22 @@ Uses `body` method (credentials sent in request body as form parameters).
 3. User authorizes application
 4. Microsoft redirects to `/api/auth/outlook/callback` with code
 5. Code exchanged for access token
-6. Token stored (in-memory by default)
+6. Token stored in the installed application OAuth store
 7. AI tools can now access Outlook data
 
 ## Production Considerations
 
 ### Token Storage
-The default `token-store.ts` uses in-memory storage. For production:
-
-1. Replace with database-backed storage
-2. Implement token encryption
-3. Support multiple users with session management
-4. Implement token refresh logic
+Production refuses to load OAuth routes until application instrumentation has
+installed a durable `ApplicationOAuthTokenStore`. See the generated `SETUP.md`.
+The store must encrypt credentials, atomically consume state once, provide
+revisioned compare-and-set, and coordinate refresh with a bounded distributed
+lease. Install a verified session/JWT identity resolver as well.
 
 ### Token Refresh
-Access tokens expire after ~1 hour. Implement refresh logic:
-
-```typescript
-import { refreshAccessToken } from './oauth'
-import { getRefreshToken, setTokens } from './token-store'
-
-async function ensureValidToken() {
-  const refreshToken = getRefreshToken()
-  if (refreshToken) {
-    const tokens = await refreshAccessToken(refreshToken)
-    setTokens({
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      expiresAt: Date.now() + tokens.expires_in * 1000,
-    })
-  }
-}
-```
+Access-token refresh is handled by `OAuthService` using the installed store's
+distributed refresh lease and revisioned compare-and-set operations. Do not
+implement a second refresh path in integration code.
 
 ### Security
 - Store secrets in environment variables

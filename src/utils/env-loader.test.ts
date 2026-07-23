@@ -145,6 +145,47 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("should not override an existing empty env var by default", async () => {
+      const key = createKey("EMPTY_NOOVERRIDE");
+      setEnv(key, "");
+      await writeEnvFile(".env", `${key}=new`);
+
+      await loadEnv({ cwd: tempDir });
+      assertEquals(getEnv(key), "");
+
+      cleanupKeys(key);
+    });
+
+    it("should not print environment values in debug logs", async () => {
+      const key = createKey("SECRET_LOG");
+      const secret = "highly-sensitive-value";
+      const previousLogLevel = getEnv("LOG_LEVEL");
+      const previousLogFormat = getEnv("LOG_FORMAT");
+      const originalDebug = console.debug;
+      const output: string[] = [];
+
+      try {
+        setEnv("LOG_LEVEL", "DEBUG");
+        setEnv("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+        console.debug = (message: string) => output.push(message);
+        await writeEnvFile(".env", `${key}=${secret}`);
+
+        await loadEnv({ cwd: tempDir, override: true, debug: true });
+
+        assertEquals(output.join("\n").includes("highly-sensitive"), false);
+        assertEquals(output.join("\n").includes(key), true);
+      } finally {
+        console.debug = originalDebug;
+        cleanupKeys(key);
+        if (previousLogLevel === undefined) deleteEnv("LOG_LEVEL");
+        else setEnv("LOG_LEVEL", previousLogLevel);
+        if (previousLogFormat === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
+
     it("should override existing env vars when override is true", async () => {
       const key = createKey("OVERRIDE");
       setEnv(key, "existing");

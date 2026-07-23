@@ -149,6 +149,8 @@ export interface FileSystemAdapter {
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
+  /** Atomically replace a path when the runtime supports same-filesystem rename. */
+  rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   readDir(path: string): AsyncIterable<DirEntry>;
   stat(path: string): Promise<FileInfo>;

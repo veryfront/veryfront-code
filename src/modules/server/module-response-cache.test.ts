@@ -78,7 +78,7 @@ describe("release module response cache", () => {
     assertEquals(typeof distributedCache.ttlSeconds.get(cacheKey), "number");
   });
 
-  it("builds cache keys within the distributed backend's allowed charset", () => {
+  it("builds cache keys within the distributed backend's allowed charset", async () => {
     // Request paths that previously produced HTTP 400 "Cache key contains
     // invalid characters" from api-cache-backend (issue #5559).
     for (
@@ -89,7 +89,7 @@ describe("release module response cache", () => {
         "deps/@scope/pkg@1.2.3.js",
       ]
     ) {
-      const key = buildReleaseModuleResponseCacheKey(baseKeyOptions(modulePath));
+      const key = await buildReleaseModuleResponseCacheKey(baseKeyOptions(modulePath));
       assertEquals(
         CACHE_KEY_PATTERN.test(key),
         true,
@@ -100,12 +100,31 @@ describe("release module response cache", () => {
     }
   });
 
-  it("produces distinct keys for distinct module paths", () => {
-    const a = buildReleaseModuleResponseCacheKey(baseKeyOptions("@vite/env"));
-    // Differs from "@vite/env" only by a character the readable form clamps to
-    // "-"; the path hash keeps the keys apart.
-    const b = buildReleaseModuleResponseCacheKey(baseKeyOptions("-vite/env"));
+  it("produces distinct keys for distinct module paths", async () => {
+    const a = await buildReleaseModuleResponseCacheKey(baseKeyOptions("@vite/env"));
+    const b = await buildReleaseModuleResponseCacheKey(baseKeyOptions("-vite/env"));
     assertEquals(a === b, false);
+  });
+
+  it("rejects a distributed response whose body fails its integrity digest", async () => {
+    const distributedCache = new FakeDistributedCache();
+    __setReleaseModuleResponseDistributedCacheForTests(distributedCache);
+    const cacheKey = await buildReleaseModuleResponseCacheKey(baseKeyOptions("page.js"));
+    const entry: ReleaseModuleResponseCacheEntry = {
+      body: "export const value = 1;\n",
+      status: 200,
+      headers: [["content-type", "application/javascript"]],
+    };
+
+    await rememberReleaseModuleResponse(cacheKey, entry);
+    const serialized = distributedCache.values.get(cacheKey)!;
+    const tampered = JSON.parse(serialized);
+    tampered.entry.body = "export const value = 2;\n";
+    distributedCache.values.set(cacheKey, JSON.stringify(tampered));
+    clearReleaseModuleResponseCache();
+
+    assertEquals(await getReleaseModuleResponse(cacheKey), undefined);
+    assertEquals(distributedCache.values.has(cacheKey), false);
   });
 
   it("does not use disk cache backends for release module responses", async () => {

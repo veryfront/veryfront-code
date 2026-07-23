@@ -4,23 +4,7 @@
  * Provides a type-safe interface to Google Calendar API operations.
  */
 
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  }
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
-
-  return undefined;
-}
+import { fetchOAuthJson } from "./oauth.ts";
 
 const CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3";
 
@@ -74,22 +58,6 @@ export interface FreeBusySlot {
   end: string;
 }
 
-/**
- * Google Calendar OAuth provider configuration
- */
-export const calendarOAuthProvider = {
-  name: "calendar",
-  authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenUrl: "https://oauth2.googleapis.com/token",
-  clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
-  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
-  scopes: [
-    "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/calendar.events",
-  ],
-  callbackPath: "/api/auth/calendar/callback",
-};
-
 type ListEventsOptions = {
   maxResults?: number;
   timeMin?: Date | string;
@@ -130,41 +98,22 @@ type CalendarClientShape = {
  * Create a Calendar client for a specific user
  */
 export function createCalendarClient(userId: string): CalendarClientShape {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(
-      calendarOAuthProvider,
-      userId,
-      "calendar",
-    );
-    if (!token) {
-      throw new Error(
-        "Calendar not connected. Please connect your Google Calendar first.",
-      );
-    }
-    return token;
-  }
-
-  async function apiRequest<T>(
+  function apiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${CALENDAR_API_BASE}${endpoint}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...options.headers,
+    return fetchOAuthJson<T>(
+      userId,
+      "calendar",
+      `${CALENDAR_API_BASE}${endpoint}`,
+      {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
       },
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Calendar API error: ${response.status} - ${error}`);
-    }
-
-    return response.json();
+    );
   }
 
   async function listEvents(
@@ -330,21 +279,16 @@ export function createCalendarClient(userId: string): CalendarClientShape {
     eventId: string,
     calendarId = "primary",
   ): Promise<void> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(
+    await fetchOAuthJson<void>(
+      userId,
+      "calendar",
       `${CALENDAR_API_BASE}/calendars/${
         encodeURIComponent(calendarId)
       }/events/${eventId}`,
       {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${accessToken}` },
       },
     );
-
-    if (!response.ok && response.status !== 204) {
-      throw new Error(`Failed to delete event: ${response.status}`);
-    }
   }
 
   return {

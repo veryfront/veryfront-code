@@ -1,8 +1,12 @@
 import type { Route, RouteMatch } from "#veryfront/routing/matchers/types.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { safeDecodeParam } from "#veryfront/routing/matchers/decode-param.ts";
 import { parseRoute } from "#veryfront/routing/matchers/route-parser.ts";
+import {
+  matchRouteWithSpecificity,
+  type RankedRouteMatch,
+} from "#veryfront/routing/matchers/route-matcher.ts";
+import { compareRouteSpecificity } from "#veryfront/utils/route-path-utils.ts";
 
 /** Max entries in the route-match LRU cache */
 const ROUTE_CACHE_MAX_ENTRIES = 500;
@@ -49,7 +53,7 @@ export class ApiRouteMatcher {
     }
 
     const parsed = parseRoute(pattern, page);
-    const route: Route = { pattern, page };
+    const route: Route = parsed;
     this._routes.set(pattern, {
       regex: parsed.regex!,
       route,
@@ -69,73 +73,33 @@ export class ApiRouteMatcher {
     return path.slice(0, -1);
   }
 
-  private sortRoutesByPriority(): Array<[string, RouteEntry]> {
-    return Array.from(this._routes.entries()).sort(([patternA], [patternB]) => {
-      const hasParamsA = patternA.includes("[");
-      const hasParamsB = patternB.includes("[");
-      const isCatchAllA = patternA.includes("[...");
-      const isCatchAllB = patternB.includes("[...");
-
-      if (!hasParamsA && hasParamsB) return -1;
-      if (hasParamsA && !hasParamsB) return 1;
-      if (!isCatchAllA && isCatchAllB) return -1;
-      if (isCatchAllA && !isCatchAllB) return 1;
-
-      return patternB.split("/").length - patternA.split("/").length;
-    });
-  }
-
   match(path: string): RouteMatch | null {
     const normalizedPath = this.normalizePathname(path);
 
     const cached = this.routeCache.get(normalizedPath);
     if (cached !== undefined) return cached;
 
-    for (const [, routeData] of this.sortRoutesByPriority()) {
-      const match = normalizedPath.match(routeData.regex);
-      if (!match) continue;
+    let best: RankedRouteMatch | null = null;
+    let ambiguous = false;
 
-      const params = this.extractParams(match, routeData.paramNames, routeData.route);
-      const result = { params, route: routeData.route };
-      this.routeCache.set(normalizedPath, result);
-      return result;
-    }
+    for (const routeData of this._routes.values()) {
+      const candidate = matchRouteWithSpecificity(normalizedPath, routeData.route);
+      if (!candidate) continue;
 
-    this.routeCache.set(normalizedPath, null);
-    return null;
-  }
-
-  private extractParams(
-    match: RegExpMatchArray,
-    paramNames: string[],
-    route: Route,
-  ): Record<string, string | string[]> {
-    const params: Record<string, string | string[]> = {};
-    const catchAllParamNames = new Set<string>();
-
-    route.pattern.replace(/\[\[\.\.\.(\w+)\]\]/g, (_: string, paramName: string) => {
-      catchAllParamNames.add(paramName);
-      return "";
-    });
-    route.pattern.replace(/\[\.\.\.(\w+)\]/g, (_: string, paramName: string) => {
-      catchAllParamNames.add(paramName);
-      return "";
-    });
-
-    for (let i = 0; i < paramNames.length; i++) {
-      const paramName = paramNames[i]!;
-      const value = match[i + 1];
-
-      if (catchAllParamNames.has(paramName)) {
-        const segments = value ? value.split("/").filter((segment) => segment.length > 0) : [];
-        params[paramName] = segments.map((segment) => safeDecodeParam(segment));
-        continue;
+      const comparison = best
+        ? compareRouteSpecificity(candidate.specificity, best.specificity)
+        : 1;
+      if (comparison > 0) {
+        best = candidate;
+        ambiguous = false;
+      } else if (comparison === 0) {
+        ambiguous = true;
       }
-
-      params[paramName] = safeDecodeParam(value ?? "");
     }
 
-    return params;
+    const result = !ambiguous && best ? best.match : null;
+    this.routeCache.set(normalizedPath, result);
+    return result;
   }
 
   listRoutes(): Route[] {

@@ -12,8 +12,10 @@
       "Chat.Read",
       "Chat.ReadWrite",
       "ChannelMessage.Send",
+      "ChannelMessage.Read.All",
       "Channel.ReadBasic.All",
       "Team.ReadBasic.All",
+      "User.Read",
       "offline_access"
     ],
     "callbackPath": "/api/auth/teams/callback",

@@ -12,8 +12,17 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
-import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
+import {
+  clearRendererCacheForProject,
+  destroyRenderer,
+  getRenderer,
+  initializeRenderer,
+  Renderer,
+  setColdProjectCacheInvalidatorForTesting,
+} from "./renderer.ts";
 import { projectRenderCounts } from "./renderer-concurrency.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { destroySharedServices } from "./shared/shared-services.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -135,6 +144,19 @@ function makeRenderContext(): RenderContext {
     contentSourceId: "release-rel-1",
     releaseId: "rel-1",
   };
+}
+
+async function buildRendererStorageKey(
+  ctx: RenderContext,
+  baseKey: string,
+  options?: { cachePrefix?: string; colorScheme?: "light" | "dark" },
+): Promise<string> {
+  const configDigest = await computeHash(JSON.stringify(ctx.config));
+  const theme = options?.colorScheme ? `:theme-${options.colorScheme}` : "";
+  return buildRenderCacheKey(
+    options?.cachePrefix ?? ctx.cachePrefix,
+    `page:${baseKey}:config-${configDigest}${theme}`,
+  );
 }
 
 describe("Renderer helpers", () => {
@@ -274,16 +296,21 @@ describe("Renderer release asset cache isolation", () => {
 
     const store = createInMemoryStore();
     const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
-    store.data.set(`${manifestPrefix}:page:/cached`, {
-      result: {
-        html: "<html>manifest cache hit</html>",
-        frontmatter: {},
-        headings: [],
-        stream: null,
-        ssrHash: "cached",
+    store.data.set(
+      await buildRendererStorageKey(makeRenderContext(), "/cached", {
+        cachePrefix: manifestPrefix,
+      }),
+      {
+        result: {
+          html: "<html>manifest cache hit</html>",
+          frontmatter: {},
+          headings: [],
+          stream: null,
+          ssrHash: "cached",
+        },
+        storedAt: Date.now(),
       },
-      storedAt: Date.now(),
-    });
+    );
 
     const renderer = new Renderer({ cache: { store } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -346,8 +373,22 @@ describe("Renderer release asset cache isolation", () => {
     const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
     const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
     assertEquals(result.html, "<html>fresh manifest render</html>");
-    assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
-    assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
+    assertEquals(
+      store.data.has(
+        await buildRendererStorageKey(makeRenderContext(), "/fresh", {
+          cachePrefix: manifestPrefix,
+        }),
+      ),
+      true,
+    );
+    assertEquals(
+      store.data.has(
+        await buildRendererStorageKey(makeRenderContext(), "/fresh", {
+          cachePrefix: jitPrefix,
+        }),
+      ),
+      false,
+    );
   });
 
   it("serves stale HTML immediately and refreshes that route in the background", async () => {
@@ -356,7 +397,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       adapter: { fs: { exists: async () => true } },
     } as unknown as RenderContext;
-    const cacheKey = `${ctx.cachePrefix}:page:/stale`;
+    const cacheKey = await buildRendererStorageKey(ctx, "/stale");
     store.data.set(cacheKey, {
       result: {
         html: "<html>stale render</html>",
@@ -455,7 +496,7 @@ describe("Renderer release asset cache isolation", () => {
       signal: requestAbort.signal,
     });
     const requestCacheKey = "/data?filter=recent";
-    const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
+    const cacheKey = await buildRendererStorageKey(ctx, requestCacheKey);
     store.data.set(cacheKey, {
       result: {
         html: "<html>stale data render</html>",
@@ -561,7 +602,7 @@ describe("Renderer release asset cache isolation", () => {
         ...makeRenderContext(),
         adapter: { fs: { exists: async () => true } },
       } as unknown as RenderContext;
-      const cacheKey = `${ctx.cachePrefix}:page:/prewarm-disabled`;
+      const cacheKey = await buildRendererStorageKey(ctx, "/prewarm-disabled");
       store.data.set(cacheKey, {
         result: {
           html: "<html>stale render with prewarm disabled</html>",
@@ -635,7 +676,10 @@ describe("Renderer release asset cache isolation", () => {
         store.data.get(cacheKey)?.result.html,
         "<html>fresh render with prewarm disabled</html>",
       );
-      assertEquals(store.data.has(`${ctx.cachePrefix}:page:/should-not-prewarm`), false);
+      assertEquals(
+        store.data.has(await buildRendererStorageKey(ctx, "/should-not-prewarm")),
+        false,
+      );
     } finally {
       setEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES", originalPrewarmLimit ?? "");
     }
@@ -647,8 +691,10 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       adapter: { fs: { exists: async () => true } },
     } as unknown as RenderContext;
-    const themedCacheKey = `${ctx.cachePrefix}:page:/stale-themed:theme-dark`;
-    const unthemedCacheKey = `${ctx.cachePrefix}:page:/stale-themed`;
+    const themedCacheKey = await buildRendererStorageKey(ctx, "/stale-themed", {
+      colorScheme: "dark",
+    });
+    const unthemedCacheKey = await buildRendererStorageKey(ctx, "/stale-themed");
     store.data.set(themedCacheKey, {
       result: {
         html: "<html>stale dark render</html>",
@@ -782,7 +828,7 @@ describe("Renderer release asset cache isolation", () => {
       pipeline: {
         renderPage: (slug, options) => {
           assertEquals(options?.releaseAssetManifest, null);
-          assertEquals(options?.nonce, slug === "/" ? "nonce-123" : undefined);
+          assertEquals(options?.nonce, undefined);
           renderedSlugs.push(slug);
           return Promise.resolve({
             html: `<html>${slug}</html>`,
@@ -802,7 +848,6 @@ describe("Renderer release asset cache isolation", () => {
       environment: "production",
       releaseId: "rel-1",
       releaseAssetManifest: null,
-      nonce: "nonce-123",
     });
     await waitForProductionPrewarm(renderer);
 
@@ -813,9 +858,18 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(renderedSlugs.includes("about"), false);
     assertEquals(renderedSlugs.includes("/docs/[slug]"), false);
     assertEquals(renderedSlugs.some((slug) => slug.startsWith("/aa-stale-")), false);
-    assertEquals(store.data.has(`${prefix}:page:/blog`), true);
-    assertEquals(store.data.has(`${prefix}:page:/about`), true);
-    assertEquals(store.data.has(`${prefix}:page:about`), false);
+    assertEquals(
+      store.data.has(await buildRendererStorageKey(ctx, "/blog", { cachePrefix: prefix })),
+      true,
+    );
+    assertEquals(
+      store.data.has(await buildRendererStorageKey(ctx, "/about", { cachePrefix: prefix })),
+      true,
+    );
+    assertEquals(
+      store.data.has(await buildRendererStorageKey(ctx, "about", { cachePrefix: prefix })),
+      false,
+    );
   });
 
   it("prioritizes route-family siblings when prewarming production routes", async () => {
@@ -1015,6 +1069,337 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
   });
 
+  it("returns detached complete results to singleflight callers", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let renderCalls = 0;
+    let releaseRender!: () => void;
+    const renderGate = new Promise<void>((resolve) => {
+      releaseRender = resolve;
+    });
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: { renderPage: () => Promise<import("#veryfront/types").RenderResult> };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async () => {
+          renderCalls++;
+          await renderGate;
+          return {
+            html: "<html>complete</html>",
+            css: "body { color: red; }",
+            frontmatter: { tags: ["original"] },
+            headings: [{ id: "heading", text: "Heading", level: 2 }],
+            nodeMap: new Map([[1, { nested: { value: "node" } }]]),
+            pageModule: { slug: "/complete", code: "export default 1", type: "component" },
+            stream: null,
+          };
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const first = renderer.renderPage("/complete", ctx, { releaseAssetManifest: null });
+    const second = renderer.renderPage("/complete", ctx, { releaseAssetManifest: null });
+    await Promise.resolve();
+    releaseRender();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    assertEquals(renderCalls, 1);
+    assertEquals(firstResult.css, "body { color: red; }");
+    assertEquals(secondResult.css, "body { color: red; }");
+    assertEquals(secondResult.nodeMap?.get(1), { nested: { value: "node" } });
+
+    (firstResult.frontmatter.tags as string[])[0] = "mutated";
+    firstResult.headings![0]!.text = "Mutated";
+    (firstResult.nodeMap!.get(1) as { nested: { value: string } }).nested.value = "mutated";
+    firstResult.pageModule!.code = "mutated";
+
+    assertEquals(secondResult.frontmatter.tags, ["original"]);
+    assertEquals(secondResult.headings![0]!.text, "Heading");
+    assertEquals(secondResult.nodeMap?.get(1), { nested: { value: "node" } });
+    assertEquals(secondResult.pageModule?.code, "export default 1");
+  });
+
+  it("bypasses shared caching for request-scoped output variants", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string; request?: Request },
+          ) => Promise<import("#veryfront/types").RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renderCalls++;
+          const variant = options?.nonce ?? options?.request?.headers.get("x-variant") ?? "none";
+          return Promise.resolve({
+            html: `<html>${variant}</html>`,
+            frontmatter: {},
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const [nonceA, nonceB] = await Promise.all([
+      renderer.renderPage("/scoped", ctx, { nonce: "nonce-a", releaseAssetManifest: null }),
+      renderer.renderPage("/scoped", ctx, { nonce: "nonce-b", releaseAssetManifest: null }),
+    ]);
+    const requestA = await renderer.renderPage("/scoped", ctx, {
+      request: new Request("https://example.test/scoped", { headers: { "x-variant": "a" } }),
+      url: new URL("https://example.test/scoped"),
+      releaseAssetManifest: null,
+    });
+    const requestB = await renderer.renderPage("/scoped", ctx, {
+      request: new Request("https://example.test/scoped", { headers: { "x-variant": "b" } }),
+      url: new URL("https://example.test/scoped"),
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(nonceA.html, "<html>nonce-a</html>");
+    assertEquals(nonceB.html, "<html>nonce-b</html>");
+    assertEquals(requestA.html, "<html>a</html>");
+    assertEquals(requestB.html, "<html>b</html>");
+    assertEquals(renderCalls, 4);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("caches an explicit public artifact without nonce and applies each response nonce", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string },
+          ) => Promise<import("#veryfront/types").RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renderCalls++;
+          assertEquals(options?.nonce, undefined);
+          return Promise.resolve({
+            html: "<html><script>window.__public = true</script></html>",
+            frontmatter: {},
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const url = new URL("https://example.test/public");
+    const common = {
+      request: new Request(url),
+      url,
+      cacheKey: "public-contract",
+      renderSessionId: "session-a",
+      releaseAssetManifest: null,
+    };
+    const first = await renderer.renderPage("/public", ctx, { ...common, nonce: "nonce-a" });
+    const second = await renderer.renderPage("/public", ctx, {
+      ...common,
+      renderSessionId: "session-b",
+      nonce: "nonce-b",
+    });
+
+    assertEquals(renderCalls, 1);
+    assertEquals(first.html.includes('<script nonce="nonce-a">'), true);
+    assertEquals(second.html.includes('<script nonce="nonce-b">'), true);
+    assertEquals(first.html.includes("nonce-b"), false);
+    assertEquals(second.html.includes("nonce-a"), false);
+    assertEquals(
+      [...store.data.values()].every((entry) => !entry.result.html.includes("nonce-")),
+      true,
+    );
+  });
+
+  it("does not let an invalidated in-flight generation repopulate or join fresh work", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+    let releaseOld!: () => void;
+    let markOldStarted!: () => void;
+    const oldStarted = new Promise<void>((resolve) => {
+      markOldStarted = resolve;
+    });
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<import("#veryfront/types").RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async () => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            markOldStarted();
+            await oldGate;
+            return { html: "<html>stale</html>", frontmatter: {}, stream: null };
+          }
+          return { html: "<html>fresh</html>", frontmatter: {}, stream: null };
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const oldRender = renderer.renderPage("/race", ctx, { releaseAssetManifest: null });
+    await oldStarted;
+    await renderer.clearCacheForProject(ctx.projectId);
+
+    const fresh = await renderer.renderPage("/race", ctx, { releaseAssetManifest: null });
+    releaseOld();
+    const staleCaller = await oldRender;
+
+    assertEquals(renderCalls, 2);
+    assertEquals(staleCaller.html, "<html>stale</html>");
+    assertEquals(fresh.html, "<html>fresh</html>");
+    assertEquals([...store.data.values()].map((entry) => entry.result.html), [
+      "<html>fresh</html>",
+    ]);
+  });
+
+  it("preserves streaming delivery and never persists the stream variant", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const stream = new ReadableStream<Uint8Array>();
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { delivery?: "string" | "stream" },
+          ) => Promise<import("#veryfront/types").RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(options?.delivery, "stream");
+          return Promise.resolve({ html: "", frontmatter: {}, stream });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/stream", makeRenderContext(), {
+      delivery: "stream",
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(result.stream, stream);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("isolates canonical caches across configuration generations", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: (ctx: RenderContext) => {
+        pipeline: { renderPage: () => Promise<import("#veryfront/types").RenderResult> };
+      };
+    }).createServicesForContext = (ctx) => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            html: `<html>${ctx.config.title}</html>`,
+            frontmatter: {},
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const base = makeRenderContext();
+    const first = await renderer.renderPage("/config", {
+      ...base,
+      config: { title: "First" },
+    }, { releaseAssetManifest: null });
+    const second = await renderer.renderPage("/config", {
+      ...base,
+      config: { title: "Second" },
+    }, { releaseAssetManifest: null });
+
+    assertEquals(first.html, "<html>First</html>");
+    assertEquals(second.html, "<html>Second</html>");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 2);
+  });
+
+  it("honors skipCacheCheck and skipCachePersist independently", async () => {
+    const store = createInMemoryStore();
+    const ctx = makeRenderContext();
+    const storageKey = await buildRendererStorageKey(ctx, "/controls");
+    store.data.set(storageKey, {
+      result: { html: "<html>cached</html>", frontmatter: {}, stream: null },
+      storedAt: Date.now(),
+    });
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: { renderPage: () => Promise<import("#veryfront/types").RenderResult> };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({ html: "<html>fresh</html>", frontmatter: {}, stream: null });
+        },
+      },
+    });
+
+    const forced = await renderer.renderPage("/controls", ctx, {
+      skipCacheCheck: true,
+      releaseAssetManifest: null,
+    });
+    assertEquals(forced.html, "<html>fresh</html>");
+    assertEquals(store.data.get(storageKey)?.result.html, "<html>fresh</html>");
+
+    await renderer.renderPage("/no-persist", ctx, {
+      skipCachePersist: true,
+      releaseAssetManifest: null,
+    });
+    assertEquals(
+      store.data.has(await buildRendererStorageKey(ctx, "/no-persist")),
+      false,
+    );
+    assertEquals(renderCalls, 2);
+  });
+
   it("detaches a cancelled caller without aborting a shared cacheable render", async () => {
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -1195,6 +1580,32 @@ describe("Renderer release asset cache isolation", () => {
 });
 
 describe("rendering/renderer singleton initialization", () => {
+  it("runs authoritative project invalidation when the renderer pod is cold", async () => {
+    await destroyRenderer();
+    const invalidated: string[] = [];
+    setColdProjectCacheInvalidatorForTesting((projectId) => {
+      invalidated.push(projectId);
+      return Promise.resolve(true);
+    });
+    try {
+      await clearRendererCacheForProject("project-cold");
+      assertEquals(invalidated, ["project-cold"]);
+    } finally {
+      setColdProjectCacheInvalidatorForTesting();
+    }
+  });
+
+  it("does not let direct initialization resurrect a destroyed renderer", async () => {
+    destroySharedServices();
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+
+    const pendingInitialize = renderer.initialize();
+    await renderer.destroy();
+
+    await assertRejects(() => pendingInitialize, Error, "cancelled");
+    await assertRejects(() => renderer.initialize(), Error, "destroyed");
+  });
+
   it("waits for an in-flight singleton initialization", async () => {
     await destroyRenderer();
 
@@ -1277,6 +1688,43 @@ describe("rendering/renderer singleton initialization", () => {
       assertThrows(() => getRenderer());
       assertEquals(destroyCalls, 1);
     } finally {
+      Renderer.prototype.initialize = originalInitialize;
+      Renderer.prototype.destroy = originalDestroy;
+      await destroyRenderer();
+    }
+  });
+
+  it("does not let a cancelled generation clear a newer initialization", async () => {
+    await destroyRenderer();
+
+    const originalInitialize = Renderer.prototype.initialize;
+    const originalDestroy = Renderer.prototype.destroy;
+    const resolvers: Array<() => void> = [];
+    let initializeCalls = 0;
+    Renderer.prototype.initialize = function () {
+      initializeCalls++;
+      return new Promise<void>((resolve) => resolvers.push(resolve));
+    };
+    Renderer.prototype.destroy = () => Promise.resolve();
+
+    try {
+      const first = initializeRenderer();
+      while (resolvers.length < 1) await Promise.resolve();
+      await destroyRenderer();
+
+      const second = initializeRenderer();
+      while (resolvers.length < 2) await Promise.resolve();
+      resolvers[0]!();
+      await assertRejects(() => first, Error, "cancelled");
+
+      const third = initializeRenderer();
+      assertEquals(initializeCalls, 2);
+      resolvers[1]!();
+      const [secondRenderer, thirdRenderer] = await Promise.all([second, third]);
+      assertEquals(secondRenderer, thirdRenderer);
+      assertEquals(initializeCalls, 2);
+    } finally {
+      for (const resolve of resolvers) resolve();
       Renderer.prototype.initialize = originalInitialize;
       Renderer.prototype.destroy = originalDestroy;
       await destroyRenderer();

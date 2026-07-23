@@ -9,7 +9,8 @@
 
 import { isAbsolute, toFileUrl } from "@std/path";
 import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
-import type { Extension, ExtensionFactory, ExtensionSource, ResolvedExtension } from "./types.ts";
+import { validateExtension } from "./validation.ts";
+import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 
 /**
  * Dynamically import an extension factory from `path` and resolve it.
@@ -60,9 +61,9 @@ export async function loadExtensionFactory(
     });
   }
 
-  let extension: Extension;
+  let factoryResult: unknown;
   try {
-    extension = (factory as ExtensionFactory)(config);
+    factoryResult = (factory as (config?: unknown) => unknown)(config);
   } catch (err) {
     throw EXTENSION_VALIDATION_ERROR.create({
       detail: `Extension factory at "${path}" threw during invocation: ${
@@ -72,5 +73,12 @@ export async function loadExtensionFactory(
     });
   }
 
-  return { extension, source, origin: path };
+  const issues = validateExtension(factoryResult);
+  if (issues.length > 0) {
+    throw EXTENSION_VALIDATION_ERROR.create({
+      detail: `Extension factory at "${path}" returned an invalid extension: ${issues.join("; ")}`,
+    });
+  }
+
+  return { extension: factoryResult as Extension, source, origin: path };
 }

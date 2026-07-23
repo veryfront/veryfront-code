@@ -109,7 +109,7 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
    * Check if the underlying backend is distributed (Redis/API) vs memory.
    */
   isDistributed(): boolean {
-    return this.type !== "memory";
+    return this.type === "redis" || this.type === "api";
   }
 
   /**
@@ -118,13 +118,13 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
    */
   async getCode(key: string): Promise<string | null> {
     const raw = await this.backend.get(key);
-    if (!raw) return null;
+    if (raw === null) return null;
 
     // Only detokenize for distributed backends
     if (!this.isDistributed()) return raw;
 
     const detokenized = detokenizeAllCachePaths(raw);
-    logger.debug(`[${this.name}] Detokenized code from cache`, { key });
+    logger.debug(`[${this.name}] Detokenized code from cache`, { keyLength: key.length });
     return detokenized;
   }
 
@@ -145,7 +145,7 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
     const rawResults = await this.backend.getBatch(keys);
     return buildBatchResults(keys, (key) => {
       const raw = rawResults.get(key) ?? null;
-      if (!raw) {
+      if (raw === null) {
         return null;
       }
 
@@ -178,14 +178,14 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
       assertPortableCode(portable);
     } catch (error) {
       logger.error(`[${this.name}] Failed to create portable code`, {
-        key,
-        error: error instanceof Error ? error.message : String(error),
+        keyLength: key.length,
+        errorName: error instanceof Error ? error.name : typeof error,
       });
       throw error;
     }
 
     await this.backend.set(key, portable, ttlSeconds);
-    logger.debug(`[${this.name}] Stored tokenized code in cache`, { key });
+    logger.debug(`[${this.name}] Stored tokenized code in cache`, { keyLength: key.length });
   }
 
   /**
@@ -231,7 +231,9 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
    * Delete codes matching pattern from cache.
    */
   async delCodeByPattern(pattern: string): Promise<number> {
-    if (!this.backend.delByPattern) return 0;
+    if (!this.backend.delByPattern) {
+      throw new TypeError("Code cache backend does not support pattern invalidation");
+    }
     return this.backend.delByPattern(pattern);
   }
 

@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   isSensitiveKey,
   REDACTED,
+  redactForSerialization,
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
@@ -131,14 +132,44 @@ describe("logger/redact", () => {
       assertEquals((result as Record<string, unknown>).password, REDACTED);
     });
 
-    it("leaves primitives and scalar-serializing objects untouched", () => {
+    it("preserves its generic source contract and non-JSON runtime value shapes", () => {
+      const callback = () => "ok";
+      const input = {
+        when: new Date(0),
+        count: 42n,
+        callback,
+        absent: undefined,
+      };
+
+      const result: typeof input = redactSensitive(input);
+      assertStrictEquals(result.when, input.when);
+      assertStrictEquals(result.count, 42n);
+      assertStrictEquals(result.callback, callback);
+      assertEquals(Object.hasOwn(result, "absent"), true);
+      assertStrictEquals(result.absent, undefined);
+    });
+
+    it("preserves sparse array slots through the compatibility API", () => {
+      const input = new Array<string | undefined>(2);
+      input[1] = "kept";
+
+      const result = redactSensitive(input);
+      assertEquals(result.length, 2);
+      assertEquals(0 in result, false);
+      assertEquals(result[1], "kept");
+    });
+
+    it("leaves safe primitives intact and snapshots scalar serializers for JSON", () => {
       const date = new Date(0);
-      const result = redactSensitive({ when: date, n: 5, flag: true, nil: null }) as Record<
-        string,
-        unknown
-      >;
-      // Date defines toJSON → serializes to a scalar → returned as-is.
-      assertEquals(result.when, date);
+      const result = redactForSerialization({
+        when: date,
+        n: 5,
+        flag: true,
+        nil: null,
+      }) as Record<string, unknown>;
+      // Snapshot toJSON output so a later/non-deterministic invocation cannot
+      // bypass the sanitization pass.
+      assertEquals(result.when, date.toISOString());
       assertEquals(result.n, 5);
       assertEquals(result.flag, true);
       assertEquals(result.nil, null);
@@ -168,6 +199,58 @@ describe("logger/redact", () => {
       });
     });
 
+    it("fails closed on a hostile array element getter", () => {
+      const hostile: unknown[] = [];
+      Object.defineProperty(hostile, 0, {
+        enumerable: true,
+        get() {
+          throw new Error("hostile array element getter");
+        },
+      });
+
+      assertEquals(redactSensitive(hostile) as unknown, REDACTED);
+      assertEquals(redactSensitive({ values: hostile }) as unknown, { values: REDACTED });
+    });
+
+    it("fails closed for revoked root and nested proxies during array classification", () => {
+      const revokedObject = Proxy.revocable({ token: "object-secret" }, {});
+      const revokedArray = Proxy.revocable(["array-secret"], {});
+      revokedObject.revoke();
+      revokedArray.revoke();
+
+      assertEquals(redactSensitive(revokedObject.proxy as unknown), REDACTED);
+      assertEquals(redactSensitive(revokedArray.proxy as unknown), REDACTED);
+      assertEquals(
+        redactSensitive({ nested: revokedObject.proxy }) as unknown,
+        { nested: REDACTED },
+      );
+      assertEquals(
+        redactSensitive({ nested: revokedArray.proxy }) as unknown,
+        { nested: REDACTED },
+      );
+      assertEquals(redactForSerialization(revokedObject.proxy as unknown), REDACTED);
+      assertEquals(redactForSerialization(revokedArray.proxy as unknown), REDACTED);
+      assertEquals(redactForSerialization({ nested: revokedObject.proxy }), {
+        nested: REDACTED,
+      });
+      assertEquals(redactForSerialization({ nested: revokedArray.proxy }), {
+        nested: REDACTED,
+      });
+    });
+
+    it("preserves dangerous property names as safe own properties", () => {
+      const input: Record<string, unknown> = {};
+      Object.defineProperty(input, "__proto__", {
+        enumerable: true,
+        value: "secret",
+      });
+
+      const result = redactSensitive(input) as Record<string, unknown>;
+      assertEquals(Object.hasOwn(result, "__proto__"), true);
+      assertEquals(result["__proto__"], "secret");
+      assertEquals(Object.getPrototypeOf(result), Object.prototype);
+    });
+
     it("fails closed past the max traversal depth", () => {
       // Build a structure deeper than MAX_DEPTH (16) with a secret at the bottom.
       let node: Record<string, unknown> = { token: "deep-secret" };
@@ -192,6 +275,35 @@ describe("logger/redact", () => {
       const serialized = JSON.stringify(redactSensitive({ obj }));
       assertEquals(serialized.includes("t-1"), false);
       assertEquals(serialized.includes("2"), true);
+    });
+
+    it("fails closed when reading a toJSON getter throws", () => {
+      const hostile: Record<string, unknown> = {};
+      Object.defineProperty(hostile, "toJSON", {
+        enumerable: false,
+        get() {
+          throw new Error("hostile serializer getter");
+        },
+      });
+
+      assertEquals(redactSensitive(hostile) as unknown, REDACTED);
+      assertEquals(redactSensitive({ nested: hostile }) as unknown, { nested: REDACTED });
+    });
+
+    it("normalizes values that JSON cannot serialize through the explicit API", () => {
+      assertEquals(
+        redactForSerialization({
+          count: 42n,
+          callback: () => {},
+          marker: Symbol("marker"),
+          absent: undefined,
+        }),
+        {
+          count: "42",
+          callback: REDACTED,
+          marker: REDACTED,
+        },
+      );
     });
   });
 
@@ -223,8 +335,57 @@ describe("logger/redact", () => {
       );
     });
 
+    it("masks credentials encoded as fragment parameters", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "https://app.example.test/callback#access_token=fragment-secret&view=summary",
+        ),
+        `https://app.example.test/callback#access_token=${REDACTED}&view=summary`,
+      );
+    });
+
+    it("masks sensitive parameter names containing percent-encoded separators", () => {
+      assertEquals(
+        sanitizeUrlCredentials("https://app.example.test/?access%5Ftoken=secret&page=2"),
+        `https://app.example.test/?access%5Ftoken=${REDACTED}&page=2`,
+      );
+    });
+
     it("leaves non-URL strings untouched", () => {
       assertEquals(sanitizeUrlCredentials("just a plain message"), "just a plain message");
+    });
+  });
+
+  describe("structured string sanitization", () => {
+    it("scrubs URL credentials from nested strings and URL objects", () => {
+      const result = redactForSerialization({
+        nested: {
+          endpoint: "https://user:pass@example.test/path?token=query-secret",
+          callback: new URL(
+            "https://client:password@example.test/callback#access_token=fragment-secret",
+          ),
+        },
+      }) as unknown as {
+        nested: { endpoint: string; callback: string };
+      };
+
+      const serialized = JSON.stringify(result);
+      assertEquals(serialized.includes("pass"), false);
+      assertEquals(serialized.includes("query-secret"), false);
+      assertEquals(serialized.includes("password"), false);
+      assertEquals(serialized.includes("fragment-secret"), false);
+      assertEquals(result.nested.endpoint.includes(REDACTED), true);
+      assertEquals(result.nested.callback.includes(REDACTED), true);
+    });
+
+    it("scrubs URL credentials returned by scalar toJSON methods", () => {
+      const value = {
+        toJSON: () => "https://example.test/callback#token=scalar-secret",
+      };
+
+      const serialized = JSON.stringify(redactForSerialization({ value }));
+      assertEquals(serialized.includes("scalar-secret"), false);
+      assertEquals(serialized.includes(REDACTED), true);
     });
   });
 

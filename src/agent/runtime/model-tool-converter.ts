@@ -78,16 +78,16 @@ export function convertToolsToRuntimeTools(
     if (providerNativeToolNames.has(def.name)) {
       continue;
     }
+    const canonicalSchema = normalizeProviderToolInputSchema(def.parameters);
+    const modelSchema = sanitizeProviderToolSchema(canonicalSchema, {
+      model: options?.model,
+    });
     addRuntimeTool(
       toolSet,
       def.name,
       createRuntimeTool({
         description: def.description,
-        inputSchema: createRuntimeJsonSchema(
-          sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
-            model: options?.model,
-          }),
-        ),
+        inputSchema: createRuntimeJsonSchema(canonicalSchema, modelSchema),
       }),
     );
   }

@@ -9,6 +9,7 @@ import {
   asyncLocalStorage,
   clearRequestScopedFileCache,
   type RequestContext,
+  type RequestTokenProvenance,
 } from "./request-context.ts";
 export {
   clearRequestScopedFileCache,
@@ -53,6 +54,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenProvenance?: RequestTokenProvenance;
     },
   ): Promise<T> {
     const startTime = performance.now();
@@ -79,6 +81,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
       branch: productionMode ? null : branch,
       environmentName,
       fileCache: new Map<string, string>(),
+      ...(options?.tokenProvenance === "project-bound"
+        ? {
+          cacheApiCredential: Object.freeze({ token, projectSlug, projectId }),
+        }
+        : {}),
     };
 
     logger.debug("asyncLocalStorage.run START", { projectSlug });
@@ -112,6 +119,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
     store.projectSlug = projectSlug;
     store.token = token;
+    store.cacheApiCredential = undefined;
   }
 
   setProductionMode(_enabled: boolean, _releaseId?: string | null): void {

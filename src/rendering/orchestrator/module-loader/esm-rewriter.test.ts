@@ -62,6 +62,9 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
     const files = new Map<string, string>();
     const localAdapter = {
       fs: {
+        exists(path: string) {
+          return Promise.resolve(files.has(path));
+        },
         writeFile(path: string, content: string) {
           files.set(path, content);
           return Promise.resolve();
@@ -165,6 +168,60 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
         Error,
       );
+    });
+
+    it("does not reuse another project source directory's artifact path", async () => {
+      const esmCache = new Map<string, string>();
+      let fetchCount = 0;
+      globalThis.fetch = (() => {
+        fetchCount++;
+        return Promise.resolve(jsonResponse(`export const value = ${fetchCount};`));
+      }) as typeof fetch;
+
+      const first = await fetchEsmModule(
+        "https://esm.sh/shared",
+        "/tmp/project-a/source-main",
+        localAdapter,
+        esmCache,
+      );
+      const second = await fetchEsmModule(
+        "https://esm.sh/shared",
+        "/tmp/project-b/source-main",
+        localAdapter,
+        esmCache,
+      );
+
+      assertEquals(first.startsWith("/tmp/project-a/source-main"), true);
+      assertEquals(second.startsWith("/tmp/project-b/source-main"), true);
+      assertEquals(fetchCount, 2);
+    });
+
+    it("refetches when cleanup removed the cached temporary artifact", async () => {
+      const esmCache = new Map<string, string>();
+      let fetchCount = 0;
+      globalThis.fetch = (() => {
+        fetchCount++;
+        return Promise.resolve(jsonResponse(`export const value = ${fetchCount};`));
+      }) as typeof fetch;
+
+      const first = await fetchEsmModule(
+        "https://esm.sh/recreated",
+        tmpDir,
+        localAdapter,
+        esmCache,
+      );
+      files.delete(first);
+
+      const second = await fetchEsmModule(
+        "https://esm.sh/recreated",
+        tmpDir,
+        localAdapter,
+        esmCache,
+      );
+
+      assertEquals(second, first);
+      assertEquals(fetchCount, 2);
+      assertEquals(files.has(second), true);
     });
   });
 });

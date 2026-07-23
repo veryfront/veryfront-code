@@ -47,6 +47,10 @@ export class Semaphore {
     maxPermits: number,
     options: { acquireTimeoutMs?: number; name?: string } = {},
   ) {
+    if (!Number.isInteger(maxPermits) || maxPermits <= 0) {
+      throw new RangeError("Semaphore maxPermits must be a positive integer");
+    }
+
     this.maxPermits = maxPermits;
     this.permits = maxPermits;
     this.acquireTimeoutMs = options.acquireTimeoutMs ?? 0;

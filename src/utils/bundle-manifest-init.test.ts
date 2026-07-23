@@ -3,6 +3,11 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getBundleManifestTTL, initializeBundleManifest } from "./bundle-manifest-init.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
+import {
+  getBundleManifestStore,
+  InMemoryBundleManifestStore,
+  setBundleManifestStore,
+} from "./bundle-manifest.ts";
 
 describe("getBundleManifestTTL", () => {
   it("should return production TTL for production mode when no config TTL", () => {
@@ -28,6 +33,14 @@ describe("getBundleManifestTTL", () => {
     assertEquals(result, 3000);
   });
 
+  it("should preserve an explicit zero TTL", () => {
+    const result = getBundleManifestTTL(
+      { cache: { bundleManifest: { ttl: 0 } } },
+      "production",
+    );
+    assertEquals(result, 0);
+  });
+
   it("should use mode-based default when cache config exists but no ttl", () => {
     const result = getBundleManifestTTL(
       { cache: { bundleManifest: { enabled: true } } },
@@ -46,6 +59,36 @@ describe("getBundleManifestTTL", () => {
 });
 
 describe("initializeBundleManifest", () => {
+  it("does not replace the process store during repeated per-project initialization", async () => {
+    const previous = getBundleManifestStore();
+    const store = new InMemoryBundleManifestStore();
+    setBundleManifestStore(store);
+    try {
+      await store.setBundleMetadata("existing", {
+        hash: "hash-existing",
+        codeHash: "code-existing",
+        size: 1,
+        compiledAt: 1,
+        source: "existing.mdx",
+        mode: "production",
+      });
+
+      await initializeBundleManifest(
+        { cache: { bundleManifest: { enabled: true, type: "memory" } } },
+        "production",
+      );
+      await initializeBundleManifest(
+        { cache: { bundleManifest: { enabled: false } } },
+        "development",
+      );
+
+      assertEquals(getBundleManifestStore() === store, true);
+      assertExists(await store.getBundleMetadata("existing"));
+    } finally {
+      setBundleManifestStore(previous);
+    }
+  });
+
   it("rejects explicit redis backend config instead of silently falling back to memory", async () => {
     await assertRejects(
       () =>
@@ -67,6 +110,18 @@ describe("initializeBundleManifest", () => {
         ),
       Error,
       'Bundle manifest store type "kv" is configured but is not implemented',
+    );
+  });
+
+  it("rejects unknown backend types instead of silently using memory", async () => {
+    await assertRejects(
+      () =>
+        initializeBundleManifest(
+          { cache: { bundleManifest: { enabled: true, type: "unknown" } } },
+          "production",
+        ),
+      Error,
+      'Bundle manifest store type "unknown" is not supported',
     );
   });
 });

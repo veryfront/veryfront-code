@@ -1,4 +1,3 @@
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
@@ -40,15 +39,25 @@ function formatMdxEsmTransformCacheKey(
   normalizedPath: string,
   contentHash: string,
 ): string {
-  return `${namespace}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}:ssr`;
+  const identity = hashString(
+    JSON.stringify([projectId, contentSourceId, reactVersion, normalizedPath, contentHash]),
+  );
+  return `${namespace}:transform:${identity}:ssr`;
 }
 
 function formatMdxEsmPathCacheKey(
   namespace: string,
   reactVersion: string,
   normalizedPath: string,
+  sourceContentHash?: string,
 ): string {
-  return `${namespace}:${reactVersion}:${normalizedPath}`;
+  // This cache is local and needs to support selective path invalidation. Keep
+  // the framed identity parseable while binding it to the full source digest.
+  return `${namespace}:path:${JSON.stringify([
+    reactVersion,
+    normalizedPath,
+    sourceContentHash ?? null,
+  ])}`;
 }
 
 function formatMdxEsmModuleFileName(namespace: string, contentHash: string): string {
@@ -61,7 +70,8 @@ function formatMdxEsmModuleRecoveryCacheKey(
   contentSourceId: string,
   fileName: string,
 ): string {
-  return `${namespace}:${projectId}:${contentSourceId}:${fileName}:vfmod`;
+  const identity = hashString(JSON.stringify([projectId, contentSourceId, fileName]));
+  return `${namespace}:recovery:${identity}:vfmod`;
 }
 
 function formatMdxJsxCacheFileName(
@@ -95,6 +105,7 @@ function buildMdxEsmCacheSchemaSample() {
       CACHE_NAMESPACE_SENTINEL,
       REACT_DEFAULT_VERSION,
       "_vf_modules/pages/index.js",
+      "deadbeef",
     ),
     moduleFile: formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
     moduleRecoveryKey: formatMdxEsmModuleRecoveryCacheKey(
@@ -128,9 +139,9 @@ function buildFrameworkVfModuleCacheSchemaSample() {
   return {
     moduleFile: formatFrameworkVfModuleCacheFileName(
       CACHE_NAMESPACE_SENTINEL,
-      hashCodeHex("/_vf_modules/_veryfront/react/runtime/core.js"),
-      hashCodeHex("/app/.cache/veryfront-mdx-esm").slice(0, 8),
-      hashCodeHex("export default function Head() {}"),
+      hashString("/_vf_modules/_veryfront/react/runtime/core.js"),
+      hashString("/app/.cache/veryfront-mdx-esm"),
+      hashString("export default function Head() {}"),
     ),
     publicRuntimeAliases: buildPublicRuntimeAliasSchema({
       "veryfront/head": "./src/react/runtime/core.ts",
@@ -173,8 +184,14 @@ export function buildMdxEsmTransformCacheKey(
 export function buildMdxEsmPathCacheKey(
   normalizedPath: string,
   reactVersion = REACT_DEFAULT_VERSION,
+  sourceContentHash?: string,
 ): string {
-  return formatMdxEsmPathCacheKey(MDX_ESM_CACHE_NAMESPACE, reactVersion, normalizedPath);
+  return formatMdxEsmPathCacheKey(
+    MDX_ESM_CACHE_NAMESPACE,
+    reactVersion,
+    normalizedPath,
+    sourceContentHash,
+  );
 }
 
 export function buildMdxEsmModuleFileName(contentHash: string): string {

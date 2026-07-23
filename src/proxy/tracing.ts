@@ -17,11 +17,9 @@ import {
   context as shimContext,
   defaultTextMapGetter,
   defaultTextMapSetter,
+  type GlobalTelemetryAPIInstallation,
+  installGlobalTelemetryAPI,
   propagation as shimPropagation,
-  setGlobalActiveSpanAccessor,
-  setGlobalContextAccessor,
-  setGlobalMetricsAPI,
-  setGlobalTracerProvider,
   type Span,
   SpanKind,
   SpanStatusCode,
@@ -39,9 +37,12 @@ import { proxyLogger } from "./logger.ts";
 const TRACING_EXTENSION_SOURCE_DIRECTORY = "ext-observability-opentelemetry";
 const TRACING_EXTENSION_PACKAGE = "@veryfront/ext-observability-opentelemetry";
 
-let initialized = false;
+let initializationPromise: Promise<void> | null = null;
+let shutdownPromise: Promise<void> | null = null;
+let lifecycleGeneration = 0;
 let tracer: Tracer | null = null;
 let exporter: TracingExporter | null = null;
+let telemetryInstallation: GlobalTelemetryAPIInstallation | null = null;
 
 interface OTLPConfig {
   serviceName: string;
@@ -133,11 +134,30 @@ async function loadTracingExporter(): Promise<TracingExporter | null> {
  *
  * @param loadExporter Test seam; production callers use the default loader.
  */
-export async function initializeOTLPWithApis(
+export function initializeOTLPWithApis(
   loadExporter: () => Promise<TracingExporter | null> = loadTracingExporter,
 ): Promise<void> {
-  if (initialized) return;
-  initialized = true;
+  if (shutdownPromise) {
+    return shutdownPromise.then(() => initializeOTLPWithApis(loadExporter));
+  }
+  if (exporter && telemetryInstallation && tracer) return Promise.resolve();
+  if (initializationPromise) return initializationPromise;
+
+  const generation = lifecycleGeneration;
+  const attempt = initializeOTLPAttempt(loadExporter, generation).finally(() => {
+    if (initializationPromise === attempt) initializationPromise = null;
+  });
+  initializationPromise = attempt;
+  return attempt;
+}
+
+async function initializeOTLPAttempt(
+  loadExporter: () => Promise<TracingExporter | null>,
+  generation: number,
+): Promise<void> {
+  let candidate: TracingExporter | null = null;
+  let candidateInstallation: GlobalTelemetryAPIInstallation | null = null;
+  let ownershipTransferred = false;
 
   const config = getConfig();
   const gate = resolveOtlpGate(config);
@@ -147,37 +167,40 @@ export async function initializeOTLPWithApis(
   }
 
   try {
-    const exporterImpl = await loadExporter();
-    if (!exporterImpl) return; // loader already logged the reason
+    candidate = await loadExporter();
+    if (!candidate) return; // loader already logged the reason
+    if (generation !== lifecycleGeneration) return;
 
     // The exporter reads OTEL_* env itself (endpoint, headers, signal gates)
     // and creates the SDK tracer provider with a batch OTLP span processor.
-    await exporterImpl.start({});
-    exporter = exporterImpl;
+    await candidate.start({});
+    if (generation !== lifecycleGeneration) return;
 
-    // Wire the shim globals before getTracer() — the tracer is cached below,
-    // so wiring afterwards would freeze the no-op tracer forever.
-    setGlobalTracerProvider(
-      exporterImpl.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
-    );
-    const metricsApi = exporterImpl.getMetricsAPI();
-    if (metricsApi) {
-      setGlobalMetricsAPI(metricsApi as Parameters<typeof setGlobalMetricsAPI>[0]);
-    }
-    const traceApi = exporterImpl.getTraceAPI?.();
-    if (traceApi) {
-      setGlobalActiveSpanAccessor(
-        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
-      );
-    }
-    const contextApi = exporterImpl.getContextAPI?.();
-    if (contextApi) {
-      setGlobalContextAccessor(
-        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
-      );
-    }
+    // Read the complete facade before installing any part of it. The shim then
+    // publishes one generation atomically, so consumers never observe a new
+    // tracer paired with stale metrics/context accessors.
+    const provider = candidate.getProvider();
+    const metricsApi = candidate.getMetricsAPI();
+    const traceApi = candidate.getTraceAPI?.() ?? null;
+    const contextApi = candidate.getContextAPI?.() ?? null;
+    candidateInstallation = installGlobalTelemetryAPI({
+      tracerProvider: provider as Parameters<typeof installGlobalTelemetryAPI>[0]["tracerProvider"],
+      metricsApi: metricsApi as Parameters<typeof installGlobalTelemetryAPI>[0]["metricsApi"],
+      activeSpanAccessor: traceApi as Parameters<
+        typeof installGlobalTelemetryAPI
+      >[0]["activeSpanAccessor"],
+      contextAccessor: contextApi as Parameters<
+        typeof installGlobalTelemetryAPI
+      >[0]["contextAccessor"],
+    });
 
-    tracer = shimTrace.getTracer(config.serviceName);
+    const candidateTracer = shimTrace.getTracer(config.serviceName);
+    if (generation !== lifecycleGeneration) return;
+
+    exporter = candidate;
+    telemetryInstallation = candidateInstallation;
+    tracer = candidateTracer;
+    ownershipTransferred = true;
 
     proxyLogger.info("[otel] Initialized", {
       serviceName: config.serviceName,
@@ -185,32 +208,65 @@ export async function initializeOTLPWithApis(
     });
   } catch (error) {
     proxyLogger.error("[otel] Init failed", error);
+  } finally {
+    if (!ownershipTransferred) {
+      candidateInstallation?.dispose();
+    }
+    // `start()` may allocate processors before rejecting, and facade getters
+    // can fail after startup. An uncommitted candidate always remains owned by
+    // this attempt and must be released before the attempt settles.
+    if (!ownershipTransferred && candidate) {
+      try {
+        await candidate.shutdown();
+      } catch (_) {
+        /* expected: initialization failure remains the primary diagnostic */
+      }
+    }
   }
 }
 
 /** Flush pending spans and release the exporter. Safe to call when disabled. */
-export async function shutdownOTLP(): Promise<void> {
-  const active = exporter;
-  exporter = null;
-  tracer = null;
+export function shutdownOTLP(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
 
-  if (active) {
-    try {
-      await active.shutdown();
-    } catch (error) {
-      proxyLogger.warn("[otel] Exporter shutdown failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+  lifecycleGeneration++;
+  const pendingInitialization = initializationPromise;
+  const active = exporter;
+  const installation = telemetryInstallation;
+  exporter = null;
+  telemetryInstallation = null;
+  tracer = null;
+  installation?.dispose();
+
+  const attempt = (async () => {
+    if (pendingInitialization) await pendingInitialization;
+
+    if (active) {
+      try {
+        await active.shutdown();
+      } catch (error) {
+        proxyLogger.warn("[otel] Exporter shutdown failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
-  }
-  proxyLogger.info("[otel] Shutdown complete");
+    proxyLogger.info("[otel] Shutdown complete");
+  })().finally(() => {
+    if (shutdownPromise === attempt) shutdownPromise = null;
+  });
+  shutdownPromise = attempt;
+  return attempt;
 }
 
 /** Reset module state between tests. Mirrors api-shim's `_resetShimForTests`. */
 export function _resetOTLPForTests(): void {
-  initialized = false;
+  lifecycleGeneration++;
+  telemetryInstallation?.dispose();
+  initializationPromise = null;
+  shutdownPromise = null;
   tracer = null;
   exporter = null;
+  telemetryInstallation = null;
 }
 
 export function extractContext(headers: Headers): Context | undefined {

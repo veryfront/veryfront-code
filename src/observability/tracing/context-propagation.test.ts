@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ContextPropagation } from "./context-propagation.ts";
 import type { Context, OpenTelemetryAPI, Span, TextMapPropagator } from "./types.ts";
@@ -157,6 +163,113 @@ describe("observability/tracing/context-propagation", () => {
   });
 
   describe("withActiveSpan", () => {
+    it("returns the application promise without waiting for a provider-owned promise", async () => {
+      const never = new Promise<never>(() => {});
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: <T>(_context: Context, fn: () => T): T => {
+            fn();
+            return never as T;
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      const applicationPromise = Promise.resolve("application result");
+
+      const result = badCtx.withActiveSpan(createMockSpan(), () => applicationPromise);
+
+      assertStrictEquals(result, applicationPromise);
+      assertEquals(await result, "application result");
+    });
+
+    it("preserves the callback result when the context provider replaces it", async () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: <T>(_context: Context, fn: () => T): T => {
+            fn();
+            return Promise.resolve("provider result") as T;
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+
+      const result = await badCtx.withActiveSpan(
+        createMockSpan(),
+        () => Promise.resolve("application result"),
+      );
+
+      assertEquals(result, "application result");
+    });
+
+    it("runs the callback when the context provider returns without invoking it", async () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: <T>(_context: Context, _fn: () => T): T => "provider result" as T,
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      let calls = 0;
+
+      const result = await badCtx.withActiveSpan(createMockSpan(), async () => {
+        calls++;
+        return "application result";
+      });
+
+      assertEquals(result, "application result");
+      assertEquals(calls, 1);
+    });
+
+    it("invokes the callback at most once when the context provider invokes it repeatedly", async () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            const result = fn();
+            fn();
+            return result;
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      let calls = 0;
+
+      await badCtx.withActiveSpan(createMockSpan(), async () => {
+        calls++;
+      });
+
+      assertEquals(calls, 1);
+    });
+
+    it("preserves the callback result when the context provider fails after invocation", async () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            fn();
+            throw new Error("context provider failed");
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      let calls = 0;
+
+      const result = await badCtx.withActiveSpan(createMockSpan(), async () => {
+        calls++;
+        return "application result";
+      });
+
+      assertEquals(result, "application result");
+      assertEquals(calls, 1);
+    });
+
     it("should execute function with span context", async () => {
       const span = createMockSpan();
       let executed = false;
@@ -200,6 +313,140 @@ describe("observability/tracing/context-propagation", () => {
   });
 
   describe("withSpan", () => {
+    it("passes the exact unknown thrown value through span finalization", () => {
+      const thrown = { reason: "non-error" };
+      let finalizedError: unknown;
+
+      try {
+        ctx.withSpan(
+          "test",
+          () => {
+            throw thrown;
+          },
+          () => createMockSpan(),
+          (_span, error) => {
+            finalizedError = error;
+          },
+        );
+      } catch (error) {
+        assertStrictEquals(error, thrown);
+      }
+
+      assertStrictEquals(finalizedError, thrown);
+    });
+
+    it("distinguishes falsey thrown values from successful span completion", () => {
+      for (const thrown of [undefined, null, 0, ""] as const) {
+        let caught = false;
+        let finalized: unknown[] = [];
+        try {
+          ctx.withSpan(
+            "test",
+            () => {
+              throw thrown;
+            },
+            () => createMockSpan(),
+            (_span, ...failure) => {
+              finalized = failure;
+            },
+          );
+        } catch (error) {
+          caught = true;
+          assertStrictEquals(error, thrown);
+        }
+        assertEquals(caught, true);
+        assertEquals(finalized.length, 1);
+        assertStrictEquals(finalized[0], thrown);
+      }
+    });
+
+    it("preserves a callback error when the context provider swallows it", () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: <T>(_context: Context, fn: () => T): T => {
+            try {
+              fn();
+            } catch (_) {
+              return "provider result" as T;
+            }
+            return "provider result" as T;
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+
+      assertThrows(
+        () =>
+          badCtx.withSpan(
+            "test",
+            () => {
+              throw new Error("application failure");
+            },
+            () => createMockSpan(),
+            () => {},
+          ),
+        Error,
+        "application failure",
+      );
+    });
+
+    it("runs the callback when the context provider returns without invoking it", () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: <T>(_context: Context, _fn: () => T): T => "provider result" as T,
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      let calls = 0;
+
+      const result = badCtx.withSpan(
+        "test",
+        () => {
+          calls++;
+          return "application result";
+        },
+        () => createMockSpan(),
+        () => {},
+      );
+
+      assertEquals(result, "application result");
+      assertEquals(calls, 1);
+    });
+
+    it("preserves a completed callback result when context and finalization fail", () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            fn();
+            throw new Error("context provider failed");
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      let calls = 0;
+
+      const result = badCtx.withSpan(
+        "test",
+        () => {
+          calls++;
+          return "application result";
+        },
+        () => createMockSpan(),
+        () => {
+          throw new Error("telemetry end failed");
+        },
+      );
+
+      assertEquals(result, "application result");
+      assertEquals(calls, 1);
+    });
+
     it("should create span, execute fn, and end span", () => {
       let startCalled = false;
       let endCalled = false;
@@ -272,7 +519,7 @@ describe("observability/tracing/context-propagation", () => {
 
     it("should end span with error when function throws", () => {
       const mockSpan = createMockSpan();
-      let endError: Error | undefined;
+      let endError: unknown;
 
       assertThrows(
         () =>
@@ -296,6 +543,58 @@ describe("observability/tracing/context-propagation", () => {
   });
 
   describe("withSpanAsync", () => {
+    it("passes the exact unknown rejection through span finalization", async () => {
+      const thrown = { reason: "async non-error" };
+      let finalizedError: unknown;
+      let caught: unknown;
+
+      try {
+        await ctx.withSpanAsync(
+          "test",
+          () => Promise.reject(thrown),
+          () => createMockSpan(),
+          (_span, error) => {
+            finalizedError = error;
+          },
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      assertStrictEquals(caught, thrown);
+      assertStrictEquals(finalizedError, thrown);
+    });
+
+    it("preserves a completed callback result when context and finalization fail", async () => {
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            fn();
+            throw new Error("context provider failed");
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+      let calls = 0;
+
+      const result = await badCtx.withSpanAsync(
+        "test",
+        async () => {
+          calls++;
+          return "application result";
+        },
+        () => createMockSpan(),
+        () => {
+          throw new Error("telemetry end failed");
+        },
+      );
+
+      assertEquals(result, "application result");
+      assertEquals(calls, 1);
+    });
+
     it("should create span, execute async fn, and end span", async () => {
       let startCalled = false;
       let endCalled = false;
@@ -351,7 +650,7 @@ describe("observability/tracing/context-propagation", () => {
 
     it("should end span with error when async function rejects", async () => {
       const mockSpan = createMockSpan();
-      let endError: Error | undefined;
+      let endError: unknown;
 
       await assertRejects(
         () =>

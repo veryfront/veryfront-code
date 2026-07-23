@@ -87,6 +87,13 @@ export type ContentPlugin = unknown | [unknown, ...unknown[]];
  * should prefer `compileMdx` / `compileMarkdown`.
  */
 export interface ContentProcessor {
+  /**
+   * Stable identity for every parser/plugin/compiler input that can change
+   * emitted output. Core disables persistent compilation caching when absent.
+   */
+  readonly cacheIdentity?: string;
+  /** Explicit promise that compilation results support structured cloning. */
+  readonly resultIsolation?: "structured-clone";
   /** Process MDX source into compiled code and extracted metadata. */
   compileMdx(options: ContentCompileOptions): Promise<ContentProcessingResult>;
   /** Process plain Markdown into compiled code and extracted metadata. */

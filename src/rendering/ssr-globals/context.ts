@@ -38,6 +38,17 @@ export function setSSRServerPort(port: number): void {
   ssrServerPort = port;
 }
 
+/**
+ * Clear the process-wide server port owned by a retiring server generation.
+ * When `expectedPort` is provided, a stale cleanup cannot erase a newer value.
+ */
+export function clearSSRServerPort(expectedPort?: number): boolean {
+  if (expectedPort !== undefined && ssrServerPort !== expectedPort) return false;
+  const changed = ssrServerPort !== null;
+  ssrServerPort = null;
+  return changed;
+}
+
 export function getSSRProjectDomain(): string | null {
   return ssrProjectDomain;
 }

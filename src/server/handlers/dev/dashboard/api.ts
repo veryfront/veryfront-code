@@ -99,7 +99,7 @@ const GET_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
 };
 
 const POST_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
-  "/_dev/api/hmr-trigger": (req) => handleHmrTrigger(req),
+  "/_dev/api/hmr-trigger": (req, ctx) => handleHmrTrigger(req, ctx),
   "/_dev/api/execute-tool": (req) => handleExecuteTool(req),
   "/_dev/api/read-resource": (req) => handleReadResource(req),
   "/_dev/api/render-prompt": (req) => handleRenderPrompt(req),
@@ -627,7 +627,7 @@ function handleLiveLogs(req: Request): Response {
   });
 }
 
-async function handleHmrTrigger(req: Request): Promise<Response> {
+async function handleHmrTrigger(req: Request, ctx: HandlerContext): Promise<Response> {
   try {
     const body = (await req.json().catch(() => ({}))) as { path?: string };
     const changedPaths = body.path ? [body.path] : undefined;
@@ -640,7 +640,22 @@ async function handleHmrTrigger(req: Request): Promise<Response> {
       });
     }
 
-    ReloadNotifier.triggerReload(changedPaths);
+    const projectId = ctx.projectId?.trim() || undefined;
+    const projectSlug = ctx.projectSlug?.trim() || undefined;
+    if (!projectId && !projectSlug) {
+      return errorResponse("Local HMR requires a resolved project ID or slug", 409);
+    }
+
+    const branch = ctx.requestContext?.branch?.trim() || "main";
+    ReloadNotifier.triggerReload(changedPaths, {
+      projectId,
+      projectSlug,
+      projectDir: ctx.projectDir,
+      environment: "preview",
+      branch,
+      releaseId: ctx.releaseId,
+      contentSourceId: ctx.enriched?.contentSourceId ?? `local-${branch}`,
+    });
     return jsonResponse({
       success: true,
       listeners: listenerCount,

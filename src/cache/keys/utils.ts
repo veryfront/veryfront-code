@@ -54,8 +54,18 @@ export function parseRenderCacheKey(cacheKey: string): {
   const parts = cacheKey.split(":");
   if (parts.length < 5) return null;
 
-  const [projectId, environment, releaseKey, version, ...contentParts] = parts;
-  if (!projectId || !environment || !releaseKey || !version) return null;
+  const [encodedProjectId, environment, encodedReleaseKey, version, ...contentParts] = parts;
+  if (!encodedProjectId || !environment || !encodedReleaseKey || !version) return null;
+
+  let projectId: string;
+  let releaseKey: string;
+  try {
+    projectId = decodeURIComponent(encodedProjectId);
+    releaseKey = decodeURIComponent(encodedReleaseKey);
+  } catch {
+    return null;
+  }
+  if (!projectId || !releaseKey) return null;
 
   return {
     projectId,
@@ -197,13 +207,15 @@ function sortQueryParamsForCacheKey(entries: Array<[string, string]>): Array<[st
   }
 
   return [...grouped.keys()]
-    .sort((leftKey, rightKey) => leftKey.localeCompare(rightKey))
+    .sort((leftKey, rightKey) => leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0)
     .flatMap((key) => grouped.get(key)!);
 }
 
 function encodeCacheKeySegment(value: string): string {
   return Array.from(value, (char) => {
-    if (/^[a-zA-Z0-9_.-]$/.test(char)) return char;
+    // Hyphen and underscore delimit pairs, and asterisk introduces escapes, so
+    // none may appear literally inside a segment.
+    if (/^[a-zA-Z0-9.]$/.test(char)) return char;
 
     return Array.from(
       querySegmentEncoder.encode(char),
@@ -251,11 +263,16 @@ export function getAllKeysForProject(projectId: string): Map<string, string[]> {
 export function getAllKeysForProjectAsync(
   projectId: string,
   includeRedis: boolean = true,
+  projectSlug?: string,
 ): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
   return withSpan(
     SpanNames.CACHE_KEYS_GET_ALL_ASYNC,
     async (span?: Span) => {
-      const result = await cacheRegistry.getAllKeysForProjectAsync(projectId, includeRedis);
+      const result = await cacheRegistry.getAllKeysForProjectAsync(
+        projectId,
+        includeRedis,
+        projectSlug,
+      );
       span?.setAttribute("cache.include_redis", includeRedis);
       return result;
     },
@@ -269,11 +286,12 @@ export function deleteAllKeysForProject(projectId: string): number {
 
 export function deleteAllKeysForProjectAsync(
   projectId: string,
+  projectSlug?: string,
 ): Promise<{ memoryDeleted: number; redisDeleted: number }> {
   return withSpan(
     SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
     async (span?: Span) => {
-      const result = await cacheRegistry.deleteAllKeysForProjectAsync(projectId);
+      const result = await cacheRegistry.deleteAllKeysForProjectAsync(projectId, projectSlug);
       span?.setAttribute("cache.memory.deleted", result.memoryDeleted);
       span?.setAttribute("cache.redis.deleted", result.redisDeleted);
       return result;

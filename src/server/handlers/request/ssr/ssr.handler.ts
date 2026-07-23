@@ -21,7 +21,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
-import { endRequest, startRequest } from "#veryfront/utils";
+import { runWithRequestTiming } from "#veryfront/utils/perf-timer.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { tryErrorPageFallback } from "./error-page-fallback.ts";
 import {
@@ -32,6 +32,7 @@ import {
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
+import { getRequestTokenProvenance } from "../../../context/request-context.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -108,9 +109,6 @@ export class SSRHandler extends BaseHandler {
     }
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
-    const requestId = `${slug || "index"}-${Date.now()}`;
-    startRequest(requestId);
-
     const hasDotSegment = slug.split("/").some((segment) => segment.startsWith("."));
     if (hasDotSegment && isProductionMode(ctx, url)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
@@ -119,7 +117,11 @@ export class SSRHandler extends BaseHandler {
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
-    return this.setupContextAndRender(req, ctx, slug, requestId, url);
+    const requestId = `${slug || "index"}-${Date.now()}`;
+    return runWithRequestTiming(
+      requestId,
+      () => this.setupContextAndRender(req, ctx, slug, requestId, url),
+    );
   }
 
   private setupContextAndRender(
@@ -156,6 +158,7 @@ export class SSRHandler extends BaseHandler {
             releaseId: ctx.releaseId,
             branch,
             environmentName: ctx.environmentName,
+            tokenProvenance: getRequestTokenProvenance(ctx.requestContext, effectiveToken),
           },
         );
       }
@@ -209,7 +212,7 @@ export class SSRHandler extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
     slug: string,
-    requestId: string,
+    _requestId: string,
     url: URL,
   ): Promise<HandlerResult> {
     return withSpan(
@@ -245,8 +248,6 @@ export class SSRHandler extends BaseHandler {
           forceProductionScripts,
           useNoCache,
         });
-
-        endRequest(requestId);
 
         if (result.errorType === "redirect" && result.redirectLocation) {
           return this.handleRedirect(req, ctx, result, nonce);

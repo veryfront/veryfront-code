@@ -6,9 +6,21 @@
  * @module extensions/schema/json-schema
  */
 
+export type JsonSchemaPrimitiveType =
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "object"
+  | "array"
+  | "null";
+
 export type JsonSchema = {
-  type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
+  [keyword: string]: unknown;
+  $schema?: string;
+  type?: JsonSchemaPrimitiveType | JsonSchemaPrimitiveType[];
   description?: string;
+  format?: string;
   enum?: unknown[];
   const?: unknown;
   default?: unknown;

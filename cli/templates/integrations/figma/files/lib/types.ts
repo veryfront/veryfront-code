@@ -91,7 +91,11 @@ export interface Paint {
   gifRef?: string;
 }
 
-export type EffectType = "INNER_SHADOW" | "DROP_SHADOW" | "LAYER_BLUR" | "BACKGROUND_BLUR";
+export type EffectType =
+  | "INNER_SHADOW"
+  | "DROP_SHADOW"
+  | "LAYER_BLUR"
+  | "BACKGROUND_BLUR";
 
 export interface Effect {
   type: EffectType;
@@ -103,8 +107,18 @@ export interface Effect {
   spread?: number;
 }
 
-export type LayoutConstraintVertical = "TOP" | "BOTTOM" | "CENTER" | "TOP_BOTTOM" | "SCALE";
-export type LayoutConstraintHorizontal = "LEFT" | "RIGHT" | "CENTER" | "LEFT_RIGHT" | "SCALE";
+export type LayoutConstraintVertical =
+  | "TOP"
+  | "BOTTOM"
+  | "CENTER"
+  | "TOP_BOTTOM"
+  | "SCALE";
+export type LayoutConstraintHorizontal =
+  | "LEFT"
+  | "RIGHT"
+  | "CENTER"
+  | "LEFT_RIGHT"
+  | "SCALE";
 
 export interface LayoutConstraint {
   vertical: LayoutConstraintVertical;
@@ -365,15 +379,15 @@ export interface TextNode extends NodeBase {
   opacity?: number;
 }
 
-export interface ComponentNode extends FrameNode {
+export interface ComponentNode extends Omit<FrameNode, "type"> {
   type: "COMPONENT";
 }
 
-export interface ComponentSetNode extends FrameNode {
+export interface ComponentSetNode extends Omit<FrameNode, "type"> {
   type: "COMPONENT_SET";
 }
 
-export interface InstanceNode extends FrameNode {
+export interface InstanceNode extends Omit<FrameNode, "type"> {
   type: "INSTANCE";
   componentId: string;
   overrides?: unknown[];

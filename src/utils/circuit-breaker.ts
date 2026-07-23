@@ -7,7 +7,7 @@
  * @module utils/circuit-breaker
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/index.ts";
 import { CIRCUIT_BREAKER_OPEN } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
@@ -27,15 +27,32 @@ const MAX_HALF_OPEN_ATTEMPTS = 3;
 
 type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
-interface CircuitBreakerOptions {
+export interface CircuitBreakerOptions {
   /** Failures before opening (default: 5) */
   failureThreshold?: number;
-  /** Ms to wait before retry (default: 30000) */
+  /**
+   * Ms to wait before retrying an open circuit and before aging an isolated
+   * failure from a closed circuit (default: 30000).
+   */
   resetTimeoutMs?: number;
   /** Successes to close (default: 3) */
   successThreshold?: number;
   /** Optional name for logging */
   name?: string;
+  /**
+   * Clock used for timeout decisions. Defaults to {@link Date.now}.
+   * Supplying a clock makes timeout behavior deterministic in tests and in
+   * runtimes that provide their own monotonic wall-clock adapter.
+   */
+  now?: () => number;
+}
+
+function requireIntegerOption(value: number, option: string, minimum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    const requirement = minimum === 0 ? "a non-negative integer" : "a positive integer";
+    throw new RangeError(`${option} must be ${requirement}`);
+  }
+  return value;
 }
 
 /**
@@ -71,38 +88,63 @@ export class CircuitBreaker {
   private state: CircuitState = "CLOSED";
   private failureCount = 0;
   private successCount = 0;
-  private lastFailureTime = 0;
+  private lastFailureTime: number | undefined;
   private halfOpenAttempts = 0;
+  private activeExecutions = 0;
 
   private readonly failureThreshold: number;
   private readonly resetTimeoutMs: number;
   private readonly successThreshold: number;
   private readonly breakerName: string;
+  private readonly now: () => number;
 
   constructor(options: CircuitBreakerOptions = {}) {
-    this.failureThreshold = options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD;
-    this.resetTimeoutMs = options.resetTimeoutMs ?? DEFAULT_RESET_TIMEOUT_MS;
-    this.successThreshold = options.successThreshold ?? DEFAULT_SUCCESS_THRESHOLD;
+    this.failureThreshold = requireIntegerOption(
+      options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD,
+      "failureThreshold",
+      1,
+    );
+    this.resetTimeoutMs = requireIntegerOption(
+      options.resetTimeoutMs ?? DEFAULT_RESET_TIMEOUT_MS,
+      "resetTimeoutMs",
+      0,
+    );
+    this.successThreshold = requireIntegerOption(
+      options.successThreshold ?? DEFAULT_SUCCESS_THRESHOLD,
+      "successThreshold",
+      1,
+    );
     this.breakerName = options.name ?? "default";
+    if (options.now !== undefined && typeof options.now !== "function") {
+      throw new TypeError("now must be a function");
+    }
+    this.now = options.now ?? Date.now;
   }
 
   /** Execute operation through circuit breaker. Throws CircuitBreakerOpen if open. */
   async execute<T>(operation: () => Promise<T>): Promise<T> {
+    const now = this.currentTime();
+    this.expireClosedFailureHistory(now);
+
     if (this.state === "OPEN") {
-      const remaining = this.resetTimeoutMs - (Date.now() - this.lastFailureTime);
+      const elapsed = this.lastFailureTime === undefined
+        ? 0
+        : Math.max(0, now - this.lastFailureTime);
+      const remaining = this.resetTimeoutMs - elapsed;
       if (remaining > 0) throw new CircuitBreakerOpen(this.breakerName, remaining);
       this.transitionTo("HALF_OPEN");
     }
 
+    let halfOpenProbe = false;
     if (this.state === "HALF_OPEN") {
       if (this.halfOpenAttempts >= MAX_HALF_OPEN_ATTEMPTS) {
-        this.transitionTo("OPEN");
-        this.lastFailureTime = Date.now();
-        throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs);
+        throw new CircuitBreakerOpen(this.breakerName, 0);
       }
       this.halfOpenAttempts++;
+      halfOpenProbe = true;
     }
 
+    this.activeExecutions++;
     try {
       const result = await operation();
       this.recordSuccess();
@@ -110,6 +152,11 @@ export class CircuitBreaker {
     } catch (error) {
       this.recordFailure();
       throw error;
+    } finally {
+      if (halfOpenProbe && this.state === "HALF_OPEN") {
+        this.halfOpenAttempts--;
+      }
+      this.activeExecutions--;
     }
   }
 
@@ -126,7 +173,7 @@ export class CircuitBreaker {
 
   private recordFailure(): void {
     this.failureCount++;
-    this.lastFailureTime = Date.now();
+    this.lastFailureTime = this.currentTime();
 
     if (this.state === "HALF_OPEN") {
       this.transitionTo("OPEN");
@@ -156,77 +203,150 @@ export class CircuitBreaker {
     logger.info(`${this.breakerName}: ${oldState} → ${newState}`);
   }
 
+  private currentTime(): number {
+    const now = this.now();
+    if (!Number.isFinite(now)) {
+      throw new RangeError("now must return a finite timestamp");
+    }
+    return now;
+  }
+
+  /**
+   * Forget an isolated CLOSED-state failure once it is older than the reset
+   * window. Until then the failure remains protected against registry churn;
+   * afterwards an idle breaker can be reclaimed instead of occupying capacity
+   * forever when a dependency recovered without another call.
+   */
+  private expireClosedFailureHistory(now: number): void {
+    if (
+      this.state !== "CLOSED" ||
+      this.activeExecutions !== 0 ||
+      this.failureCount === 0 ||
+      this.lastFailureTime === undefined
+    ) {
+      return;
+    }
+
+    const elapsed = Math.max(0, now - this.lastFailureTime);
+    if (elapsed >= this.resetTimeoutMs) {
+      this.failureCount = 0;
+    }
+  }
+
   getState(): CircuitState {
     return this.state;
   }
 
+  /** Whether the breaker has no admitted operation still executing. */
+  isIdle(): boolean {
+    return this.activeExecutions === 0;
+  }
+
+  /**
+   * Whether capacity pressure may safely forget this breaker.
+   *
+   * A closed breaker with failures below its opening threshold still carries
+   * protection state. Evicting it would reset the consecutive-failure count
+   * and let dependency-name churn prevent the circuit from ever opening.
+   */
+  isSafeToEvict(): boolean {
+    this.expireClosedFailureHistory(this.currentTime());
+    return this.state === "CLOSED" && this.activeExecutions === 0 && this.failureCount === 0;
+  }
+
   /** Get the last activity time (failure or success) */
   getLastActivityTime(): number {
-    return this.lastFailureTime || Date.now();
+    return this.lastFailureTime ?? this.currentTime();
   }
 
   /** Update last activity time on use */
   touch(): void {
     if (this.state !== "CLOSED" || this.failureCount !== 0) return;
-    this.lastFailureTime = Date.now();
+    this.lastFailureTime = this.currentTime();
   }
 }
 
 /** Maximum number of circuit breakers to keep in registry */
 const MAX_BREAKERS = 1_000;
 
-/** Minimum age (ms) before a breaker can be evicted (1 hour) */
-const MIN_EVICTION_AGE_MS = 60 * 60 * 1000;
-
 interface BreakerEntry {
   breaker: CircuitBreaker;
   lastUsed: number;
 }
 
-const breakers = new Map<string, BreakerEntry>();
-
-/** Evict stale circuit breakers to prevent memory leaks */
-function evictStaleBreakers(): void {
-  if (breakers.size <= MAX_BREAKERS) return;
-
-  const now = Date.now();
-  const entries = Array.from(breakers.entries()).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-
-  const toEvict = entries.length - MAX_BREAKERS;
-  let evicted = 0;
-
-  for (const [name, entry] of entries) {
-    if (evicted >= toEvict) break;
-
-    const age = now - entry.lastUsed;
-    if (age < MIN_EVICTION_AGE_MS) continue;
-    if (entry.breaker.getState() !== "CLOSED") continue;
-
-    breakers.delete(name);
-    evicted++;
-    logger.debug(`Evicted stale breaker: ${name}`, {
-      age: Math.round(age / 1000),
-    });
-  }
-
-  if (evicted > 0) {
-    logger.info(`Evicted ${evicted} stale breakers, ${breakers.size} remaining`);
-  }
+export interface CircuitBreakerRegistry {
+  readonly size: number;
+  get(name: string, options?: Omit<CircuitBreakerOptions, "name">): CircuitBreaker;
+  clear(): void;
 }
+
+/**
+ * Create a hard-bounded breaker registry.
+ *
+ * Capacity pressure evicts only closed breakers. Open and half-open breakers
+ * encode active protection for an unhealthy dependency; forgetting them would
+ * fail open and immediately resume downstream traffic. If every slot is
+ * protected, admission of a new breaker therefore fails closed.
+ */
+export function createCircuitBreakerRegistry(maxBreakers = MAX_BREAKERS): CircuitBreakerRegistry {
+  requireIntegerOption(maxBreakers, "maxBreakers", 1);
+  const entries = new Map<string, BreakerEntry>();
+  let accessSequence = 0;
+
+  function evictClosedBreaker(): boolean {
+    let candidate: { name: string; lastUsed: number } | undefined;
+    for (const [name, entry] of entries) {
+      if (!entry.breaker.isSafeToEvict()) continue;
+      if (!candidate || entry.lastUsed < candidate.lastUsed) {
+        candidate = { name, lastUsed: entry.lastUsed };
+      }
+    }
+    if (!candidate) return false;
+
+    entries.delete(candidate.name);
+    logger.debug(`Evicted closed breaker: ${candidate.name}`);
+    return true;
+  }
+
+  function get(
+    name: string,
+    options?: Omit<CircuitBreakerOptions, "name">,
+  ): CircuitBreaker {
+    const existing = entries.get(name);
+    if (existing) {
+      existing.lastUsed = ++accessSequence;
+      return existing.breaker;
+    }
+
+    if (entries.size >= maxBreakers && !evictClosedBreaker()) {
+      logger.warn("Circuit breaker registry is full of active protections", {
+        maxBreakers,
+        rejectedBreaker: name,
+      });
+      throw new CircuitBreakerOpen(name, DEFAULT_RESET_TIMEOUT_MS);
+    }
+
+    const breaker = new CircuitBreaker({ ...options, name });
+    entries.set(name, { breaker, lastUsed: ++accessSequence });
+    return breaker;
+  }
+
+  return {
+    get size() {
+      return entries.size;
+    },
+    get,
+    clear() {
+      entries.clear();
+    },
+  };
+}
+
+const defaultRegistry = createCircuitBreakerRegistry();
 
 export function getCircuitBreaker(
   name: string,
   options?: Omit<CircuitBreakerOptions, "name">,
 ): CircuitBreaker {
-  const existing = breakers.get(name);
-  if (existing) {
-    existing.lastUsed = Date.now();
-    return existing.breaker;
-  }
-
-  evictStaleBreakers();
-
-  const breaker = new CircuitBreaker({ ...options, name });
-  breakers.set(name, { breaker, lastUsed: Date.now() });
-  return breaker;
+  return defaultRegistry.get(name, options);
 }

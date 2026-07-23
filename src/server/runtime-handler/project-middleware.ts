@@ -13,6 +13,7 @@ import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
+import { getRequestTokenProvenance } from "../context/request-context.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -51,6 +52,7 @@ function resolvedBranch(ctx: HandlerContext): string | null {
 export class ProjectMiddlewareRuntime {
   readonly #cache: LRUCache<string, Promise<readonly MiddlewareFunction[]>>;
   readonly #loadMiddleware: MiddlewareLoader;
+  #releaseRegistry: (() => boolean) | undefined;
 
   constructor(options: ProjectMiddlewareRuntimeOptions = {}) {
     this.#cache = new LRUCache({
@@ -60,7 +62,7 @@ export class ProjectMiddlewareRuntime {
       ((projectDir, adapter) => loadMiddlewareFile(projectDir, adapter, { throwOnError: true }));
 
     if (options.registryName) {
-      registerLRUCache(options.registryName, this.#cache);
+      this.#releaseRegistry = registerLRUCache(options.registryName, this.#cache);
     }
   }
 
@@ -82,6 +84,13 @@ export class ProjectMiddlewareRuntime {
 
   clear(): void {
     this.#cache.clear();
+  }
+
+  /** Release this runtime's optional process-global cache registration. */
+  dispose(): void {
+    this.clear();
+    this.#releaseRegistry?.();
+    this.#releaseRegistry = undefined;
   }
 
   async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
@@ -136,6 +145,7 @@ export class ProjectMiddlewareRuntime {
         releaseId: ctx.releaseId ?? null,
         branch,
         environmentName: ctx.environmentName ?? null,
+        tokenProvenance: getRequestTokenProvenance(ctx.requestContext, ctx.proxyToken),
       },
     );
   }

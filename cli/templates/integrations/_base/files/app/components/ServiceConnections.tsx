@@ -18,7 +18,10 @@ interface ServiceConnectionsProps {
   className?: string;
 }
 
-function useIntegrationStatus(): { status: Record<string, boolean>; loading: boolean } {
+function useIntegrationStatus(): {
+  status: Record<string, boolean>;
+  loading: boolean;
+} {
   const [status, setStatus] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -132,7 +135,9 @@ export function ServiceConnectionsCard({
 
   if (loading) return null;
 
-  const disconnectedServices = withStatus(services, status).filter((service) => !service.connected);
+  const disconnectedServices = withStatus(services, status).filter((service) =>
+    !service.connected
+  );
   if (disconnectedServices.length === 0) return null;
 
   return (

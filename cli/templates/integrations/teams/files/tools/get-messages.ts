@@ -1,26 +1,31 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getChatMessages, getPlainTextContent } from "../../lib/teams-client.ts";
+import { createTeamsClient } from "../lib/teams-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-messages",
   description:
     "Get messages from a specific Microsoft Teams chat. Returns message content, sender information, and timestamps. Use list-chats first to get chat IDs.",
-  inputSchema: defineSchema((v) => v.object({
-    chatId: v.string().describe("The ID of the chat to get messages from"),
-    limit: v
-      .number()
-      .min(1)
-      .max(50)
-      .default(20)
-      .describe("Maximum number of messages to return (1-50)"),
-    includeHtml: v
-      .boolean()
-      .default(false)
-      .describe("Include HTML formatted content in addition to plain text"),
-  }))(),
-  async execute({ chatId, limit, includeHtml }) {
-    const messages = await getChatMessages(chatId, {
+  inputSchema: defineSchema((v) =>
+    v.object({
+      chatId: v.string().describe("The ID of the chat to get messages from"),
+      limit: v
+        .number()
+        .min(1)
+        .max(50)
+        .default(20)
+        .describe("Maximum number of messages to return (1-50)"),
+      includeHtml: v
+        .boolean()
+        .default(false)
+        .describe("Include HTML formatted content in addition to plain text"),
+    })
+  )(),
+  async execute({ chatId, limit, includeHtml }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createTeamsClient(userId);
+    const messages = await client.getChatMessages(chatId, {
       limit,
       orderBy: "createdDateTime desc",
     });
@@ -34,7 +39,7 @@ export default tool({
 
         return {
           id: msg.id,
-          content: getPlainTextContent(msg),
+          content: client.getPlainTextContent(msg),
           htmlContent: includeHtml ? msg.body.content : undefined,
           contentType: msg.body.contentType,
           sender: {

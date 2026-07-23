@@ -18,6 +18,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CACHE_ERROR } from "#veryfront/errors";
+import { MAX_CACHE_TTL_SECONDS, resolveCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
+import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 
 /**
  * Generic cache tier interface.
@@ -58,7 +60,7 @@ export interface CacheTier<T = string> {
 /**
  * Configuration for multi-tier cache.
  */
-interface MultiTierCacheConfig<T = string> {
+export interface MultiTierCacheConfig<T = string> {
   /** Cache name for logging */
   name: string;
 
@@ -103,6 +105,13 @@ export interface CacheStats {
   backfills: number;
 }
 
+interface KeyState {
+  generation: number;
+  activeOperations: number;
+}
+
+const MAX_INFLIGHT_COMPUTATIONS = 1_000;
+
 export class MultiTierCache<T = string> {
   private readonly config:
     & Required<Omit<MultiTierCacheConfig<T>, "l1" | "l2" | "l3">>
@@ -117,44 +126,67 @@ export class MultiTierCache<T = string> {
     sets: 0,
     backfills: 0,
   };
+  private readonly computations = new Map<
+    string,
+    { state: KeyState; generation: number; promise: Promise<T> }
+  >();
+  private readonly keyStates = new Map<string, KeyState>();
+  private readonly mutationQueues = new Map<string, Promise<void>>();
 
   constructor(config: MultiTierCacheConfig<T>) {
-    this.config = {
+    const resolvedConfig = {
       defaultTtlSeconds: 300,
       backfillOnHit: true,
       asyncBackfill: true,
       ...config,
     };
+    validateConfig(resolvedConfig);
+    this.config = resolvedConfig;
   }
 
   get(key: string): Promise<T | null> {
     return withSpan(
       SpanNames.CACHE_MULTI_TIER_GET,
       async (span?: Span): Promise<T | null> => {
-        this.stats.gets++;
-        span?.setAttribute("cache.name", this.config.name);
-        span?.setAttribute("cache.key", key);
+        const state = this.retainKeyState(key);
+        const generation = state.generation;
+        try {
+          this.stats.gets++;
+          span?.setAttribute("cache.name", this.config.name);
+          span?.setAttribute("cache.key_length", key.length);
 
-        const l1Value = await this.getFromTier(this.config.l1, key, "l1");
-        if (l1Value !== null) return l1Value;
+          const l1Value = await this.getFromTier(this.config.l1, key, "l1");
+          if (l1Value !== null) return l1Value;
 
-        const l2Value = await this.getFromTier(this.config.l2, key, "l2");
-        if (l2Value !== null) {
-          await this.maybeAwaitBackfill(this.backfill(key, l2Value, ["l1"], this.config.l2));
-          return l2Value;
+          const l2Value = await this.getFromTier(this.config.l2, key, "l2");
+          if (l2Value !== null) {
+            await this.maybeAwaitBackfill(
+              this.backfill(key, l2Value, ["l1"], state, generation, this.config.l2),
+            );
+            return l2Value;
+          }
+
+          const l3Value = await this.getFromTier(this.config.l3, key, "l3");
+          if (l3Value !== null) {
+            await this.maybeAwaitBackfill(
+              this.backfill(
+                key,
+                l3Value,
+                ["l1", "l2"],
+                state,
+                generation,
+                this.config.l3,
+              ),
+            );
+            return l3Value;
+          }
+
+          this.stats.misses++;
+          span?.setAttribute("cache.hit_tier", "miss");
+          return null;
+        } finally {
+          this.releaseKeyState(key, state);
         }
-
-        const l3Value = await this.getFromTier(this.config.l3, key, "l3");
-        if (l3Value !== null) {
-          await this.maybeAwaitBackfill(
-            this.backfill(key, l3Value, ["l1", "l2"], this.config.l3),
-          );
-          return l3Value;
-        }
-
-        this.stats.misses++;
-        span?.setAttribute("cache.hit_tier", "miss");
-        return null;
       },
       { "cache.operation": "get" },
     );
@@ -164,51 +196,25 @@ export class MultiTierCache<T = string> {
     return withSpan(
       SpanNames.CACHE_MULTI_TIER_SET,
       async (span?: Span): Promise<void> => {
-        this.stats.sets++;
-        const ttl = ttlSeconds ?? this.config.defaultTtlSeconds;
+        const state = this.retainKeyState(key);
+        try {
+          this.stats.sets++;
+          const ttl = resolveCacheTtlSeconds(
+            ttlSeconds,
+            this.config.defaultTtlSeconds,
+          )!;
+          const generation = this.advanceGeneration(state);
 
-        span?.setAttribute("cache.name", this.config.name);
-        span?.setAttribute("cache.key", key);
-        span?.setAttribute("cache.ttl_seconds", ttl);
+          span?.setAttribute("cache.name", this.config.name);
+          span?.setAttribute("cache.key_length", key.length);
+          span?.setAttribute("cache.ttl_seconds", ttl);
 
-        // L1/L2 are per-pod tiers: their write may be best-effort (fire-and-forget
-        // under asyncBackfill). L3 is the distributed/authoritative tier whose
-        // failure must be observable to the caller — otherwise `await set()`
-        // resolves "successfully" while a cross-pod read later misses, silently
-        // losing data. So L3 is always awaited and its failure propagates.
-        const perPodTiers = [this.config.l1, this.config.l2].filter(
-          (t): t is CacheTier<T> => t !== undefined,
-        );
-
-        const perPodOps = perPodTiers.map((tier) =>
-          tier.set(key, value, ttl).catch((error) => {
-            logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
-              key: key.slice(-60),
-              error: error instanceof Error ? error.message : String(error),
-            });
-          })
-        );
-
-        if (this.config.asyncBackfill) {
-          void Promise.all(perPodOps).catch((err) => {
-            logger.warn(`[${this.config.name}] Cache backfill failed`, {
-              error: err instanceof Error ? err.message : String(err),
-            });
+          await this.enqueueMutation(key, async () => {
+            if (!this.isCurrentGeneration(key, state, generation)) return;
+            await this.writeValue(key, value, ttl);
           });
-        } else {
-          await Promise.all(perPodOps);
-        }
-
-        if (this.config.l3) {
-          try {
-            await this.config.l3.set(key, value, ttl);
-          } catch (error) {
-            logger.error(`[${this.config.name}] Set error in ${this.config.l3.name}`, {
-              key: key.slice(-60),
-              error: error instanceof Error ? error.message : String(error),
-            });
-            throw error;
-          }
+        } finally {
+          this.releaseKeyState(key, state);
         }
       },
       { "cache.operation": "set" },
@@ -216,105 +222,198 @@ export class MultiTierCache<T = string> {
   }
 
   async delete(key: string): Promise<void> {
-    const tiers = [this.config.l1, this.config.l2, this.config.l3].filter(
-      (t): t is CacheTier<T> => t !== undefined && t.delete !== undefined,
+    const configuredTiers = [this.config.l1, this.config.l2, this.config.l3].filter(
+      (tier): tier is CacheTier<T> => tier !== undefined,
     );
-
-    const failedTiers: string[] = [];
-    await Promise.all(
-      tiers.map((tier) =>
-        tier.delete?.(key).catch((error) => {
-          logger.error(`[${this.config.name}] Delete error in ${tier.name}`, { key, error });
-          failedTiers.push(tier.name);
-        })
-      ),
-    );
-
-    if (failedTiers.length > 0) {
+    const unsupported = configuredTiers.filter((tier) => !tier.delete).map((tier) => tier.name);
+    if (unsupported.length > 0) {
       throw CACHE_ERROR.create({
-        detail: `Delete failed in cache tier(s): ${failedTiers.join(", ")}`,
-        context: { cacheName: this.config.name, failedTiers },
+        detail: `Delete is unsupported in cache tier(s): ${unsupported.join(", ")}`,
+        context: { cacheName: this.config.name, unsupportedTiers: unsupported },
       });
+    }
+
+    const state = this.retainKeyState(key);
+    try {
+      const generation = this.advanceGeneration(state);
+
+      await this.enqueueMutation(key, async () => {
+        if (!this.isCurrentGeneration(key, state, generation)) return;
+
+        const failedTiers: string[] = [];
+        await Promise.all(
+          configuredTiers.map((tier) =>
+            tier.delete?.(key).catch((error) => {
+              logger.error(`[${this.config.name}] Delete error in ${tier.name}`, {
+                keyLength: key.length,
+                errorName: error instanceof Error ? error.name : typeof error,
+              });
+              failedTiers.push(tier.name);
+            })
+          ),
+        );
+
+        if (failedTiers.length > 0) {
+          throw CACHE_ERROR.create({
+            detail: `Delete failed in cache tier(s): ${failedTiers.join(", ")}`,
+            context: { cacheName: this.config.name, failedTiers },
+          });
+        }
+      });
+    } finally {
+      this.releaseKeyState(key, state);
     }
   }
 
   async getOrCompute(key: string, computeFn: () => Promise<T>, ttlSeconds?: number): Promise<T> {
     const cached = await this.get(key);
     if (cached !== null) return cached;
+    const ttl = resolveCacheTtlSeconds(ttlSeconds, this.config.defaultTtlSeconds)!;
 
-    const value = await computeFn();
-    await this.set(key, value, ttlSeconds);
-    return value;
+    const state = this.retainKeyState(key);
+    const generation = state.generation;
+    let ownedComputation: Promise<T> | undefined;
+    try {
+      const existing = this.computations.get(key);
+      if (
+        existing?.state === state && existing.generation === generation
+      ) return await existing.promise;
+
+      ownedComputation = this.computeAndPublish(
+        key,
+        computeFn,
+        ttl,
+        state,
+        generation,
+      );
+
+      if (this.computations.size < MAX_INFLIGHT_COMPUTATIONS) {
+        this.computations.set(key, { state, generation, promise: ownedComputation });
+      } else {
+        logger.warn(`[${this.config.name}] Computation singleflight capacity reached`, {
+          inflight: this.computations.size,
+        });
+      }
+      return await ownedComputation;
+    } finally {
+      if (ownedComputation && this.computations.get(key)?.promise === ownedComputation) {
+        this.computations.delete(key);
+      }
+      this.releaseKeyState(key, state);
+    }
   }
 
   async getBatch(keys: string[]): Promise<Map<string, T | null>> {
     if (keys.length === 0) return new Map();
+    if (keys.length > MAX_BATCH_SIZE) {
+      throw new RangeError(`Multi-tier cache batches may contain at most ${MAX_BATCH_SIZE} keys`);
+    }
+
+    // Batch results are maps, so duplicate requested keys collapse to one cache
+    // lookup for statistics just as they collapse to one returned entry.
+    const uniqueKeys = [...new Set(keys)];
+    this.stats.gets += uniqueKeys.length;
 
     const results = new Map<string, T | null>();
-    let remainingKeys = [...keys];
-    const backfillPromises: Promise<void>[] = [];
+    const states = new Map(
+      uniqueKeys.map((key) => {
+        const state = this.retainKeyState(key);
+        return [key, { state, generation: state.generation }] as const;
+      }),
+    );
+    try {
+      let remainingKeys = [...uniqueKeys];
+      const backfillPromises: Promise<void>[] = [];
 
-    if (this.config.l1 && remainingKeys.length > 0) {
-      remainingKeys = await this.getBatchFromTier(this.config.l1, remainingKeys, "l1", results);
-    }
+      if (this.config.l1 && remainingKeys.length > 0) {
+        remainingKeys = await this.getBatchFromTier(this.config.l1, remainingKeys, "l1", results);
+      }
 
-    if (this.config.l2 && remainingKeys.length > 0) {
-      remainingKeys = await this.getBatchFromTier(
-        this.config.l2,
-        remainingKeys,
-        "l2",
-        results,
-        (k, v) => {
-          backfillPromises.push(this.backfill(k, v, ["l1"], this.config.l2));
-        },
-      );
-    }
+      if (this.config.l2 && remainingKeys.length > 0) {
+        remainingKeys = await this.getBatchFromTier(
+          this.config.l2,
+          remainingKeys,
+          "l2",
+          results,
+          (k, v) => {
+            const expected = states.get(k);
+            if (!expected) return;
+            backfillPromises.push(
+              this.backfill(
+                k,
+                v,
+                ["l1"],
+                expected.state,
+                expected.generation,
+                this.config.l2,
+              ),
+            );
+          },
+        );
+      }
 
-    if (this.config.l3 && remainingKeys.length > 0) {
-      try {
-        const l3Results = this.config.l3.getBatch
-          ? await this.config.l3.getBatch(remainingKeys)
-          : await this.individualGets(this.config.l3, remainingKeys);
+      if (this.config.l3 && remainingKeys.length > 0) {
+        try {
+          const l3Results = this.config.l3.getBatch
+            ? await this.config.l3.getBatch(remainingKeys)
+            : await this.individualGets(this.config.l3, remainingKeys);
+          const requestedKeys = new Set(remainingKeys);
 
-        for (const [k, v] of l3Results) {
-          if (v !== null) {
-            results.set(k, v);
-            this.stats.l3Hits++;
-            backfillPromises.push(this.backfill(k, v, ["l1", "l2"], this.config.l3));
-          } else {
-            results.set(k, null);
-            this.stats.misses++;
+          for (const [k, v] of l3Results) {
+            if (!requestedKeys.has(k)) continue;
+            if (v !== null) {
+              results.set(k, v);
+              this.stats.l3Hits++;
+              const expected = states.get(k);
+              if (expected) {
+                backfillPromises.push(
+                  this.backfill(
+                    k,
+                    v,
+                    ["l1", "l2"],
+                    expected.state,
+                    expected.generation,
+                    this.config.l3,
+                  ),
+                );
+              }
+            } else {
+              results.set(k, null);
+              this.stats.misses++;
+            }
           }
-        }
-      } catch (error) {
-        logger.error(`[${this.config.name}] L3 getBatch error`, {
-          keyCount: remainingKeys.length,
-          error,
-        });
-      }
-    }
-
-    for (const k of remainingKeys) {
-      if (!results.has(k)) {
-        results.set(k, null);
-        this.stats.misses++;
-      }
-    }
-
-    if (backfillPromises.length > 0) {
-      if (this.config.asyncBackfill) {
-        void Promise.all(backfillPromises).catch((error) => {
-          logger.debug(`[${this.config.name}] async batch backfill failed (best-effort)`, {
-            promiseCount: backfillPromises.length,
-            error,
+        } catch (error) {
+          logger.error(`[${this.config.name}] L3 getBatch error`, {
+            keyCount: remainingKeys.length,
+            errorName: error instanceof Error ? error.name : typeof error,
           });
-        });
-      } else {
-        await Promise.all(backfillPromises);
+        }
       }
-    }
 
-    return results;
+      for (const k of remainingKeys) {
+        if (!results.has(k)) {
+          results.set(k, null);
+          this.stats.misses++;
+        }
+      }
+
+      if (backfillPromises.length > 0) {
+        if (this.config.asyncBackfill) {
+          void Promise.all(backfillPromises).catch((error) => {
+            logger.debug(`[${this.config.name}] async batch backfill failed (best-effort)`, {
+              promiseCount: backfillPromises.length,
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+          });
+        } else {
+          await Promise.all(backfillPromises);
+        }
+      }
+
+      return results;
+    } finally {
+      for (const [key, { state }] of states) this.releaseKeyState(key, state);
+    }
   }
 
   getStats(): CacheStats & { hitRate: number } {
@@ -335,6 +434,100 @@ export class MultiTierCache<T = string> {
     };
   }
 
+  private retainKeyState(key: string): KeyState {
+    let state = this.keyStates.get(key);
+    if (!state) {
+      state = { generation: 0, activeOperations: 0 };
+      this.keyStates.set(key, state);
+    }
+    state.activeOperations++;
+    return state;
+  }
+
+  private releaseKeyState(key: string, state: KeyState): void {
+    state.activeOperations--;
+    if (state.activeOperations < 0) {
+      state.activeOperations = 0;
+      logger.error(`[${this.config.name}] Invalid cache key-state reference count`, {
+        keyLength: key.length,
+      });
+    }
+    this.pruneKeyState(key, state);
+  }
+
+  private pruneKeyState(key: string, state = this.keyStates.get(key)): void {
+    if (
+      state && this.keyStates.get(key) === state && state.activeOperations === 0 &&
+      !this.mutationQueues.has(key) && !this.computations.has(key)
+    ) {
+      this.keyStates.delete(key);
+    }
+  }
+
+  private advanceGeneration(state: KeyState): number {
+    state.generation++;
+    return state.generation;
+  }
+
+  private isCurrentGeneration(key: string, state: KeyState, generation: number): boolean {
+    return this.keyStates.get(key) === state && state.generation === generation;
+  }
+
+  /** Serialize all writes for one key so a slow stale write cannot finish last. */
+  private enqueueMutation(key: string, mutation: () => Promise<void>): Promise<void> {
+    const previous = this.mutationQueues.get(key) ?? Promise.resolve();
+    const queued = previous.catch(() => undefined).then(mutation);
+    this.mutationQueues.set(key, queued);
+    const cleanup = (): void => {
+      if (this.mutationQueues.get(key) === queued) {
+        this.mutationQueues.delete(key);
+        this.pruneKeyState(key);
+      }
+    };
+    void queued.then(cleanup, cleanup);
+    return queued;
+  }
+
+  private async writeValue(key: string, value: T, ttl: number): Promise<void> {
+    const perPodTiers = [this.config.l1, this.config.l2].filter(
+      (tier): tier is CacheTier<T> => tier !== undefined,
+    );
+
+    // Commit the distributed tier first. Publishing to L1/L2 before L3
+    // acknowledges the value lets one pod observe data that never became
+    // authoritative for other pods.
+    if (this.config.l3) {
+      try {
+        await this.config.l3.set(key, value, ttl);
+      } catch (error) {
+        logger.error(`[${this.config.name}] Set error in ${this.config.l3.name}`, {
+          keyLength: key.length,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        throw error;
+      }
+    } else if (perPodTiers.length === 0) {
+      throw CACHE_ERROR.create({
+        detail: "Cannot set a value because no cache tiers are configured",
+        context: { cacheName: this.config.name },
+      });
+    }
+
+    await Promise.all(
+      perPodTiers.map(async (tier) => {
+        try {
+          await tier.set(key, value, ttl);
+        } catch (error) {
+          logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
+            keyLength: key.length,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+          throw error;
+        }
+      }),
+    );
+  }
+
   private async getFromTier(
     tier: CacheTier<T> | undefined,
     key: string,
@@ -350,12 +543,14 @@ export class MultiTierCache<T = string> {
       if (tierName === "l2") this.stats.l2Hits++;
       if (tierName === "l3") this.stats.l3Hits++;
 
-      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} hit`, { key });
+      logger.debug(`[${this.config.name}] ${tierName.toUpperCase()} hit`, {
+        keyLength: key.length,
+      });
       return value;
     } catch (error) {
       logger.error(`[${this.config.name}] ${tierName.toUpperCase()} get error`, {
-        key: key.slice(-60),
-        error: error instanceof Error ? error.message : String(error),
+        keyLength: key.length,
+        errorName: error instanceof Error ? error.name : typeof error,
       });
       return null;
     }
@@ -372,8 +567,10 @@ export class MultiTierCache<T = string> {
       const tierResults = tier.getBatch
         ? await tier.getBatch(keys)
         : await this.individualGets(tier, keys);
+      const requestedKeys = new Set(keys);
 
       for (const [k, v] of tierResults) {
+        if (!requestedKeys.has(k)) continue;
         if (v === null) continue;
 
         results.set(k, v);
@@ -386,7 +583,7 @@ export class MultiTierCache<T = string> {
     } catch (error) {
       logger.error(`[${this.config.name}] ${tierName.toUpperCase()} getBatch error`, {
         keyCount: keys.length,
-        error,
+        errorName: error instanceof Error ? error.name : typeof error,
       });
       return keys;
     }
@@ -396,7 +593,7 @@ export class MultiTierCache<T = string> {
     if (this.config.asyncBackfill) {
       void promise.catch((error) => {
         logger.debug(`[${this.config.name}] async backfill failed (best-effort)`, {
-          error,
+          errorName: error instanceof Error ? error.name : typeof error,
         });
       });
       return;
@@ -408,60 +605,124 @@ export class MultiTierCache<T = string> {
     key: string,
     value: T,
     tiers: ("l1" | "l2")[],
+    expectedState: KeyState,
+    generation: number,
     sourceTier?: CacheTier<T>,
   ): Promise<void> {
-    if (!this.config.backfillOnHit) return;
+    const state = this.retainKeyState(key);
+    try {
+      if (!this.config.backfillOnHit) return;
+      if (state !== expectedState || !this.isCurrentGeneration(key, state, generation)) return;
 
-    this.stats.backfills++;
+      this.stats.backfills++;
 
-    // Derive the backfill TTL from the source entry's remaining lifetime when the
-    // source tier can report it. Writing defaultTtl unconditionally resurrects a
-    // near-expired value (e.g. a 5s entry would get a fresh 300s on L1 backfill).
-    // Fall back only when the source tier does not implement TTL reporting.
-    // Once a tier reports TTLs, an unknown result must fail closed.
-    let ttl = this.config.defaultTtlSeconds;
-    if (sourceTier?.getRemainingTtlSeconds) {
-      let remaining: number | null | undefined;
-      try {
-        remaining = await sourceTier.getRemainingTtlSeconds(key);
-      } catch (error) {
-        logger.debug(`[${this.config.name}] remaining-TTL lookup failed; skipping backfill`, {
-          errorName: error instanceof Error ? error.name : typeof error,
-        });
-        return;
+      // Derive the backfill TTL from the source entry's remaining lifetime when the
+      // source tier can report it. Writing defaultTtl unconditionally resurrects a
+      // near-expired value (e.g. a 5s entry would get a fresh 300s on L1 backfill).
+      // Fall back only when the source tier does not implement TTL reporting.
+      // Once a tier reports TTLs, an unknown result must fail closed.
+      let ttl = this.config.defaultTtlSeconds;
+      if (sourceTier?.getRemainingTtlSeconds) {
+        let remaining: number | null | undefined;
+        try {
+          remaining = await sourceTier.getRemainingTtlSeconds(key);
+        } catch (error) {
+          logger.debug(`[${this.config.name}] remaining-TTL lookup failed; skipping backfill`, {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+          return;
+        }
+
+        // A TTL-aware source returning null no longer has an authoritative entry.
+        // Backfilling the previously read value with a fresh default would revive it.
+        if (typeof remaining !== "number" || Number.isNaN(remaining) || remaining <= 0) {
+          return;
+        }
+        ttl = Math.min(remaining, this.config.defaultTtlSeconds);
       }
 
-      // A TTL-aware source returning null no longer has an authoritative entry.
-      // Backfilling the previously read value with a fresh default would revive it.
-      if (typeof remaining !== "number" || Number.isNaN(remaining) || remaining <= 0) {
-        return;
-      }
-      ttl = Math.min(remaining, this.config.defaultTtlSeconds);
+      if (!this.isCurrentGeneration(key, state, generation)) return;
+
+      await this.enqueueMutation(key, async () => {
+        if (!this.isCurrentGeneration(key, state, generation)) return;
+        const backfillOps: Promise<void>[] = [];
+
+        if (tiers.includes("l1") && this.config.l1) {
+          backfillOps.push(
+            this.config.l1.set(key, value, ttl).catch((error) => {
+              logger.error(`[${this.config.name}] L1 backfill error`, {
+                keyLength: key.length,
+                errorName: error instanceof Error ? error.name : typeof error,
+              });
+            }),
+          );
+        }
+
+        if (tiers.includes("l2") && this.config.l2) {
+          backfillOps.push(
+            this.config.l2.set(key, value, ttl).catch((error) => {
+              logger.error(`[${this.config.name}] L2 backfill error`, {
+                keyLength: key.length,
+                errorName: error instanceof Error ? error.name : typeof error,
+              });
+            }),
+          );
+        }
+
+        await Promise.all(backfillOps);
+      });
+    } finally {
+      this.releaseKeyState(key, state);
     }
+  }
 
-    const backfillOps: Promise<void>[] = [];
-
-    if (tiers.includes("l1") && this.config.l1) {
-      backfillOps.push(
-        this.config.l1.set(key, value, ttl).catch((error) => {
-          logger.error(`[${this.config.name}] L1 backfill error`, { key, error });
-        }),
-      );
+  private async computeAndPublish(
+    key: string,
+    computeFn: () => Promise<T>,
+    ttl: number,
+    state: KeyState,
+    generation: number,
+  ): Promise<T> {
+    const value = await computeFn();
+    if (this.isCurrentGeneration(key, state, generation)) {
+      const publishGeneration = this.advanceGeneration(state);
+      this.stats.sets++;
+      await this.enqueueMutation(key, async () => {
+        if (!this.isCurrentGeneration(key, state, publishGeneration)) return;
+        await this.writeValue(key, value, ttl);
+      });
     }
-
-    if (tiers.includes("l2") && this.config.l2) {
-      backfillOps.push(
-        this.config.l2.set(key, value, ttl).catch((error) => {
-          logger.error(`[${this.config.name}] L2 backfill error`, { key, error });
-        }),
-      );
-    }
-
-    await Promise.all(backfillOps);
+    return value;
   }
 
   private async individualGets(tier: CacheTier<T>, keys: string[]): Promise<Map<string, T | null>> {
     const results = await Promise.all(keys.map(async (key) => [key, await tier.get(key)] as const));
     return new Map(results);
+  }
+}
+
+function validateConfig<T>(
+  config:
+    & Required<Omit<MultiTierCacheConfig<T>, "l1" | "l2" | "l3">>
+    & Pick<MultiTierCacheConfig<T>, "l1" | "l2" | "l3">,
+): void {
+  if (
+    typeof config.name !== "string" || config.name.length === 0 || config.name.length > 256 ||
+    config.name.trim() !== config.name || /\p{Cc}/u.test(config.name)
+  ) {
+    throw new TypeError(
+      "Multi-tier cache name must be a trimmed 1-256 character string without control characters",
+    );
+  }
+  if (
+    !Number.isFinite(config.defaultTtlSeconds) || config.defaultTtlSeconds <= 0 ||
+    config.defaultTtlSeconds > MAX_CACHE_TTL_SECONDS
+  ) {
+    throw new RangeError(
+      `Multi-tier cache default TTL must be greater than 0 and at most ${MAX_CACHE_TTL_SECONDS} seconds`,
+    );
+  }
+  if (typeof config.backfillOnHit !== "boolean" || typeof config.asyncBackfill !== "boolean") {
+    throw new TypeError("Multi-tier cache backfill options must be booleans");
   }
 }

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createTable } from "../../lib/airtable-client.ts";
+import { createAirtableClient } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "create-table",
@@ -32,6 +33,9 @@ export default tool({
         ),
     })
   )(),
-  execute: async ({ baseId, name, description, fields }) =>
-    createTable(baseId, name, fields, { description }),
+  execute: async ({ baseId, name, description, fields }, context) => {
+    const userId = requireUserIdFromContext(context);
+    const client = createAirtableClient(userId);
+    return await client.createTable(baseId, name, fields, { description });
+  },
 });

@@ -13,7 +13,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * - Edge cases and error scenarios
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
@@ -30,6 +30,7 @@ import {
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
 import { __resetAutoInstrumentForTests } from "./auto-instrument/orchestrator.ts";
+import { metricsManager } from "./metrics/manager.ts";
 import {
   createResolvedFetch,
   createThrowingFetch,
@@ -435,6 +436,34 @@ describe("Auto-Instrumentation", () => {
   });
 
   describe("instrumentReactRender", () => {
+    it("records and preserves PromiseLike render rejections", async () => {
+      const recorder = metricsManager.getRecorder();
+      assertExists(recorder);
+      const originalRecordRenderError = recorder.recordRenderError;
+      let recordedErrors = 0;
+      recorder.recordRenderError = () => {
+        recordedErrors++;
+      };
+      const rejection = { reason: "suspended render failed" };
+      const thenable = {
+        then(_resolve: (value: string) => void, reject: (error: unknown) => void): void {
+          reject(rejection);
+        },
+      } as unknown as Promise<string>;
+      let caught: unknown;
+
+      try {
+        await instrumentReactRender(() => thenable, "ThenableComponent");
+      } catch (error) {
+        caught = error;
+      } finally {
+        recorder.recordRenderError = originalRecordRenderError;
+      }
+
+      assertStrictEquals(caught, rejection);
+      assertEquals(recordedErrors, 1);
+    });
+
     it("should instrument synchronous render function", async () => {
       const renderFn = (): string => "<div>Hello</div>";
       const result = await instrumentReactRender(renderFn, "TestComponent");
@@ -511,6 +540,21 @@ describe("Auto-Instrumentation", () => {
   });
 
   describe("instrumentErrorHandler", () => {
+    it("should invoke the handler when error capture itself fails", async () => {
+      const handler = (): Response => new Response("handled", { status: 500 });
+      const instrumented = instrumentErrorHandler(handler);
+      const error = new Error("capture failure");
+      Object.defineProperty(error, "stack", {
+        get() {
+          throw new Error("telemetry stack failure");
+        },
+      });
+
+      const response = await instrumented(error);
+
+      assertEquals(await response.text(), "handled");
+    });
+
     it("should instrument error handler with span capture", async () => {
       const handler = (error: Error): Response => new Response(error.message, { status: 500 });
       const instrumented = instrumentErrorHandler(handler, true);
@@ -589,7 +633,10 @@ describe("Auto-Instrumentation", () => {
         Promise.resolve({ userId, action });
 
       const instrumented = instrument(fn, "user.action", {
-        attributes: ([userId, action]: unknown[]) => ({ userId, action }),
+        attributes: ([userId, action]: unknown[]) => ({
+          userId: String(userId),
+          action: String(action),
+        }),
       });
 
       const result = await instrumented("user-123", "login");
@@ -648,7 +695,7 @@ describe("Auto-Instrumentation", () => {
     it("should record custom attributes", () => {
       const fn = (name: string): string => `Hello, ${name}`;
       const instrumented = instrumentSync(fn, "greet", {
-        attributes: ([name]: unknown[]) => ({ name }),
+        attributes: ([name]: unknown[]) => ({ name: String(name) }),
       });
 
       const result = instrumented("World");

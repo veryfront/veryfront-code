@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearModuleCacheForProject,
@@ -11,6 +11,7 @@ import {
   getModuleCache,
   getModuleCacheStats,
 } from "./module-cache.ts";
+import { cacheRegistry } from "./registry.ts";
 
 describe("cache/module-cache", () => {
   afterEach(() => {
@@ -247,6 +248,30 @@ describe("cache/module-cache", () => {
       assertEquals(cache.has("proj2:file-c.ts"), true);
     });
 
+    it("should clear structured render-pipeline keys for the specified project", () => {
+      const cache = getModuleCache();
+      const projectOneKey = JSON.stringify([
+        "proj1",
+        "source",
+        "19.0.0",
+        "production",
+        "/page.tsx",
+      ]);
+      const projectTwoKey = JSON.stringify([
+        "proj2",
+        "source",
+        "19.0.0",
+        "production",
+        "/page.tsx",
+      ]);
+      cache.set(projectOneKey, "/tmp/project-one.js");
+      cache.set(projectTwoKey, "/tmp/project-two.js");
+
+      assertEquals(clearModuleCacheForProject("proj1"), 1);
+      assertEquals(cache.has(projectOneKey), false);
+      assertEquals(cache.has(projectTwoKey), true);
+    });
+
     it("should return 0 when no entries match the project", () => {
       getModuleCache().set("proj2:file.ts", "/tmp/file.js");
       assertEquals(clearModuleCacheForProject("proj1"), 0);
@@ -266,6 +291,18 @@ describe("cache/module-cache", () => {
     it("should be safe to call multiple times", () => {
       destroyModuleCaches();
       destroyModuleCaches();
+    });
+
+    it("should unregister destroyed caches from the cache registry", () => {
+      getModuleCache();
+      getEsmCache();
+      assertExists(cacheRegistry.get("pod-module-cache"));
+      assertExists(cacheRegistry.get("pod-esm-cache"));
+
+      destroyModuleCaches();
+
+      assertEquals(cacheRegistry.get("pod-module-cache"), undefined);
+      assertEquals(cacheRegistry.get("pod-esm-cache"), undefined);
     });
   });
 });

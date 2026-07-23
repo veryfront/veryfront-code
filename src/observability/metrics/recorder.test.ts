@@ -121,6 +121,7 @@ function createMockInstruments(): MetricsInstruments & {
     dataFetchErrorCounter: dataFetchErrorCounter as never,
     corsRejectionCounter: corsRejectionCounter as never,
     securityHeadersCounter: securityHeadersCounter as never,
+    errorCounter: null,
     memoryUsageGauge: null,
     heapUsageGauge: null,
     heapTotalGauge: null,
@@ -175,6 +176,51 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordHttpRequest", () => {
+    it("repairs poisoned state and saturates active request counters", () => {
+      runtimeState.activeRequests = Number.NaN;
+      recorder.recordHttpRequest();
+      assertEquals(runtimeState.activeRequests, 1);
+
+      runtimeState.activeRequests = Number.MAX_SAFE_INTEGER;
+      recorder.recordHttpRequest();
+      assertEquals(runtimeState.activeRequests, Number.MAX_SAFE_INTEGER);
+    });
+
+    it("updates state when attribute enumeration and getters are hostile", () => {
+      const getterAttributes: Record<string, string> = {};
+      Object.defineProperty(getterAttributes, "route", {
+        enumerable: true,
+        get() {
+          throw new Error("hostile attribute getter");
+        },
+      });
+
+      recorder.recordHttpRequest(getterAttributes);
+      recorder.recordHttpRequest(
+        new Proxy({}, {
+          ownKeys() {
+            throw new Error("hostile attribute enumeration");
+          },
+        }),
+      );
+
+      assertEquals(runtimeState.activeRequests, 2);
+      assertEquals(instruments._httpRequestCounter._value, 2);
+    });
+
+    it("isolates instrument failures and still updates runtime state", () => {
+      instruments.httpRequestCounter = {
+        add() {
+          throw new Error("telemetry counter failed");
+        },
+      } as never;
+
+      recorder.recordHttpRequest();
+
+      assertEquals(runtimeState.activeRequests, 1);
+      assertEquals(instruments._httpActiveRequests._value, 1);
+    });
+
     it("should increment http request counter and active requests", () => {
       recorder.recordHttpRequest();
       assertEquals(instruments._httpRequestCounter._value, 1);
@@ -188,6 +234,18 @@ describe("observability/metrics/recorder", () => {
       assertEquals(instruments._httpRequestCounter._lastAttributes, attrs);
     });
 
+    it("redacts sensitive and URL credential attributes", () => {
+      recorder.recordHttpRequest({
+        apiKey: "secret",
+        endpoint: "https://example.test/path?token=secret",
+      });
+
+      assertEquals(instruments._httpRequestCounter._lastAttributes, {
+        apiKey: "[REDACTED]",
+        endpoint: "https://example.test/path?token=[REDACTED]",
+      });
+    });
+
     it("should accumulate multiple requests", () => {
       recorder.recordHttpRequest();
       recorder.recordHttpRequest();
@@ -198,6 +256,13 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordHttpRequestComplete", () => {
+    it("does not make active request state or gauges negative", () => {
+      recorder.recordHttpRequestComplete(100);
+
+      assertEquals(runtimeState.activeRequests, 0);
+      assertEquals(instruments._httpActiveRequests._value, 0);
+    });
+
     it("should record duration and decrement active requests", () => {
       runtimeState.activeRequests = 1;
       recorder.recordHttpRequestComplete(150);
@@ -230,6 +295,16 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordCacheSet", () => {
+    it("repairs poisoned state and saturates cache size", () => {
+      runtimeState.cacheSize = Number.NaN;
+      recorder.recordCacheSet();
+      assertEquals(runtimeState.cacheSize, 1);
+
+      runtimeState.cacheSize = Number.MAX_SAFE_INTEGER;
+      recorder.recordCacheSet();
+      assertEquals(runtimeState.cacheSize, Number.MAX_SAFE_INTEGER);
+    });
+
     it("should increment set counter and cache size", () => {
       recorder.recordCacheSet();
       assertEquals(instruments._cacheSetCounter._value, 1);
@@ -245,6 +320,15 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordCacheInvalidate", () => {
+    it("ignores negative invalidation counts", () => {
+      runtimeState.cacheSize = 4;
+
+      recorder.recordCacheInvalidate(-2);
+
+      assertEquals(runtimeState.cacheSize, 4);
+      assertEquals(instruments._cacheInvalidateCounter._value, 0);
+    });
+
     it("should increment invalidation counter and reduce cache size", () => {
       runtimeState.cacheSize = 10;
       recorder.recordCacheInvalidate(3);
@@ -260,6 +344,14 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("setCacheSize", () => {
+    it("normalizes negative and non-finite cache sizes", () => {
+      recorder.setCacheSize(-2);
+      assertEquals(runtimeState.cacheSize, 0);
+
+      recorder.setCacheSize(Number.POSITIVE_INFINITY);
+      assertEquals(runtimeState.cacheSize, 0);
+    });
+
     it("should set cache size directly", () => {
       recorder.setCacheSize(42);
       assertEquals(runtimeState.cacheSize, 42);
@@ -273,6 +365,14 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordRender", () => {
+    it("never sends non-finite or unsafe durations to a metrics backend", () => {
+      recorder.recordRender(Number.POSITIVE_INFINITY);
+      assertEquals(instruments._renderDuration._value, 0);
+
+      recorder.recordRender(Number.MAX_VALUE);
+      assertEquals(instruments._renderDuration._value, Number.MAX_SAFE_INTEGER);
+    });
+
     it("should record render duration and increment counter", () => {
       recorder.recordRender(200);
       assertEquals(instruments._renderDuration._value, 200);
@@ -416,6 +516,7 @@ describe("observability/metrics/recorder", () => {
         dataFetchErrorCounter: null,
         corsRejectionCounter: null,
         securityHeadersCounter: null,
+        errorCounter: null,
         memoryUsageGauge: null,
         heapUsageGauge: null,
         heapTotalGauge: null,

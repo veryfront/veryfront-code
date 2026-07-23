@@ -18,10 +18,13 @@ export function createDefaultInvalidationCallbacks(
         "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts",
       ).then((m) => m.clearModulePathCache());
     },
-    invalidateModulePaths: (changedPaths: string[]) => {
-      void loadModule<{ invalidateModulePaths: (changedPaths: string[]) => void }>(
+    invalidateModulePaths: async (changedPaths: string[]) => {
+      const module = await loadModule<{
+        invalidateModulePaths: (changedPaths: string[]) => Promise<void>;
+      }>(
         "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts",
-      ).then((m) => m.invalidateModulePaths(changedPaths));
+      );
+      await module.invalidateModulePaths(changedPaths);
     },
     clearSSRModuleCacheForProject: (projectId: string) => {
       void loadModule<{ clearSSRModuleCacheForProject: (projectId: string) => void }>(
@@ -33,10 +36,13 @@ export function createDefaultInvalidationCallbacks(
         "#veryfront/rendering/router-detection.ts",
       ).then((m) => m.clearRouterDetectionCacheForProject(projectId));
     },
-    clearSnippetCacheForProject: (projectSlug: string) => {
-      void loadModule<{ clearSnippetCacheForProject: (projectSlug: string) => void }>(
+    clearSnippetCacheForProject: async (projectSlug: string) => {
+      const module = await loadModule<{
+        clearSnippetCacheForProject: (projectSlug: string) => void | Promise<void>;
+      }>(
         "#veryfront/rendering/snippet-renderer.ts",
-      ).then((m) => m.clearSnippetCacheForProject(projectSlug));
+      );
+      await module.clearSnippetCacheForProject(projectSlug);
     },
     clearRendererCacheForProject: async (projectId: string) => {
       const { clearRendererCacheForProject } = await loadModule<{

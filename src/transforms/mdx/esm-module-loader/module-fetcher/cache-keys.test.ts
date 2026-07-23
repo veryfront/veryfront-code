@@ -6,11 +6,11 @@ import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
   describe("getTransformCacheKey", () => {
-    it("includes cache namespace, projectId, content source, react version, path, hash, and ssr suffix", () => {
+    it("uses a namespaced full digest and ssr suffix", () => {
       const key = getTransformCacheKey("proj1", "preview-main", "19.1.1", "lib/utils.ts", "abc123");
       assertEquals(
-        key,
-        `${MDX_ESM_CACHE_NAMESPACE}:proj1:preview-main:19.1.1:lib/utils.ts:abc123:ssr`,
+        new RegExp(`^${MDX_ESM_CACHE_NAMESPACE}:transform:[a-f0-9]{64}:ssr$`).test(key),
+        true,
       );
     });
 
@@ -21,10 +21,11 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
 
     it("handles empty strings", () => {
       const key = getTransformCacheKey("", "", "", "", "");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}::::::ssr`);
+      assertEquals(key.startsWith(`${MDX_ESM_CACHE_NAMESPACE}:transform:`), true);
+      assertEquals(key.endsWith(":ssr"), true);
     });
 
-    it("preserves special characters in path", () => {
+    it("frames special characters in path deterministically", () => {
       const key = getTransformCacheKey(
         "proj",
         "preview-main",
@@ -32,7 +33,16 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
         "@/components/Button.tsx",
         "def456",
       );
-      assertEquals(key.includes("@/components/Button.tsx"), true);
+      assertEquals(
+        key,
+        getTransformCacheKey(
+          "proj",
+          "preview-main",
+          "19.1.1",
+          "@/components/Button.tsx",
+          "def456",
+        ),
+      );
     });
 
     it("isolates by content source", () => {
@@ -75,12 +85,12 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
   describe("getVersionedPathCacheKey", () => {
     it("includes cache namespace, react version, and path", () => {
       const key = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:lib/utils.ts`);
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","lib/utils.ts",null]`);
     });
 
     it("handles empty path", () => {
       const key = getVersionedPathCacheKey("", "19.1.1");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:`);
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","",null]`);
     });
 
     it("starts with cache namespace prefix", () => {
@@ -92,6 +102,12 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       const react18Key = getVersionedPathCacheKey("lib/utils.ts", "18.3.1");
       const react19Key = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
       assertEquals(react18Key === react19Key, false);
+    });
+
+    it("isolates by full source-content digest", () => {
+      const first = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "a".repeat(64));
+      const second = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "b".repeat(64));
+      assertEquals(first === second, false);
     });
   });
 });

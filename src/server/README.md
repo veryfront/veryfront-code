@@ -1,228 +1,121 @@
-# Server Module
+# Server module reference
 
-The Server module provides development and production server implementations with HMR, file watching, and core request handling.
-
-## Import Map Alias
-
-```typescript
-// Using import map alias (recommended)
-import { createHandler, startDevServer, startProductionServer } from "#server";
-
-// Using barrel file
-import { createHandler, startDevServer, startProductionServer } from "./server/index.ts";
-```
-
-## Public API Overview
-
-The Server module exports:
-
-- **`startDevServer()`** - Creates a development server with HMR and file watching
-- **`DevServer`** - Development server class
-- **`startProductionServer()`** - Starts a production server
-- **`createHandler()`** - Creates a runtime-agnostic request handler for any runtime
-- **`createVeryfrontServer()`** - Creates a Veryfront service server instance
-- **`startVeryfrontServer()`** - Starts a Veryfront service server
-- **`startNodeVeryfrontServer()`** - Starts a Node.js-compatible Veryfront service server
-- **`toNodeHandler()`** - Adapts a Veryfront handler for Node.js HTTP servers
-
-## File Structure
-
-```
-server/
-├── index.ts                      # Public API (barrel file) ← USE THIS
-├── README.md                     # This file
-├── dev-server.ts                 # Development server implementation
-├── dev-server/                   # Dev server internals
-│   ├── file-watch-setup.ts
-│   ├── hmr-server.ts
-│   ├── hmr-types.ts
-│   ├── hmr/                      # HMR implementation
-│   ├── request-handler.ts
-│   ├── route-discovery.ts
-│   └── server.ts
-├── production-server.ts          # Production server
-├── runtime-handler/            # Runtime-agnostic handler
-│   ├── index.ts
-│   └── handler.ts
-├── build/                        # Build system
-│   ├── index.ts (barrel)
-│   ├── asset-generation.ts
-│   ├── client-runtime.ts
-│   ├── manifest.ts
-│   ├── static-generation.ts
-│   └── build/                    # Build orchestration
-│       ├── index.ts (barrel)
-│       ├── build-executor.ts
-│       ├── build-initializer.ts
-│       └── build-orchestrator.ts
-├── modules/                      # Server modules
-│   ├── index.ts (barrel)
-│   ├── api-server.ts             # API module server
-│   ├── module-server.ts          # HMR module server
-│   ├── rate-limiter.ts           # Rate limiting
-│   └── websocket-handler.ts      # WebSocket support
-├── handlers/                     # Request handlers
-│   ├── types.ts
-│   ├── monitoring/               # Health/metrics endpoints
-│   ├── request/                  # Request routing
-│   └── routing/                  # Route registry
-└── rsc-endpoints/                # RSC endpoints
-    ├── endpoint-router.ts
-    └── types.ts
-```
-
-## Quick Start
-
-### Development Server
+The server module exposes the framework's development and production HTTP
+lifecycles, embeddable request handlers, and the lower-level composable service
+server.
 
 ```ts
-import { startDevServer } from "#server";
-import { getConfig } from "#config";
-import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
-
-const config = await getConfig(cwd());
-const server = await startDevServer({
-  projectDir: cwd(),
-  config,
-  port: 3000,
-});
-
-await server.start();
-console.log("Dev server running on http://localhost:3000");
+import {
+  createHandler,
+  createVeryfrontServer,
+  startDevServer,
+  startProductionServer,
+  startServer,
+  toNodeHandler,
+} from "veryfront/server";
 ```
 
-### Production Server
+## Framework server APIs
+
+| API                              | Return value                | Purpose                                                                                                                           |
+| -------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `startServer(options?)`          | `Promise<VeryfrontServer>`  | Start development mode by default, or production when `mode: "production"` is set. Defaults the project directory and port.       |
+| `startDevServer(options)`        | `Promise<DevServer>`        | Bootstrap and start the development server, including configured file watching and HMR. The returned instance is already started. |
+| `startProductionServer(options)` | `Promise<ServerHandle>`     | Bootstrap and start the production server. `ready` resolves only after both the HTTP listener and request handler are ready.      |
+| `createHandler(options?)`        | `Promise<VeryfrontHandler>` | Create a development or production request handler for an externally managed HTTP server.                                         |
+
+`startServer` accepts `StartServerOptions`. Its returned `VeryfrontServer`
+contains `ready`, `stop()`, `port`, and `url`.
+
+`startDevServer` requires `DevServerOptions`, including `projectDir` and `port`.
+Use `handlerOnly: true` when another HTTP server owns the listener.
+
+`startProductionServer` requires `StartProductionServerOptions`, including
+`projectDir` and `port`. An optional `bootstrapResult` transfers exclusive
+ownership of that bootstrap result to the returned server handle.
+
+`createHandler` accepts:
 
 ```ts
-import { startProductionServer } from "#server";
-import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
-
-await startProductionServer({
-  projectDir: cwd(),
-  port: 8000,
-  hostname: "0.0.0.0",
-});
-
-console.log("Production server running on http://0.0.0.0:8000");
-```
-
-### Runtime Handler (for custom runtimes)
-
-```ts
-import { createHandler } from "#server";
-import { getConfig } from "#config";
-import { runtime } from "veryfront/platform";
-import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
-
-const adapter = await runtime.get();
-const config = await getConfig(cwd(), adapter);
-
-const handler = await createHandler({
-  projectDir: cwd(),
-  config,
-  adapter,
-  mode: "production",
-});
-
-// Use with any HTTP server
-const server = Deno.serve(handler);
-```
-
-## Features
-
-### Development Server
-
-- **Hot Module Replacement (HMR)**: Instant updates without full page reload
-- **File Watching**: Automatically rebuilds on file changes
-- **Error Overlay**: In-browser error reporting
-- **Route Discovery**: Automatically discovers API and page routes
-- **Module Server**: Serves transformed modules for HMR
-
-### Production Server
-
-- **Optimized Performance**: Pre-bundled assets and server-side rendering
-- **Runtime Handler**: Works with Deno, Node, Bun, Cloudflare Workers
-- **Static Generation**: Pre-renders pages at build time (SSG)
-- **Incremental Static Regeneration (ISR)**: Updates static pages on-demand
-- **API Routes**: Serverless API endpoints
-
-### Build System
-
-Available via `#server/build` alias:
-
-- **Asset Generation**: Optimizes CSS, images, and client bundles
-- **Client Runtime**: Hydration and client-side navigation
-- **Manifest Generation**: Build manifest with asset hashes
-- **Static Generation**: SSG with parallel page rendering
-
-## Configuration
-
-### Dev Server Options
-
-```ts
-interface DevServerOptions {
-  projectDir: string;
-  config: VeryfrontConfig;
+type CreateHandlerOptions = {
+  projectDir?: string;
+  mode?: "development" | "production";
   port?: number;
-  hostname?: string;
-  hmr?: boolean;
-  watch?: boolean;
-}
+};
 ```
 
-### Production Server Options
+The returned handler is callable and also exposes:
 
 ```ts
-interface ProductionServerOptions {
-  projectDir: string;
-  port?: number;
-  hostname?: string;
-  config?: VeryfrontConfig;
-}
+type VeryfrontHandler = {
+  (request: Request): Promise<Response>;
+  upgrade(server: unknown): void;
+  connectHMR(socket: WebSocket): void;
+  dispose(): Promise<void>;
+};
 ```
 
-### Runtime Handler Options
+`upgrade()` attaches development HMR upgrade handling to a Node HTTP server.
+`connectHMR()` registers a WebSocket upgraded by an external runtime.
+
+## Lifecycle and ownership
+
+Bootstrap-backed server APIs own process-wide extension-registry, telemetry,
+SSR, and HMR state. Only one such generation may be live in a process. Starting
+a second generation before stopping or disposing the first rejects instead of
+silently replacing its globals.
+
+The caller must retain and close the returned lifecycle object:
+
+- call `stop()` on `VeryfrontServer`, `DevServer`, or `ServerHandle`;
+- call `dispose()` on `VeryfrontHandler` after the external HTTP server stops;
+- do not separately dispose a `BootstrapResult` passed to
+  `startProductionServer`.
+
+Concurrent shutdown calls share the same in-flight cleanup. Successful cleanup
+is idempotent. If cleanup rejects, ownership remains held and a later shutdown
+call retries the unfinished phases; a replacement server remains blocked until
+that retry succeeds.
+
+While a production server is starting, health readiness remains false. Startup,
+handler-readiness, or listener failures return readiness to false and run owned
+cleanup before the failure is reported.
+
+## External Node HTTP servers
+
+`toNodeHandler()` converts the Web `Request`/`Response` handler into a Node HTTP
+request listener. Development HMR additionally requires `upgrade()`:
 
 ```ts
-interface RuntimeHandlerOptions {
-  projectDir: string;
-  config: VeryfrontConfig;
-  adapter: RuntimeAdapter;
-  mode: "development" | "production";
-  port?: number;
-}
+import { createServer } from "node:http";
+import { createHandler, toNodeHandler } from "veryfront/server";
+
+const handler = await createHandler({ mode: "development", port: 3_000 });
+const server = createServer(toNodeHandler(handler));
+
+handler.upgrade(server);
+server.once("close", () => void handler.dispose());
 ```
 
-## Sub-Modules
+The external server remains responsible for calling `server.close()`. Handler
+disposal removes the attached upgrade listener, terminates owned HMR sockets,
+closes the no-server WebSocket server, and releases bootstrap resources.
 
-### server/build
+## Composable service server
 
-Build system exports for server-side bundling and generation.
+`createVeryfrontServer(options)` creates an ordered module dispatcher. Each
+module may return a response or decline the request with `null`/`undefined`.
+The returned runtime exposes `fetch`, `setShuttingDown`, and `stop`.
 
-### server/modules
+`startVeryfrontServer(options)` starts that runtime on the detected Node, Deno,
+or Bun host. `startNodeVeryfrontServer(options)` is the Node-specific form. Both
+return a service handle with `ready`, `stop()`, `port`, `url`, and `runtime`;
+the Node-specific handle also exposes its HTTP `server`.
 
-Server-side modules:
+## Related documentation
 
-- **API Server**: Serves API routes with dynamic import
-- **Module Server**: Serves HMR-enabled ES modules
-- **Rate Limiter**: Request rate limiting
-- **WebSocket Handler**: WebSocket support for HMR
-
-## Best Practices
-
-1. **Use the runtime handler** for deployment flexibility
-2. **Enable HMR in development** for faster iteration
-3. **Pre-render static pages** in production for better performance
-4. **Configure rate limiting** for API routes to prevent abuse
-5. **Use graceful shutdown** to finish pending requests before stopping
-
-## Related Modules
-
-- **#rendering** - SSR and RSC rendering
-- **#api** - API route handling
-- **#middleware** - Request pipeline
-- **veryfront/platform** - Runtime compatibility
-
-## References
-
-- [Veryfront Documentation](https://veryfront.com/docs/framework)
+- [Server runtime architecture](../../docs/architecture/04-server-runtime.md)
+- [Runtime adapters](../../docs/architecture/15-runtime-adapters.md)
+- [Configuration](../../docs/guides/configuration.md)
+- [Build and deploy](../../docs/guides/deploying.md)
+- [`veryfront/server` API reference](../../docs/api-reference/veryfront/server.md)

@@ -9,7 +9,8 @@ import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.t
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { isCompiledBinary } from "#veryfront/utils/platform.ts";
-import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { hashString } from "#veryfront/transforms/mdx/esm-module-loader/utils/hash.ts";
 
 export const LOG_PREFIX = "[SSR-VF-MODULES]";
 
@@ -73,11 +74,16 @@ export function buildFrameworkTransformCacheKey(
   reactVersion: string,
   projectDir: string,
   sourceContent: string,
+  importMapFingerprint: string,
 ): string {
-  const contentFingerprint = `${sourceContent.length}:${hashCodeHex(sourceContent)}:${
-    fnv1aHash(sourceContent)
-  }`;
-  return JSON.stringify([projectDir, reactVersion, identifier, contentFingerprint]);
+  const contentFingerprint = hashString(sourceContent);
+  return JSON.stringify([
+    projectDir,
+    reactVersion,
+    importMapFingerprint,
+    identifier,
+    contentFingerprint,
+  ]);
 }
 
 // Maximum entries for the per-process framework transform caches.
@@ -115,6 +121,10 @@ export interface TransformContext {
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
   onProgress?: TransformProgressListener;
+  /** Adapter-bound immutable import-map snapshot from the outer pipeline. */
+  importMap: ImportMapConfig;
+  /** Full digest of the import-map snapshot, included in every cache/flight key. */
+  importMapFingerprint: string;
   /** Transform keys already visited by the current recursive traversal. */
   transformAncestry?: ReadonlySet<string>;
 }

@@ -1,23 +1,18 @@
 import { serverLogger } from "#veryfront/utils";
 import {
-  clearModulePathCache,
-  invalidateModulePaths,
+  clearMdxEsmCacheNamespace,
+  clearMdxEsmCacheNamespacesForProject,
 } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 import { clearModuleCacheForProject } from "#veryfront/cache/module-cache.ts";
-import {
-  clearSSRModuleCache,
-  clearSSRModuleCacheForProject,
-} from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
+import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { cacheRegistry } from "#veryfront/cache";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
-import {
-  clearRouterDetectionCache,
-  clearRouterDetectionCacheForProject,
-} from "#veryfront/rendering/router-detection.ts";
+import { clearRouterDetectionCacheForProject } from "#veryfront/rendering/router-detection.ts";
 import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/api/pages-api-handler.ts";
-import { clearSourceMissCache } from "#veryfront/modules/server/module-source-resolution-cache.ts";
+import { clearSourceMissCacheForProject } from "#veryfront/modules/server/module-source-resolution-cache.ts";
 import { invalidateProjectMiddlewareCache } from "#veryfront/server/runtime-handler/project-middleware.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = serverLogger.component("cache-invalidation");
 
@@ -28,11 +23,34 @@ interface InvalidationOptions {
   branchId?: string | null;
   /** Project ID for registry-based invalidation */
   projectId?: string;
+  /** Project directory for scoped local source-resolution invalidation. */
+  projectDir?: string;
+  /** Exact render/module content source identity (for example preview-main). */
+  contentSourceId?: string;
+  /** Release ID used to derive a production content source when needed. */
+  releaseId?: string | null;
+}
+
+export class ProjectCacheInvalidationError extends AggregateError {
+  constructor(
+    readonly projectIdentity: { projectId?: string; projectSlug?: string },
+    errors: unknown[],
+  ) {
+    super(
+      errors,
+      `One or more cache invalidation phases failed for ${
+        projectIdentity.projectId ?? projectIdentity.projectSlug ?? "unknown project"
+      }`,
+    );
+    this.name = "ProjectCacheInvalidationError";
+  }
 }
 
 /**
- * Invalidate project caches with optional environment scoping.
- * When environment is specified, only caches for that environment are invalidated.
+ * Invalidate caches owned by one project. Environment/content-source-aware
+ * registries are narrowed when that identity is available. Caches whose schema
+ * contains only project identity are necessarily evicted project-wide; no
+ * operation may fall back to a process-global wipe.
  */
 export async function invalidateProjectCaches(
   projectSlug: string,
@@ -40,124 +58,129 @@ export async function invalidateProjectCaches(
   options?: InvalidationOptions,
 ): Promise<void> {
   const startTime = Date.now();
-  const projectId = options?.projectId;
+  const projectId = options?.projectId?.trim() || undefined;
+  const normalizedSlug = projectSlug.trim();
+  const realProjectSlug = normalizedSlug && normalizedSlug !== "preview"
+    ? normalizedSlug
+    : undefined;
+  if (!projectId && !realProjectSlug) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Cache invalidation requires a non-placeholder project ID or slug",
+    });
+  }
+
+  const scopedProjectSlug = realProjectSlug ?? projectId!;
   const environment = options?.environment;
-  const hasRealProjectSlug = projectSlug !== "preview" || !!projectId;
+  const branchId = options?.branchId?.trim() || undefined;
+  const releaseId = options?.releaseId?.trim() || undefined;
+  const contentSourceId = options?.contentSourceId?.trim() ||
+    (environment === "production" && releaseId
+      ? `release-${releaseId}`
+      : environment === "preview" && branchId
+      ? `preview-${branchId}`
+      : undefined);
+  if (projectId && environment && !contentSourceId) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Cache invalidation for ${environment} requires an exact contentSourceId`,
+    });
+  }
+  const failures: unknown[] = [];
+
+  const runPhase = async (
+    phase: string,
+    operation: () => unknown | Promise<unknown>,
+  ): Promise<void> => {
+    try {
+      await operation();
+    } catch (error) {
+      failures.push(new Error(`Cache invalidation phase failed: ${phase}`, { cause: error }));
+      logger.error("Cache invalidation phase failed", {
+        phase,
+        projectId,
+        projectSlug: realProjectSlug,
+        error,
+      });
+    }
+  };
 
   logger.debug("▶ Starting cache invalidation", {
-    projectSlug,
+    projectSlug: realProjectSlug,
+    projectId,
     environment: environment ?? "all",
     changedPaths: changedPaths?.length ?? "all",
-    mode: hasRealProjectSlug ? "per-project" : "global",
+    contentSourceId,
   });
 
-  if (changedPaths?.length) {
-    logger.debug("Clearing module paths (selective)", {
-      projectSlug,
-      pathCount: changedPaths.length,
+  if (projectId && contentSourceId) {
+    await runPhase("MDX ESM namespace", async () => {
+      await clearMdxEsmCacheNamespace(projectId, contentSourceId);
     });
-    invalidateModulePaths(changedPaths);
-  } else {
-    logger.debug("Clearing module path cache (full)", { projectSlug });
-    clearModulePathCache();
+  } else if (projectId && environment === undefined) {
+    await runPhase("all MDX ESM namespaces", async () => {
+      await clearMdxEsmCacheNamespacesForProject(projectId);
+    });
   }
-  clearSourceMissCache();
-
-  const middlewareEntries = invalidateProjectMiddlewareCache(projectSlug, projectId);
-  logger.debug("Clearing project middleware cache", {
-    projectSlug,
-    projectId,
-    entriesDeleted: middlewareEntries,
+  await runPhase("module source misses", () => {
+    clearSourceMissCacheForProject({
+      projectDir: options?.projectDir,
+      projectId,
+      projectSlug: realProjectSlug,
+    });
   });
-
-  logger.debug("Clearing SSR module cache", {
-    projectSlug,
-    projectId,
-    mode: projectId ? "per-project" : "global",
+  await runPhase("project middleware", () => {
+    invalidateProjectMiddlewareCache(scopedProjectSlug, projectId);
   });
 
   if (projectId) {
-    clearSSRModuleCacheForProject(projectId);
-    // Also clear the pod-level module cache (used by RenderPipeline)
-    // This was previously missed, causing stale renders despite SSR module cache clearing
-    clearModuleCacheForProject(projectId);
-  } else {
-    clearSSRModuleCache();
+    await runPhase("SSR module cache", () => clearSSRModuleCacheForProject(projectId));
+    await runPhase("render-pipeline module cache", () => clearModuleCacheForProject(projectId));
+    await runPhase("router detection cache", () => clearRouterDetectionCacheForProject(projectId));
   }
 
-  logger.debug("Clearing router detection cache", { projectSlug, projectId });
-  if (projectId) {
-    clearRouterDetectionCacheForProject(projectId);
-  } else {
-    clearRouterDetectionCache();
-  }
-
-  if (!hasRealProjectSlug) {
-    logger.error(
-      "[CacheInvalidation] Skipping cache invalidation — no project identity available",
-      {
-        projectSlug,
-        reason: "projectSlug is 'preview' and no projectId provided",
-        action: "skipped_global_wipe",
-      },
-    );
-    // Previously called clearRendererCaches() which wiped ALL projects' caches on this pod.
-    // This was a multi-tenant blast radius risk: one preview deployment could nuke every tenant's cache.
-    // Now we skip the invalidation entirely. The stale cache will be naturally evicted by TTL
-    // or the next scoped invalidation that includes a projectId.
-    return;
-  }
-
-  const rendererProjectKey = projectId ?? projectSlug;
-
-  logger.debug("Clearing renderer cache (per-project)", {
-    projectSlug,
-    projectId,
-    rendererProjectKey,
-  });
-  await clearRendererCacheForProject(rendererProjectKey);
-
-  logger.debug("Clearing snippet cache (per-project)", { projectSlug });
-  clearSnippetCacheForProject(projectSlug);
-
-  logger.debug("Clearing API route handler cache (per-project)", { projectSlug });
-  try {
-    await resetApiHandlerForProject(projectSlug);
-  } catch (error) {
-    logger.error("Failed to reset API route handler cache", { projectSlug, error });
-  }
+  await runPhase("renderer cache", () => clearRendererCacheForProject(projectId ?? scopedProjectSlug));
+  await runPhase("snippet cache", () => clearSnippetCacheForProject(scopedProjectSlug));
+  await runPhase("API route handler cache", () => resetApiHandlerForProject(scopedProjectSlug));
 
   if (projectId) {
     if (environment) {
-      logger.debug("Clearing registry caches (environment-scoped)", {
-        projectId,
-        environment,
+      await runPhase("registry environment cache", () => {
+        cacheRegistry.deleteKeysForProjectEnvironment(projectId, environment);
       });
-      const deleted = cacheRegistry.deleteKeysForProjectEnvironment(projectId, environment);
-      logger.debug("Registry caches cleared", {
-        projectId,
-        environment,
-        keysDeleted: deleted,
+    } else {
+      await runPhase("all local registry project caches", () => {
+        cacheRegistry.deleteKeysForProject(projectId);
       });
     }
 
-    const branchId = options?.branchId;
-    if (branchId) {
-      logger.debug("Clearing registry caches (content-source)", {
-        projectId,
-        contentSourceId: branchId,
-      });
-      const deleted = cacheRegistry.deleteKeysForContentSource(projectId, branchId);
-      logger.debug("Registry caches cleared (content-source)", {
-        projectId,
-        contentSourceId: branchId,
-        keysDeleted: deleted,
+    if (contentSourceId) {
+      await runPhase("registry content-source cache", () => {
+        cacheRegistry.deleteKeysForContentSource(projectId, contentSourceId);
       });
     }
   }
 
+  const redisProjectIdentity = {
+    projectId,
+    projectSlug: realProjectSlug,
+  };
+  await runPhase("distributed registry cache", async () => {
+    if (environment) {
+      await cacheRegistry.deleteRedisKeysForProjectEnvironment(
+        redisProjectIdentity,
+        environment,
+      );
+    } else {
+      await cacheRegistry.deleteRedisKeysForProject(redisProjectIdentity);
+    }
+  });
+
+  if (failures.length > 0) {
+    throw new ProjectCacheInvalidationError(redisProjectIdentity, failures);
+  }
+
   logger.debug("✓ Per-project cache invalidation complete", {
-    projectSlug,
+    projectSlug: realProjectSlug,
+    projectId,
     durationMs: Date.now() - startTime,
   });
 }

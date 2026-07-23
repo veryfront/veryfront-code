@@ -13,7 +13,20 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
     const name = trimmed.slice(0, separatorIndex).trim();
     if (!name) continue;
 
-    cookies[name] = decodeURIComponent(trimmed.slice(separatorIndex + 1));
+    let value: string;
+    try {
+      value = decodeURIComponent(trimmed.slice(separatorIndex + 1));
+    } catch {
+      // Treat only the malformed cookie as absent so valid siblings remain usable.
+      continue;
+    }
+
+    Object.defineProperty(cookies, name, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
   }
 
   return cookies;

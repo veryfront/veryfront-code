@@ -1,21 +1,23 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSlackClient } from "../../lib/slack-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createSlackClient } from "../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "send-message",
   description: "Send a message to a Slack channel",
-  inputSchema: defineSchema((v) => v.object({
-    channel: v
-      .string()
-      .describe("Channel ID or name (e.g., 'C1234567890' or '#general')"),
-    text: v.string().min(1).describe("Message text to send"),
-    threadTs: v
-      .string()
-      .optional()
-      .describe("Thread timestamp to reply to (for threaded messages)"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      channel: v
+        .string()
+        .describe("Channel ID or name (e.g., 'C1234567890' or '#general')"),
+      text: v.string().min(1).describe("Message text to send"),
+      threadTs: v
+        .string()
+        .optional()
+        .describe("Thread timestamp to reply to (for threaded messages)"),
+    })
+  )(),
   execute: async ({ channel, text, threadTs }, context) => {
     const userId = requireUserIdFromContext(context);
 

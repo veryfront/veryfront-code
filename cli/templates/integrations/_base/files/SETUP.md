@@ -1,6 +1,7 @@
 # Integration Setup Guide
 
-This guide helps you set up credentials for all 50+ service integrations available in Veryfront.
+This guide helps you set up credentials for all 50+ service integrations
+available in Veryfront.
 
 ## Quick Start
 
@@ -20,12 +21,16 @@ Visit `http://localhost:3000/api/auth/{service}` to connect each service.
 ## Table of Contents
 
 - [Google Services](#google-services) (Gmail, Calendar, Drive, Docs, Sheets)
-- [Microsoft Services](#microsoft-services) (Outlook, Teams, SharePoint, OneDrive)
+- [Microsoft Services](#microsoft-services) (Outlook, Teams, SharePoint,
+  OneDrive)
 - [Atlassian Services](#atlassian-services) (Jira, Confluence)
-- [Communication](#communication) (Slack, Twilio, Zoom, Webex)
-- [Project Management](#project-management) (Asana, Monday, Trello, ClickUp, Linear, Notion)
-- [Developer Tools](#developer-tools) (GitHub, GitLab, Bitbucket, Figma, Sentry, PostHog)
-- [CRM & Sales](#crm--sales) (Salesforce, Pipedrive, Intercom, Zendesk, Freshdesk)
+- [Communication](#communication) (Slack, Twilio)
+- [Project Management](#project-management) (Asana, Monday, Trello, ClickUp,
+  Linear, Notion)
+- [Developer Tools](#developer-tools) (GitHub, GitLab, Bitbucket, Figma, Sentry,
+  PostHog)
+- [CRM & Sales](#crm--sales) (Salesforce, Pipedrive, Intercom, Zendesk,
+  Freshdesk)
 - [Databases](#databases) (Supabase, Neon, Airtable, Snowflake)
 - [Cloud & Storage](#cloud--storage) (AWS, Box)
 - [Finance](#finance) (Stripe, QuickBooks, Xero)
@@ -37,11 +42,13 @@ Visit `http://localhost:3000/api/auth/{service}` to connect each service.
 
 ## Google Services
 
-**Gmail, Calendar, Drive, Docs, Sheets** all use the same Google OAuth credentials.
+**Gmail, Calendar, Drive, Docs, Sheets** all use the same Google OAuth
+credentials.
 
 ### Setup Steps
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+1. Go to
+   [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
 2. Create a new project or select existing
 3. Enable required APIs:
    - Gmail API
@@ -72,13 +79,13 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 
 ### Required Scopes by Service
 
-| Service  | Scopes                                                                                                                           |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Gmail    | `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.compose`, `https://mail.google.com/` for permanent delete |
-| Calendar | `calendar.readonly`, `calendar.events`                                                                                           |
-| Drive    | `drive.readonly`, `drive.file`                                                                                                   |
-| Docs     | `documents.readonly`, `documents`                                                                                                |
-| Sheets   | `spreadsheets.readonly`, `spreadsheets`                                                                                          |
+| Service  | Scopes                                                                                                                                         |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gmail    | `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.compose`, `https://mail.google.com/` for permanent delete               |
+| Calendar | `calendar.readonly`, `calendar.events`                                                                                                         |
+| Drive    | `https://www.googleapis.com/auth/drive`                                                                                                        |
+| Docs     | `documents.readonly`, `documents`                                                                                                              |
+| Sheets   | `https://www.googleapis.com/auth/spreadsheets`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.file` |
 
 ---
 
@@ -88,7 +95,8 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 
 ### Setup Steps
 
-1. Go to [Azure Portal](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
+1. Go to
+   [Azure Portal](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
 2. Click **New registration**:
    - Name: Your app name
    - Supported account types: Accounts in any organizational directory
@@ -108,12 +116,12 @@ MICROSOFT_TENANT_ID=common
 
 ### Required Scopes by Service
 
-| Service    | Scopes                                                        |
-| ---------- | ------------------------------------------------------------- |
-| Outlook    | `Mail.Read`, `Mail.Send`, `Calendars.ReadWrite`               |
-| Teams      | `Team.ReadBasic.All`, `Chat.ReadWrite`, `ChannelMessage.Send` |
-| SharePoint | `Sites.Read.All`, `Files.ReadWrite.All`                       |
-| OneDrive   | `Files.Read`, `Files.ReadWrite`                               |
+| Service    | Scopes                                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Outlook    | `Mail.Read`, `Mail.Send`, `Mail.ReadWrite`, `Calendars.Read`, `Calendars.ReadWrite`, `Group.Read.All`, `Group-Conversation.Read.All`, `User.Read`, `offline_access` |
+| Teams      | `Chat.Read`, `Chat.ReadWrite`, `ChannelMessage.Send`, `ChannelMessage.Read.All`, `Channel.ReadBasic.All`, `Team.ReadBasic.All`, `User.Read`, `offline_access`       |
+| SharePoint | `Sites.Read.All`, `Sites.ReadWrite.All`, `Files.Read.All`, `Files.ReadWrite.All`, `offline_access`                                                                  |
+| OneDrive   | `Files.Read`, `Files.ReadWrite`, `Files.Read.All`, `Files.ReadWrite.All`, `offline_access`                                                                          |
 
 ---
 
@@ -123,13 +131,15 @@ MICROSOFT_TENANT_ID=common
 
 ### Setup Steps
 
-1. Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
+1. Go to
+   [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
 2. Click **Create** > **OAuth 2.0 integration**
 3. Configure:
    - Name: Your app name
    - Callback URL: `http://localhost:3000/api/auth/jira/callback`
 4. Add required scopes in **Permissions**
-5. Get your Cloud ID: Visit `https://your-domain.atlassian.net/_edge/tenant_info`
+5. Get your Cloud ID: Visit
+   `https://your-domain.atlassian.net/_edge/tenant_info`
 
 ### Environment Variables
 
@@ -141,10 +151,10 @@ ATLASSIAN_CLOUD_ID=your-cloud-id
 
 ### Required Scopes
 
-| Service    | Scopes                                                    |
-| ---------- | --------------------------------------------------------- |
-| Jira       | `read:jira-work`, `write:jira-work`, `read:jira-user`     |
-| Confluence | `read:confluence-content.all`, `write:confluence-content` |
+| Service    | Scopes                                                                                                                                                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Jira       | `read:jira-work`, `write:jira-work`, `read:jira-user`, `offline_access`                                                                                                                                    |
+| Confluence | `read:confluence-content.all`, `write:confluence-content`, `read:confluence-space.summary`, `read:confluence-user`, `search:confluence`, `read:page:confluence`, `write:page:confluence`, `offline_access` |
 
 ---
 
@@ -155,8 +165,11 @@ ATLASSIAN_CLOUD_ID=your-cloud-id
 1. Go to [Slack API Apps](https://api.slack.com/apps)
 2. Click **Create New App** > **From scratch**
 3. Go to **OAuth & Permissions**:
+   - Enable **PKCE** for the authorization flow (S256)
    - Add redirect URL: `http://localhost:3000/api/auth/slack/callback`
-   - Add scopes: `channels:history`, `channels:read`, `chat:write`, `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`, `mpim:read`, `users:read`
+   - Add scopes: `channels:history`, `channels:read`, `chat:write`,
+     `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`,
+     `mpim:read`, `users:read`
 4. **Install to Workspace**
 
 ```env
@@ -174,30 +187,6 @@ SLACK_CLIENT_SECRET=your-client-secret
 TWILIO_ACCOUNT_SID=your-account-sid
 TWILIO_AUTH_TOKEN=your-auth-token
 TWILIO_PHONE_NUMBER=+1234567890
-```
-
-### Zoom
-
-1. Go to [Zoom App Marketplace](https://marketplace.zoom.us/develop/create)
-2. Create **OAuth App**
-3. Configure redirect: `http://localhost:3000/api/auth/zoom/callback`
-4. Add scopes: `meeting:read`, `meeting:write`, `user:read`
-
-```env
-ZOOM_CLIENT_ID=your-client-id
-ZOOM_CLIENT_SECRET=your-client-secret
-```
-
-### Webex
-
-1. Go to [Webex for Developers](https://developer.webex.com/my-apps)
-2. Create new integration
-3. Redirect URI: `http://localhost:3000/api/auth/webex/callback`
-4. Scopes: `spark:messages_read`, `spark:messages_write`, `spark:rooms_read`
-
-```env
-WEBEX_CLIENT_ID=your-client-id
-WEBEX_CLIENT_SECRET=your-client-secret
 ```
 
 ---
@@ -219,7 +208,8 @@ ASANA_CLIENT_SECRET=your-client-secret
 
 1. Go to [Monday Apps](https://auth.monday.com/oauth2/authorize)
 2. Create new app in your account's Developer section
-3. Configure OAuth with redirect: `http://localhost:3000/api/auth/monday/callback`
+3. Configure OAuth with redirect:
+   `http://localhost:3000/api/auth/monday/callback`
 
 ```env
 MONDAY_CLIENT_ID=your-client-id
@@ -280,6 +270,7 @@ NOTION_CLIENT_SECRET=your-oauth-client-secret
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
 2. Create **New OAuth App**
 3. Authorization callback: `http://localhost:3000/api/auth/github/callback`
+4. Scopes: `repo`, `read:user`, `read:org`
 
 ```env
 GITHUB_CLIENT_ID=your-client-id
@@ -291,7 +282,7 @@ GITHUB_CLIENT_SECRET=your-client-secret
 1. Go to [GitLab Applications](https://gitlab.com/-/profile/applications)
 2. Create new application
 3. Redirect URI: `http://localhost:3000/api/auth/gitlab/callback`
-4. Scopes: `read_user`, `read_api`, `read_repository`
+4. Scopes: `api`, `read_user`, `read_repository`
 
 ```env
 GITLAB_CLIENT_ID=your-application-id
@@ -300,9 +291,12 @@ GITLAB_CLIENT_SECRET=your-secret
 
 ### Bitbucket
 
-1. Go to [Bitbucket App Passwords](https://bitbucket.org/account/settings/app-passwords/) or create OAuth consumer
+1. Go to
+   [Bitbucket App Passwords](https://bitbucket.org/account/settings/app-passwords/)
+   or create OAuth consumer
 2. For OAuth: Workspace settings > OAuth consumers
 3. Callback URL: `http://localhost:3000/api/auth/bitbucket/callback`
+4. Permissions: `repository`, `pullrequest:write`, `issue`, `account`
 
 ```env
 BITBUCKET_CLIENT_ID=your-client-id
@@ -322,7 +316,8 @@ FIGMA_CLIENT_SECRET=your-client-secret
 
 ### Sentry
 
-1. Go to [Sentry Developer Settings](https://sentry.io/settings/developer-settings/)
+1. Go to
+   [Sentry Developer Settings](https://sentry.io/settings/developer-settings/)
 2. Create new public integration
 3. Redirect URL: `http://localhost:3000/api/auth/sentry/callback`
 
@@ -351,7 +346,8 @@ POSTHOG_HOST=https://app.posthog.com
 
 1. Go to [Salesforce Setup](https://login.salesforce.com/) > App Manager
 2. Create **New Connected App**
-3. Enable OAuth, add callback: `http://localhost:3000/api/auth/salesforce/callback`
+3. Enable OAuth, add callback:
+   `http://localhost:3000/api/auth/salesforce/callback`
 4. Required scopes: `api`, `refresh_token`
 
 ```env
@@ -537,8 +533,10 @@ XERO_CLIENT_SECRET=your-client-secret
 
 ### Mailchimp
 
-1. Go to [Mailchimp Account API Keys](https://us1.admin.mailchimp.com/account/api/)
-2. For OAuth: Register app at [Mailchimp OAuth](https://admin.mailchimp.com/account/oauth2/)
+1. Go to
+   [Mailchimp Account API Keys](https://us1.admin.mailchimp.com/account/api/)
+2. For OAuth: Register app at
+   [Mailchimp OAuth](https://admin.mailchimp.com/account/oauth2/)
 3. Redirect: `http://localhost:3000/api/auth/mailchimp/callback`
 
 ```env
@@ -550,7 +548,8 @@ MAILCHIMP_API_KEY=your-api-key-us1
 
 ### Twitter/X
 
-1. Go to [Twitter Developer Portal](https://developer.twitter.com/en/portal/dashboard)
+1. Go to
+   [Twitter Developer Portal](https://developer.twitter.com/en/portal/dashboard)
 2. Create project and app
 3. Enable OAuth 2.0
 4. Callback URL: `http://localhost:3000/api/auth/twitter/callback`
@@ -642,16 +641,57 @@ DEBUG=veryfront:oauth veryfront dev
 
 ### Token Storage
 
-By default, tokens are stored in memory. For production:
+OAuth routes do not silently select process-local storage. Before loading an
+OAuth route in production, install one durable `ApplicationOAuthTokenStore` from
+`lib/oauth-store-registry.ts` in your framework's server instrumentation. The
+adapter must atomically consume state once, issue a new opaque revision for
+every token write, compare-and-set by revision, and hold a bounded distributed
+refresh lease. Use encrypted Redis or a transactional database with TLS and
+least-privilege credentials. The adapter must also implement
+`getStorageStatus()` and truthfully report `{ mode, durable, encrypted }`. Use
+`encrypted: null` when the adapter cannot attest to encryption at rest; the
+setup API never guesses capabilities from environment-variable names.
 
-1. Implement `TokenStore` interface in `lib/token-store.ts`
-2. Use Redis, database, or encrypted file storage
-3. Handle token refresh automatically
+The generated project intentionally does not include a fake Redis or database
+adapter: those implementations must use the transactions and lease primitives of
+the backend actually deployed. Wire the completed adapter during server startup
+before importing any OAuth route:
+
+```ts
+import {
+  type ApplicationOAuthTokenStore,
+  installOAuthTokenStore,
+} from "./lib/oauth-store-registry.ts";
+
+export function installApplicationOAuthStore(
+  store: ApplicationOAuthTokenStore,
+): void {
+  installOAuthTokenStore(store);
+}
+```
+
+The registry validates the complete interface and rejects non-durable adapters;
+your adapter test suite must additionally prove atomic state consumption,
+revisioned compare-and-set, and crash-recoverable distributed refresh leases.
+
+For local development only, opt in explicitly:
+
+```env
+NODE_ENV=development
+VERYFRONT_OAUTH_STORE_MODE=memory
+```
+
+OAuth routes also require a verified identity resolver. During application
+startup call `installRequestIdentityResolver()` from `lib/user-id.ts` with a
+resolver backed by your server-side session or verified JWT. Raw request headers
+are not an authentication boundary and are intentionally ignored.
 
 ## Production Checklist
 
 - [ ] Update all redirect URIs to production domain
-- [ ] Implement persistent token storage
+- [ ] Install a durable OAuth store with one-shot state, CAS, and distributed
+      refresh locking
+- [ ] Install a verified session/JWT identity resolver
 - [ ] Set up token encryption
 - [ ] Configure rate limiting
 - [ ] Add error monitoring (Sentry)

@@ -6,7 +6,7 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import {
   generateCacheKey as generateTransformCacheKey,
@@ -22,6 +22,12 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import {
+  fingerprintPipelineImportMap,
+  snapshotImportMap,
+} from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -53,6 +59,7 @@ interface TransformOptions {
   ssr: boolean;
   reactVersion?: string;
   onProgress?: TransformProgressListener;
+  loadImportMap?: () => Promise<ImportMapConfig>;
 }
 
 interface PipelineResult {
@@ -84,6 +91,7 @@ export interface ModuleTransformCacheDeps {
   findMissingFrameworkBundlePaths: (code: string) => Promise<string[]>;
   getHttpBundleCacheDir: typeof getHttpBundleCacheDir;
   setCachedTransformAsync: typeof setCachedTransformAsync;
+  loadImportMap: typeof loadImportMap;
   runPipeline: (
     code: string,
     filePath: string,
@@ -108,6 +116,7 @@ const defaultDeps: ModuleTransformCacheDeps = {
     }),
   getHttpBundleCacheDir,
   setCachedTransformAsync,
+  loadImportMap,
   runPipeline: async (code, filePath, projectDir, options) => {
     const { runPipeline } = await import("#veryfront/transforms/pipeline/index.ts");
     return await runPipeline(code, filePath, projectDir, options);
@@ -165,13 +174,20 @@ export async function transformModuleCodeWithCache(
 ): Promise<ModuleTransformCacheResult> {
   const deps = input.deps ?? defaultDeps;
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
-  const contentHash = hashCodeHex(input.fileContent);
+  const importMap = snapshotImportMap(
+    await deps.loadImportMap(input.projectDir, input.adapter),
+  );
+  const [contentHash, importMapFingerprint] = await Promise.all([
+    computeHash(input.fileContent),
+    fingerprintPipelineImportMap(importMap),
+  ]);
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
   const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
-  const configHash = hashCodeHex(JSON.stringify([
+  const configHash = await computeHash(JSON.stringify([
     input.projectDir,
     input.mode,
     reactVersion,
+    importMapFingerprint,
   ]));
   const cacheKey = generateTransformCacheKey(
     scopedPath,
@@ -186,6 +202,7 @@ export async function transformModuleCodeWithCache(
     ssr: true,
     reactVersion,
     onProgress: input.onProgress,
+    loadImportMap: () => Promise.resolve(importMap),
   };
 
   await deps.initializeTransformCache();
@@ -244,10 +261,10 @@ export async function transformModuleCodeWithCache(
           "Check that framework sources exist in dist/framework-src/ and ssrVfModulesPlugin is running",
       });
     } else {
-      deps.setCachedTransformAsync(
+      await deps.setCachedTransformAsync(
         cacheKey,
         transformedCode,
-        hashCodeHex(transformedCode).slice(0, 16),
+        contentHash,
         ttlSeconds,
       ).catch((error) => {
         logger.debug("Failed to update cache after retry", {

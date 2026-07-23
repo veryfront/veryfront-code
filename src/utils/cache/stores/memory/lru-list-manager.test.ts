@@ -8,14 +8,14 @@ function createNode(key: string): LRUNode<unknown> {
   return new LRUNode(key, { value: key, size: 1, lastAccessed: Date.now() });
 }
 
-function createListWithNodes(...keys: string[]): {
+function createListWithNodes<const Keys extends readonly string[]>(...keys: Keys): {
   list: LRUListManager<unknown>;
-  nodes: Record<string, LRUNode<unknown>>;
+  nodes: Record<Keys[number], LRUNode<unknown>>;
 } {
   const list = new LRUListManager<unknown>();
-  const nodes: Record<string, LRUNode<unknown>> = {};
+  const nodes = {} as Record<Keys[number], LRUNode<unknown>>;
 
-  for (const key of keys) {
+  for (const key of keys as readonly Keys[number][]) {
     const node = createNode(key);
     nodes[key] = node;
     list.addToFront(node);

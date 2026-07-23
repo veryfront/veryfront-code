@@ -4,23 +4,7 @@
  * Provides a type-safe interface to Slack API operations.
  */
 
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  }
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
-
-  return undefined;
-}
+import { fetchOAuthJson } from "./oauth.ts";
 
 const SLACK_API_BASE = "https://slack.com/api";
 
@@ -55,30 +39,6 @@ export interface SlackUser {
   };
 }
 
-/**
- * Slack OAuth provider configuration
- */
-export const slackOAuthProvider = {
-  name: "slack",
-  authorizationUrl: "https://slack.com/oauth/v2/authorize",
-  tokenUrl: "https://slack.com/api/oauth.v2.access",
-  clientId: getEnv("SLACK_CLIENT_ID") ?? "",
-  clientSecret: getEnv("SLACK_CLIENT_SECRET") ?? "",
-  scopes: [
-    "channels:history",
-    "channels:read",
-    "chat:write",
-    "groups:history",
-    "groups:read",
-    "im:history",
-    "im:read",
-    "mpim:history",
-    "mpim:read",
-    "users:read",
-  ],
-  callbackPath: "/api/auth/slack/callback",
-};
-
 export interface SlackClient {
   listChannels(options?: {
     limit?: number;
@@ -105,38 +65,26 @@ export interface SlackClient {
  * Create a Slack client for a specific user
  */
 export function createSlackClient(userId: string): SlackClient {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(slackOAuthProvider, userId, "slack");
-    if (!token) {
-      throw new Error(
-        "Slack not connected. Please connect your Slack account first.",
-      );
-    }
-    return token;
-  }
-
   async function apiRequest<T>(
     method: string,
     params: Record<string, unknown> = {},
   ): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${SLACK_API_BASE}/${method}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json; charset=utf-8",
+    const data = await fetchOAuthJson<{ ok?: boolean; error?: string } & T>(
+      userId,
+      "slack",
+      `${SLACK_API_BASE}/${method}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify(params),
       },
-      body: JSON.stringify(params),
-    });
-
-    const data = await response.json();
+    );
 
     if (!data.ok) {
       throw new Error(`Slack API error: ${data.error}`);
     }
 
-    return data as T;
+    return data;
   }
 
   return {
@@ -176,7 +124,7 @@ export function createSlackClient(userId: string): SlackClient {
     /**
      * Send a message to a channel
      */
-    async sendMessage(
+    sendMessage(
       channelId: string,
       text: string,
       options = {},

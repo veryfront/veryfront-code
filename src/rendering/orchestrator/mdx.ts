@@ -1,9 +1,14 @@
 import { wrapWithContext } from "#veryfront/errors";
 import type { MdxBundle } from "#veryfront/types";
-import type { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
+import {
+  cloneMDXCompilationResult,
+  type MDXCacheAdapter,
+} from "#veryfront/transforms/mdx/index.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 
 export interface MDXCompilerConfig {
   projectDir: string;
@@ -18,10 +23,14 @@ type MDXCompileResult = MdxBundle & {
   nodeMap?: Map<number, unknown>;
 };
 
-// Module-level so dedup spans compiler instances: the renderer creates an
-// MDXCompiler per render context, and the bundle cache key (mdx:<mode>:<hash>)
-// is already global, so the flight map can be too.
+// Module-level so dedup spans compiler instances. Keys come from the cache
+// adapter's complete compilation identity, which includes tenant scope and
+// every caller-controlled input that can change emitted code.
 const compileFlight = new Singleflight<MDXCompileResult>();
+
+function frameFlightPart(value: string): string {
+  return `${value.length}:${value}`;
+}
 
 export class MDXCompiler {
   constructor(private config: MDXCompilerConfig) {}
@@ -41,25 +50,53 @@ export class MDXCompiler {
       async () => {
         const cachedBundle = await withSpan(
           SpanNames.MDX_CACHE_GET,
-          () => this.config.mdxCacheAdapter.getCachedBundle(content, frontmatter, filePath),
+          () =>
+            this.config.mdxCacheAdapter.getCachedBundle(
+              content,
+              frontmatter,
+              filePath,
+              this.config.studioEmbed,
+            ),
           spanAttrs,
         );
 
-        if (cachedBundle) return cachedBundle;
+        if (cachedBundle) return cloneMDXCompilationResult(cachedBundle);
 
-        // Key includes projectDir and filePath because relative imports are
-        // resolved against the file's location: identical source in two
-        // places can compile to different modules, so only compiles of the
-        // same file may share an in-flight promise.
-        const contentHash = await this.config.mdxCacheAdapter.computeHash(content);
-        const flightKey = `mdx:${this.config.projectDir}:${this.config.mode}:${contentHash}:${
-          filePath ?? "inline"
+        let compilationIdentity: string;
+        try {
+          compilationIdentity = await this.config.mdxCacheAdapter.computeCompilationIdentity(
+            content,
+            frontmatter,
+            filePath,
+            this.config.studioEmbed,
+          );
+        } catch {
+          // Unsupported/cyclic frontmatter must not make compilation fail.
+          // It is intentionally compiled without cache or cross-call sharing.
+          return this.compileAndCache(content, frontmatter, filePath);
+        }
+
+        const flightKey = `mdx:${frameFlightPart(this.config.projectDir)}${
+          frameFlightPart(compilationIdentity)
         }`;
 
-        return compileFlight.do(
+        const processor = tryResolveContract<ContentProcessor>("ContentProcessor");
+        if (processor?.resultIsolation !== "structured-clone") {
+          return this.compileAndCache(content, frontmatter, filePath);
+        }
+
+        const sharedResult = await compileFlight.do(
           flightKey,
           () => this.compileAndCache(content, frontmatter, filePath),
         );
+        try {
+          return cloneMDXCompilationResult(sharedResult);
+        } catch {
+          // A provider that violates its declared isolation capability must not
+          // leak a shared mutable result. Recompile independently for this
+          // caller and let cache persistence fail closed for unsupported data.
+          return this.compileAndCache(content, frontmatter, filePath);
+        }
       },
       { ...spanAttrs, "mdx.mode": this.config.mode },
     );
@@ -80,11 +117,20 @@ export class MDXCompiler {
         frontmatter,
         filePath,
         "server",
+        undefined,
+        this.config.studioEmbed,
       )) as MDXCompileResult;
 
       await withSpan(
         SpanNames.MDX_CACHE_SET,
-        () => this.config.mdxCacheAdapter.setCachedBundle(content, bundle, filePath),
+        () =>
+          this.config.mdxCacheAdapter.setCachedBundle(
+            content,
+            bundle,
+            filePath,
+            frontmatter,
+            this.config.studioEmbed,
+          ),
         { "mdx.file_path": filePath ?? "inline" },
       );
 

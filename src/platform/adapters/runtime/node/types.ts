@@ -5,6 +5,7 @@ export interface WSWebSocket extends EventTarget {
   on(event: "error", listener: (error: Error) => void): this;
   send(data: string | ArrayBuffer): void;
   close(code?: number, reason?: string): void;
+  terminate?(): void;
 }
 
 export interface WSMessageData {
@@ -27,11 +28,12 @@ export interface NodeServerResponse {
 
 export interface NodeHttpServer {
   listen(port: number, hostname: string, callback: () => void): void;
-  close(callback: () => void): void;
+  close(callback: (error?: Error) => void): void;
 }
 
 export interface WSWebSocketServer {
-  close(): void;
+  readonly clients?: Iterable<WSWebSocket>;
+  close(callback?: (error?: Error) => void): void;
   handleUpgrade(
     request: unknown,
     socket: unknown,

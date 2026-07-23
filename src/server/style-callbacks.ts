@@ -16,10 +16,10 @@ import {
 } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
-  invalidatePreparedProjectCSS,
+  invalidatePreparedProjectCSSAsync,
 } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
-import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { invalidateProjectCSSAsync } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 
 const styleCallbackLog = logger.component("server-style-callbacks");
 
@@ -92,10 +92,21 @@ export function createServerStyleInvalidationCallbacks(): Pick<
   "clearProjectCSSCache"
 > {
   return {
-    clearProjectCSSCache: (projectSlug) => {
-      invalidateProjectCSS(projectSlug);
-      invalidatePreparedProjectCSS(projectSlug);
+    clearProjectCSSCache: async (projectSlug) => {
       invalidateProjectCandidateManifests(projectSlug);
+      const outcomes = await Promise.allSettled([
+        invalidateProjectCSSAsync(projectSlug),
+        invalidatePreparedProjectCSSAsync(projectSlug),
+      ]);
+      const failures = outcomes.flatMap((outcome) =>
+        outcome.status === "rejected" ? [outcome.reason] : []
+      );
+      if (failures.length > 0) {
+        throw new AggregateError(
+          failures,
+          `Failed to invalidate distributed CSS caches for ${projectSlug}`,
+        );
+      }
     },
   };
 }

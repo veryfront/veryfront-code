@@ -55,4 +55,37 @@ describe("server/handlers/preview/hmr-message-router", () => {
       },
     );
   });
+
+  it("sends scoped updates only to the target project and unscoped external clients", () => {
+    const target = new MockSocket();
+    const otherProject = new MockSocket();
+    const external = new MockSocket();
+    const now = Date.now();
+    addClient({
+      id: "target",
+      socket: target,
+      connectedAt: now,
+      lastActivity: now,
+      projectSlug: "target-project",
+    });
+    addClient({
+      id: "other",
+      socket: otherProject,
+      connectedAt: now,
+      lastActivity: now,
+      projectSlug: "other-project",
+    });
+    addClient({
+      id: "external",
+      socket: external,
+      connectedAt: now,
+      lastActivity: now,
+    });
+
+    broadcastUpdate(["app/page.tsx"], { projectSlug: "target-project" });
+
+    assertEquals(target.sent.length, 1);
+    assertEquals(external.sent.length, 1);
+    assertEquals(otherProject.sent.length, 0);
+  });
 });

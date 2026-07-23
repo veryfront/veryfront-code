@@ -22,6 +22,7 @@ export interface PersistResolvedModuleInput {
   log: Logger;
   projectSlug: string;
   reactVersion?: string;
+  sourceContentHash?: string;
   distributedCacheWrite?: {
     distributedCache: DistributedCache;
     transformCacheKey: string;
@@ -43,7 +44,7 @@ export async function persistResolvedModule(
   const moduleCode = ensureFilenameDefaultExport(input.normalizedPath, input.moduleCode);
 
   if (input.distributedCacheWrite) {
-    writeToDistributedCache(
+    await writeToDistributedCache(
       input.distributedCacheWrite.distributedCache,
       input.distributedCacheWrite.transformCacheKey,
       input.distributedCacheWrite.projectId,
@@ -66,6 +67,7 @@ export async function persistResolvedModule(
     input.pathCache,
     input.log,
     input.reactVersion,
+    input.sourceContentHash,
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
     projectSlug: input.projectSlug,

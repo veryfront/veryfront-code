@@ -6,7 +6,7 @@ import {
 import type { WSMessageData, WSWebSocket } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
-import { registerWebSocketUpgrade } from "./http-server.ts";
+import { NODE_WEBSOCKET_UPGRADE_ID_HEADER, registerWebSocketUpgrade } from "./http-server.ts";
 import * as crypto from "node:crypto";
 import { Buffer } from "node:buffer";
 
@@ -35,6 +35,16 @@ function createCloseEvent(
   }) as CloseEvent;
 }
 
+function createErrorEvent(error: Error): ErrorEvent {
+  return Object.assign(new Event("error"), {
+    error,
+    message: error.message,
+    filename: "",
+    lineno: 0,
+    colno: 0,
+  }) as ErrorEvent;
+}
+
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
     const key = request.headers.get("sec-websocket-key");
@@ -47,12 +57,13 @@ export class NodeServerAdapter implements ServerAdapter {
       );
     }
 
+    const requestId = request.headers.get(NODE_WEBSOCKET_UPGRADE_ID_HEADER) ?? key;
     const protocol = request.headers.get("sec-websocket-protocol");
     const socket = new NodeWebSocket();
 
     void (async () => {
       try {
-        const ws = await registerWebSocketUpgrade(key);
+        const ws = await registerWebSocketUpgrade(requestId);
         socket._attachRealSocket(ws);
       } catch (error) {
         serverLogger.error("WebSocket upgrade failed:", error);
@@ -93,38 +104,77 @@ export class NodeWebSocket {
   static readonly CLOSED = 3;
 
   private pendingMessages: Array<string | ArrayBuffer> = [];
+  private pendingClose: { code?: number; reason?: string } | null = null;
+  private openDispatched = false;
+  private closeDispatched = false;
+  private listeners = new Map<
+    string,
+    Map<EventListener, {
+      once: boolean;
+      signal?: AbortSignal;
+      abortListener?: () => void;
+    }>
+  >();
 
   _attachRealSocket(ws: WSWebSocket): void {
+    if (this.readyState === NodeWebSocket.CLOSED) {
+      if (ws.terminate) ws.terminate();
+      else ws.close();
+      return;
+    }
+
     this.ws = ws;
-    this.readyState = 1; // OPEN
 
     ws.on("open", () => {
-      this.readyState = 1;
-      this.onopen?.(new Event("open"));
+      this.dispatchOpen();
     });
 
     ws.on("message", (data: WSMessageData) => {
-      this.onmessage?.(new MessageEvent("message", { data: data.toString() }));
+      if (this.readyState !== NodeWebSocket.OPEN) return;
+      this.dispatch("message", new MessageEvent("message", { data: data.toString() }));
     });
 
     ws.on("close", (code?: number, reason?: Buffer | string) => {
-      this.readyState = 3;
-      this.onclose?.(createCloseEvent(code, reason));
+      this.finishClose(createCloseEvent(code, reason));
     });
 
     ws.on("error", (error: Error) => {
-      this.onerror?.(new ErrorEvent("error", { error }));
+      this.dispatch("error", createErrorEvent(error));
     });
 
-    for (const msg of this.pendingMessages) ws.send(msg);
-    this.pendingMessages = [];
+    if (this.pendingClose) {
+      const pendingClose = this.pendingClose;
+      this.pendingClose = null;
+      this.pendingMessages = [];
+      this.readyState = NodeWebSocket.CLOSING;
+      ws.close(pendingClose.code, pendingClose.reason);
+      return;
+    }
 
-    this.onopen?.(new Event("open"));
+    this.readyState = NodeWebSocket.OPEN;
+
+    const pendingMessages = this.pendingMessages;
+    this.pendingMessages = [];
+    try {
+      for (const msg of pendingMessages) ws.send(msg);
+    } catch (error) {
+      this.dispatch(
+        "error",
+        createErrorEvent(error instanceof Error ? error : new Error(String(error))),
+      );
+      this.close();
+      return;
+    }
+
+    this.dispatchOpen();
   }
 
   _emitError(error: Error): void {
-    this.readyState = 3; // CLOSED
-    this.onerror?.(new ErrorEvent("error", { error }));
+    if (this.readyState === NodeWebSocket.CLOSED) return;
+    this.pendingMessages = [];
+    this.pendingClose = null;
+    this.dispatch("error", createErrorEvent(error));
+    this.finishClose(createCloseEvent(1006, ""));
   }
 
   send(data: string | ArrayBuffer): void {
@@ -147,41 +197,106 @@ export class NodeWebSocket {
   }
 
   close(code?: number, reason?: string): void {
-    this.ws?.close(code, reason);
-    this.readyState = 2; // CLOSING
+    if (
+      this.readyState === NodeWebSocket.CLOSING ||
+      this.readyState === NodeWebSocket.CLOSED
+    ) return;
+
+    this.readyState = NodeWebSocket.CLOSING;
+    this.pendingMessages = [];
+    if (!this.ws) {
+      this.pendingClose = { code, reason };
+      return;
+    }
+    this.ws.close(code, reason);
   }
 
-  addEventListener(type: string, listener: EventListener): void {
-    switch (type) {
-      case "open":
-        this.onopen = listener as (event: Event) => void;
-        return;
-      case "close":
-        this.onclose = listener as (event: CloseEvent) => void;
-        return;
-      case "error":
-        this.onerror = listener as (event: Event) => void;
-        return;
-      case "message":
-        this.onmessage = listener as (event: MessageEvent) => void;
-        return;
+  addEventListener(
+    type: string,
+    listener: EventListener,
+    options: AddEventListenerOptions = {},
+  ): void {
+    if (options.signal?.aborted) return;
+
+    let typeListeners = this.listeners.get(type);
+    if (!typeListeners) {
+      typeListeners = new Map();
+      this.listeners.set(type, typeListeners);
+    }
+    // EventTarget ignores duplicate registrations with the same type and
+    // callback. This also prevents duplicate abort listeners.
+    if (typeListeners.has(listener)) return;
+
+    const registration: {
+      once: boolean;
+      signal?: AbortSignal;
+      abortListener?: () => void;
+    } = {
+      once: options.once === true,
+      signal: options.signal,
+    };
+    if (options.signal) {
+      registration.abortListener = () => this.removeEventListener(type, listener);
+      options.signal.addEventListener("abort", registration.abortListener, { once: true });
+    }
+    typeListeners.set(listener, registration);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    const typeListeners = this.listeners.get(type);
+    const registration = typeListeners?.get(listener);
+    if (!typeListeners || !registration) return;
+    typeListeners.delete(listener);
+    if (typeListeners.size === 0) this.listeners.delete(type);
+    if (registration.signal && registration.abortListener) {
+      registration.signal.removeEventListener("abort", registration.abortListener);
     }
   }
 
-  removeEventListener(type: string, _listener: EventListener): void {
-    switch (type) {
-      case "open":
-        this.onopen = null;
-        return;
-      case "close":
-        this.onclose = null;
-        return;
-      case "error":
-        this.onerror = null;
-        return;
-      case "message":
-        this.onmessage = null;
-        return;
+  private dispatchOpen(): void {
+    if (this.openDispatched || this.readyState !== NodeWebSocket.OPEN) return;
+    this.openDispatched = true;
+    this.dispatch("open", new Event("open"));
+  }
+
+  private finishClose(event: CloseEvent): void {
+    if (this.closeDispatched) return;
+    this.closeDispatched = true;
+    this.readyState = NodeWebSocket.CLOSED;
+    this.pendingMessages = [];
+    this.pendingClose = null;
+    this.dispatch("close", event);
+  }
+
+  private dispatch(type: string, event: Event): void {
+    try {
+      switch (type) {
+        case "open":
+          this.onopen?.(event);
+          break;
+        case "close":
+          this.onclose?.(event as CloseEvent);
+          break;
+        case "error":
+          this.onerror?.(event);
+          break;
+        case "message":
+          this.onmessage?.(event as MessageEvent);
+          break;
+      }
+    } catch (error) {
+      serverLogger.error("Node WebSocket event handler failed", { type, error });
+    }
+
+    const typeListeners = this.listeners.get(type);
+    if (!typeListeners) return;
+    for (const [listener, registration] of [...typeListeners]) {
+      if (registration.once) this.removeEventListener(type, listener);
+      try {
+        listener(event);
+      } catch (error) {
+        serverLogger.error("Node WebSocket event listener failed", { type, error });
+      }
     }
   }
 }

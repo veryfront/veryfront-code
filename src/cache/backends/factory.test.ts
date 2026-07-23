@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { createCacheBackend, isDiskCacheConfigured, isDistributedBackend } from "./factory.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { MemoryCacheBackend } from "./memory.ts";
@@ -23,13 +23,32 @@ Deno.test("factory: createCacheBackend with preferredBackend=memory", async () =
 });
 
 Deno.test("factory: isDistributedBackend", async (t) => {
-  await t.step("returns true for disk backend", () => {
-    assertEquals(isDistributedBackend(new DiskCacheBackend()), true);
+  await t.step("returns false for pod-local disk backend", () => {
+    assertEquals(isDistributedBackend(new DiskCacheBackend()), false);
   });
 
   await t.step("returns false for memory backend", () => {
     assertEquals(isDistributedBackend(new MemoryCacheBackend()), false);
   });
+});
+
+Deno.test("factory: explicit Redis selection fails closed when unavailable", async () => {
+  const originalUrl = Deno.env.get("REDIS_URL");
+  const originalVeryfrontUrl = Deno.env.get("VERYFRONT_REDIS_URL");
+  Deno.env.delete("REDIS_URL");
+  Deno.env.delete("VERYFRONT_REDIS_URL");
+  try {
+    await assertRejects(
+      () => createCacheBackend({ preferredBackend: "redis" }),
+      Error,
+      "could not be initialized",
+    );
+  } finally {
+    if (originalUrl !== undefined) Deno.env.set("REDIS_URL", originalUrl);
+    if (originalVeryfrontUrl !== undefined) {
+      Deno.env.set("VERYFRONT_REDIS_URL", originalVeryfrontUrl);
+    }
+  }
 });
 
 Deno.test("factory: isDiskCacheConfigured responds to env vars", async (t) => {

@@ -2,6 +2,7 @@ import type { ResolveFileOptions } from "../../base.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
+import type { RequestTokenProvenance } from "./request-context.ts";
 
 export type { DirectoryEntry };
 
@@ -52,6 +53,7 @@ export interface ContextualFSAdapter extends FSAdapter {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenProvenance?: RequestTokenProvenance;
     },
   ): Promise<T>;
 }
@@ -106,10 +108,13 @@ export interface FSAdapterConfig {
     cache?: {
       enabled?: boolean;
       ttl?: number;
+      maxSize?: number;
+      maxMemory?: number;
     };
     retry?: {
       maxRetries?: number;
-      retryDelay?: number;
+      initialDelay?: number;
+      maxDelay?: number;
     };
   };
   github?: GitHubConfig;
@@ -146,6 +151,7 @@ export interface InvalidationProjectContext {
   environment?: "preview" | "production";
   branch?: string | null;
   releaseId?: string | null;
+  contentSourceId?: string;
   styleArtifactHash?: string;
   styleAssetPath?: string;
 }
@@ -155,12 +161,12 @@ export interface InvalidationCallbacks {
   clearSSRModuleCacheForProject?: (projectId: string) => void;
   clearRouterDetectionCacheForProject?: (projectId: string) => void;
   clearModulePathCache?: () => void;
-  invalidateModulePaths?: (changedPaths: string[]) => void;
-  clearSnippetCacheForProject?: (projectSlug: string) => void;
+  invalidateModulePaths?: (changedPaths: string[]) => void | Promise<void>;
+  clearSnippetCacheForProject?: (projectSlug: string) => void | Promise<void>;
   triggerReload?: (changedPaths?: string[], project?: InvalidationProjectContext) => void;
   clearRendererCacheForProject?: (projectId: string) => void | Promise<void>;
   /** Invalidate project-level CSS cache when source files change */
-  clearProjectCSSCache?: (projectSlug: string) => void;
+  clearProjectCSSCache?: (projectSlug: string) => void | Promise<void>;
   /** Clear domain lookup cache to refresh release IDs after publishing */
   clearDomainCache?: () => void;
   /** Evict the current shared proxy adapter after successful invalidation */

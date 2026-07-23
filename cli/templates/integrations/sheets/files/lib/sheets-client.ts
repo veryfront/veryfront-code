@@ -4,15 +4,7 @@
  * Provides a type-safe interface to Google Sheets API operations.
  */
 
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-  return undefined;
-}
+import { fetchOAuthJson } from "./oauth.ts";
 
 const SHEETS_API_BASE = "https://sheets.googleapis.com/v4";
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
@@ -83,20 +75,6 @@ export interface BatchUpdateOptions {
   responseRanges?: string[];
 }
 
-export const sheetsOAuthProvider = {
-  name: "sheets",
-  authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenUrl: "https://oauth2.googleapis.com/token",
-  clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
-  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
-  scopes: [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/drive.file",
-  ],
-  callbackPath: "/api/auth/sheets/callback",
-};
-
 export function createSheetsClient(userId: string): {
   listSpreadsheets(options?: {
     maxResults?: number;
@@ -166,54 +144,32 @@ export function createSheetsClient(userId: string): {
     rule: Record<string, unknown>;
   }): Promise<unknown>;
 } {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(sheetsOAuthProvider, userId, "sheets");
-    if (token) return token;
-    throw new Error(
-      "Google Sheets not connected. Please connect your Google account first.",
-    );
-  }
-
-  async function apiRequest<T>(
+  function apiRequest<T>(
     baseUrl: string,
-    serviceName: "Sheets" | "Drive",
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${baseUrl}${endpoint}`, {
+    return fetchOAuthJson<T>(userId, "sheets", `${baseUrl}${endpoint}`, {
       ...options,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         ...options.headers,
       },
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(
-        `${serviceName} API error: ${response.status} - ${error}`,
-      );
-    }
-
-    if (response.status === 204) return undefined as T;
-    return response.json();
   }
 
   function sheetsApiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    return apiRequest<T>(SHEETS_API_BASE, "Sheets", endpoint, options);
+    return apiRequest<T>(SHEETS_API_BASE, endpoint, options);
   }
 
   function driveApiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    return apiRequest<T>(DRIVE_API_BASE, "Drive", endpoint, options);
+    return apiRequest<T>(DRIVE_API_BASE, endpoint, options);
   }
 
   return {

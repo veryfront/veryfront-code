@@ -8,7 +8,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/discovery.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "@std/path";
 import type { Extension, ResolvedExtension } from "./types.ts";
@@ -176,6 +176,26 @@ describe("mergeExtensions()", () => {
     assertEquals(result[0]?.extension.name, "alpha");
     assertEquals(result[0]?.extension.version, "3.0.0");
     assertEquals(result[1]?.extension.name, "beta");
+  });
+
+  it("rejects distinct same-priority extensions with the same name", () => {
+    const first = stubExtension({ name: "duplicate", version: "1.0.0" });
+    const second = stubExtension({ name: "duplicate", version: "2.0.0" });
+
+    assertThrows(
+      () =>
+        mergeExtensions(
+          [
+            { extension: first, source: "config", origin: "config[0]" },
+            { extension: second, source: "config", origin: "config[1]" },
+          ],
+          [],
+          [],
+          [],
+        ),
+      Error,
+      'Duplicate extension name "duplicate"',
+    );
   });
 
   it("should return empty for empty inputs", () => {

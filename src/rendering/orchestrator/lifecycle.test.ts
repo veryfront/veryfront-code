@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RendererLifecycle, type RendererServices } from "./lifecycle.ts";
 import { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getOwnedRedisCacheNamespaceDescriptors } from "#veryfront/cache/backends/redis-keyspace.ts";
+import { RedisCacheStore } from "../cache/stores/redis-store.ts";
+import type { RedisClientManager } from "#veryfront/utils/redis-client.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -176,6 +179,64 @@ describe("rendering/orchestrator/lifecycle", () => {
       assertEquals(services, mockServices);
     });
 
+    it("singleflights concurrent initialization and reuses the ready generation", async () => {
+      const mockServices = createMockServices();
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const factoryStarted = Promise.withResolvers<void>();
+      const releaseFactory = Promise.withResolvers<void>();
+      let factoryCalls = 0;
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: async () => {
+          factoryCalls++;
+          factoryStarted.resolve();
+          await releaseFactory.promise;
+          return mockServices;
+        },
+      });
+
+      const first = lifecycle.initialize();
+      await factoryStarted.promise;
+      const second = lifecycle.initialize();
+      releaseFactory.resolve();
+
+      const [firstServices, secondServices] = await Promise.all([first, second]);
+      assertEquals(firstServices, mockServices);
+      assertEquals(secondServices, mockServices);
+      assertEquals(await lifecycle.initialize(), mockServices);
+      assertEquals(factoryCalls, 1);
+    });
+
+    it("returns to idle when an injected factory fails so initialization can retry", async () => {
+      const mockServices = createMockServices();
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      let factoryCalls = 0;
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => {
+          factoryCalls++;
+          if (factoryCalls === 1) throw new Error("factory failed");
+          return mockServices;
+        },
+      });
+
+      await assertRejects(() => lifecycle.initialize(), Error, "factory failed");
+      assertEquals(await lifecycle.initialize(), mockServices);
+      assertEquals(factoryCalls, 2);
+    });
+
     it("getServices returns services after initialize", async () => {
       const mockServices = createMockServices();
       const adapter = createMockAdapter();
@@ -300,6 +361,85 @@ describe("rendering/orchestrator/lifecycle", () => {
       assertEquals(destroyed, true);
     });
 
+    it("retains failed cleanup for retry without repeating completed phases", async () => {
+      let destroyAttempts = 0;
+      const mockServices = createMockServices();
+      mockServices.cacheCoordinator.destroy = () => {
+        destroyAttempts++;
+        if (destroyAttempts === 1) return Promise.reject(new Error("disconnect failed"));
+        return Promise.resolve();
+      };
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: () => mockServices,
+      });
+
+      await lifecycle.initialize();
+      const firstFailure = await assertRejects(
+        () => lifecycle.destroy(),
+        AggregateError,
+        "cleanup failed",
+      );
+      assertEquals(typeof (firstFailure as { retryCleanup?: unknown }).retryCleanup, "function");
+      assertThrows(() => lifecycle.getServices(), Error);
+      await assertRejects(() => lifecycle.initialize(), Error, "require cleanup");
+
+      await (firstFailure as { retryCleanup: () => Promise<void> }).retryCleanup();
+      assertEquals(destroyAttempts, 2);
+      assertEquals(
+        mockServices._cleared.filter((entry) => entry === "componentRegistry").length,
+        1,
+      );
+      assertEquals(
+        mockServices._cleared.filter((entry) => entry === "virtualModules").length,
+        1,
+      );
+      assertThrows(() => lifecycle.getServices(), Error);
+    });
+
+    it("cancels and cleans a generation when destroy is requested during initialization", async () => {
+      const mockServices = createMockServices();
+      let destroyCalls = 0;
+      mockServices.cacheCoordinator.destroy = () => {
+        destroyCalls++;
+        return Promise.resolve();
+      };
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+      });
+      const factoryStarted = Promise.withResolvers<void>();
+      const releaseFactory = Promise.withResolvers<void>();
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        servicesFactory: async () => {
+          factoryStarted.resolve();
+          await releaseFactory.promise;
+          return mockServices;
+        },
+      });
+
+      const initialization = lifecycle.initialize();
+      await factoryStarted.promise;
+      const destruction = lifecycle.destroy();
+      releaseFactory.resolve();
+
+      await assertRejects(() => initialization, Error, "cancelled during shutdown");
+      await destruction;
+      assertEquals(destroyCalls, 1);
+      assertThrows(() => lifecycle.getServices(), Error);
+    });
+
     it("updateCompileMDX delegates after init", async () => {
       let updatedFn: unknown = null;
       const mockServices = createMockServices();
@@ -329,6 +469,137 @@ describe("rendering/orchestrator/lifecycle", () => {
       await lifecycle.initialize();
       lifecycle.updateCompileMDX(newCompile);
       assertEquals(updatedFn, newCompile);
+    });
+  });
+
+  describe("initialize Redis render cache", () => {
+    it("propagates configured millisecond TTLs as rounded-up Redis seconds", async () => {
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+        config: {
+          cache: {
+            render: { type: "redis", ttl: 7_200_001 },
+          },
+        },
+      });
+      await configManager.initialize();
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        projectId: "ttl-project",
+      });
+
+      try {
+        const services = await lifecycle.initialize();
+        const cacheStore = (services.cacheCoordinator as unknown as {
+          store: RedisCacheStore;
+        }).store;
+        const setTtls: number[] = [];
+        const clientManager: RedisClientManager = {
+          getClient: () =>
+            Promise.resolve({
+              connect: () => Promise.resolve(),
+              disconnect: () => Promise.resolve(),
+              get: () => Promise.resolve(null),
+              mGet: (keys) => Promise.resolve(keys.map(() => null)),
+              set: (
+                _key: string,
+                _value: string,
+                options?: { EX?: number },
+              ): Promise<string> => {
+                if (options?.EX !== undefined) setTtls.push(options.EX);
+                return Promise.resolve("OK");
+              },
+              del: () => Promise.resolve(0),
+              scan: () => Promise.resolve({ cursor: 0, keys: [] }),
+              expire: () => Promise.resolve(1),
+              isOpen: true,
+            }),
+          disconnect: () => Promise.resolve(),
+          isConfigured: () => true,
+        };
+        (cacheStore as unknown as { clientManager: RedisClientManager }).clientManager =
+          clientManager;
+
+        await cacheStore.set("page", {
+          result: {
+            html: "<p>cached</p>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          },
+          storedAt: Date.now(),
+        });
+
+        assertEquals(setTtls, [7_201]);
+      } finally {
+        await lifecycle.destroy();
+      }
+    });
+
+    it("normalizes a legacy configured prefix before namespace registration", async () => {
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+        config: {
+          cache: {
+            render: { type: "redis", redisKeyPrefix: "lifecycle-legacy-prefix" },
+          },
+        },
+      });
+      await configManager.initialize();
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+        projectId: "project-x",
+        contentSourceId: "preview-main",
+      });
+
+      try {
+        await lifecycle.initialize();
+        const descriptor = getOwnedRedisCacheNamespaceDescriptors()
+          .find((candidate) => candidate.prefix === "lifecycle-legacy-prefix:");
+        assertEquals(
+          descriptor?.matchProjectOwnership?.("project-x:preview-main:digest"),
+          { projectId: "project-x", environment: "preview" },
+        );
+      } finally {
+        await lifecycle.destroy();
+      }
+    });
+  });
+
+  describe("initialize filesystem render cache", () => {
+    it("rejects a configured cache directory that escapes the project root", async () => {
+      const adapter = createMockAdapter();
+      const configManager = new ConfigurationManager({
+        projectDir: "/project",
+        mode: "production",
+        adapter,
+        config: {
+          cache: {
+            dir: "../outside",
+            render: { type: "filesystem" },
+          },
+        },
+      });
+      await configManager.initialize();
+      const lifecycle = new RendererLifecycle({
+        configManager,
+        port: 3000,
+      });
+
+      await assertRejects(
+        () => lifecycle.initialize(),
+        TypeError,
+        "inside its owner root",
+      );
+      assertThrows(() => lifecycle.getServices(), Error);
     });
   });
 

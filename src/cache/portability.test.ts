@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   CACHE_DIR_TOKEN,
@@ -16,7 +16,7 @@ import {
   tokenizeAllVeryFrontPaths,
 } from "./paths.ts";
 import { createTokenizingGateway, type TokenizingCacheGateway } from "./tokenizing-gateway.ts";
-import { type CacheBackend, MemoryCacheBackend } from "./backend.ts";
+import { type CacheBackend, DiskCacheBackend, MemoryCacheBackend } from "./backend.ts";
 
 /**
  * Mock distributed backend that simulates Redis behavior.
@@ -285,6 +285,21 @@ describe("Cache Portability", () => {
       assertEquals(results?.get("third"), "export const value = 1;");
     });
 
+    it("preserves valid empty modules in single and batch reads", async () => {
+      await mockBackend.set("empty", "");
+
+      assertEquals(await gateway.getCode("empty"), "");
+      assertEquals((await gateway.getCodeBatch?.(["empty"]))?.get("empty"), "");
+    });
+
+    it("rejects unsupported pattern invalidation", async () => {
+      await assertRejects(
+        () => gateway.delCodeByPattern("project:*"),
+        TypeError,
+        "does not support pattern invalidation",
+      );
+    });
+
     it("provides isDistributed() = true for distributed backends", () => {
       assertEquals(gateway.isDistributed(), true);
     });
@@ -294,6 +309,11 @@ describe("Cache Portability", () => {
       const memGateway = createTokenizingGateway(memBackend, "MEM-GATEWAY");
 
       assertEquals(memGateway.isDistributed(), false);
+    });
+
+    it("does not classify pod-local disk storage as distributed", () => {
+      const diskGateway = createTokenizingGateway(new DiskCacheBackend(), "DISK-GATEWAY");
+      assertEquals(diskGateway.isDistributed(), false);
     });
 
     it("skips tokenization for memory backends (optimization)", async () => {

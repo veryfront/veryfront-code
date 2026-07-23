@@ -19,6 +19,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
+import { bindRequestTokenToProject } from "../context/request-context.ts";
 
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -376,7 +377,8 @@ export function createVeryfrontHandler(
       isProxyMode,
       adapterEnv: adapter.env,
     });
-    const { headers, requestContext: reqCtx } = preparedRequest;
+    const { headers } = preparedRequest;
+    let reqCtx = preparedRequest.requestContext;
     const { proxyTrusted } = preparedRequest.proxyTrust;
 
     const loggerContext: RequestContext = {
@@ -499,6 +501,10 @@ export function createVeryfrontHandler(
                 proxyTrust: { proxyTrusted },
               }),
           );
+          reqCtx = bindRequestTokenToProject(reqCtx, {
+            proxyTrusted: proxyTrusted === true,
+            projectSlug: projectRes.projectSlug,
+          });
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
           setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);

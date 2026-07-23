@@ -128,6 +128,60 @@ describe("ApiRouteMatcher", () => {
     });
   });
 
+  describe("Canonical route precedence", () => {
+    it("prefers an earlier static segment over a longer generic shape", () => {
+      const router = createRouter();
+      router.addRoute("/[section]/edit", "pages/generic-edit.tsx");
+      router.addRoute("/docs/[page]", "pages/docs-page.tsx");
+
+      assertEquals(router.match("/docs/edit")?.route.page, "pages/docs-page.tsx");
+    });
+
+    it("prefers a static suffix after an empty optional catch-all", () => {
+      const router = createRouter();
+      router.addRoute("/docs/[page]", "pages/dynamic.tsx");
+      router.addRoute("/docs/[[...parts]]/edit", "pages/optional-suffix.tsx");
+
+      assertEquals(router.match("/docs/edit")?.route.page, "pages/optional-suffix.tsx");
+    });
+
+    it("returns null for equal-shape ambiguity regardless of registration order", () => {
+      for (const patterns of [["/[id]", "/[slug]"], ["/[slug]", "/[id]"]]) {
+        const router = createRouter();
+        for (const pattern of patterns) router.addRoute(pattern, `pages${pattern}.tsx`);
+
+        assertEquals(router.match("/value"), null);
+      }
+    });
+
+    it("returns hyphenated catch-alls as arrays", () => {
+      const router = createRouter();
+      router.addRoute("/files/[...file-parts]", "pages/files.tsx");
+
+      assertEquals(router.match("/files/a/b")?.params["file-parts"], ["a", "b"]);
+    });
+
+    it("defines __proto__ as an own data property", () => {
+      const router = createRouter();
+      router.addRoute("/users/[__proto__]", "pages/users.tsx");
+
+      const params = router.match("/users/42")?.params;
+      assertEquals(Object.hasOwn(params ?? {}, "__proto__"), true);
+      assertEquals(params?.["__proto__"], "42");
+      assertStrictEquals(Object.getPrototypeOf(params), Object.prototype);
+    });
+
+    it("preserves ordering after eighteen route segments", () => {
+      const prefix = Array.from({ length: 18 }, (_, index) => `[part${index}]`);
+      const slug = `/${[...new Array(18).fill("value"), "fixed"].join("/")}`;
+      const router = createRouter();
+      router.addRoute(`/${[...prefix, "[tail]"].join("/")}`, "pages/dynamic-tail.tsx");
+      router.addRoute(`/${[...prefix, "fixed"].join("/")}`, "pages/static-tail.tsx");
+
+      assertEquals(router.match(slug)?.route.page, "pages/static-tail.tsx");
+    });
+  });
+
   describe("Catch-all routes", () => {
     it("matches catch-all routes", () => {
       const router = createRouter();

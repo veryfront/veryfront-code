@@ -24,15 +24,19 @@ function createMockSpan(): MockSpan {
     },
     setStatus(status: { code: number; message?: string }) {
       span._status = status;
+      return span;
     },
     setAttributes(attrs: Record<string, unknown>) {
       Object.assign(span._attributes, attrs);
+      return span;
     },
     setAttribute(key: string, value: unknown) {
       span._attributes[key] = value;
+      return span;
     },
     addEvent(name: string, attributes?: Record<string, unknown>) {
       span._events.push({ name, attributes });
+      return span;
     },
     recordException(error: Error) {
       span._exception = error;
@@ -48,7 +52,7 @@ function createMockSpan(): MockSpan {
     },
   };
 
-  return span as MockSpan;
+  return span as unknown as MockSpan;
 }
 
 function createMockTracer(): Tracer {
@@ -99,6 +103,52 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("startSpan", () => {
+    it("redacts sensitive and URL credential attribute values", () => {
+      let receivedAttributes: Record<string, unknown> | undefined;
+      tracer = {
+        startSpan: (_name, options) => {
+          receivedAttributes = options?.attributes;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      ops.startSpan("test", {
+        attributes: {
+          apiKey: "secret",
+          endpoint: "https://example.test/path?token=secret",
+        },
+      });
+
+      assertEquals(receivedAttributes, {
+        apiKey: "[REDACTED]",
+        endpoint: "https://example.test/path?token=[REDACTED]",
+      });
+    });
+
+    it("converts a Span parent into an OpenTelemetry Context", () => {
+      const parent = createMockSpan();
+      const expectedContext = { _type: "parent-context" } as never;
+      let receivedContext: unknown;
+      api.trace.setSpan = (_context, span) => {
+        assertEquals(span, parent);
+        return expectedContext;
+      };
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      ops.startSpan("child", { parent });
+
+      assertEquals(receivedContext, expectedContext);
+    });
+
     it("should create a span with given name", () => {
       const span = ops.startSpan("test.operation");
       assertEquals(span !== null, true);
@@ -136,6 +186,23 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("endSpan", () => {
+    it("still attempts to end a span when status recording fails", () => {
+      let ended = false;
+      const badSpan = {
+        ...createMockSpan(),
+        setStatus() {
+          throw new Error("setStatus failed");
+        },
+        end() {
+          ended = true;
+        },
+      } as unknown as Span;
+
+      ops.endSpan(badSpan);
+
+      assertEquals(ended, true);
+    });
+
     it("should end a span with OK status", () => {
       const mockSpan = createMockSpan();
       ops.endSpan(mockSpan);
@@ -150,7 +217,20 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(mockSpan._ended, true);
       assertEquals(mockSpan._status?.code, 2);
       assertEquals(mockSpan._status?.message, "test error");
-      assertEquals(mockSpan._exception, error);
+      assertEquals(mockSpan._exception?.message, error.message);
+    });
+
+    it("redacts URL credentials from error telemetry", () => {
+      const mockSpan = createMockSpan();
+      const error = new Error(
+        "failed https://user:password@example.test/path?access_token=secret",
+      );
+
+      ops.endSpan(mockSpan, error);
+
+      assertEquals(mockSpan._status?.message?.includes("secret"), false);
+      assertEquals(mockSpan._exception?.message.includes("secret"), false);
+      assertEquals(error.message.includes("secret"), true);
     });
 
     it("should handle null span gracefully", () => {

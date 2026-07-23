@@ -1,6 +1,6 @@
 import { LRUCacheAdapter } from "./cache/stores/memory/lru-cache-adapter.ts";
 import type { LRUCacheOptions } from "./cache/stores/memory/types.ts";
-import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils";
+import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
@@ -15,22 +15,40 @@ interface LRUOptions {
   cleanupIntervalMs?: number;
 }
 
+function requirePositiveFinite(value: number, option: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RangeError(`${option} must be a positive finite number`);
+  }
+  return value;
+}
+
 export class LRUCache<K, V> {
   private adapter: LRUCacheAdapter;
+  private readonly internalKeys = new Map<K, string>();
+  private readonly originalKeys = new Map<string, K>();
+  private nextInternalKey = 0;
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private cleanupIntervalMs: number;
   private ttlMs?: number;
 
   constructor(options: LRUOptions = {}) {
+    const ttlMs = options.ttlMs === undefined
+      ? undefined
+      : requirePositiveFinite(options.ttlMs, "ttlMs");
+    const cleanupIntervalMs = requirePositiveFinite(
+      options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS,
+      "cleanupIntervalMs",
+    );
     const adapterOptions: LRUCacheOptions = {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
       maxSizeBytes: options.maxSizeBytes,
-      ttlMs: options.ttlMs,
+      ttlMs,
+      onEvict: (internalKey) => this.releaseInternalKey(internalKey),
     };
 
     this.adapter = new LRUCacheAdapter(adapterOptions);
-    this.ttlMs = options.ttlMs;
-    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS;
+    this.ttlMs = ttlMs;
+    this.cleanupIntervalMs = cleanupIntervalMs;
 
     if (this.ttlMs && this.ttlMs > 0) {
       this.startPeriodicCleanup();
@@ -55,8 +73,21 @@ export class LRUCache<K, V> {
     this.cleanupTimer = undefined;
   }
 
-  private toStringKey(key: K): string {
-    return typeof key === "string" ? key : String(key);
+  private getOrCreateInternalKey(key: K): { internalKey: string; created: boolean } {
+    const existing = this.internalKeys.get(key);
+    if (existing !== undefined) return { internalKey: existing, created: false };
+
+    const internalKey = `lru:${this.nextInternalKey++}`;
+    this.internalKeys.set(key, internalKey);
+    this.originalKeys.set(internalKey, key);
+    return { internalKey, created: true };
+  }
+
+  private releaseInternalKey(internalKey: string): void {
+    if (!this.originalKeys.has(internalKey)) return;
+    const key = this.originalKeys.get(internalKey) as K;
+    this.originalKeys.delete(internalKey);
+    this.internalKeys.delete(key);
   }
 
   get size(): number {
@@ -64,26 +95,39 @@ export class LRUCache<K, V> {
   }
 
   has(key: K): boolean {
-    return this.adapter.get(this.toStringKey(key)) !== undefined;
+    const internalKey = this.internalKeys.get(key);
+    return internalKey !== undefined && this.adapter.has(internalKey);
   }
 
   get(key: K): V | undefined {
-    return this.adapter.get<V>(this.toStringKey(key));
+    const internalKey = this.internalKeys.get(key);
+    return internalKey === undefined ? undefined : this.adapter.get<V>(internalKey);
   }
 
   set(key: K, value: V): void {
-    this.adapter.set(this.toStringKey(key), value);
+    const { internalKey, created } = this.getOrCreateInternalKey(key);
+    try {
+      this.adapter.set(internalKey, value);
+    } catch (error) {
+      if (created) this.releaseInternalKey(internalKey);
+      throw error;
+    }
   }
 
   delete(key: K): boolean {
-    const stringKey = this.toStringKey(key);
-    const had = this.adapter.get(stringKey) !== undefined;
-    this.adapter.delete(stringKey);
+    const internalKey = this.internalKeys.get(key);
+    if (internalKey === undefined) return false;
+
+    const had = this.adapter.has(internalKey);
+    if (had) this.adapter.delete(internalKey);
+    else this.releaseInternalKey(internalKey);
     return had;
   }
 
   clear(): void {
     this.adapter.clear();
+    this.internalKeys.clear();
+    this.originalKeys.clear();
   }
 
   cleanup(): void {
@@ -92,15 +136,23 @@ export class LRUCache<K, V> {
 
   destroy(): void {
     this.stopCleanupTimer();
-    this.adapter.clear();
+    this.clear();
   }
 
-  keys(): IterableIterator<K> {
-    return this.adapter.keys() as IterableIterator<K>;
+  *keys(): IterableIterator<K> {
+    for (const [internalKey] of this.adapter.entries<unknown>()) {
+      if (this.originalKeys.has(internalKey)) {
+        yield this.originalKeys.get(internalKey) as K;
+      }
+    }
   }
 
-  entries(): IterableIterator<[K, V]> {
-    return this.adapter.entries<V>() as IterableIterator<[K, V]>;
+  *entries(): IterableIterator<[K, V]> {
+    for (const [internalKey, value] of this.adapter.entries<V>()) {
+      if (this.originalKeys.has(internalKey)) {
+        yield [this.originalKeys.get(internalKey) as K, value];
+      }
+    }
   }
 }
 

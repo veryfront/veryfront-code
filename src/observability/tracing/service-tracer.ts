@@ -1,3 +1,7 @@
+import { REDACTED, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
+import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributeValue } from "../telemetry-error.ts";
+import { runSyncWithContextFallback } from "./context-callback.ts";
+
 /** Context for open telemetry span. */
 export type OpenTelemetrySpanContext = {
   traceId: string;
@@ -144,10 +148,31 @@ function toAttributeValue(
   }
 
   if (typeof value === "object") {
-    return JSON.stringify(value);
+    try {
+      const redacted = redactForSerialization(value);
+      if (typeof redacted === "string") return redacted;
+      return JSON.stringify(redacted) ?? REDACTED;
+    } catch (_) {
+      return REDACTED;
+    }
   }
 
   return value;
+}
+
+function setSpanAttribute<TSpan extends OpenTelemetrySpan>(
+  span: TSpan,
+  key: string,
+  value: ServiceTracerAttributeInput,
+): void {
+  try {
+    span.setAttribute(
+      key,
+      sanitizeTelemetryAttributeValue(key, toAttributeValue(value)) ?? "",
+    );
+  } catch (_) {
+    /* expected: telemetry failures must not replace application results */
+  }
 }
 
 function createTracerSpan<TContext, TSpan extends OpenTelemetrySpan>(
@@ -155,27 +180,40 @@ function createTracerSpan<TContext, TSpan extends OpenTelemetrySpan>(
   span: TSpan,
   context: TContext,
 ): ServiceTracerSpan<TContext, TSpan> {
-  const spanContext = span.spanContext();
-
   return {
     setTag: (key, value) => {
-      span.setAttribute(key, toAttributeValue(value));
+      setSpanAttribute(span, key, value);
       return span;
     },
     setAttributes: (attributes) => {
-      for (const [key, value] of Object.entries(attributes)) {
-        span.setAttribute(key, toAttributeValue(value));
+      try {
+        for (const [key, value] of Object.entries(attributes)) {
+          setSpanAttribute(span, key, value);
+        }
+      } catch (_) {
+        /* expected: hostile attribute containers fail closed */
       }
       return span;
     },
     finish: () => {
-      span.end();
+      endSpan(span);
     },
-    withContext: <T>(fn: () => T): T => contextApi.with(context, fn),
-    context: () => ({
-      toTraceId: () => spanContext.traceId,
-      toSpanId: () => spanContext.spanId,
-    }),
+    withContext: <T>(fn: () => T): T =>
+      runSyncWithContextFallback(
+        (callback) => contextApi.with(context, callback),
+        fn,
+      ),
+    context: () => {
+      try {
+        const spanContext = span.spanContext();
+        return {
+          toTraceId: () => spanContext.traceId,
+          toSpanId: () => spanContext.spanId,
+        };
+      } catch (_) {
+        return undefined;
+      }
+    },
     otelSpan: span,
     otelContext: context,
   };
@@ -186,14 +224,133 @@ function setSpanErrorStatus<TSpan extends OpenTelemetrySpan>(
   errorStatusCode: number,
   error: unknown,
 ): void {
-  span.setStatus({ code: errorStatusCode });
-  if (error instanceof Error) {
-    span.recordException(error);
+  try {
+    span.setStatus({ code: errorStatusCode });
+  } catch (_) {
+    /* expected: telemetry failures must not replace application failures */
+  }
+  try {
+    span.recordException(sanitizeErrorForTelemetry(error));
+  } catch (_) {
+    /* expected: telemetry failures must not replace application failures */
   }
 }
 
-function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
-  return value instanceof Promise;
+function endSpan<TSpan extends OpenTelemetrySpan>(span: TSpan): void {
+  try {
+    span.end();
+  } catch (_) {
+    /* expected: telemetry failures must not replace application results */
+  }
+}
+
+function createInertSpan<TSpan extends OpenTelemetrySpan>(): TSpan {
+  const spanContext = Object.freeze({
+    traceId: "00000000000000000000000000000000",
+    spanId: "0000000000000000",
+  });
+  const span: OpenTelemetrySpan = Object.freeze({
+    setAttribute: () => span,
+    setAttributes: () => span,
+    setStatus: () => span,
+    recordException: () => {},
+    end: () => {},
+    spanContext: () => spanContext,
+  });
+  return span as TSpan;
+}
+
+function isUsableSpan<TSpan extends OpenTelemetrySpan>(value: unknown): value is TSpan {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
+  try {
+    const span = value as OpenTelemetrySpan;
+    return typeof span.setAttribute === "function" &&
+      typeof span.setAttributes === "function" &&
+      typeof span.setStatus === "function" &&
+      typeof span.recordException === "function" &&
+      typeof span.end === "function" &&
+      typeof span.spanContext === "function";
+  } catch (_) {
+    return false;
+  }
+}
+
+type SpanFinisher = (failed: boolean, error?: unknown) => void;
+
+function createSpanFinisher<TSpan extends OpenTelemetrySpan>(
+  span: TSpan,
+  errorStatusCode: number,
+): SpanFinisher {
+  let finished = false;
+  return (failed, error) => {
+    if (finished) return;
+    finished = true;
+    if (failed) setSpanErrorStatus(span, errorStatusCode, error);
+    endSpan(span);
+  };
+}
+
+function getThenMethod(value: unknown): ((...args: unknown[]) => unknown) | null {
+  if (
+    !((typeof value === "object" && value !== null) || typeof value === "function")
+  ) {
+    return null;
+  }
+  const then = (value as { then?: unknown }).then;
+  return typeof then === "function" ? then as (...args: unknown[]) => unknown : null;
+}
+
+function observeSettlement(
+  value: unknown,
+  finish: SpanFinisher,
+): void {
+  let then: ((...args: unknown[]) => unknown) | null;
+  try {
+    then = getThenMethod(value);
+  } catch (error) {
+    finish(true, error);
+    return;
+  }
+
+  if (!then) {
+    finish(false);
+    return;
+  }
+
+  let settled = false;
+  try {
+    Reflect.apply(then, value, [
+      () => {
+        if (settled) return;
+        settled = true;
+        finish(false);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        finish(true, error);
+      },
+    ]);
+  } catch (error) {
+    if (settled) return;
+    settled = true;
+    finish(true, error);
+  }
+}
+
+function consumeIgnoredThenable(value: unknown): void {
+  let then: ((...args: unknown[]) => unknown) | null;
+  try {
+    then = getThenMethod(value);
+  } catch (_) {
+    return;
+  }
+  if (!then) return;
+  try {
+    Reflect.apply(then, value, [() => {}, () => {}]);
+  } catch (_) {
+    /* expected: provider-owned thenables cannot affect application outcomes */
+  }
 }
 
 /** Create open telemetry service tracer. */
@@ -204,74 +361,172 @@ export function createOpenTelemetryServiceTracer<
 >(
   options: CreateOpenTelemetryServiceTracerOptions<TContext, TSpan, TSpanOptions>,
 ): OpenTelemetryServiceTracer<TContext, TSpan, TSpanOptions> {
-  const otelTracer = options.trace.getTracer(options.serviceName);
+  function getOtelTracer(): OpenTelemetryTracer<TContext, TSpan, TSpanOptions> | undefined {
+    try {
+      const candidate = options.trace.getTracer(options.serviceName);
+      if (
+        !candidate || typeof candidate.startSpan !== "function" ||
+        typeof candidate.startActiveSpan !== "function"
+      ) {
+        return undefined;
+      }
+      return candidate;
+    } catch (_) {
+      return undefined;
+    }
+  }
+
+  function getActiveContext(): TContext {
+    try {
+      return options.context.active();
+    } catch (_) {
+      return undefined as TContext;
+    }
+  }
+
+  function setSpanOnContext(context: TContext, span: TSpan): TContext {
+    try {
+      return options.trace.setSpan(context, span);
+    } catch (_) {
+      return context;
+    }
+  }
+
+  function startSpan(
+    name: string,
+    startOptions: TSpanOptions | undefined,
+    context: TContext,
+  ): TSpan {
+    const tracer = getOtelTracer();
+    if (tracer) {
+      try {
+        const candidate = tracer.startSpan(name, startOptions, context);
+        if (isUsableSpan<TSpan>(candidate)) return candidate;
+      } catch (_) {
+        /* expected: invalid providers fall back to an inert span */
+      }
+    }
+    return createInertSpan<TSpan>();
+  }
+
+  function getSpanFromContext(context: TContext): TSpan | undefined {
+    try {
+      const span = options.trace.getSpan(context);
+      return isUsableSpan<TSpan>(span) ? span : undefined;
+    } catch (_) {
+      return undefined;
+    }
+  }
 
   function wrap<TArgs extends unknown[], TResult>(
     name: string,
     fn: (...args: TArgs) => TResult,
   ): (...args: TArgs) => TResult {
     return (...args: TArgs): TResult => {
-      const span = otelTracer.startSpan(name, undefined, options.context.active());
-      const contextWithSpan = options.trace.setSpan(options.context.active(), span);
+      const parentContext = getActiveContext();
+      const span = startSpan(name, undefined, parentContext);
+      const contextWithSpan = setSpanOnContext(parentContext, span);
+      const finish = createSpanFinisher(span, options.errorStatusCode);
+      let result: TResult;
       try {
-        return options.context.with(contextWithSpan, () => fn(...args));
+        result = runSyncWithContextFallback(
+          (callback) => options.context.with(contextWithSpan, callback),
+          () => fn(...args),
+        );
       } catch (error) {
-        setSpanErrorStatus(span, options.errorStatusCode, error);
+        finish(true, error);
         throw error;
-      } finally {
-        span.end();
       }
+
+      observeSettlement(result, finish);
+      return result;
     };
   }
 
   function trace<T>(name: string, fn: () => Promise<T>): Promise<T>;
   function trace<T>(name: string, fn: () => T): T;
   function trace<T>(name: string, fn: () => T | Promise<T>): T | Promise<T> {
-    return otelTracer.startActiveSpan(name, (span) => {
+    let callbackInvoked = false;
+    let callbackSucceeded = false;
+    let callbackResult!: T | Promise<T>;
+    let callbackError: unknown;
+    let selectedSpan: TSpan | undefined;
+
+    const selectSpan = (candidate?: unknown): TSpan => {
+      if (!selectedSpan) {
+        selectedSpan = isUsableSpan<TSpan>(candidate) ? candidate : createInertSpan<TSpan>();
+      } else if (
+        isUsableSpan<TSpan>(candidate) && candidate !== selectedSpan
+      ) {
+        endSpan(candidate);
+      }
+      return selectedSpan;
+    };
+
+    const invoke = (): T | Promise<T> => {
+      if (callbackInvoked) {
+        if (!callbackSucceeded) throw callbackError;
+        return callbackResult;
+      }
+      callbackInvoked = true;
+      const finish = createSpanFinisher(selectSpan(), options.errorStatusCode);
       try {
-        const result = fn();
-        if (isPromise(result)) {
-          return result
-            .then((value) => {
-              span.end();
-              return value;
-            })
-            .catch((error) => {
-              setSpanErrorStatus(span, options.errorStatusCode, error);
-              span.end();
-              throw error;
-            });
-        }
-        span.end();
-        return result;
+        callbackResult = fn();
+        callbackSucceeded = true;
+        observeSettlement(callbackResult, finish);
+        return callbackResult;
       } catch (error) {
-        setSpanErrorStatus(span, options.errorStatusCode, error);
-        span.end();
+        callbackError = error;
+        finish(true, error);
         throw error;
       }
-    });
+    };
+
+    const activeTracer = getOtelTracer();
+    if (!activeTracer) return invoke();
+
+    let providerResult: unknown;
+    try {
+      providerResult = activeTracer.startActiveSpan(name, (span) => {
+        selectSpan(span);
+        return invoke();
+      });
+    } catch (_) {
+      if (!callbackInvoked) return invoke();
+      if (!callbackSucceeded) throw callbackError;
+      return callbackResult;
+    }
+
+    if (!callbackInvoked) {
+      consumeIgnoredThenable(providerResult);
+      return invoke();
+    }
+    if (providerResult !== callbackResult) consumeIgnoredThenable(providerResult);
+    if (!callbackSucceeded) throw callbackError;
+    return callbackResult;
   }
 
   const tracer: ServiceTracer<TContext, TSpan, TSpanOptions> = {
     init: () => {},
     startSpan: (name, startOptions) => {
-      let parentContext = options.context.active();
-
-      if (startOptions?.childOf?.otelSpan) {
-        parentContext = options.trace.setSpan(
-          options.context.active(),
-          startOptions.childOf.otelSpan,
-        );
+      let parentContext = getActiveContext();
+      try {
+        const parentSpan = startOptions?.childOf?.otelSpan;
+        if (parentSpan) {
+          parentContext = setSpanOnContext(parentContext, parentSpan);
+        }
+      } catch (_) {
+        /* expected: hostile option accessors do not prevent span creation */
       }
 
-      const span = otelTracer.startSpan(name, startOptions, parentContext);
-      const spanContext = options.trace.setSpan(parentContext, span);
+      const span = startSpan(name, startOptions, parentContext);
+      const spanContext = setSpanOnContext(parentContext, span);
       return createTracerSpan(options.context, span, spanContext);
     },
     scope: () => ({
       active: () => {
-        const activeContext = options.context.active();
-        const activeSpan = options.trace.getSpan(activeContext);
+        const activeContext = getActiveContext();
+        const activeSpan = getSpanFromContext(activeContext);
         if (!activeSpan) return null;
 
         return createTracerSpan(options.context, activeSpan, activeContext);
@@ -284,22 +539,26 @@ export function createOpenTelemetryServiceTracer<
   return {
     tracer,
     setActiveSpanAttributes(attributes) {
-      const activeSpan = tracer.scope().active();
-      if (!activeSpan) return;
-
-      activeSpan.setAttributes(attributes);
+      try {
+        const activeSpan = tracer.scope().active();
+        if (!activeSpan) return;
+        activeSpan.setAttributes(attributes);
+      } catch (_) {
+        /* expected: telemetry failures do not escape */
+      }
     },
     getTraceContext() {
-      const activeSpan = tracer.scope().active();
-      if (!activeSpan) {
+      try {
+        const activeSpan = tracer.scope().active();
+        const spanContext = activeSpan?.context();
+        if (!spanContext) return {};
+        return {
+          traceId: spanContext.toTraceId(),
+          spanId: spanContext.toSpanId(),
+        };
+      } catch (_) {
         return {};
       }
-
-      const spanContext = activeSpan.otelSpan.spanContext();
-      return {
-        traceId: spanContext.traceId,
-        spanId: spanContext.spanId,
-      };
     },
   };
 }

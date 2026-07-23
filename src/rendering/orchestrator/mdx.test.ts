@@ -28,12 +28,36 @@ async function sha256Hex(content: string): Promise<string> {
 
 function makeMissAdapter(
   onSetCachedBundle?: () => void,
+  identityScope = "test-scope",
 ): MDXCacheAdapter {
-  return {
+  const adapter = {
     computeHash: sha256Hex,
-    getCachedBundle: (_content: string, _fm?: Record<string, unknown>, _fp?: string) =>
-      Promise.resolve(undefined),
-    setCachedBundle: (_content: string, _bundle: MDXCompilationResult, _fp?: string) => {
+    computeCompilationIdentity: async (
+      content: string,
+      frontmatter?: Record<string, unknown>,
+      filePath?: string,
+      studioEmbed?: boolean,
+    ) =>
+      JSON.stringify([
+        identityScope,
+        await adapter.computeHash(content),
+        frontmatter ?? {},
+        filePath ?? null,
+        studioEmbed ?? false,
+      ]),
+    getCachedBundle: (
+      _content: string,
+      _fm?: Record<string, unknown>,
+      _fp?: string,
+      _studioEmbed?: boolean,
+    ) => Promise.resolve(undefined),
+    setCachedBundle: (
+      _content: string,
+      _bundle: MDXCompilationResult,
+      _fp?: string,
+      _fm?: Record<string, unknown>,
+      _studioEmbed?: boolean,
+    ) => {
       onSetCachedBundle?.();
       return Promise.resolve();
     },
@@ -41,7 +65,8 @@ function makeMissAdapter(
     invalidateSource: (_source: string) => Promise.resolve(0),
     clearAll: () => Promise.resolve(),
     getStats: () => Promise.resolve({ totalBundles: 0, totalSize: 0 }),
-  } as unknown as MDXCacheAdapter;
+  };
+  return adapter as unknown as MDXCacheAdapter;
 }
 
 describe("rendering/orchestrator/MDXCompiler singleflight", () => {
@@ -68,6 +93,8 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
         "#veryfront/extensions/contracts.ts"
       );
       registerContract("ContentProcessor", {
+        cacheIdentity: "test-content-processor@1",
+        resultIsolation: "structured-clone",
         compileMdx: (_opts: Record<string, unknown>) => compileGate,
       });
 
@@ -118,8 +145,45 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
 
       assertEquals(r1.compiledCode, COMPILED_CODE);
       assertEquals(r2.compiledCode, COMPILED_CODE);
+      assertEquals(r1 === r2, false);
       // setCachedBundle called once proves compileAndCache ran once
       assertEquals(setCacheCount, 1);
+    });
+
+    it("returns detached mutable results to concurrent callers", async () => {
+      let resolveCompile!: (r: MDXCompilationResult) => void;
+      const compileGate = new Promise<MDXCompilationResult>((resolve) => {
+        resolveCompile = resolve;
+      });
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        cacheIdentity: "test-content-processor@1",
+        resultIsolation: "structured-clone",
+        compileMdx: () => compileGate,
+      });
+
+      const compiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: makeMissAdapter(),
+      });
+      const firstPromise = compiler.compileMDX("# Detached", {}, "detached.mdx");
+      const secondPromise = compiler.compileMDX("# Detached", {}, "detached.mdx");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resolveCompile({
+        ...makeResult(),
+        frontmatter: { tags: ["original"] },
+        nodeMap: new Map([[1, { line: 1 }]]),
+      });
+
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+      (first.frontmatter!.tags as string[])[0] = "mutated";
+      (first.nodeMap!.get(1) as { line: number }).line = 99;
+
+      assertEquals(second.frontmatter, { tags: ["original"] });
+      assertEquals(second.nodeMap?.get(1), { line: 1 });
     });
 
     it("does not coalesce identical content compiled from different file paths", async () => {
@@ -156,6 +220,68 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
       await Promise.all([p1, p2]);
 
       assertEquals(setCacheCount, 2);
+    });
+
+    it("does not coalesce identical inputs across adapter scopes", async () => {
+      let compileCount = 0;
+      let resolveCompile!: (result: MDXCompilationResult) => void;
+      const compileGate = new Promise<MDXCompilationResult>((resolve) => {
+        resolveCompile = resolve;
+      });
+
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: () => {
+          compileCount++;
+          return compileGate;
+        },
+      });
+
+      const first = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: makeMissAdapter(undefined, "project-a"),
+      });
+      const second = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: makeMissAdapter(undefined, "project-b"),
+      });
+
+      const p1 = first.compileMDX("# Shared", {}, "index.mdx");
+      const p2 = second.compileMDX("# Shared", {}, "index.mdx");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resolveCompile(makeResult());
+      await Promise.all([p1, p2]);
+
+      assertEquals(compileCount, 2);
+    });
+  });
+
+  describe("Studio compilation", () => {
+    it("forwards studioEmbed to the content processor", async () => {
+      let receivedStudioEmbed: unknown;
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: (options: Record<string, unknown>) => {
+          receivedStudioEmbed = options["studioEmbed"];
+          return Promise.resolve(makeResult());
+        },
+      });
+
+      const compiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "development",
+        mdxCacheAdapter: makeMissAdapter(),
+        studioEmbed: true,
+      });
+
+      await compiler.compileMDX("# Studio", {}, "studio.mdx");
+      assertEquals(receivedStudioEmbed, true);
     });
   });
 

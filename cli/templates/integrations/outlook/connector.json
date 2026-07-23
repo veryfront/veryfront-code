@@ -16,6 +16,7 @@
       "Calendars.ReadWrite",
       "Group.Read.All",
       "Group-Conversation.Read.All",
+      "User.Read",
       "offline_access"
     ],
     "callbackPath": "/api/auth/outlook/callback",

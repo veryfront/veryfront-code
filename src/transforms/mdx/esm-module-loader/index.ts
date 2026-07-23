@@ -8,6 +8,7 @@
 export {
   clearESMDiskCache,
   clearMdxEsmCacheNamespace,
+  clearMdxEsmCacheNamespacesForProject,
   clearModulePathCache,
   invalidateModulePaths,
 } from "./cache/index.ts";

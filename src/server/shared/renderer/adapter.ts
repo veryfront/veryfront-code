@@ -33,6 +33,7 @@ import { APICacheStore } from "#veryfront/rendering/cache/stores/api-store.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getRequestTokenProvenance } from "../../context/request-context.ts";
 
 const logger = rendererLogger.component("renderer-adapter");
 
@@ -46,8 +47,8 @@ export interface RendererAdapter {
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult>;
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse>;
   getAllPages(): Promise<string[]>;
-  clearCache(slug?: string): void;
-  clearAllState(): void;
+  clearCache(slug?: string): Promise<void>;
+  clearAllState(): Promise<void>;
   getVirtualModuleSystem(): {
     handleRequest(req: Request): Response | null;
     register(id: string, source: string, projectDir: string): Promise<string>;
@@ -324,6 +325,7 @@ function runWithProjectContext<T>(ctx: HandlerContext, fn: () => Promise<T>): Pr
       releaseId: ctx.releaseId,
       branch: resolveContextBranch(ctx),
       environmentName: ctx.environmentName,
+      tokenProvenance: getRequestTokenProvenance(ctx.requestContext, token),
     },
   );
 }
@@ -353,18 +355,12 @@ class RendererAdapterImpl implements RendererAdapter {
     return runWithProjectContext(this.handlerCtx, () => this.renderer.getAllPages(this.ctx));
   }
 
-  clearCache(slug?: string): void {
-    // The interface requires void return, so cache-clear failures are fire-and-forget.
-    // The warn log below surfaces failures in monitoring. Callers (e.g., HMR invalidation)
-    // cannot observe the failure — if stale content is served after a deploy, check logs
-    // for "Failed to clear cache" entries.
-    this.renderer.clearCache(this.ctx, slug).catch((error) => {
-      logger.warn("Failed to clear cache", { error: String(error), slug });
-    });
+  clearCache(slug?: string): Promise<void> {
+    return this.renderer.clearCache(this.ctx, slug);
   }
 
-  clearAllState(): void {
-    this.clearCache();
+  clearAllState(): Promise<void> {
+    return this.clearCache();
   }
 
   getVirtualModuleSystem(): {
@@ -374,17 +370,12 @@ class RendererAdapterImpl implements RendererAdapter {
     getModule(id: string): unknown;
     clear(): void;
   } {
-    logger.warn("getVirtualModuleSystem called - not supported");
-    return {
-      handleRequest: () => null,
-      register: async () => "",
-      registerModule: async () => "",
-      getModule: () => undefined,
-      clear: () => {},
-    };
+    return this.renderer.getVirtualModuleSystem(this.ctx);
   }
 
-  async initializeComponents(): Promise<void> {}
+  initializeComponents(): Promise<void> {
+    return this.renderer.initializeComponents(this.ctx);
+  }
 
   async compileMDX(
     content: string,
@@ -398,6 +389,7 @@ class RendererAdapterImpl implements RendererAdapter {
       const mdxCacheAdapter = new MDXCacheAdapter({
         config: this.ctx.config,
         mode: this.ctx.mode,
+        scope: JSON.stringify([this.ctx.projectId, this.ctx.contentSourceId]),
       });
 
       const compiler = new MDXCompiler({
@@ -410,7 +402,9 @@ class RendererAdapterImpl implements RendererAdapter {
     });
   }
 
-  async destroy(): Promise<void> {}
+  destroy(): Promise<void> {
+    return this.renderer.releaseContext(this.ctx);
+  }
 }
 
 export async function getRendererForProject(ctx: HandlerContext): Promise<RendererAdapter> {

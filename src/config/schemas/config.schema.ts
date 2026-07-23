@@ -3,8 +3,19 @@ import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
 import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
+import { validateLegacyRenderRedisCacheKeyPrefix } from "#veryfront/cache/backends/redis-keyspace.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
+
+function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
+  try {
+    validateLegacyRenderRedisCacheKeyPrefix(prefix);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Sub-schemas
 const getCorsSchema = defineSchema((v) =>
@@ -97,24 +108,64 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           dir: v.string().optional(),
           bundleManifest: v
             .object({
-              type: v.enum(["redis", "kv", "memory"]).optional(),
-              redisUrl: v.string().optional(),
-              keyPrefix: v.string().optional(),
-              ttl: v.number().int().positive().optional(),
+              type: v.literal("memory").optional(),
+              ttl: v.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
               enabled: v.boolean().optional(),
             })
             .partial()
+            .strict()
             .optional(),
           render: v
             .object({
               type: v.enum(["memory", "filesystem", "kv", "redis"]).optional(),
-              ttl: v.number().optional(),
-              maxEntries: v.number().optional(),
+              ttl: v.number().positive().max(MAX_CACHE_TTL_MILLISECONDS).optional(),
+              maxEntries: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
               kvPath: v.string().optional(),
               redisUrl: v.string().optional(),
-              redisKeyPrefix: v.string().optional(),
+              /** Redis namespace; an omitted trailing colon is normalized at store construction. */
+              redisKeyPrefix: v.string().refine(
+                isSafeRenderRedisKeyPrefix,
+                "Expected a non-blank, bounded Redis key prefix without control characters",
+              ).optional(),
+              /**
+               * Explicit contract for caching SSR responses that execute
+               * request-aware project data hooks. Disabled unless opted in.
+               */
+              public: v
+                .object({
+                  enabled: v.boolean().optional(),
+                  /** Request headers whose values are part of the public response identity. */
+                  varyHeaders: v
+                    .array(
+                      v.string().regex(
+                        /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/,
+                        "Expected a valid HTTP header name",
+                      ),
+                    )
+                    .max(32)
+                    .optional(),
+                })
+                .partial()
+                .strict()
+                .optional(),
             })
             .partial()
+            .strict()
+            .refine(
+              (config) => {
+                const type = config.type ?? "memory";
+                if (type === "memory" || type === "filesystem") {
+                  return config.kvPath === undefined && config.redisUrl === undefined &&
+                    config.redisKeyPrefix === undefined;
+                }
+                if (type === "kv") {
+                  return config.maxEntries === undefined && config.redisUrl === undefined &&
+                    config.redisKeyPrefix === undefined;
+                }
+                return config.maxEntries === undefined && config.kvPath === undefined;
+              },
+              "Render cache options must belong to the selected backend type",
+            )
             .optional(),
           /**
            * Query parameter handling for page cache keys.
@@ -134,14 +185,18 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            * // Only vary cache by specific params
            * cache: { queryParams: { policy: "include-list", params: ["page", "sort"] } }
            */
-          queryParams: v
-            .object({
-              policy: v.enum(["ignore-all", "include-all", "include-list", "exclude-list"])
-                .optional(),
-              params: v.array(v.string()).optional(),
-            })
-            .partial()
-            .optional(),
+          queryParams: v.union([
+            v.object({ policy: v.literal("ignore-all") }).strict(),
+            v.object({ policy: v.literal("include-all") }).strict(),
+            v.object({
+              policy: v.literal("include-list"),
+              params: v.array(v.string().min(1).max(256)).min(1).max(128),
+            }).strict(),
+            v.object({
+              policy: v.literal("exclude-list").optional(),
+              params: v.array(v.string().min(1).max(256)).max(128).optional(),
+            }).strict(),
+          ]).optional(),
         })
         .partial()
         .optional(),
@@ -344,8 +399,9 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               cache: v
                 .object({
                   enabled: v.boolean().optional(),
-                  ttl: v.number().int().positive().optional(),
-                  maxSize: v.number().int().positive().optional(),
+                  ttl: v.number().int().positive().max(MAX_CACHE_TTL_MILLISECONDS).optional(),
+                  maxSize: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+                  maxMemory: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
                 })
                 .partial()
                 .optional(),
@@ -380,9 +436,9 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               cache: v
                 .object({
                   enabled: v.boolean().optional(),
-                  ttl: v.number().int().positive().optional(),
-                  maxSize: v.number().int().positive().optional(),
-                  maxMemory: v.number().int().positive().optional(),
+                  ttl: v.number().int().positive().max(MAX_CACHE_TTL_MILLISECONDS).optional(),
+                  maxSize: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+                  maxMemory: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
                 })
                 .partial()
                 .optional(),

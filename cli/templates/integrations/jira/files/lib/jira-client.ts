@@ -1,4 +1,5 @@
-import { getAccessToken, getCloudId } from "./token-store.ts";
+import { fetchOAuthJson } from "./oauth.ts";
+import { resolveAtlassianCloudId } from "./atlassian-cloud.ts";
 
 const JIRA_API_VERSION = "3";
 
@@ -120,264 +121,258 @@ function buildAdfDescription(text: string): Record<string, unknown> {
   };
 }
 
-async function jiraFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error(
-      "Not authenticated with Jira. Please connect your account.",
+export function createJiraClient(userId: string) {
+  const cloudId = resolveAtlassianCloudId(userId, "jira");
+
+  async function jiraFetch<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const resolvedCloudId = await cloudId;
+
+    const baseUrl =
+      `https://api.atlassian.com/ex/jira/${resolvedCloudId}/rest/api/${JIRA_API_VERSION}`;
+    const url = `${baseUrl}${endpoint}`;
+
+    return await fetchOAuthJson<T>(userId, "jira", url, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  }
+
+  async function searchIssues(
+    jql: string,
+    options?: {
+      fields?: string[];
+      maxResults?: number;
+      startAt?: number;
+    },
+  ): Promise<{ issues: JiraIssue[]; total: number }> {
+    const params = new URLSearchParams({
+      jql,
+      maxResults: String(options?.maxResults ?? 50),
+      startAt: String(options?.startAt ?? 0),
+    });
+
+    if (options?.fields?.length) {
+      params.set("fields", options.fields.join(","));
+    }
+
+    const response = await jiraFetch<JiraResponse<JiraIssue>>(
+      `/search?${params.toString()}`,
     );
+
+    return {
+      issues: response.issues ?? [],
+      total: response.total ?? 0,
+    };
   }
 
-  const cloudId = await getCloudId();
-  if (!cloudId) {
-    throw new Error("Jira cloud ID not found. Please reconnect your account.");
+  function getIssue(issueIdOrKey: string): Promise<JiraIssue> {
+    return jiraFetch<JiraIssue>(`/issue/${issueIdOrKey}`);
   }
 
-  const baseUrl =
-    `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/${JIRA_API_VERSION}`;
-  const url = endpoint.startsWith("http") ? endpoint : `${baseUrl}${endpoint}`;
-
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({} as unknown));
-    const message = (error as any)?.errorMessages?.join(", ") ||
-      (error as any)?.message ||
-      response.statusText;
-
-    throw new Error(`Jira API error: ${response.status} ${message}`);
-  }
-
-  if (response.status === 204) {
-    return {} as T;
-  }
-
-  return response.json();
-}
-
-export async function searchIssues(
-  jql: string,
-  options?: {
-    fields?: string[];
-    maxResults?: number;
-    startAt?: number;
-  },
-): Promise<{ issues: JiraIssue[]; total: number }> {
-  const params = new URLSearchParams({
-    jql,
-    maxResults: String(options?.maxResults ?? 50),
-    startAt: String(options?.startAt ?? 0),
-  });
-
-  if (options?.fields?.length) {
-    params.set("fields", options.fields.join(","));
-  }
-
-  const response = await jiraFetch<JiraResponse<JiraIssue>>(
-    `/search?${params.toString()}`,
-  );
-
-  return {
-    issues: response.issues ?? [],
-    total: response.total ?? 0,
-  };
-}
-
-export function getIssue(issueIdOrKey: string): Promise<JiraIssue> {
-  return jiraFetch<JiraIssue>(`/issue/${issueIdOrKey}`);
-}
-
-export async function createIssue(options: {
-  projectKey: string;
-  summary: string;
-  description?: string;
-  issueType: string;
-  priority?: string;
-  assigneeId?: string;
-  labels?: string[];
-}): Promise<JiraIssue> {
-  const fields: Record<string, unknown> = {
-    project: { key: options.projectKey },
-    summary: options.summary,
-    issuetype: { name: options.issueType },
-  };
-
-  if (options.description) {
-    fields.description = buildAdfDescription(options.description);
-  }
-
-  if (options.priority) {
-    fields.priority = { name: options.priority };
-  }
-
-  if (options.assigneeId) {
-    fields.assignee = { id: options.assigneeId };
-  }
-
-  if (options.labels?.length) {
-    fields.labels = options.labels;
-  }
-
-  const response = await jiraFetch<{ id: string; key: string; self: string }>(
-    "/issue",
-    {
-      method: "POST",
-      body: JSON.stringify({ fields }),
-    },
-  );
-
-  return getIssue(response.key);
-}
-
-export async function listComments(
-  issueIdOrKey: string,
-  options?: { startAt?: number; maxResults?: number },
-): Promise<
-  {
-    comments: JiraComment[];
-    total: number;
-    startAt: number;
-    maxResults: number;
-  }
-> {
-  const params = new URLSearchParams({
-    startAt: String(options?.startAt ?? 0),
-    maxResults: String(options?.maxResults ?? 50),
-  });
-
-  const response = await jiraFetch<{
-    comments?: JiraComment[];
-    total?: number;
-    startAt?: number;
-    maxResults?: number;
-  }>(`/issue/${issueIdOrKey}/comment?${params.toString()}`);
-
-  return {
-    comments: response.comments ?? [],
-    total: response.total ?? 0,
-    startAt: response.startAt ?? 0,
-    maxResults: response.maxResults ?? 0,
-  };
-}
-
-export function addComment(
-  issueIdOrKey: string,
-  body: string,
-): Promise<JiraComment> {
-  return jiraFetch<JiraComment>(`/issue/${issueIdOrKey}/comment`, {
-    method: "POST",
-    body: JSON.stringify({ body: buildAdfDescription(body) }),
-  });
-}
-
-export function updateIssue(
-  issueIdOrKey: string,
-  updates: {
-    summary?: string;
+  async function createIssue(options: {
+    projectKey: string;
+    summary: string;
     description?: string;
+    issueType: string;
     priority?: string;
     assigneeId?: string;
     labels?: string[];
-  },
-): Promise<void> {
-  const fields: Record<string, unknown> = {};
+  }): Promise<JiraIssue> {
+    const fields: Record<string, unknown> = {
+      project: { key: options.projectKey },
+      summary: options.summary,
+      issuetype: { name: options.issueType },
+    };
 
-  if (updates.summary) {
-    fields.summary = updates.summary;
-  }
-
-  if (updates.description) {
-    fields.description = buildAdfDescription(updates.description);
-  }
-
-  if (updates.priority) {
-    fields.priority = { name: updates.priority };
-  }
-
-  if (updates.assigneeId) {
-    fields.assignee = { id: updates.assigneeId };
-  }
-
-  if (updates.labels) {
-    fields.labels = updates.labels;
-  }
-
-  return jiraFetch<void>(`/issue/${issueIdOrKey}`, {
-    method: "PUT",
-    body: JSON.stringify({ fields }),
-  });
-}
-
-export async function transitionIssue(
-  issueIdOrKey: string,
-  transitionId: string,
-): Promise<void> {
-  await jiraFetch<void>(`/issue/${issueIdOrKey}/transitions`, {
-    method: "POST",
-    body: JSON.stringify({ transition: { id: transitionId } }),
-  });
-}
-
-export async function getIssueTransitions(
-  issueIdOrKey: string,
-): Promise<JiraTransition[]> {
-  const response = await jiraFetch<{ transitions: JiraTransition[] }>(
-    `/issue/${issueIdOrKey}/transitions`,
-  );
-  return response.transitions ?? [];
-}
-
-export async function listProjects(): Promise<JiraProject[]> {
-  return jiraFetch<JiraProject[]>("/project");
-}
-
-export function getProject(projectIdOrKey: string): Promise<JiraProject> {
-  return jiraFetch<JiraProject>(`/project/${projectIdOrKey}`);
-}
-
-export async function getProjectIssueTypes(
-  projectIdOrKey: string,
-): Promise<JiraIssueType[]> {
-  return jiraFetch<JiraIssueType[]>(`/project/${projectIdOrKey}/statuses`);
-}
-
-export function extractDescriptionText(description: unknown): string {
-  if (typeof description === "string") {
-    return description;
-  }
-
-  if (!description || typeof description !== "object") {
-    return "";
-  }
-
-  const content = (description as { content?: unknown[] }).content;
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const texts: string[] = [];
-
-  function extractText(node: any): void {
-    if (node?.type === "text" && node.text) {
-      texts.push(node.text);
+    if (options.description) {
+      fields.description = buildAdfDescription(options.description);
     }
 
-    if (Array.isArray(node?.content)) {
-      node.content.forEach(extractText);
+    if (options.priority) {
+      fields.priority = { name: options.priority };
     }
+
+    if (options.assigneeId) {
+      fields.assignee = { id: options.assigneeId };
+    }
+
+    if (options.labels?.length) {
+      fields.labels = options.labels;
+    }
+
+    const response = await jiraFetch<{ id: string; key: string; self: string }>(
+      "/issue",
+      {
+        method: "POST",
+        body: JSON.stringify({ fields }),
+      },
+    );
+
+    return getIssue(response.key);
   }
 
-  content.forEach(extractText);
-  return texts.join(" ");
+  async function listComments(
+    issueIdOrKey: string,
+    options?: { startAt?: number; maxResults?: number },
+  ): Promise<
+    {
+      comments: JiraComment[];
+      total: number;
+      startAt: number;
+      maxResults: number;
+    }
+  > {
+    const params = new URLSearchParams({
+      startAt: String(options?.startAt ?? 0),
+      maxResults: String(options?.maxResults ?? 50),
+    });
+
+    const response = await jiraFetch<{
+      comments?: JiraComment[];
+      total?: number;
+      startAt?: number;
+      maxResults?: number;
+    }>(`/issue/${issueIdOrKey}/comment?${params.toString()}`);
+
+    return {
+      comments: response.comments ?? [],
+      total: response.total ?? 0,
+      startAt: response.startAt ?? 0,
+      maxResults: response.maxResults ?? 0,
+    };
+  }
+
+  function addComment(
+    issueIdOrKey: string,
+    body: string,
+  ): Promise<JiraComment> {
+    return jiraFetch<JiraComment>(`/issue/${issueIdOrKey}/comment`, {
+      method: "POST",
+      body: JSON.stringify({ body: buildAdfDescription(body) }),
+    });
+  }
+
+  function updateIssue(
+    issueIdOrKey: string,
+    updates: {
+      summary?: string;
+      description?: string;
+      priority?: string;
+      assigneeId?: string;
+      labels?: string[];
+    },
+  ): Promise<void> {
+    const fields: Record<string, unknown> = {};
+
+    if (updates.summary) {
+      fields.summary = updates.summary;
+    }
+
+    if (updates.description) {
+      fields.description = buildAdfDescription(updates.description);
+    }
+
+    if (updates.priority) {
+      fields.priority = { name: updates.priority };
+    }
+
+    if (updates.assigneeId) {
+      fields.assignee = { id: updates.assigneeId };
+    }
+
+    if (updates.labels) {
+      fields.labels = updates.labels;
+    }
+
+    return jiraFetch<void>(`/issue/${issueIdOrKey}`, {
+      method: "PUT",
+      body: JSON.stringify({ fields }),
+    });
+  }
+
+  async function transitionIssue(
+    issueIdOrKey: string,
+    transitionId: string,
+  ): Promise<void> {
+    await jiraFetch<void>(`/issue/${issueIdOrKey}/transitions`, {
+      method: "POST",
+      body: JSON.stringify({ transition: { id: transitionId } }),
+    });
+  }
+
+  async function getIssueTransitions(
+    issueIdOrKey: string,
+  ): Promise<JiraTransition[]> {
+    const response = await jiraFetch<{ transitions: JiraTransition[] }>(
+      `/issue/${issueIdOrKey}/transitions`,
+    );
+    return response.transitions ?? [];
+  }
+
+  function listProjects(): Promise<JiraProject[]> {
+    return jiraFetch<JiraProject[]>("/project");
+  }
+
+  function getProject(projectIdOrKey: string): Promise<JiraProject> {
+    return jiraFetch<JiraProject>(`/project/${projectIdOrKey}`);
+  }
+
+  function getProjectIssueTypes(
+    projectIdOrKey: string,
+  ): Promise<JiraIssueType[]> {
+    return jiraFetch<JiraIssueType[]>(`/project/${projectIdOrKey}/statuses`);
+  }
+
+  function extractDescriptionText(description: unknown): string {
+    if (typeof description === "string") {
+      return description;
+    }
+
+    if (!description || typeof description !== "object") {
+      return "";
+    }
+
+    const content = (description as { content?: unknown[] }).content;
+    if (!Array.isArray(content)) {
+      return "";
+    }
+
+    const texts: string[] = [];
+
+    function extractText(node: unknown): void {
+      if (!node || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+
+      if (record.type === "text" && typeof record.text === "string") {
+        texts.push(record.text);
+      }
+
+      if (Array.isArray(record.content)) record.content.forEach(extractText);
+    }
+
+    content.forEach(extractText);
+    return texts.join(" ");
+  }
+
+  return {
+    searchIssues,
+    getIssue,
+    createIssue,
+    listComments,
+    addComment,
+    updateIssue,
+    transitionIssue,
+    getIssueTransitions,
+    listProjects,
+    getProject,
+    getProjectIssueTypes,
+    extractDescriptionText,
+  };
 }

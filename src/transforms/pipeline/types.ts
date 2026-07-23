@@ -6,6 +6,7 @@
  */
 
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 
 /**
@@ -64,6 +65,11 @@ export interface TransformOptions {
   dependencyHashCache?: DependencyHashCache;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
+  /**
+   * Load the import map through the same project/runtime adapter as source reads.
+   * SSR transforms snapshot this value before building their cache identity.
+   */
+  loadImportMap?: () => Promise<ImportMapConfig>;
 }
 
 /**
@@ -107,6 +113,10 @@ export interface TransformContext {
   reactVersion: string;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
+  /** Immutable import-map snapshot used by all SSR stages in this run. */
+  importMap?: ImportMapConfig;
+  /** Full SHA-256 fingerprint of the immutable import-map snapshot. */
+  importMapFingerprint?: string;
 }
 
 /**
@@ -117,6 +127,11 @@ export interface TransformPlugin {
   name: string;
   /** Stage this plugin runs at */
   stage: TransformStage;
+  /**
+   * Stable, versioned identity for output-affecting custom plugin behavior.
+   * Custom plugins without an identity still run, but disable persistent caching.
+   */
+  cacheIdentity?: string;
   /** Optional condition - if false, plugin is skipped */
   condition?: (ctx: TransformContext) => boolean;
   /** Transform function - returns new code */

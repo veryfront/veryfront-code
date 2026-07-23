@@ -26,7 +26,18 @@ export function buildRenderCachePrefix(
    */
   manifestVersion?: number,
 ): string {
-  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  if (!projectId) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Missing projectId for render cache prefix",
+    });
+  }
+  const encodedProjectId = encodeURIComponent(projectId);
+  const encodedReleaseKey = encodeCacheSourceIdentity(
+    environment === "production"
+      ? { type: "release", releaseId: releaseKey }
+      : { type: "branch", branch: releaseKey },
+  ).qualifier;
+  const base = `${encodedProjectId}:${environment}:${encodedReleaseKey}:${VERSION}`;
   return manifestVersion === undefined ? base : `${base}:m${manifestVersion}`;
 }
 

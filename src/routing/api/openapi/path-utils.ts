@@ -6,10 +6,15 @@
  * @module routing/api/openapi/path-utils
  */
 
+import {
+  compileRoutePattern,
+  parseRouteParameterSegment,
+} from "#veryfront/utils/route-path-utils.ts";
+
 /**
  * Path parameter extracted from route pattern.
  */
-interface PathParam {
+export interface PathParam {
   /** Parameter name (e.g., "id", "slug") */
   name: string;
   /** Whether the parameter is required */
@@ -18,36 +23,95 @@ interface PathParam {
   catchAll: boolean;
 }
 
+export interface OpenAPIPathDescription {
+  path: string;
+  params: PathParam[];
+}
+
+export interface OpenAPIPathAnalysis {
+  description: OpenAPIPathDescription | null;
+  reason: string | null;
+}
+
+/**
+ * Convert the canonical runtime grammar into the subset OpenAPI 3.1 can
+ * represent. Optional catch-alls fail closed because OpenAPI path parameters
+ * are always required.
+ */
+export function analyzeOpenAPIPath(pattern: string): OpenAPIPathAnalysis {
+  const compiled = compileRoutePattern(pattern);
+  if (!compiled.valid) {
+    return {
+      description: null,
+      reason:
+        "the route grammar is invalid or contains more than one catch-all parameter; correct malformed segments and keep at most one catch-all",
+    };
+  }
+  if (compiled.parameters.some((param) => param.kind === "optional-catch-all")) {
+    return {
+      description: null,
+      reason:
+        "OpenAPI 3.1 requires every path parameter; split the optional catch-all into explicit routes",
+    };
+  }
+
+  const params: PathParam[] = [];
+  const seen = new Set<string>();
+  const convertedSegments: string[] = [];
+
+  for (const segment of pattern.split("/")) {
+    const parameter = parseRouteParameterSegment(segment);
+    if (!parameter) {
+      if (segment.includes("{") || segment.includes("}")) {
+        return {
+          description: null,
+          reason: "literal braces conflict with OpenAPI path-template syntax",
+        };
+      }
+      convertedSegments.push(segment);
+      continue;
+    }
+
+    convertedSegments.push(`{${parameter.name}}${parameter.suffix}`);
+    if (seen.has(parameter.name)) continue;
+    seen.add(parameter.name);
+    params.push({
+      name: parameter.name,
+      required: true,
+      catchAll: parameter.kind === "catch-all",
+    });
+  }
+
+  return {
+    description: { path: convertedSegments.join("/"), params },
+    reason: null,
+  };
+}
+
+export function describeOpenAPIPath(pattern: string): OpenAPIPathDescription | null {
+  return analyzeOpenAPIPath(pattern).description;
+}
+
 /**
  * Convert file-system route pattern to OpenAPI path format.
  *
  * Transforms Next.js-style dynamic segments to OpenAPI path parameters:
  * - `[id]` → `{id}` (required parameter)
  * - `[...slug]` → `{slug}` (required catch-all)
- * - `[[...slug]]` → `{slug}` (optional catch-all)
+ * - `[[...slug]]` is not representable and returns `null`
  *
  * @param pattern - Route pattern (e.g., "/api/users/[id]")
- * @returns OpenAPI path (e.g., "/api/users/{id}")
+ * @returns OpenAPI path, or `null` when the runtime pattern is not representable
  *
  * @example
  * ```typescript
  * toOpenAPIPath("/api/users/[id]") // → "/api/users/{id}"
  * toOpenAPIPath("/api/docs/[...slug]") // → "/api/docs/{slug}"
- * toOpenAPIPath("/api/[[...path]]") // → "/api/{path}"
+ * toOpenAPIPath("/api/[[...path]]") // → null
  * ```
  */
-export function toOpenAPIPath(pattern: string): string {
-  return pattern.replace(
-    /\[\[\.\.\.([^\]]+)\]\]|\[\.\.\.([^\]]+)\]|\[([^\]]+)\]/g,
-    (
-      _match,
-      optionalCatchAll: string | undefined,
-      catchAll: string | undefined,
-      segment: string | undefined,
-    ) => {
-      return `{${optionalCatchAll ?? catchAll ?? segment ?? ""}}`;
-    },
-  );
+export function toOpenAPIPath(pattern: string): string | null {
+  return describeOpenAPIPath(pattern)?.path ?? null;
 }
 
 /**
@@ -67,34 +131,11 @@ export function toOpenAPIPath(pattern: string): string {
  * // → [{ name: "slug", required: true, catchAll: true }]
  *
  * extractPathParams("/api/[[...path]]")
- * // → [{ name: "path", required: false, catchAll: true }]
+ * // → null
  * ```
  */
-export function extractPathParams(pattern: string): PathParam[] {
-  const params: PathParam[] = [];
-  const seen = new Set<string>();
-
-  function addParam(name: string | undefined, required: boolean, catchAll: boolean): void {
-    if (!name || seen.has(name)) return;
-    seen.add(name);
-    params.push({ name, required, catchAll });
-  }
-
-  for (const match of pattern.matchAll(/\[\[\.\.\.([^\]]+)\]\]/g)) {
-    addParam(match[1], false, true);
-  }
-
-  for (const match of pattern.matchAll(/\[\.\.\.([^\]]+)\]/g)) {
-    addParam(match[1], true, true);
-  }
-
-  for (const match of pattern.matchAll(/\[([^\[\]]+)\]/g)) {
-    const name = match[1];
-    if (!name || name.startsWith("...")) continue;
-    addParam(name, true, false);
-  }
-
-  return params;
+export function extractPathParams(pattern: string): PathParam[] | null {
+  return describeOpenAPIPath(pattern)?.params ?? null;
 }
 
 /**

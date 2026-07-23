@@ -39,6 +39,11 @@ export interface OrchestrateOptions {
   /** Per-extension setup() timeout in milliseconds. Defaults to 30 000 ms.
    *  Pass `0` to disable. */
   setupTimeoutMs?: number;
+  /**
+   * @internal Release process-global resources owned by the previous
+   * generation after its teardown and before candidate setup begins.
+   */
+  beforeActivate?: () => void | Promise<void>;
   /** @internal Override discovery functions in tests. */
   discovery?: {
     discoverPackageExtensions: typeof defaultDiscovery.discoverPackageExtensions;
@@ -49,6 +54,14 @@ export interface OrchestrateOptions {
   /** @internal Override factory loading in tests. */
   loadFactory?: typeof defaultLoadFactory;
 }
+
+// The contract registry is process-global, so production orchestration must
+// have one serialized generation owner. Direct ExtensionLoader construction is
+// still available for tests and low-level use, but overlapping direct loaders
+// are intentionally outside the supported lifecycle contract.
+let orchestrationTail: Promise<void> = Promise.resolve();
+let activeLoader: ExtensionLoader | undefined;
+let failedCandidate: ExtensionLoader | undefined;
 
 function isDisableDirective(
   entry: ExtensionConfigEntry,
@@ -100,7 +113,18 @@ function projectExtensionNameFromPath(path: string): string | undefined {
  * partial rollback internally. The error is re-thrown unchanged so callers
  * can surface the extension name to the user.
  */
-export async function orchestrateExtensions(
+export function orchestrateExtensions(
+  options: OrchestrateOptions,
+): Promise<ExtensionLoader> {
+  const result = orchestrationTail.then(() => orchestrateExtensionGeneration(options));
+  orchestrationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function orchestrateExtensionGeneration(
   options: OrchestrateOptions,
 ): Promise<ExtensionLoader> {
   const { projectDir, config, logger } = options;
@@ -180,9 +204,42 @@ export async function orchestrateExtensions(
   if (options.primeContracts) {
     loader.primeContracts(options.primeContracts);
   }
-  await loader.setupAll(merged, config as Record<string, unknown>, {
-    setupTimeoutMs: options.setupTimeoutMs,
-  });
+
+  let activationStarted = false;
+  try {
+    await loader.setupAll(merged, config as Record<string, unknown>, {
+      setupTimeoutMs: options.setupTimeoutMs,
+      beforeActivate: async () => {
+        // Candidate discovery, factory loading, flattening, validation,
+        // conflict checks, and topology all completed before this hook. A bad
+        // candidate therefore cannot tear down the active generation.
+        const failed = failedCandidate;
+        if (failed) {
+          await failed.awaitLateSetupCleanup();
+          if (failedCandidate === failed) failedCandidate = undefined;
+        }
+
+        const previous = activeLoader;
+        if (previous) {
+          await previous.teardownAll();
+          if (activeLoader === previous) activeLoader = undefined;
+        }
+        await options.beforeActivate?.();
+        activationStarted = true;
+      },
+    });
+  } catch (error) {
+    if (activationStarted) {
+      activeLoader = undefined;
+      // setupAll rejects promptly on timeout but retains its own losing setup
+      // and cleanup barrier. Keep the candidate reachable so the next
+      // generation cannot activate until that barrier succeeds.
+      failedCandidate = loader;
+    }
+    throw error;
+  }
+
+  activeLoader = loader;
   return loader;
 }
 

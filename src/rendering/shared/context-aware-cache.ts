@@ -2,11 +2,13 @@ import { rendererLogger } from "#veryfront/utils";
 import { markRequestProfilePhase, metrics, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
-import type { CacheStore } from "../cache/types.ts";
+import type { CachePayload, CacheStore } from "../cache/types.ts";
+import { cloneCachePayload, parseCachePayload } from "../cache/cache-payload.ts";
 import type { CacheLookupStatus } from "../cache/cache-coordinator.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
 import type { RenderContext } from "../context/render-context.ts";
 import { createCacheKey } from "../context/render-context.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 
 const logger = rendererLogger.component("context-aware-cache");
 
@@ -17,20 +19,29 @@ const DEFAULT_CACHE_STALE_MS = 30 * 60 * 1_000;
 /** Default max entries for the in-memory cache store */
 const DEFAULT_MAX_ENTRIES = 500;
 
+function validateDurations(ttlMs: number, staleMs: number): void {
+  if (!Number.isFinite(ttlMs) || ttlMs < 0 || ttlMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Context-aware cache ttlMs must be between 0 and ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+  if (!Number.isFinite(staleMs) || staleMs < 0 || staleMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Context-aware cache staleMs must be between 0 and ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+  if (ttlMs + staleMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Context-aware cache ttlMs + staleMs must not exceed ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+}
+
 export interface ContextAwareCacheOptions {
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
   ttlMs?: number;
   staleMs?: number;
-}
-
-interface CachePayload {
-  result: RenderResult;
-  storedAt: number;
-  expiresAt?: number;
-  staleUntil?: number;
-  /** Optional serialized form of result.nodeMap for JSON-based stores */
-  nodeMapEntries?: Array<[number, unknown]>;
 }
 
 export interface ContextAwareCacheLookupResult {
@@ -43,13 +54,14 @@ export interface ContextAwareCacheLookupResult {
 
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
-  private ttlMs: number | undefined;
+  private ttlMs: number;
   private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.staleMs = options.staleMs ?? DEFAULT_CACHE_STALE_MS;
+    validateDurations(this.ttlMs, this.staleMs);
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
@@ -70,7 +82,12 @@ export class ContextAwareCacheCoordinator {
       SpanNames.CACHE_CHECK_SPECULATIVE,
       async () => {
         const lookupStart = performance.now();
-        const cached = (await this.store.get(cacheKey)) as CachePayload | undefined;
+        const stored = await this.store.get(cacheKey);
+        const cached = stored === undefined ? undefined : parseCachePayload(stored);
+
+        if (stored !== undefined && cached === undefined) {
+          await this.store.delete(cacheKey);
+        }
 
         if (!cached) {
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -160,15 +177,16 @@ export class ContextAwareCacheCoordinator {
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
     const now = Date.now();
 
-    await this.store.set(cacheKey, {
+    const payload: CachePayload = {
       result: this.cloneResult(result),
       nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
       storedAt: now,
-      expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
-      staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
+      expiresAt: now + this.ttlMs,
+      staleUntil: this.shouldServeStale(ctx) && this.staleMs > 0
         ? now + this.ttlMs + this.staleMs
         : undefined,
-    });
+    };
+    await this.store.set(cacheKey, cloneCachePayload(payload));
 
     logger.debug("Cached result", {
       slug,
@@ -181,12 +199,11 @@ export class ContextAwareCacheCoordinator {
   async clearForContext(ctx: RenderContext): Promise<void> {
     const startTime = Date.now();
 
+    if (typeof ctx.cachePrefix !== "string" || ctx.cachePrefix.length === 0) {
+      throw new TypeError("Context cache invalidation requires a non-empty cache prefix");
+    }
     if (!this.store.deleteByPrefix) {
-      logger.warn("Store does not support prefix deletion", {
-        projectId: ctx.projectId,
-        cachePrefix: ctx.cachePrefix,
-      });
-      return;
+      throw new TypeError("Cache store does not support context-scoped invalidation");
     }
 
     logger.debug("Clearing cache for context", {
@@ -206,11 +223,13 @@ export class ContextAwareCacheCoordinator {
 
   async clearForProject(projectId: string): Promise<void> {
     const startTime = Date.now();
-    const prefix = `${projectId}:`;
+    if (typeof projectId !== "string" || projectId.trim().length === 0) {
+      throw new TypeError("Project cache invalidation requires a non-empty projectId");
+    }
+    const prefix = `${encodeURIComponent(projectId)}:`;
 
     if (!this.store.deleteByPrefix) {
-      logger.warn("Store does not support prefix deletion", { projectId });
-      return;
+      throw new TypeError("Cache store does not support project-scoped invalidation");
     }
 
     logger.debug("Clearing cache for project", { projectId, prefix });
@@ -226,12 +245,13 @@ export class ContextAwareCacheCoordinator {
 
   async clearSlug(slug: string, ctx: RenderContext): Promise<void> {
     if (this.store.deleteByPrefix) {
-      const prefix = createCacheKey(ctx, `page:${slug}`);
-      await this.store.deleteByPrefix(prefix);
+      const exactKey = createCacheKey(ctx, `page:${slug}`);
+      await this.store.delete(exactKey);
+      await this.store.deleteByPrefix(`${exactKey}:`);
       logger.debug("Cleared slug from cache by prefix", {
         slug,
         projectId: ctx.projectId,
-        prefix,
+        exactKey,
       });
       return;
     }
@@ -284,7 +304,7 @@ export class ContextAwareCacheCoordinator {
   }
 
   private isExpired(entry: CachePayload): boolean {
-    return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
+    return typeof entry.expiresAt === "number" && Date.now() >= entry.expiresAt;
   }
 
   private isStaleUsable(entry: CachePayload, ctx: RenderContext): boolean {
@@ -301,35 +321,11 @@ export class ContextAwareCacheCoordinator {
     result: RenderResult,
     nodeMapEntries?: Array<[number, unknown]>,
   ): RenderResult {
-    let nodeMap: Map<number, unknown> | undefined;
-    if (nodeMapEntries) {
-      nodeMap = new Map(nodeMapEntries);
-    } else if (result.nodeMap instanceof Map) {
-      nodeMap = new Map(result.nodeMap);
-    } else if (result.nodeMap && typeof result.nodeMap === "object") {
-      nodeMap = new Map(
-        Object.entries(result.nodeMap as Record<string, unknown>).map(([k, v]) => [
-          Number(k),
-          v,
-        ]),
-      );
-    }
-
-    const cloned: RenderResult = {
-      html: result.html,
-      css: result.css,
-      frontmatter: { ...result.frontmatter },
-      headings: result.headings ? [...result.headings] : [],
-      nodeMap,
-      stream: null,
-      ssrHash: result.ssrHash,
-    };
-
-    if (result.pageModule) {
-      cloned.pageModule = { ...result.pageModule };
-    }
-
-    return cloned;
+    return cloneCachePayload({
+      result: { ...result, stream: null },
+      nodeMapEntries,
+      storedAt: 0,
+    }).result;
   }
 }
 

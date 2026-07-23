@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getDashboardApiRoutePaths, handleDashboardAPI } from "./api.ts";
 import type { HandlerContext } from "../../types.ts";
+import { ReloadNotifier, type ReloadProjectInfo } from "../../../reload-notifier.ts";
 
 // Minimal mock adapter with fs that tracks readDir/readFile calls
 function createMockCtx(): HandlerContext {
@@ -449,6 +450,52 @@ describe("Dashboard API - POST endpoints", () => {
     });
     const res = await handleDashboardAPI(req, createMockCtx());
     assertEquals(res?.status, 200);
+  });
+
+  it("/_dev/api/hmr-trigger publishes the exact local project and source scope", async () => {
+    ReloadNotifier.reset();
+    let resolveReload!: (value: { paths?: string[]; project?: ReloadProjectInfo }) => void;
+    const reload = new Promise<{ paths?: string[]; project?: ReloadProjectInfo }>((resolve) => {
+      resolveReload = resolve;
+    });
+    const unsubscribe = ReloadNotifier.subscribe((paths, project) => {
+      resolveReload({ paths, project });
+    });
+
+    try {
+      const req = new Request("http://localhost/_dev/api/hmr-trigger", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "src/index.ts" }),
+      });
+      const ctx = {
+        ...createMockCtx(),
+        projectId: "project-id-a",
+        projectSlug: "project-a",
+        projectDir: "/projects/a",
+        releaseId: "release-a",
+        requestContext: { branch: "feature-a" },
+        enriched: { contentSourceId: "preview-feature-a" },
+      } as unknown as HandlerContext;
+
+      const res = await handleDashboardAPI(req, ctx);
+      const event = await reload;
+
+      assertEquals(res?.status, 200);
+      assertEquals(event.paths, ["src/index.ts"]);
+      assertEquals(event.project, {
+        projectId: "project-id-a",
+        projectSlug: "project-a",
+        projectDir: "/projects/a",
+        environment: "preview",
+        branch: "feature-a",
+        releaseId: "release-a",
+        contentSourceId: "preview-feature-a",
+      });
+    } finally {
+      unsubscribe();
+      ReloadNotifier.reset();
+    }
   });
 
   it("returns null for unknown POST path", async () => {

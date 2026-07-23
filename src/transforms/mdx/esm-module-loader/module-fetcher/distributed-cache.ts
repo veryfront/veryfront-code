@@ -9,8 +9,6 @@
 
 import type { Logger } from "#veryfront/utils";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
-import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
-import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { createBundleManifest, storeBundleManifest } from "../../../esm/bundle-manifest.ts";
 import { validateCachedBundlesByManifestOrCode } from "../../../esm/cached-bundle-validation.ts";
@@ -24,8 +22,13 @@ import {
   hasIncompatibleFrameworkPaths,
 } from "./framework-validator.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
-import { buildMdxEsmModuleFileName, buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
-import { hashString } from "../utils/hash.ts";
+import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
+import {
+  createMdxModuleRecoveryPayload,
+  MAX_MDX_MODULE_CODE_BYTES,
+  serializeMdxModuleRecoveryPayload,
+  utf8ByteLength,
+} from "./recovery-payload.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -66,8 +69,8 @@ export async function readDistributedCache(
   contentSourceId: string | undefined,
   normalizedPath: string,
   projectSlug: string,
-  projectDir: string,
-  reactVersion: string | undefined,
+  _projectDir: string,
+  _reactVersion: string | undefined,
   log: Logger,
 ): Promise<DistributedCacheReadResult | null> {
   const distributedCache = await getDistributedTransformBackend();
@@ -76,6 +79,14 @@ export async function readDistributedCache(
   try {
     const cached = await distributedCache.get(transformCacheKey);
     if (!cached) return { code: null, distributedCache };
+    if (utf8ByteLength(cached) > MAX_MDX_MODULE_CODE_BYTES) {
+      log.warn(`${LOG_PREFIX_MDX_LOADER} Distributed transform exceeds size limit`, {
+        normalizedPath,
+        cacheKey: transformCacheKey,
+      });
+      await distributedCache.del(transformCacheKey).catch(() => {});
+      return { code: null, distributedCache };
+    }
 
     // Detokenize all cache paths for local environment
     let moduleCode: string | null = detokenizeAllCachePaths(cached);
@@ -165,24 +176,6 @@ export async function readDistributedCache(
       }
     }
 
-    // Safety net: Convert any remaining HTTP imports to local file:// paths.
-    // New cache entries should already have file:// paths, but old entries might have HTTP URLs.
-    // This is a no-op for properly cached entries and fixes legacy cache entries.
-    if (moduleCode) {
-      const importMap = await loadImportMap(projectDir);
-      const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
-        cacheDir: getHttpBundleCacheDir(),
-        importMap,
-        reactVersion,
-      });
-      if (cacheResult.code !== moduleCode) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Converted HTTP imports from legacy cache entry`, {
-          normalizedPath,
-        });
-        moduleCode = cacheResult.code;
-      }
-    }
-
     return { code: moduleCode, distributedCache };
   } catch (error) {
     log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
@@ -201,7 +194,7 @@ export async function readDistributedCache(
  *
  * This is fire-and-forget: errors are logged but do not propagate.
  */
-export function writeDistributedCache(
+export async function writeDistributedCache(
   distributedCache: DistributedCache,
   transformCacheKey: string,
   projectId: string,
@@ -209,43 +202,56 @@ export function writeDistributedCache(
   moduleCode: string,
   normalizedPath: string,
   log: Logger,
-): void {
+): Promise<void> {
   // Tokenize all cache paths for cross-environment portability
   // Uses aggressive tokenization to catch paths from ANY environment (build server, other pods)
   const portableCode = tokenizeAllVeryFrontPaths(moduleCode);
 
-  // Store transformed code in distributed cache
-  distributedCache
-    .set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
-    .catch((error) => {
+  if (utf8ByteLength(portableCode) > MAX_MDX_MODULE_CODE_BYTES) {
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Skipping oversized distributed module cache write`, {
+      normalizedPath,
+    });
+    return;
+  }
+
+  const recoveryPayload = createMdxModuleRecoveryPayload(
+    projectId,
+    contentSourceId,
+    normalizedPath,
+    portableCode,
+  );
+  const moduleRecoveryKey = buildMdxEsmModuleRecoveryCacheKey(
+    projectId,
+    contentSourceId,
+    recoveryPayload.fileName,
+  );
+  const serializedRecoveryPayload = serializeMdxModuleRecoveryPayload(recoveryPayload);
+
+  const writes: Promise<unknown>[] = [
+    distributedCache.set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
+      (error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
         normalizedPath,
         error,
       });
-    });
-
-  const moduleFileName = buildMdxEsmModuleFileName(hashString(normalizedPath + moduleCode));
-  const moduleRecoveryKey = buildMdxEsmModuleRecoveryCacheKey(
-    projectId,
-    contentSourceId,
-    moduleFileName,
-  );
-
-  distributedCache
-    .set(moduleRecoveryKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
-    .catch((error) => {
+      },
+    ),
+    distributedCache
+      .set(moduleRecoveryKey, serializedRecoveryPayload, TRANSFORM_CACHE_TTL_SECONDS)
+      .catch((error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed vfmod recovery set failed`, {
         normalizedPath,
         moduleRecoveryKey,
         error,
       });
-    });
+      }),
+  ];
 
   // Create and store bundle manifest companion key for atomic validation
   const bundlePaths = extractHttpBundlePaths(moduleCode);
   if (bundlePaths.length > 0) {
     const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
-    void (async () => {
+    writes.push((async () => {
       try {
         const manifest = await createBundleManifest(entries);
         await storeBundleManifest(manifest);
@@ -261,6 +267,8 @@ export function writeDistributedCache(
           error,
         });
       }
-    })();
+    })());
   }
+
+  await Promise.all(writes);
 }

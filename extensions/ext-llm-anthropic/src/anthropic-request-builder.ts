@@ -161,6 +161,26 @@ function pushAnthropicUserContent(
   });
 }
 
+function readAnthropicRawAssistantMessages(
+  message: Extract<RuntimePromptMessage, { role: "assistant" }>,
+): Array<Array<Record<string, unknown>>> | undefined {
+  const metadata = message.providerMetadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  const anthropic = metadata.anthropic;
+  if (!anthropic || typeof anthropic !== "object" || Array.isArray(anthropic)) return undefined;
+  const rawAssistantMessages = (anthropic as Record<string, unknown>).rawAssistantMessages;
+  if (!Array.isArray(rawAssistantMessages) || rawAssistantMessages.length === 0) return undefined;
+  if (
+    !rawAssistantMessages.every((content) =>
+      Array.isArray(content) &&
+      content.every((block) => block !== null && typeof block === "object" && !Array.isArray(block))
+    )
+  ) {
+    return undefined;
+  }
+  return rawAssistantMessages as Array<Array<Record<string, unknown>>>;
+}
+
 function toAnthropicUserContent(
   parts: Extract<RuntimePromptMessage, { role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -236,6 +256,21 @@ function toAnthropicMessages(
         skippingHistoricalToolResults = false;
         const shouldCompactCompletedToolRound = index < lastHistoricalAssistantTextIndex &&
           message.content.some((part) => part.type === "tool-call");
+        const rawAssistantMessages = index < lastUserIndex || shouldCompactCompletedToolRound
+          ? undefined
+          : readAnthropicRawAssistantMessages(message);
+        if (rawAssistantMessages) {
+          pendingToolUseIds = new Set();
+          for (const rawContent of rawAssistantMessages) {
+            messages.push({ role: "assistant", content: rawContent });
+            for (const block of rawContent) {
+              if (block.type === "tool_use" && typeof block.id === "string") {
+                pendingToolUseIds.add(block.id);
+              }
+            }
+          }
+          break;
+        }
         const assistantContent = shouldCompactCompletedToolRound
           ? message.content.filter((part) => part.type === "text" && part.text.length > 0)
           : message.content;

@@ -5,6 +5,7 @@ import {
   type RuntimeUsage,
 } from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
+import type { RuntimePromptMessage } from "./types.ts";
 import {
   buildProviderError,
   parseRetryAfterMs,
@@ -35,52 +36,8 @@ export {
   requestJson,
   requestStream,
 };
+export type { RuntimePromptMessage } from "./types.ts";
 export type { RuntimeUsage };
-
-/** Message shape for runtime prompt. */
-export type RuntimePromptMessage =
-  | { role: "system"; content: string }
-  | {
-    role: "user";
-    content: Array<
-      | { type: "text"; text: string }
-      | { type: "image" | "file"; mediaType: string; url: string; filename?: string }
-    >;
-  }
-  | {
-    role: "assistant";
-    content: Array<
-      | { type: "text"; text: string }
-      | {
-        type: "tool-call";
-        toolCallId: string;
-        toolName: string;
-        input: unknown;
-        providerExecuted?: boolean;
-      }
-      | {
-        // Anthropic thinking block replay. Carries the original signed
-        // thinking trace so that on the next turn Anthropic can verify
-        // the signature and let Claude continue reasoning from the same
-        // point. `text` + `signature` are the normal pair for an
-        // un-redacted thinking block; `redactedData` is set instead of
-        // both when Anthropic returned an encrypted opaque payload.
-        type: "reasoning";
-        text?: string;
-        signature?: string;
-        redactedData?: string;
-      }
-    >;
-  }
-  | {
-    role: "tool";
-    content: Array<{
-      type: "tool-result";
-      toolCallId: string;
-      toolName: string;
-      output: { type: "json"; value: unknown };
-    }>;
-  };
 type RuntimeToolDefinition =
   | {
     type: "function";

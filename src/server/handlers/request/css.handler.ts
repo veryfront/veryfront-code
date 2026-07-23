@@ -12,6 +12,7 @@ import {
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import { getRequestTokenProvenance } from "../../context/request-context.ts";
 
 /** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
 const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
@@ -84,6 +85,7 @@ export class CSSHandler extends BaseHandler {
           projectId: ctx.projectId,
           productionMode: ctx.resolvedEnvironment === "production",
           releaseId: ctx.releaseId,
+          tokenProvenance: getRequestTokenProvenance(ctx.requestContext, effectiveToken),
         },
         lookup,
       )

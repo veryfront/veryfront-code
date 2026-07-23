@@ -1,13 +1,53 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  installGlobalTelemetryAPI,
+  type Span,
+  type Tracer,
+  type TracerProvider,
+} from "./api-shim.ts";
 import { TracingManager } from "./manager.ts";
+
+function createProvider(label: string, calls: string[]): TracerProvider {
+  const span: Span = {
+    setAttribute: () => span,
+    setAttributes: () => span,
+    setStatus: () => span,
+    recordException: () => {},
+    addEvent: () => span,
+    end: () => {},
+    spanContext: () => ({
+      traceId: label.padEnd(32, "0"),
+      spanId: label.padEnd(16, "0"),
+      traceFlags: 1,
+    }),
+    updateName: () => {},
+  };
+  const tracer: Tracer = {
+    startSpan(name) {
+      calls.push(`${label}:${name}`);
+      return span;
+    },
+    startActiveSpan: ((_name: string, ...args: unknown[]) => {
+      const callback = args.find((arg) => typeof arg === "function") as (span: Span) => unknown;
+      return callback(span);
+    }) as Tracer["startActiveSpan"],
+  };
+  return { getTracer: () => tracer };
+}
 
 describe("observability/tracing/manager", () => {
   let manager: TracingManager;
 
   beforeEach(() => {
     manager = new TracingManager();
+  });
+
+  afterEach(() => {
+    manager.shutdown();
+    _resetShimForTests();
   });
 
   describe("initial state", () => {
@@ -39,6 +79,26 @@ describe("observability/tracing/manager", () => {
   });
 
   describe("initialize", () => {
+    it("follows provider A to B to none without retaining stale span operations", async () => {
+      const calls: string[] = [];
+      const providerA = installGlobalTelemetryAPI({
+        tracerProvider: createProvider("A", calls),
+      });
+      await manager.initialize({ enabled: true, serviceName: "test" });
+      manager.getSpanOperations()?.startSpan("first");
+
+      const providerB = installGlobalTelemetryAPI({
+        tracerProvider: createProvider("B", calls),
+      });
+      manager.getSpanOperations()?.startSpan("second");
+      assertEquals(providerA.dispose(), false);
+      assertEquals(providerB.dispose(), true);
+
+      assertEquals(manager.isEnabled(), false);
+      assertEquals(manager.getSpanOperations(), null);
+      assertEquals(calls, ["A:first", "B:second"]);
+    });
+
     it("should mark as initialized with disabled config", async () => {
       await manager.initialize({ enabled: false });
       assertEquals(manager.getState().initialized, true);
@@ -103,6 +163,23 @@ describe("observability/tracing/manager", () => {
   });
 
   describe("shutdown", () => {
+    it("releases cached state and permits a fresh initialization", async () => {
+      const calls: string[] = [];
+      installGlobalTelemetryAPI({ tracerProvider: createProvider("A", calls) });
+      await manager.initialize({ enabled: true, serviceName: "test" });
+      const firstOperations = manager.getSpanOperations();
+
+      manager.shutdown();
+
+      assertEquals(manager.getState().initialized, false);
+      assertEquals(manager.getSpanOperations(), null);
+      installGlobalTelemetryAPI({ tracerProvider: createProvider("B", calls) });
+      await manager.initialize({ enabled: true, serviceName: "test" });
+      assertNotEquals(manager.getSpanOperations(), firstOperations);
+      manager.getSpanOperations()?.startSpan("fresh");
+      assertEquals(calls, ["B:fresh"]);
+    });
+
     it("should not throw when not initialized", () => {
       manager.shutdown();
     });

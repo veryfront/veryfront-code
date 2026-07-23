@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   _resetShimForTests,
   getGlobalTracerProvider,
+  installGlobalTelemetryAPI,
   type Span,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -175,13 +176,100 @@ describe("proxy otlp initialization", () => {
       OTEL_TRACES_ENABLED: "true",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
     });
-    const { exporter } = createFakeExporter({
+    const { exporter, calls } = createFakeExporter({
       start: () => Promise.reject(new Error("collector unreachable")),
     });
 
     // deno-lint-ignore require-await
     await initializeOTLPWithApis(async () => exporter);
 
+    assertEquals(startServerSpan("GET", "/"), null);
+    assertEquals(calls.shutdown, 1);
+  });
+
+  it("shares an in-flight initialization attempt", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const { exporter, calls } = createFakeExporter();
+    let loaderCalls = 0;
+    let releaseLoader!: () => void;
+    const loaderGate = new Promise<void>((resolve) => {
+      releaseLoader = resolve;
+    });
+    const loader = async (): Promise<TracingExporter> => {
+      loaderCalls++;
+      await loaderGate;
+      return exporter;
+    };
+
+    const first = initializeOTLPWithApis(loader);
+    const second = initializeOTLPWithApis(loader);
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+
+    assertEquals(loaderCalls, 1);
+    assertEquals(secondSettled, false);
+
+    releaseLoader();
+    await Promise.all([first, second]);
+    assertEquals(calls.start, 1);
+    assertEquals(secondSettled, true);
+  });
+
+  it("invalidates and releases an exporter that starts during shutdown", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const { exporter, calls } = createFakeExporter();
+    let releaseStart!: () => void;
+    let markStartEntered!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const startEntered = new Promise<void>((resolve) => {
+      markStartEntered = resolve;
+    });
+    exporter.start = async () => {
+      calls.start++;
+      markStartEntered();
+      await startGate;
+    };
+
+    const initialization = initializeOTLPWithApis(async () => exporter);
+    await startEntered;
+    const shutdown = shutdownOTLP();
+    releaseStart();
+    await Promise.all([initialization, shutdown]);
+
+    assertEquals(calls.start, 1);
+    assertEquals(calls.shutdown, 1);
+    assertEquals(startServerSpan("GET", "/"), null);
+  });
+
+  it("does not publish a partial facade when an exporter getter fails", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const previousProvider = { getTracer: () => ({}) as Tracer };
+    installGlobalTelemetryAPI({ tracerProvider: previousProvider });
+    const { exporter, calls } = createFakeExporter({
+      getMetricsAPI: () => {
+        throw new Error("metrics facade unavailable");
+      },
+    });
+
+    await initializeOTLPWithApis(async () => exporter);
+
+    assertEquals(calls.start, 1);
+    assertEquals(calls.shutdown, 1);
+    assertEquals(getGlobalTracerProvider(), previousProvider);
     assertEquals(startServerSpan("GET", "/"), null);
   });
 
@@ -213,6 +301,42 @@ describe("proxy otlp initialization", () => {
 
     assertEquals(calls.shutdown, 1);
     assertEquals(startServerSpan("GET", "/"), null);
+    assertEquals(
+      getGlobalTracerProvider().getTracer("cleared").startSpan("span").spanContext().traceId,
+      "0".repeat(32),
+    );
+  });
+
+  it("does not let proxy shutdown clear a newer telemetry generation", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const { exporter } = createFakeExporter();
+    await initializeOTLPWithApis(async () => exporter);
+
+    const newerProvider = { getTracer: () => ({}) as Tracer };
+    installGlobalTelemetryAPI({ tracerProvider: newerProvider });
+    await shutdownOTLP();
+
+    assertEquals(getGlobalTracerProvider(), newerProvider);
+  });
+
+  it("can initialize a fresh exporter after shutdown", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const first = createFakeExporter();
+    const second = createFakeExporter();
+
+    await initializeOTLPWithApis(async () => first.exporter);
+    await shutdownOTLP();
+    await initializeOTLPWithApis(async () => second.exporter);
+
+    assertEquals(first.calls.start, 1);
+    assertEquals(second.calls.start, 1);
+    assertNotEquals(startServerSpan("GET", "/"), null);
   });
 
   it("shutdown is safe when tracing was never initialized", async () => {

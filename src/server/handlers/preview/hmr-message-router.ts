@@ -66,7 +66,10 @@ export function broadcastUpdate(changedPaths?: string[], project?: ReloadProject
 }
 
 function broadcastMessage(message: string, projectSlug?: string): void {
-  const sockets = getOpenSockets(projectSlug);
+  // Runtime-managed external sockets are intentionally unscoped and must see
+  // every local update. Project-scoped sockets only see their own project;
+  // never broaden one project's event to sockets owned by another project.
+  const sockets = getOpenSockets(projectSlug, { includeUnscoped: true });
   let sentCount = 0;
 
   for (const socket of sockets) {

@@ -1,7 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createGitHubClient } from "../../lib/github-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createGitHubClient } from "../lib/github-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+const PULL_REQUEST_STATES = ["open", "closed", "all"] as const;
 
 type PullRequest = {
   number: number;
@@ -51,7 +54,7 @@ export default tool({
     try {
       const github = createGitHubClient(userId);
       const prs = await github.listPullRequests(owner, repoName, {
-        state,
+        state: requireAllowedValue(state, PULL_REQUEST_STATES, "state"),
         perPage: limit,
       });
 

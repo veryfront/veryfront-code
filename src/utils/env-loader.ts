@@ -31,19 +31,17 @@ export async function loadEnv(
 
       for (const [key, value] of Object.entries(vars)) {
         const existing = getEnv(key);
-        if (existing && !override) continue;
+        if (existing !== undefined && !override) continue;
 
         setEnv(key, value);
         envSources.set(key, file);
         totalVars++;
 
         if (debug) {
-          logger.debug(
-            `[env] ${key}=${value.substring(0, 20)}${value.length > 20 ? "..." : ""}`,
-          );
+          logger.debug(`[env] Loaded ${key}`);
         }
         if (key === "VERYFRONT_API_BASE_URL") {
-          logger.info(`VERYFRONT_API_BASE_URL loaded: ${value}`);
+          logger.info("VERYFRONT_API_BASE_URL loaded from environment file");
         }
       }
 

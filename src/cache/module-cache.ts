@@ -10,12 +10,14 @@ import {
   MODULE_CACHE_MAX_ENTRIES,
   MODULE_CACHE_TTL_MS,
 } from "#veryfront/utils/constants/cache.ts";
-import { registerLRUCache } from "./registry.ts";
+import { cacheRegistry, LRUCacheStore } from "./registry.ts";
 
 const logger = rendererLogger.component("module-cache");
 
 let moduleCache: LRUCache<string, string> | null = null;
 let esmCache: LRUCache<string, string> | null = null;
+let unregisterModuleCache: (() => boolean) | null = null;
+let unregisterEsmCache: (() => boolean) | null = null;
 
 export interface ModuleCacheMap extends Map<string, string> {
   getOrInsert(key: string, value: string): string;
@@ -38,6 +40,7 @@ interface ModuleCacheStats {
 interface PodCacheOptions {
   getExisting: () => LRUCache<string, string> | null;
   assign: (cache: LRUCache<string, string>) => void;
+  assignRegistration: (unregister: () => boolean) => void;
   maxEntries: number;
   ttlMs: number;
   registryName: string;
@@ -54,7 +57,9 @@ function getOrInitPodCache(options: PodCacheOptions): LRUCache<string, string> {
   });
 
   options.assign(cache);
-  registerLRUCache(options.registryName, cache);
+  options.assignRegistration(
+    cacheRegistry.register(new LRUCacheStore(options.registryName, cache)),
+  );
 
   logger.info(options.logMessage, {
     maxEntries: options.maxEntries,
@@ -69,6 +74,9 @@ const modulePodCacheOptions: PodCacheOptions = {
   assign: (cache) => {
     moduleCache = cache;
   },
+  assignRegistration: (unregister) => {
+    unregisterModuleCache = unregister;
+  },
   maxEntries: MODULE_CACHE_MAX_ENTRIES,
   ttlMs: MODULE_CACHE_TTL_MS,
   registryName: "pod-module-cache",
@@ -79,6 +87,9 @@ const esmPodCacheOptions: PodCacheOptions = {
   getExisting: () => esmCache,
   assign: (cache) => {
     esmCache = cache;
+  },
+  assignRegistration: (unregister) => {
+    unregisterEsmCache = unregister;
   },
   maxEntries: ESM_CACHE_MAX_ENTRIES,
   ttlMs: ESM_CACHE_TTL_MS,
@@ -227,13 +238,25 @@ export function clearModuleCaches(): void {
   logger.info("All module caches cleared");
 }
 
+function belongsToProject(cacheKey: string, projectId: string): boolean {
+  if (cacheKey.startsWith(`${projectId}:`)) return true;
+  if (!cacheKey.startsWith("[")) return false;
+
+  try {
+    const segments: unknown = JSON.parse(cacheKey);
+    return Array.isArray(segments) && segments[0] === projectId;
+  } catch {
+    return false;
+  }
+}
+
 export function clearModuleCacheForProject(projectId: string): number {
   if (!moduleCache) return 0;
 
   let cleared = 0;
 
   for (const key of moduleCache.keys()) {
-    if (!key.startsWith(`${projectId}:`)) continue;
+    if (!belongsToProject(key, projectId)) continue;
     moduleCache.delete(key);
     cleared++;
   }
@@ -246,9 +269,13 @@ export function clearModuleCacheForProject(projectId: string): number {
 }
 
 export function destroyModuleCaches(): void {
+  unregisterModuleCache?.();
+  unregisterEsmCache?.();
   moduleCache?.destroy();
   esmCache?.destroy();
   moduleCache = null;
   esmCache = null;
+  unregisterModuleCache = null;
+  unregisterEsmCache = null;
   logger.info("Module caches destroyed");
 }

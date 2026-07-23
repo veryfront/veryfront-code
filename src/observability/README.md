@@ -1,595 +1,258 @@
-# Observability Module
+# Observability reference
 
-The Observability module provides comprehensive OpenTelemetry integration for distributed tracing, metrics collection, and automatic instrumentation across the entire framework.
+The observability module defines Veryfront's tracing, metrics, instrumentation,
+request profiling, and development-diagnostics contracts.
 
-## Import Map Alias
+## Public entry points
 
-```typescript
-// Using import map alias (recommended)
-import {
-  initAutoInstrumentation,
-  initMetrics,
-  initTracing,
-  instrumentHttpHandler,
-  recordHttpRequest,
-  startSpan,
-} from "#observability";
-
-// Using barrel file
-import { initTracing, startSpan } from "./observability/index.ts";
-```
-
-## Public API Overview
-
-The Observability module exports:
-
-- **Tracing utilities** - OpenTelemetry distributed tracing and span management
-- **Metrics utilities** - Performance metrics for HTTP, cache, rendering, RSC, builds
-- **Auto-instrumentation** - Automatic instrumentation for handlers, fetch, React
-- **Configuration** - Simple setup for common observability backends
-
-## File Structure
-
-```
-observability/
-├── index.ts                    # Public API (barrel file) ← USE THIS
-├── README.md                   # This file
-├── tracing/                    # Distributed tracing
-│   ├── index.ts
-│   ├── init.ts                 # Tracing initialization
-│   ├── spans.ts                # Span management
-│   ├── context.ts              # Context propagation
-│   └── config.ts               # Tracing configuration
-├── metrics/                    # Metrics collection
-│   ├── index.ts
-│   ├── init.ts                 # Metrics initialization
-│   ├── http.ts                 # HTTP metrics
-│   ├── cache.ts                # Cache metrics
-│   ├── render.ts               # Rendering metrics
-│   ├── rsc.ts                  # RSC metrics
-│   ├── build.ts                # Build metrics
-│   └── manager.ts              # Metrics manager
-└── auto-instrument/            # Auto-instrumentation
-    ├── index.ts
-    ├── orchestrator.ts         # Instrumentation orchestrator
-    ├── http.ts                 # HTTP instrumentation
-    ├── fetch.ts                # Fetch instrumentation
-    ├── react.ts                # React instrumentation
-    └── error.ts                # Error instrumentation
-```
-
-## Quick Start
-
-### Basic Setup
+| Specifier                            | Contract                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| `veryfront/observability`            | Stable public tracing, metrics, instrumentation, profiling, and diagnostics API |
+| `veryfront/observability/otlp-setup` | Lower-level shim-based tracing helpers used by framework integrations           |
 
 ```ts
-import { initAutoInstrumentation, initMetrics, initTracing } from "#observability";
-
-// Initialize observability (typically in your main server file)
-await initTracing({
-  serviceName: "my-veryfront-app",
-  endpoint: "http://localhost:4318", // OTLP endpoint
-  enabled: true,
-});
-
-await initMetrics({
-  serviceName: "my-veryfront-app",
-  endpoint: "http://localhost:4318",
-  enabled: true,
-});
-
-// Enable automatic instrumentation
-await initAutoInstrumentation({
-  tracing: true,
-  metrics: true,
-  instruments: ["http", "fetch", "react", "error"],
-});
+import { initTracing, recordHttpRequest, withSpan } from "veryfront/observability";
 ```
 
-### Manual Tracing
+Core uses an OpenTelemetry-compatible shim. Without an observability extension,
+the shim is a no-op and traced callbacks still run. Exporter creation, provider
+wiring, flushing, and resource shutdown belong to the active observability
+extension and bootstrap lifecycle.
 
-```ts
-import { endSpan, setSpanAttributes, startSpan, withSpan } from "#observability";
-
-// Manual span management
-async function processRequest(req: Request) {
-  const span = startSpan("process-request");
-
-  try {
-    setSpanAttributes(span, {
-      "http.method": req.method,
-      "http.url": req.url,
-    });
-
-    const result = await doWork();
-    return result;
-  } finally {
-    endSpan(span);
-  }
-}
-
-// Using withSpan helper (recommended)
-async function processRequest(req: Request) {
-  return await withSpan("process-request", async (span) => {
-    setSpanAttributes(span, {
-      "http.method": req.method,
-      "http.url": req.url,
-    });
-
-    return await doWork();
-  });
-}
-```
-
-### Manual Metrics
-
-```ts
-import {
-  recordCacheGet,
-  recordHttpRequest,
-  recordHttpRequestComplete,
-  recordRender,
-} from "#observability";
-
-// Record HTTP request start
-const requestId = recordHttpRequest("GET", "/api/users");
-
-// Do work...
-const response = await handleRequest();
-
-// Record completion
-recordHttpRequestComplete(requestId, {
-  statusCode: 200,
-  duration: 150,
-});
-
-// Record cache operations
-recordCacheGet("user:123", true); // hit
-recordCacheSet("user:123", 1024); // size in bytes
-
-// Record render
-recordRender("page:/users", 250, false); // duration, isRSC
-```
-
-## Distributed Tracing
+## Tracing
 
 ### Configuration
 
-```ts
-interface TracingConfig {
-  serviceName: string;
-  endpoint: string; // OTLP endpoint (e.g., 'http://localhost:4318')
-  enabled: boolean;
-  sampleRate?: number; // 0.0 to 1.0 (default: 1.0)
-  exporterType?: "otlp" | "console" | "jaeger";
-  headers?: Record<string, string>; // Auth headers
-}
+`initTracing(config?, adapter?)` accepts a partial `TracingConfig`:
 
-await initTracing({
-  serviceName: "veryfront-app",
-  endpoint: process.env.OTLP_ENDPOINT,
-  enabled: process.env.NODE_ENV === "production",
-  sampleRate: 0.1, // Sample 10% of traces
-  headers: {
-    "Authorization": `Bearer ${process.env.OTLP_TOKEN}`,
-  },
-});
-```
+| Field         | Type                                          | Default       |
+| ------------- | --------------------------------------------- | ------------- |
+| `enabled`     | `boolean`                                     | `false`       |
+| `exporter`    | `"jaeger" \| "zipkin" \| "otlp" \| "console"` | `"console"`   |
+| `endpoint`    | `string`                                      | unset         |
+| `serviceName` | `string`                                      | `"veryfront"` |
+| `sampleRate`  | `number`                                      | `1`           |
+| `debug`       | `boolean`                                     | `false`       |
 
-### Span Management
+The runtime adapter or host environment can provide:
 
-```ts
-import {
-  addSpanEvent,
-  createChildSpan,
-  endSpan,
-  setSpanAttributes,
-  startSpan,
-} from "#observability";
+- `VERYFRONT_OTEL=1`
+- `OTEL_TRACES_ENABLED=true`
+- `OTEL_SERVICE_NAME`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+- `OTEL_TRACES_EXPORTER`
 
-// Start root span
-const rootSpan = startSpan("http.request");
+The core manager records configuration and binds to the active shim provider.
+Exporter-specific behavior, including sampling, is implemented by the provider
+extension.
 
-// Add attributes
-setSpanAttributes(rootSpan, {
-  "http.method": "GET",
-  "http.url": "/api/users",
-  "http.user_agent": req.headers.get("user-agent"),
-});
+### Functions
 
-// Add events
-addSpanEvent(rootSpan, "validation.start");
-await validateRequest(req);
-addSpanEvent(rootSpan, "validation.complete");
+| Function                                  | Contract                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| `initTracing(config?, adapter?)`          | Initializes the core tracing manager once                        |
+| `isTracingEnabled()`                      | Returns whether the manager has a tracer                         |
+| `isTracingDegraded()`                     | Returns whether initialization failed                            |
+| `shutdownTracing()`                       | Signals core shutdown; exporter teardown remains extension-owned |
+| `startSpan(name, options?)`               | Returns a `Span` or `null`                                       |
+| `endSpan(span, error?)`                   | Records status and ends a span; accepts `null`                   |
+| `setSpanAttributes(span, attributes)`     | Adds string, number, or boolean attributes                       |
+| `addSpanEvent(span, name, attributes?)`   | Adds an event                                                    |
+| `createChildSpan(parent, name, options?)` | Creates a child span or a root span when `parent` is `null`      |
+| `extractContext(headers)`                 | Extracts a tracing context from headers                          |
+| `injectContext(context, headers)`         | Injects an explicit context into headers                         |
+| `getActiveContext()`                      | Returns the current context when available                       |
+| `withActiveSpan(span, asyncFn)`           | Runs an async callback with `span` active                        |
+| `withSpan(name, asyncFn, options?)`       | Runs an async callback and completes its span                    |
+| `withSpanSync(name, fn, options?)`        | Synchronous form of `withSpan`                                   |
 
-// Create child span
-const dbSpan = createChildSpan(rootSpan, "db.query");
-setSpanAttributes(dbSpan, {
-  "db.system": "postgresql",
-  "db.statement": "SELECT * FROM users",
-});
-await db.query("SELECT * FROM users");
-endSpan(dbSpan);
+`SpanOptions` supports `kind`, `attributes`, and `parent`. `kind` is one of
+`internal`, `server`, `client`, `producer`, or `consumer`. `parent` may be a
+`Span` or a tracing `Context`.
 
-// End root span
-endSpan(rootSpan);
-```
+`SpanNames` contains the framework's standard span-name constants.
 
-### Context Propagation
+## OTLP helper entry point
 
-```ts
-import { extractContext, getActiveContext, injectContext, withActiveSpan } from "#observability";
+`veryfront/observability/otlp-setup` uses the shim provider directly. Its
+`withSpan` callback receives a non-null span, which is a no-op span when no real
+provider is installed.
 
-// Extract context from incoming request
-const context = extractContext(req.headers);
+| Function                                         | Contract                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------- |
+| `withSpan(name, asyncFn, attributes?, options?)` | Runs an async callback in an active span context                      |
+| `withSpanSync(name, fn, attributes?, options?)`  | Runs a synchronous callback in an active span context                 |
+| `startServerSpan(method, path, parentContext?)`  | Returns `{ span, context }`, or `null` when span startup fails        |
+| `endServerSpan(span, statusCode, error?)`        | Records HTTP status and ends the server span                          |
+| `extractContext(headers)`                        | Extracts from incoming headers                                        |
+| `injectContext(headers)`                         | Injects the active context into outgoing headers                      |
+| `withContext(context, asyncFn)`                  | Runs a callback in an explicit context                                |
+| `getTraceContext()`                              | Returns active `traceId` and `spanId`, or `{}`                        |
+| `setActiveSpanAttributes(attributes)`            | Adds attributes to the active span                                    |
+| `initializeOTLP()`                               | Marks the compatibility wrapper initialized                           |
+| `shutdownOTLP()`                                 | Delegates shutdown to the extension lifecycle                         |
+| `isOTLPEnabled()`                                | Reports whether `initializeOTLP()` was called, not exporter readiness |
 
-// Inject context into outgoing request
-const headers = new Headers();
-injectContext(headers);
-await fetch("https://api.example.com", { headers });
+`WithSpanOptions.kind` accepts the exported numeric `SpanKind` values.
 
-// Get current active span
-const activeSpan = withActiveSpan((span) => {
-  console.log("Current span:", span);
-  return span;
-});
-```
-
-### Async Span Wrapping
-
-```ts
-import { withSpan } from "#observability";
-
-// Automatically creates and ends span
-async function fetchUser(id: string) {
-  return await withSpan("fetch-user", async (span) => {
-    setSpanAttributes(span, { "user.id": id });
-
-    const user = await db.users.findById(id);
-
-    if (!user) {
-      addSpanEvent(span, "user.not_found");
-      throw new Error("User not found");
-    }
-
-    return user;
-  });
-}
-
-// Nested spans work automatically
-async function processOrder(orderId: string) {
-  return await withSpan("process-order", async () => {
-    const order = await fetchOrder(orderId); // Child span
-    const user = await fetchUser(order.userId); // Child span
-    await sendEmail(user.email); // Child span
-    return { order, user };
-  });
-}
-```
-
-## Metrics Collection
+## Metrics
 
 ### Configuration
 
-```ts
-interface MetricsConfig {
-  serviceName: string;
-  endpoint: string;
-  enabled: boolean;
-  collectInterval?: number; // Collection interval in ms (default: 60000)
-  exportInterval?: number; // Export interval in ms (default: 60000)
-  headers?: Record<string, string>;
-}
-
-await initMetrics({
-  serviceName: "veryfront-app",
-  endpoint: process.env.OTLP_ENDPOINT,
-  enabled: true,
-  collectInterval: 30000, // Collect every 30s
-  exportInterval: 60000, // Export every 60s
-});
-```
-
-### HTTP Metrics
-
-```ts
-import { recordHttpRequest, recordHttpRequestComplete } from "#observability";
-
-// Start recording request
-const requestId = recordHttpRequest("POST", "/api/users", {
-  userAgent: req.headers.get("user-agent"),
-  remoteAddr: req.headers.get("x-forwarded-for"),
-});
-
-// Handle request
-const response = await handleRequest(req);
-
-// Record completion
-recordHttpRequestComplete(requestId, {
-  statusCode: response.status,
-  duration: performance.now() - startTime,
-  bytesWritten: response.headers.get("content-length"),
-});
-```
-
-### Cache Metrics
-
-```ts
-import {
-  recordCacheGet,
-  recordCacheInvalidate,
-  recordCacheSet,
-  setCacheSize,
-} from "#observability";
-
-// Record cache operations
-recordCacheGet("user:123", true); // Cache hit
-recordCacheGet("user:456", false); // Cache miss
-
-recordCacheSet("user:789", 2048); // Set with size in bytes
-
-recordCacheInvalidate("user:*", 10); // Invalidated 10 entries
-
-// Update cache size
-setCacheSize(1024 * 1024 * 10); // 10 MB
-```
-
-### Rendering Metrics
-
-```ts
-import { recordRender, recordRenderError, recordRSCRender, recordRSCStream } from "#observability";
-
-// SSR rendering
-recordRender("page:/users", 250, false); // path, duration, isRSC
-
-// RSC rendering
-recordRSCRender("component:UserList", 120);
-recordRSCStream("payload:users", 5120); // size in bytes
-
-// Render errors
-recordRenderError("page:/users", "TypeError: Cannot read property...");
-```
-
-### Build Metrics
-
-```ts
-import { recordBuild, recordBundle, recordDataFetch } from "#observability";
-
-// Build process
-recordBuild(45000, true); // duration, success
-
-// Bundle generation
-recordBundle("client", 512000, 2500); // target, size, duration
-
-// Data fetching (SSG)
-recordDataFetch("users", 150, true); // source, duration, success
-recordDataFetchError("posts", "Network timeout");
-```
-
-## Auto-Instrumentation
-
-### Configuration
-
-```ts
-interface AutoInstrumentConfig {
-  tracing: boolean;
-  metrics: boolean;
-  instruments?: ("http" | "fetch" | "react" | "error")[];
-}
-
-await initAutoInstrumentation({
-  tracing: true,
-  metrics: true,
-  instruments: ["http", "fetch", "react", "error"],
-});
-```
-
-### HTTP Handler Instrumentation
-
-```ts
-import { instrumentHttpHandler } from "#observability";
-
-// Wrap your HTTP handler
-const instrumentedHandler = instrumentHttpHandler(
-  async (req: Request) => {
-    return new Response("Hello World");
-  },
-  {
-    spanName: "http.request",
-    recordMetrics: true,
-  },
-);
-
-// Use with server
-Deno.serve(instrumentedHandler);
-```
-
-### Fetch Instrumentation
-
-```ts
-import { instrumentFetch } from "#observability";
-
-// Instrument fetch globally
-instrumentFetch();
-
-// Now all fetch calls are automatically traced
-const response = await fetch("https://api.example.com/users");
-// Creates span: "http.client.fetch" with method, url, status attributes
-```
-
-### React Render Instrumentation
-
-```ts
-import { instrumentReactRender } from "#observability";
-
-// Instrument React rendering
-const instrumentedRender = instrumentReactRender(
-  async (element: React.ReactElement) => {
-    return await renderToString(element);
-  },
-);
-
-// Use instrumented render
-const html = await instrumentedRender(<App />);
-// Creates span: "react.render" with component name and duration
-```
-
-### Error Instrumentation
-
-```ts
-import { instrumentErrorHandler } from "#observability";
-
-// Wrap error handler
-const instrumentedErrorHandler = instrumentErrorHandler(
-  async (error: Error, req: Request) => {
-    console.error("Error:", error);
-    return new Response("Internal Server Error", { status: 500 });
-  },
-);
-
-// Errors automatically create spans and record metrics
-```
-
-### Batch Instrumentation
-
-```ts
-import { instrumentBatch } from "#observability";
-
-// Instrument multiple functions at once
-const operations = instrumentBatch({
-  fetchUser: async (id: string) => {/* ... */},
-  updateUser: async (id: string, data: any) => {/* ... */},
-  deleteUser: async (id: string) => {/* ... */},
-});
-
-// Each operation now creates spans automatically
-await operations.fetchUser("123");
-```
-
-## Observability Backends
-
-### Jaeger
-
-```ts
-await initTracing({
-  serviceName: "veryfront-app",
-  endpoint: "http://localhost:14268/api/traces",
-  exporterType: "jaeger",
-  enabled: true,
-});
-```
-
-### Zipkin
-
-```ts
-await initTracing({
-  serviceName: "veryfront-app",
-  endpoint: "http://localhost:9411/api/v2/spans",
-  exporterType: "otlp",
-  enabled: true,
-});
-```
-
-### Grafana Cloud (OTLP)
-
-```ts
-await initTracing({
-  serviceName: "veryfront-app",
-  endpoint: "https://otlp-gateway-prod-us-east-0.grafana.net/otlp",
-  enabled: true,
-  headers: {
-    "Authorization": `Basic ${btoa(`${instanceId}:${apiToken}`)}`,
-  },
-});
-
-await initMetrics({
-  serviceName: "veryfront-app",
-  endpoint: "https://otlp-gateway-prod-us-east-0.grafana.net/otlp",
-  enabled: true,
-  headers: {
-    "Authorization": `Basic ${btoa(`${instanceId}:${apiToken}`)}`,
-  },
-});
-```
-
-### Honeycomb
-
-```ts
-await initTracing({
-  serviceName: "veryfront-app",
-  endpoint: "https://api.honeycomb.io",
-  enabled: true,
-  headers: {
-    "x-honeycomb-team": process.env.HONEYCOMB_API_KEY,
-    "x-honeycomb-dataset": "veryfront-traces",
-  },
-});
-```
-
-## Best Practices
-
-1. **Initialize early** - Call init functions at application startup
-2. **Use auto-instrumentation** - Enable for common patterns (HTTP, fetch, React)
-3. **Manual spans for business logic** - Use `withSpan` for important operations
-4. **Add meaningful attributes** - Include user IDs, request IDs, operation details
-5. **Sample in production** - Use `sampleRate` to reduce overhead (e.g., 0.1 = 10%)
-6. **Propagate context** - Always extract/inject context for distributed traces
-7. **Record metrics consistently** - Use standard metric names and labels
-8. **Handle shutdown gracefully** - Call `shutdownTracing()` and `shutdownMetrics()`
-
-## Performance Tips
-
-- Auto-instrumentation adds ~1-5ms overhead per operation
-- Sampling reduces overhead proportionally (0.1 = 90% reduction)
-- Use batch exports to reduce network calls
-- Disable in development if not needed
-- Use console exporter for debugging (no network overhead)
-
-## Monitoring Examples
-
-### SLI/SLO Tracking
-
-```ts
-// Track service level indicators
-recordHttpRequestComplete(requestId, {
-  statusCode: 200,
-  duration: 120, // < 200ms SLO
-});
-
-// Query metrics to calculate SLI
-const successRate = successfulRequests / totalRequests;
-const p95Latency = calculateP95(requestDurations);
-
-console.log(`Success Rate: ${successRate * 100}% (SLO: 99.9%)`);
-console.log(`P95 Latency: ${p95Latency}ms (SLO: 200ms)`);
-```
-
-### Error Rate Monitoring
-
-```ts
-// Automatic error tracking
-instrumentErrorHandler(async (error) => {
-  // Error automatically recorded in metrics
-  return handleError(error);
-});
-
-// Query error rate
-const errorRate = errorCount / totalRequests;
-if (errorRate > 0.01) { // > 1% error rate
-  alert("High error rate detected!");
-}
-```
-
-## Related Modules
-
-- **#server** - Server implementation with observability hooks
-- **#rendering** - SSR/RSC rendering with automatic tracing
-- **#api** - API routes with HTTP metrics
-- **#middleware** - Middleware pipeline with instrumentation
-
-## References
-
-- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
-- [Jaeger Documentation](https://www.jaegertracing.io/docs/)
-- [Grafana Cloud OTLP](https://grafana.com/docs/grafana-cloud/send-data/otlp/)
-- [Honeycomb Documentation](https://docs.honeycomb.io/)
+`initMetrics(config?, adapter?)` accepts a partial `MetricsConfig`:
+
+| Field             | Type                                  | Default              |
+| ----------------- | ------------------------------------- | -------------------- |
+| `enabled`         | `boolean`                             | `false`              |
+| `exporter`        | `"prometheus" \| "otlp" \| "console"` | `"console"`          |
+| `endpoint`        | `string`                              | unset                |
+| `prefix`          | `string`                              | `"veryfront"`        |
+| `collectInterval` | `number`                              | `60000` milliseconds |
+| `debug`           | `boolean`                             | `false`              |
+
+The runtime adapter or host environment can provide `VERYFRONT_OTEL`,
+`OTEL_METRICS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, and `OTEL_METRICS_EXPORTER`.
+
+The core metrics manager requires a metrics API installed by an observability
+extension. Without one, recorders update their in-process runtime state and
+external instruments remain disabled.
+
+### Functions
+
+All duration arguments are milliseconds. Attributes are
+`Record<string, string>`.
+
+| Function                                                                                   | Signature summary                                                     |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `recordHttpRequest`                                                                        | `(attributes?) => void`                                               |
+| `recordHttpRequestComplete`                                                                | `(durationMs, attributes?) => void`                                   |
+| `recordCacheGet`                                                                           | `(hit, attributes?) => void`                                          |
+| `recordCacheSet`                                                                           | `(attributes?) => void`                                               |
+| `recordCacheInvalidate`                                                                    | `(count, attributes?) => void`                                        |
+| `setCacheSize`                                                                             | `(size) => void`                                                      |
+| `recordRender`, `recordRSCRender`, `recordRSCStream`                                       | `(durationMs, attributes?) => void`                                   |
+| `recordRenderError`, `recordRSCError`                                                      | `(attributes?) => void`                                               |
+| `recordRSCRequest`                                                                         | `("manifest" \| "page" \| "stream" \| "action", attributes?) => void` |
+| `recordBuild`, `recordDataFetch`                                                           | `(durationMs, attributes?) => void`                                   |
+| `recordBundle`                                                                             | `(sizeKb, attributes?) => void`                                       |
+| `recordDataFetchError`, `recordCorsRejection`, `recordSecurityHeaders`, `recordErrorCount` | `(attributes?) => void`                                               |
+| `getMetricsState()`                                                                        | Returns initialization, cache-size, and active-request state          |
+| `isMetricsEnabled()`                                                                       | Returns whether a real meter is installed                             |
+| `shutdownMetrics()`                                                                        | Signals core shutdown; exporter teardown remains extension-owned      |
+
+Non-finite and negative measurements are normalized before recording. Active
+request and cache-size state is clamped at zero. Instrument failures are
+isolated from application work.
+
+## Instrumentation wrappers
+
+`initAutoInstrumentation(config?, adapter?)` initializes the configured tracing
+and metrics managers. It does not replace global functions. Apply the exported
+wrappers explicitly.
+
+`AutoInstrumentConfig` contains optional `tracing`, `metrics`,
+`instrumentHttp`, `instrumentFetch`, `instrumentReact`, and `captureErrors`
+fields. The four instrumentation flags are configuration metadata; wrapper
+installation remains explicit.
+
+| Function                                            | Contract                                                                   |
+| --------------------------------------------------- | -------------------------------------------------------------------------- |
+| `instrumentHttpHandler(handler)`                    | Returns an async request handler with server-span tracing                  |
+| `instrumentFetch(baseFetch?)`                       | Returns a fetch-compatible function; it does not mutate `globalThis.fetch` |
+| `instrumentReactRender(renderFn, componentName)`    | Traces one synchronous or asynchronous render                              |
+| `instrumentErrorHandler(handler, captureToSpan?)`   | Optionally captures an error before invoking the handler                   |
+| `instrument(fn, spanName, options?)`                | Wraps an async function and preserves its argument/result types            |
+| `instrumentSync(fn, spanName, options?)`            | Synchronous form of `instrument`                                           |
+| `instrumentBatch(name, items, processor, options?)` | Processes sequential batches, with items in each batch run concurrently    |
+| `isAutoInstrumentEnabled()`                         | Reports whether the initializer has completed                              |
+
+`instrumentBatch` defaults to a batch size of 10 and rejects non-positive or
+non-integer batch sizes.
+
+## Service tracer adapter
+
+`createOpenTelemetryServiceTracer(options)` adapts injected OpenTelemetry trace
+and context APIs to the service tracer contract. The returned object provides:
+
+- `tracer.startSpan`, `tracer.scope`, `tracer.wrap`, and `tracer.trace`
+- `setActiveSpanAttributes(attributes)`
+- `getTraceContext()`
+
+Async wrappers keep spans open until their returned promise settles while
+preserving the exact returned promise or thenable object. Telemetry recording
+failures do not replace completed application results or failures.
+
+## In-process metrics
+
+The `metrics` object exposes counters and bounded histogram snapshots for
+framework-local diagnostics. Root-level convenience exports also include
+`recordApiRequest`, `recordApiRetry`, `recordContentCacheHit`, and
+`recordContentNetworkFetch`.
+
+`metrics.snapshot()` returns a detached snapshot. Histogram boundaries and
+counts in returned snapshots are safe for callers to mutate.
+
+## Request profiling
+
+The root entry point exports:
+
+| Function                                     | Contract                                                              |
+| -------------------------------------------- | --------------------------------------------------------------------- |
+| `profilePhase(name, asyncFn)`                | Measures and accumulates an async phase in the active request profile |
+| `profileSyncPhase(name, fn)`                 | Synchronous phase measurement                                         |
+| `markRequestProfilePhase(name, durationMs?)` | Adds an explicit phase duration                                       |
+| `snapshotRequestProfiles()`                  | Returns retained profile records and the latest sequence              |
+
+Profiling uses async-local request state. The full internal profiler also uses
+`VERYFRONT_ENABLE_PERF_PROFILING`, `VERYFRONT_ENABLE_SERVER_TIMING`, and
+`VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING`.
+
+## Development diagnostics
+
+### `ErrorCollector`
+
+`ErrorCollector({ maxErrors? })` retains development errors by type and category.
+`maxErrors` must be a non-negative safe integer; zero keeps notifications active
+without retaining entries. Query methods return detached copies. Subscriber
+failures do not interrupt collection.
+
+### `LogBuffer`
+
+`LogBuffer({ maxSize? })` retains structured log entries. `maxSize` must be a
+non-negative safe integer. `query`, `tail`, `getAll`, and `toJSON` return
+detached copies. `interceptConsole(buffer, source?)` returns a function that
+restores the original console methods.
+
+### `FileLogSubscriber`
+
+`FileLogConfig` contains:
+
+| Field      | Type                                             |
+| ---------- | ------------------------------------------------ |
+| `enabled`  | `boolean`                                        |
+| `path`     | non-empty `string`                               |
+| `maxSize`  | positive byte count or a string such as `"10mb"` |
+| `maxFiles` | positive safe integer                            |
+| `level`    | `"debug" \| "info" \| "warn" \| "error"`         |
+| `format`   | `"json" \| "text"`                               |
+
+`FileLogSubscriber` serializes writes, rotates files by size, and exposes
+`flush()` and `close()`. Passive subscriber callbacks report and contain write
+failures; explicit `flush()` and `close()` reject when writes, durability sync,
+or file closure fails. It requires the Deno file API.
+
+## Data safety and cardinality
+
+Telemetry attributes with credential-like keys are replaced with
+`[REDACTED]`. Credentials embedded in URL userinfo or sensitive query
+parameters are also removed from traced URLs, recorded errors, buffered logs,
+and collected development errors. Structured log and error context is copied
+and key-redacted before retention.
+
+Redaction is defense in depth, not permission to attach secrets. Free-form
+values that are not recognizable URLs may still contain sensitive data. Keep
+attribute keys bounded and values low-cardinality. Prefer route templates,
+operation kinds, and status classes over raw IDs, arbitrary paths, request
+bodies, SQL statements, or user-provided text.

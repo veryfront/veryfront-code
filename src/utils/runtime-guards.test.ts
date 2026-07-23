@@ -43,6 +43,10 @@ describe("runtime-guards", () => {
       assertEquals(hasNodeProcess({ process: {} }), false);
     });
 
+    it("should return false for a null process environment", () => {
+      assertEquals(hasNodeProcess({ process: { env: null } }), false);
+    });
+
     it("should return false for null", () => {
       assertEquals(hasNodeProcess(null), false);
     });
@@ -55,6 +59,12 @@ describe("runtime-guards", () => {
 
     it("should return false for missing Bun", () => {
       assertEquals(hasBunRuntime({}), false);
+    });
+
+    it("should return false for Bun without a string version", () => {
+      assertEquals(hasBunRuntime({ Bun: null }), false);
+      assertEquals(hasBunRuntime({ Bun: {} }), false);
+      assertEquals(hasBunRuntime({ Bun: { version: 1 } }), false);
     });
 
     it("should return false for null", () => {

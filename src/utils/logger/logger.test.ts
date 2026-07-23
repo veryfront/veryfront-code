@@ -318,6 +318,155 @@ describe("logger", () => {
       }
     });
 
+    it("fails closed when a context getter throws", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const context: Record<string, unknown> = { password: "must-not-leak" };
+      Object.defineProperty(context, "error", {
+        enumerable: true,
+        get() {
+          throw new Error("getter failure");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Unsafe context", context);
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("must-not-leak"), false);
+          assertEquals(entry.context?.unreadable_context, "[REDACTED]");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("scrubs credentials embedded in the log message", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info(
+            "Fetching https://user:password@example.com/cb?access_token=secret",
+          );
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("password"), false);
+          assertEquals(line.includes("secret"), false);
+          assertEquals(entry.message.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("scrubs URL credentials from every structured string representation", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Structured values", {
+            nested: {
+              raw: "https://user:raw-pass@example.test/?token=raw-token",
+              url: new URL(
+                "https://client:url-pass@example.test/callback#access_token=url-token",
+              ),
+              serialized: {
+                toJSON: () => "https://example.test/#secret=serialized-token",
+              },
+            },
+          });
+
+          const line = getOutput();
+          for (
+            const secret of ["raw-pass", "raw-token", "url-pass", "url-token", "serialized-token"]
+          ) {
+            assertEquals(line.includes(secret), false);
+          }
+          assertEquals(line.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("serializes BigInt and hostile toJSON getters without throwing", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostile: Record<string, unknown> = {};
+      Object.defineProperty(hostile, "toJSON", {
+        get() {
+          throw new Error("hostile serializer getter");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Unusual values", { count: 42n, hostile });
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.context?.count, "42");
+        assertEquals(entry.context?.hostile, "[REDACTED]");
+      } finally {
+        restore();
+      }
+    });
+
+    it("fails closed when a structured array has a hostile element getter", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostile: unknown[] = [];
+      Object.defineProperty(hostile, 0, {
+        enumerable: true,
+        get() {
+          throw new Error("hostile array element getter");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Hostile array", { values: hostile });
+        });
+
+        const output = getOutput();
+        const entry = JSON.parse(output) as LogEntry;
+        assertEquals(entry.context?.values, "[REDACTED]");
+        assertEquals(output.includes("hostile array element getter"), false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("fails closed when root or nested log context proxies are revoked", () => {
+      const { getOutput, reset, restore } = captureConsoleLog();
+      const root = Proxy.revocable({ token: "root-secret" }, {});
+      const nested = Proxy.revocable(["nested-secret"], {});
+      root.revoke();
+      nested.revoke();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Revoked root", root.proxy);
+        });
+        const rootOutput = getOutput();
+        const rootEntry = JSON.parse(rootOutput) as LogEntry;
+        assertEquals(rootEntry.context?.unreadable_context, "[REDACTED]");
+        assertEquals(rootOutput.includes("root-secret"), false);
+
+        reset();
+        withJsonLogFormat(() => {
+          serverLogger.info("Revoked nested", { values: nested.proxy });
+        });
+        const nestedOutput = getOutput();
+        const nestedEntry = JSON.parse(nestedOutput) as LogEntry;
+        assertEquals(nestedEntry.context?.values, "[REDACTED]");
+        assertEquals(nestedOutput.includes("nested-secret"), false);
+      } finally {
+        restore();
+      }
+    });
+
     it("should surface run user log routing fields as top-level JSON fields", () => {
       const { getOutput, restore } = captureConsoleLog();
 
@@ -417,6 +566,52 @@ describe("logger", () => {
   });
 
   describe("text output format", () => {
+    it("scrubs credentials embedded in the rendered message", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info("Fetching https://user:password@example.com?token=secret");
+        const output = getOutput();
+        assertEquals(output.includes("password"), false);
+        assertEquals(output.includes("secret"), false);
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("scrubs URL credentials from nested text context values", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info("Structured text", {
+          nested: {
+            raw: "https://user:text-pass@example.test/#token=text-token",
+            url: new URL("https://client:url-pass@example.test/callback?secret=url-token"),
+          },
+        });
+        const output = getOutput();
+        for (const secret of ["text-pass", "text-token", "url-pass", "url-token"]) {
+          assertEquals(output.includes(secret), false);
+        }
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
     it("should render Error values provided inside context.error as err=", () => {
       Deno.env.set("LOG_FORMAT", "text");
       Deno.env.set("NO_COLOR", "1");

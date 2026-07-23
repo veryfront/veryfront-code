@@ -1,5 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ProviderOverloadedError } from "veryfront/provider/shared";
 import { streamAnthropicCompatibleParts } from "./anthropic-stream.ts";
 
 type AnthropicStreamOptions = Parameters<typeof streamAnthropicCompatibleParts>[1];
@@ -197,6 +198,156 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         },
       },
     ]);
+  });
+
+  it("accepts exactly 1 MiB of partial_json then rejects the next byte and cancels", async () => {
+    let cancelCount = 0;
+    const exactBoundaryPartialJson = "é".repeat(524_288);
+    const stream = streamFromChunksWithCancelSpy([
+      [
+        data({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_oversized", name: "bash" },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: exactBoundaryPartialJson },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: "x" },
+        }),
+      ].join(""),
+    ], { onCancel: () => cancelCount++ });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    assertEquals(await iterator.next(), {
+      done: false,
+      value: { type: "tool-input-start", id: "toolu_oversized", toolName: "bash" },
+    });
+    assertEquals(await iterator.next(), {
+      done: false,
+      value: {
+        type: "tool-input-delta",
+        id: "toolu_oversized",
+        delta: exactBoundaryPartialJson,
+      },
+    });
+    await assertRejects(
+      () => iterator.next(),
+      RangeError,
+      "partial_json exceeded 1048576 UTF-8 bytes",
+    );
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
+  });
+
+  it("rejects more than 4096 partial_json deltas and cancels the provider body", async () => {
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      [
+        data({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_many_deltas", name: "bash" },
+        }),
+        ...Array.from({ length: 4_097 }, () =>
+          data({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: "" },
+          })),
+      ].join(""),
+    ], { onCancel: () => cancelCount++ });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    assertEquals((await iterator.next()).done, false);
+    for (let index = 0; index < 4_096; index++) {
+      assertEquals((await iterator.next()).done, false);
+    }
+    await assertRejects(
+      () => iterator.next(),
+      RangeError,
+      "partial_json exceeded 4096 deltas",
+    );
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
+  });
+
+  it("caps an unterminated SSE remainder and cancels the provider body", async () => {
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      "x".repeat(8_388_609),
+    ], { onCancel: () => cancelCount++ });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    await assertRejects(
+      () => iterator.next(),
+      RangeError,
+      "SSE remainder exceeded 8388608 bytes",
+    );
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
+  });
+
+  it("caps a complete SSE event across individually bounded lines and cancels", async () => {
+    let cancelCount = 0;
+    const boundedLine = `:${"x".repeat(4_200_000)}\n`;
+    const stream = streamFromChunksWithCancelSpy([
+      `${boundedLine}${boundedLine}\n`,
+    ], { onCancel: () => cancelCount++ });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    await assertRejects(
+      () => iterator.next(),
+      RangeError,
+      "SSE event exceeded 8388608 bytes",
+    );
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
+  });
+
+  it("surfaces HTTP-200 SSE error events as typed failures and cancels", async () => {
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      data({
+        type: "error",
+        error: { type: "overloaded_error", message: "Anthropic is overloaded" },
+      }),
+    ], { onCancel: () => cancelCount++ });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    await assertRejects(
+      () => iterator.next(),
+      ProviderOverloadedError,
+      "Anthropic is overloaded",
+    );
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
+  });
+
+  it("cancels the provider body when the consumer returns early", async () => {
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "partial" },
+      }),
+    ], { closeDelayMs: 600, onCancel: () => cancelCount++ });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    assertEquals(await iterator.next(), {
+      done: false,
+      value: { type: "text-delta", delta: "partial" },
+    });
+    await iterator.return?.();
+
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
   });
 
   it("preserves Veryfront gateway billing metadata from usage envelopes", async () => {

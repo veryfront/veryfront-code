@@ -5,8 +5,8 @@
  * tracking cache sizes, and detecting memory leaks.
  **************************/
 
-import { rendererLogger } from "#veryfront/utils";
-import { getArgs, getEnv, memoryUsage } from "#veryfront/platform/compat/process.ts";
+import { rendererLogger } from "#veryfront/utils/logger/index.ts";
+import { getArgs, getEnv, memoryUsage, unrefTimer } from "#veryfront/platform/compat/process.ts";
 
 const logger = rendererLogger.component("memory-profiler");
 
@@ -202,10 +202,11 @@ function toMonitoringCacheStats(cache: CacheStats): MonitoringCacheStats {
 }
 
 export function getTopCacheStats(caches: CacheStats[], limit = 8): MonitoringCacheStats[] {
+  const normalizedLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
   return [...caches]
     .filter((cache) => cache.entries > 0)
     .sort((a, b) => b.entries - a.entries || a.name.localeCompare(b.name))
-    .slice(0, limit)
+    .slice(0, normalizedLimit)
     .map(toMonitoringCacheStats);
 }
 
@@ -229,11 +230,8 @@ export function getMemoryMonitoringLogContext(
 export function getMemoryMonitoringConfig(env: MemoryMonitoringEnv): MemoryMonitoringConfig {
   const enabled = env.get("ENABLE_MEMORY_MONITORING") === "true";
   const rawInterval = env.get("MEMORY_MONITORING_INTERVAL_MS");
-  const parsedInterval = parseInt(
-    rawInterval ?? String(DEFAULT_MEMORY_MONITORING_INTERVAL_MS),
-    10,
-  );
-  const intervalMs = Number.isFinite(parsedInterval) && parsedInterval > 0
+  const parsedInterval = Number(rawInterval ?? DEFAULT_MEMORY_MONITORING_INTERVAL_MS);
+  const intervalMs = Number.isInteger(parsedInterval) && parsedInterval > 0
     ? parsedInterval
     : DEFAULT_MEMORY_MONITORING_INTERVAL_MS;
 
@@ -318,6 +316,10 @@ export async function forceGC(): Promise<boolean> {
 }
 
 export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS): void {
+  if (!Number.isInteger(intervalMs) || intervalMs <= 0) {
+    throw new RangeError("Memory monitoring interval must be a positive integer");
+  }
+
   if (memoryCheckInterval) clearInterval(memoryCheckInterval);
 
   logger.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
@@ -327,42 +329,47 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
   pendingRapidHeapGrowth = rapidGrowthState.pending;
 
   memoryCheckInterval = setInterval(() => {
-    const snapshot = getMemorySnapshot();
-    const { heap } = snapshot;
-    const monitoringContext = getMemoryMonitoringLogContext(snapshot);
+    try {
+      const snapshot = getMemorySnapshot();
+      const { heap } = snapshot;
+      const monitoringContext = getMemoryMonitoringLogContext(snapshot);
 
-    logger.info("Memory status", monitoringContext);
+      logger.info("Memory status", monitoringContext);
 
-    const thresholdPercent = heapGrowthWarningThreshold * 100;
-    if (heap.heapUsedPercent > thresholdPercent) {
-      logger.warn("HIGH MEMORY USAGE", {
-        heapUsedPercent: heap.heapUsedPercent,
-        threshold: thresholdPercent,
-        topCaches: monitoringContext.topCaches,
-        caches: snapshot.caches.map((c) => `${c.name}: ${c.entries}`).join(", "),
+      const thresholdPercent = heapGrowthWarningThreshold * 100;
+      if (heap.heapUsedPercent > thresholdPercent) {
+        logger.warn("HIGH MEMORY USAGE", {
+          heapUsedPercent: heap.heapUsedPercent,
+          threshold: thresholdPercent,
+          topCaches: monitoringContext.topCaches,
+          caches: snapshot.caches.map((c) => `${c.name}: ${c.entries}`).join(", "),
+        });
+      }
+
+      const rapidGrowthEvaluation = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: lastHeapUsed,
+        currentHeapUsedMB: heap.usedHeapSizeMB,
+        currentHeapUsedPercent: heap.heapUsedPercent,
+        pending: pendingRapidHeapGrowth,
+        thresholdMB: HEAP_RAPID_GROWTH_THRESHOLD_MB,
+        memoryPressureWarningThresholdPercent: thresholdPercent,
       });
-    }
+      pendingRapidHeapGrowth = rapidGrowthEvaluation.pending;
+      if (rapidGrowthEvaluation.shouldWarn) {
+        logger.warn("Rapid heap growth detected", {
+          growthMB: rapidGrowthEvaluation.growthMB,
+          observedGrowthMB: rapidGrowthEvaluation.observedGrowthMB,
+          intervalMs,
+          topCaches: monitoringContext.topCaches,
+        });
+      }
 
-    const rapidGrowthEvaluation = getRapidHeapGrowthEvaluation({
-      previousHeapUsedMB: lastHeapUsed,
-      currentHeapUsedMB: heap.usedHeapSizeMB,
-      currentHeapUsedPercent: heap.heapUsedPercent,
-      pending: pendingRapidHeapGrowth,
-      thresholdMB: HEAP_RAPID_GROWTH_THRESHOLD_MB,
-      memoryPressureWarningThresholdPercent: thresholdPercent,
-    });
-    pendingRapidHeapGrowth = rapidGrowthEvaluation.pending;
-    if (rapidGrowthEvaluation.shouldWarn) {
-      logger.warn("Rapid heap growth detected", {
-        growthMB: rapidGrowthEvaluation.growthMB,
-        observedGrowthMB: rapidGrowthEvaluation.observedGrowthMB,
-        intervalMs,
-        topCaches: monitoringContext.topCaches,
-      });
+      lastHeapUsed = heap.usedHeapSizeMB;
+    } catch (error) {
+      logger.warn("Memory monitoring sample failed", { error });
     }
-
-    lastHeapUsed = heap.usedHeapSizeMB;
   }, intervalMs);
+  unrefTimer(memoryCheckInterval);
 }
 
 export function startConfiguredMemoryMonitoring(env: MemoryMonitoringEnv): MemoryMonitoringConfig {
@@ -393,6 +400,9 @@ export function stopMemoryMonitoring(): void {
 }
 
 export function setHeapWarningThreshold(threshold: number): void {
+  if (!Number.isFinite(threshold)) {
+    throw new RangeError("Heap warning threshold must be finite");
+  }
   heapGrowthWarningThreshold = Math.max(0.1, Math.min(0.99, threshold));
 }
 

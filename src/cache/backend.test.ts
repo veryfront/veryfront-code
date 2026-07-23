@@ -9,7 +9,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cache/backend.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#std/assert";
+import { assertEquals, assertExists, assertRejects, assertThrows } from "#std/assert";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -17,13 +17,15 @@ import {
   type Span,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import type { RedisClient } from "#veryfront/utils/redis-client.ts";
+import type { RedisClient, RedisClientManager } from "#veryfront/utils/redis-client.ts";
 import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   createControlPlaneSignature,
   createCtx,
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
+import { MAX_CACHE_TTL_SECONDS } from "./backends/ttl.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 type RecordedSpan = {
   name: string;
@@ -32,6 +34,35 @@ type RecordedSpan = {
 
 async function importBackend(): Promise<typeof import("./backend.ts")> {
   return await import("./backend.ts");
+}
+
+function injectRedisClient(
+  cache: unknown,
+  overrides: Partial<RedisClient>,
+  onDisconnect?: () => void,
+): RedisClient {
+  const client: RedisClient = {
+    connect: () => Promise.resolve(),
+    disconnect: () => Promise.resolve(),
+    get: () => Promise.resolve(null),
+    mGet: (keys) => Promise.resolve(keys.map(() => null)),
+    set: () => Promise.resolve("OK"),
+    del: () => Promise.resolve(0),
+    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
+    expire: () => Promise.resolve(0),
+    isOpen: true,
+    ...overrides,
+  };
+  const clientManager: RedisClientManager = {
+    getClient: () => Promise.resolve(client),
+    disconnect: () => {
+      onDisconnect?.();
+      return Promise.resolve();
+    },
+    isConfigured: () => true,
+  };
+  (cache as { clientManager: RedisClientManager }).clientManager = clientManager;
+  return client;
 }
 
 async function createVerifiedCacheClaims(options: {
@@ -161,6 +192,58 @@ Deno.test("MemoryCacheBackend TTL expiration", async () => {
   assertEquals(await cache.get("expires"), null);
 });
 
+Deno.test("MemoryCacheBackend does not retain non-positive TTL entries", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10);
+
+  await cache.set("existing", "old", 60);
+  await cache.set("existing", "replacement", 0);
+  await cache.set("negative", "value", -1);
+  assertEquals(cache.size, 0);
+  assertEquals(await cache.get("existing"), null);
+
+  await cache.setBatch([
+    { key: "zero", value: "value", ttl: 0 },
+    { key: "negative", value: "value", ttl: -10 },
+    { key: "positive", value: "value", ttl: 60 },
+  ]);
+
+  assertEquals(cache.size, 1);
+  assertEquals(
+    await cache.getBatch(["zero", "negative", "positive"]),
+    new Map([
+      ["zero", null],
+      ["negative", null],
+      ["positive", "value"],
+    ]),
+  );
+});
+
+Deno.test("MemoryCacheBackend rejects unsafe TTLs before mutating a batch", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("existing", "old", 60);
+
+  await assertRejects(
+    () => cache.set("oversized", "value", MAX_CACHE_TTL_SECONDS + 1),
+    RangeError,
+    "finite number of seconds at most",
+  );
+  await assertRejects(
+    () =>
+      cache.setBatch([
+        { key: "would-write", value: "value", ttl: 60 },
+        { key: "invalid", value: "value", ttl: Number.MAX_VALUE },
+      ]),
+    RangeError,
+    "finite number of seconds at most",
+  );
+
+  assertEquals(await cache.get("existing"), "old");
+  assertEquals(await cache.get("oversized"), null);
+  assertEquals(await cache.get("would-write"), null);
+});
+
 Deno.test("MemoryCacheBackend reports remaining TTL without extending it", async () => {
   const { MemoryCacheBackend } = await importBackend();
   const cache = new MemoryCacheBackend(10);
@@ -186,6 +269,53 @@ Deno.test("MemoryCacheBackend evicts oldest on capacity", async () => {
   assertEquals(cache.size, 3);
   assertEquals(await cache.get("a"), null);
   assertEquals(await cache.get("d"), "4");
+});
+
+Deno.test("MemoryCacheBackend evicts an empty-string key without looping", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(1);
+
+  await cache.set("", "empty-key-value");
+  await cache.set("next", "next-value");
+
+  assertEquals(await cache.get(""), null);
+  assertEquals(await cache.get("next"), "next-value");
+});
+
+Deno.test("MemoryCacheBackend removes expired entries before evicting live entries", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(2);
+
+  await cache.set("live", "keep", 60);
+  await cache.set("expired", "discard", -1);
+  await cache.set("new", "value", 60);
+
+  assertEquals(await cache.get("live"), "keep");
+  assertEquals(await cache.get("expired"), null);
+  assertEquals(await cache.get("new"), "value");
+  assertEquals(cache.size, 2);
+});
+
+Deno.test("MemoryCacheBackend with zero capacity stores no entries", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(0);
+
+  await cache.set("single", "value");
+  await cache.setBatch([{ key: "batch", value: "value" }]);
+
+  assertEquals(cache.size, 0);
+  assertEquals(cache.sizeBytes, 0);
+  assertEquals(await cache.get("single"), null);
+  assertEquals(await cache.get("batch"), null);
+});
+
+Deno.test("MemoryCacheBackend validates capacity options", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  for (const invalid of [-1, 1.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assertThrows(() => new MemoryCacheBackend(invalid), RangeError);
+    assertThrows(() => new MemoryCacheBackend(1, { maxSizeBytes: invalid }), RangeError);
+  }
 });
 
 Deno.test("MemoryCacheBackend delByPattern", async () => {
@@ -277,6 +407,20 @@ Deno.test("MemoryCacheBackend delByPattern uses compiled glob cache", async () =
   assertEquals(await cache.delByPattern("prefix:*"), 1);
 });
 
+Deno.test("MemoryCacheBackend bounds compiled globs when the oldest pattern is empty", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(20);
+
+  await cache.delByPattern("");
+  for (let index = 0; index < 100; index++) {
+    await cache.delByPattern(`pattern-${index}`);
+  }
+
+  const globCache = (cache as unknown as { globCache: Map<string, unknown> }).globCache;
+  assertEquals(globCache.size, 100);
+  assertEquals(globCache.has(""), false);
+});
+
 Deno.test("MemoryCacheBackend delByPattern with ? wildcard", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
@@ -345,20 +489,20 @@ Deno.test("MemoryCacheBackend set overwrites existing entry without eviction", a
 Deno.test("MemoryCacheBackend evicts when byte size limit exceeded", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
-  // maxSizeBytes=20 chars (key.length + value.length as estimate)
+  // maxSizeBytes=20 UTF-8 bytes (these fixtures are ASCII)
   const cache = new MemoryCacheBackend(100, { maxSizeBytes: 20 });
 
-  // "a" + "12345678" = 9 chars
+  // "a" + "12345678" = 9 bytes
   await cache.set("a", "12345678");
   assertEquals(cache.size, 1);
   assertEquals(cache.sizeBytes, 9);
 
-  // "b" + "12345678" = 9 chars, total 18 — fits within 20
+  // "b" + "12345678" = 9 bytes, total 18 - fits within 20
   await cache.set("b", "12345678");
   assertEquals(cache.size, 2);
   assertEquals(cache.sizeBytes, 18);
 
-  // "c" + "12345678" = 9 chars, total would be 27 — evict oldest ("a") until it fits
+  // "c" + "12345678" = 9 bytes, total would be 27 - evict oldest ("a") until it fits
   await cache.set("c", "12345678");
   assertEquals(cache.size, 2);
   assertEquals(await cache.get("a"), null);
@@ -443,6 +587,41 @@ Deno.test("MemoryCacheBackend rejects single entry exceeding maxSizeBytes", asyn
   assertEquals(await cache.get("k"), "small");
 });
 
+Deno.test("MemoryCacheBackend oversized overwrite removes the previous value", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 10 });
+
+  await cache.set("k", "small");
+  await cache.set("k", "this-value-is-way-too-large");
+
+  assertEquals(await cache.get("k"), null);
+  assertEquals(cache.size, 0);
+  assertEquals(cache.sizeBytes, 0);
+});
+
+Deno.test("MemoryCacheBackend oversized batch overwrite removes the previous value", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 10 });
+
+  await cache.set("k", "small");
+  await cache.setBatch([{ key: "k", value: "this-value-is-way-too-large" }]);
+
+  assertEquals(await cache.get("k"), null);
+  assertEquals(cache.size, 0);
+  assertEquals(cache.sizeBytes, 0);
+});
+
+Deno.test("MemoryCacheBackend measures byte limits using UTF-8", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10, { maxSizeBytes: 5 });
+
+  // UTF-8 size is 2 bytes for the key and 4 bytes for the value.
+  await cache.set("é", "🙂");
+
+  assertEquals(await cache.get("é"), null);
+  assertEquals(cache.sizeBytes, 0);
+});
+
 Deno.test("ApiCacheBackend requires auth and project context", async () => {
   const { ApiCacheBackend } = await importBackend();
 
@@ -457,28 +636,38 @@ Deno.test("ApiCacheBackend type property", async () => {
   assertEquals(cache.type, "api");
 });
 
-Deno.test("ApiCacheBackend set returns without auth context", async () => {
+Deno.test("ApiCacheBackend validates endpoint and timeout options at construction", async () => {
   const { ApiCacheBackend } = await importBackend();
 
-  const cache = new ApiCacheBackend({});
-  await cache.set("key", "value"); // Should not throw
+  for (
+    const apiBaseUrl of [
+      "",
+      " api.example.test",
+      "api.example.test",
+      "ftp://api.example.test",
+      "https://user:secret@api.example.test",
+      "https://api.example.test?tenant=one",
+      "https://api.example.test#fragment",
+    ]
+  ) {
+    assertThrows(() => new ApiCacheBackend({ apiBaseUrl }), TypeError, "base URL");
+  }
+  for (const timeoutMs of [0, -1, 1.5, Number.POSITIVE_INFINITY, 120_001]) {
+    assertThrows(
+      () => new ApiCacheBackend({ apiBaseUrl: "https://api.example.test", timeoutMs }),
+      RangeError,
+      "timeoutMs",
+    );
+  }
+
+  const cache = new ApiCacheBackend({
+    apiBaseUrl: "https://api.example.test/base/",
+    timeoutMs: 1,
+  });
+  assertEquals(cache.type, "api");
 });
 
-Deno.test("ApiCacheBackend del returns without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
-
-  const cache = new ApiCacheBackend({});
-  await cache.del("key"); // Should not throw
-});
-
-Deno.test("ApiCacheBackend delByPattern returns 0 without auth context", async () => {
-  const { ApiCacheBackend } = await importBackend();
-
-  const cache = new ApiCacheBackend({});
-  assertEquals(await cache.delByPattern("prefix:*"), 0);
-});
-
-Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
+Deno.test("ApiCacheBackend rejects malformed response values", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
@@ -491,17 +680,226 @@ Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
   };
   globalThis.fetch = (() =>
     Promise.resolve(
-      new Response("cache unavailable", { status: 503 }),
+      Response.json({ value: 42, deleted: "3" }),
     )) as typeof fetch;
 
   try {
     const cache = new ApiCacheBackend({
       apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-malformed-response-test",
+    });
+
+    assertEquals(await cache.get("key"), null);
+    await assertRejects(() => cache.delByPattern("prefix:*"));
+  } finally {
+    if (originalAdapter === undefined) {
+      delete globals.__vf_multi_project_adapter;
+    } else {
+      globals.__vf_multi_project_adapter = originalAdapter;
+    }
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
+Deno.test("ApiCacheBackend set rejects without auth context", async () => {
+  const { ApiCacheBackend } = await importBackend();
+
+  const cache = new ApiCacheBackend({});
+  await assertRejects(
+    () => cache.set("key", "value"),
+    Error,
+    "missing authentication token and project context",
+  );
+});
+
+Deno.test("ApiCacheBackend validates TTLs before resolving auth context", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const cache = new ApiCacheBackend({});
+
+  await assertRejects(
+    () => cache.set("key", "value", Number.NaN),
+    RangeError,
+    "finite number of seconds",
+  );
+  await assertRejects(
+    () => cache.setBatch([{ key: "key", value: "value", ttl: Number.POSITIVE_INFINITY }]),
+    RangeError,
+    "finite number of seconds",
+  );
+});
+
+Deno.test("ApiCacheBackend del rejects without auth context", async () => {
+  const { ApiCacheBackend } = await importBackend();
+
+  const cache = new ApiCacheBackend({});
+  await assertRejects(
+    () => cache.del("key"),
+    Error,
+    "missing authentication token and project context",
+  );
+});
+
+Deno.test("ApiCacheBackend delByPattern rejects without auth context", async () => {
+  const { ApiCacheBackend } = await importBackend();
+
+  const cache = new ApiCacheBackend({});
+  await assertRejects(
+    () => cache.delByPattern("prefix:*"),
+    Error,
+    "missing authentication token and project context",
+  );
+});
+
+Deno.test("ApiCacheBackend accepts empty successful mutation responses", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
+  };
+  globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 204 }))) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-empty-mutation-response-test",
+    });
+
+    await cache.set("key", "value");
+    await cache.setBatch([{ key: "key", value: "value" }]);
+    await cache.del("key");
+  } finally {
+    if (originalAdapter === undefined) {
+      delete globals.__vf_multi_project_adapter;
+    } else {
+      globals.__vf_multi_project_adapter = originalAdapter;
+    }
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
+Deno.test("ApiCacheBackend applies the shared TTL contract to single and batch writes", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  const requests: Array<{ path: string; body: unknown }> = [];
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
+  };
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      path: new URL(String(input)).pathname,
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+    return Promise.resolve(new Response(null, { status: 204 }));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      keyPrefix: "ttl-test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-ttl-contract-test",
+    });
+
+    await cache.set("expired", "replacement", 0);
+    await cache.set("fractional", "value", 0.1);
+    await cache.setBatch([
+      { key: "negative", value: "replacement", ttl: -1 },
+      { key: "fractional-batch", value: "value", ttl: 1.01 },
+      { key: "defaulted", value: "value" },
+    ]);
+
+    const setBodies = requests
+      .filter((request) => request.path.endsWith("/set"))
+      .map((request) => request.body);
+    const batchBodies = requests
+      .filter((request) => request.path.endsWith("/set-batch"))
+      .map((request) => request.body);
+    const deleteBodies = requests
+      .filter((request) => request.path.endsWith("/del"))
+      .map((request) => request.body);
+
+    assertEquals(setBodies, [{ key: "ttl-test:fractional", value: "value", ttl: 1 }]);
+    assertEquals(batchBodies, [{
+      entries: [
+        { key: "ttl-test:fractional-batch", value: "value", ttl: 2 },
+        { key: "ttl-test:defaulted", value: "value", ttl: 300 },
+      ],
+    }]);
+    assertEquals(deleteBodies, [
+      { key: "ttl-test:expired" },
+      { key: "ttl-test:negative" },
+    ]);
+  } finally {
+    if (originalAdapter === undefined) {
+      delete globals.__vf_multi_project_adapter;
+    } else {
+      globals.__vf_multi_project_adapter = originalAdapter;
+    }
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
+Deno.test("ApiCacheBackend propagates attempted mutation failures", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
+  };
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response("database password=super-secret", { status: 503 }),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
       circuitBreakerName: "api-cache-delete-failure-test",
     });
 
-    await assertRejects(() => cache.del("key"));
-    await assertRejects(() => cache.delByPattern("prefix:*"));
+    const setError = await assertRejects(() => cache.set("key", "value"), Error);
+    const batchError = await assertRejects(
+      () => cache.setBatch([{ key: "key", value: "value" }]),
+      Error,
+    );
+    const deleteError = await assertRejects(() => cache.del("key"), Error);
+    const patternError = await assertRejects(() => cache.delByPattern("prefix:*"), Error);
+    assertEquals(setError.message.includes("super-secret"), false);
+    assertEquals(batchError.message.includes("super-secret"), false);
+    assertEquals(deleteError.message.includes("super-secret"), false);
+    assertEquals(patternError.message.includes("super-secret"), false);
   } finally {
     if (originalAdapter === undefined) {
       delete globals.__vf_multi_project_adapter;
@@ -534,11 +932,15 @@ Deno.test("ApiCacheBackend getBatch returns empty map for empty keys", async () 
   assertEquals(results.size, 0);
 });
 
-Deno.test("ApiCacheBackend setBatch returns without auth context", async () => {
+Deno.test("ApiCacheBackend setBatch rejects without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
 
   const cache = new ApiCacheBackend({});
-  await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
+  await assertRejects(
+    () => cache.setBatch([{ key: "k", value: "v" }]),
+    Error,
+    "missing authentication token and project context",
+  );
 });
 
 Deno.test("ApiCacheBackend setBatch returns for empty entries", async () => {
@@ -626,7 +1028,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   }
 });
 
-Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", async () => {
+Deno.test("ApiCacheBackend keeps credentials bound to their trusted project context", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
@@ -676,9 +1078,45 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
       "https://api.example.test/projects/project-123/cache/del-pattern",
     );
 
-    const forgedTrustDeleted = await cache.delByPattern("agent:*");
+    await assertRejects(
+      () => cache.delByPattern("agent:*"),
+      Error,
+      "missing authentication token and project context",
+    );
+    assertEquals(capturedUrls.length, 1);
 
-    assertEquals(forgedTrustDeleted, 3);
+    // Exercise the production ALS accessor. A framework token copied into a
+    // request context must not become authorized for an attacker-selected
+    // project.
+    await assertRejects(
+      () =>
+        runWithRequestContext(
+          {
+            token: "host-framework-token",
+            projectId: "attacker-project",
+            projectSlug: "attacker-project-slug",
+          },
+          () => cache.delByPattern("agent:*"),
+        ),
+      Error,
+      "missing authentication token and project context",
+    );
+    assertEquals(capturedUrls.length, 1);
+
+    await assertRejects(
+      () =>
+        runWithRequestContext(
+          {
+            token: "unmarked-request-token",
+            projectId: "project-123",
+            projectSlug: "project-slug",
+          },
+          () => cache.delByPattern("agent:*"),
+        ),
+      Error,
+      "missing authentication token and project context",
+    );
+    assertEquals(capturedUrls.length, 1);
 
     globals.__vf_multi_project_adapter = {
       getCurrentRequestContext: () => ({
@@ -687,31 +1125,37 @@ Deno.test("ApiCacheBackend only prefers verified control-plane request tokens", 
         projectSlug: "project-slug",
       }),
     };
-    const unverifiedRequestDeleted = await cache.delByPattern("agent:*");
+    await assertRejects(
+      () => cache.delByPattern("agent:*"),
+      Error,
+      "missing authentication token and project context",
+    );
+    assertEquals(capturedUrls.length, 1);
 
-    assertEquals(unverifiedRequestDeleted, 3);
-
-    Deno.env.delete("VERYFRONT_API_TOKEN");
-    const requestFallbackDeleted = await cache.delByPattern("agent:*");
-
-    assertEquals(requestFallbackDeleted, 3);
-
-    Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
-
-    globals.__vf_multi_project_adapter = {
-      getCurrentRequestContext: () => ({
+    const requestDeleted = await runWithRequestContext(
+      {
+        token: "request-project-token",
         projectId: "project-123",
         projectSlug: "project-slug",
-      }),
-    };
-    const hostFallbackDeleted = await cache.delByPattern("agent:*");
+        tokenProvenance: "project-bound",
+      },
+      () => cache.delByPattern("agent:*"),
+    );
+    assertEquals(requestDeleted, 3);
 
-    assertEquals(hostFallbackDeleted, 3);
+    const hostBoundCache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "host-project",
+      circuitBreakerName: "api-cache-host-bound-token-test",
+    });
+    assertEquals(await hostBoundCache.delByPattern("agent:*"), 3);
+    assertEquals(capturedUrls.slice(1), [
+      "https://api.example.test/projects/project-123/cache/del-pattern",
+      "https://api.example.test/projects/host-project/cache/del-pattern",
+    ]);
     assertEquals(capturedAuthorizations, [
       "Bearer run-scoped-request-token",
-      "Bearer host-framework-token",
-      "Bearer host-framework-token",
-      "Bearer unverified-proxy-token",
+      "Bearer request-project-token",
       "Bearer host-framework-token",
     ]);
   } finally {
@@ -736,6 +1180,21 @@ Deno.test("RedisCacheBackend type property", async () => {
   assertEquals(cache.type, "redis");
 });
 
+Deno.test("RedisCacheBackend requires an explicit namespace boundary", async () => {
+  const { RedisCacheBackend } = await importBackend();
+
+  assertThrows(
+    () => new RedisCacheBackend("vf:ambiguous"),
+    TypeError,
+    "end with ':'",
+  );
+  assertThrows(
+    () => new RedisCacheBackend("vf:unsafe:\n"),
+    TypeError,
+    "control characters",
+  );
+});
+
 Deno.test("RedisCacheBackend returns null without client", async () => {
   const { RedisCacheBackend } = await importBackend();
 
@@ -748,12 +1207,12 @@ Deno.test("RedisCacheBackend translates Redis TTL sentinel values", async () => 
   const cache = new RedisCacheBackend("vf:test:");
   let ttl = 12;
   const keys: string[] = [];
-  (cache as unknown as { client: { ttl: (key: string) => Promise<number> } }).client = {
+  injectRedisClient(cache, {
     ttl: (key: string) => {
       keys.push(key);
       return Promise.resolve(ttl);
     },
-  };
+  });
 
   assertEquals(await cache.getRemainingTtlSeconds("key"), 12);
   ttl = -1;
@@ -763,33 +1222,94 @@ Deno.test("RedisCacheBackend translates Redis TTL sentinel values", async () => 
   assertEquals(keys, ["vf:test:key", "vf:test:key", "vf:test:key"]);
 });
 
-Deno.test("RedisCacheBackend set is no-op without client", async () => {
+Deno.test("RedisCacheBackend expires non-positive TTL entries without SET EX 0", async () => {
   const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  const store = new Map<string, string>();
+  const setExpiries: number[] = [];
+  injectRedisClient(cache, {
+    get: (key: string) => Promise.resolve(store.get(key) ?? null),
+    mGet: (keys: string[]) => Promise.resolve(keys.map((key) => store.get(key) ?? null)),
+    set: (key: string, value: string, options?: { EX?: number }) => {
+      setExpiries.push(options?.EX ?? Number.NaN);
+      store.set(key, value);
+      return Promise.resolve("OK");
+    },
+    del: (keys: string | string[]) => {
+      let deleted = 0;
+      for (const key of Array.isArray(keys) ? keys : [keys]) {
+        if (store.delete(key)) deleted++;
+      }
+      return Promise.resolve(deleted);
+    },
+  });
 
-  const cache = new RedisCacheBackend();
-  await cache.set("key", "value"); // Should not throw
+  await cache.set("existing", "old", 60);
+  await cache.set("existing", "replacement", 0);
+  await cache.set("fractional", "value", 0.1);
+  await cache.setBatch([
+    { key: "negative", value: "value", ttl: -1 },
+    { key: "positive", value: "value", ttl: 30 },
+    { key: "fractional-batch", value: "value", ttl: 1.01 },
+  ]);
+
+  assertEquals(await cache.get("existing"), null);
+  assertEquals(
+    await cache.getBatch(["negative", "positive"]),
+    new Map([
+      ["negative", null],
+      ["positive", "value"],
+    ]),
+  );
+  assertEquals(setExpiries, [60, 1, 30, 2]);
 });
 
-Deno.test("RedisCacheBackend del is no-op without client", async () => {
+Deno.test("RedisCacheBackend set rejects without a configured client", async () => {
   const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
-  await cache.del("key"); // Should not throw
+  await assertRejects(() => cache.set("key", "value"), Error, "not configured");
 });
 
-Deno.test("RedisCacheBackend delByPattern returns 0 without client", async () => {
+Deno.test("RedisCacheBackend propagates set failures", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  injectRedisClient(cache, {
+    set: () => Promise.reject(new Error("redis set failed")),
+  });
+
+  await assertRejects(
+    () => cache.set("key", "value"),
+    Error,
+    "redis set failed",
+  );
+  await assertRejects(
+    () => cache.setBatch([{ key: "key", value: "value" }]),
+    Error,
+    "redis set failed",
+  );
+});
+
+Deno.test("RedisCacheBackend del rejects without a configured client", async () => {
   const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
-  assertEquals(await cache.delByPattern("*"), 0);
+  await assertRejects(() => cache.del("key"), Error, "not configured");
+});
+
+Deno.test("RedisCacheBackend delByPattern rejects without a configured client", async () => {
+  const { RedisCacheBackend } = await importBackend();
+
+  const cache = new RedisCacheBackend();
+  await assertRejects(() => cache.delByPattern("*"), Error, "not configured");
 });
 
 Deno.test("RedisCacheBackend propagates delete failures", async () => {
   const { RedisCacheBackend } = await importBackend();
   const cache = new RedisCacheBackend("vf:test:");
-  (cache as unknown as { client: RedisClient }).client = {
+  injectRedisClient(cache, {
     del: () => Promise.reject(new Error("redis delete failed")),
-  } as unknown as RedisClient;
+  });
 
   await assertRejects(
     () => cache.del("key"),
@@ -801,15 +1321,117 @@ Deno.test("RedisCacheBackend propagates delete failures", async () => {
 Deno.test("RedisCacheBackend propagates pattern delete failures", async () => {
   const { RedisCacheBackend } = await importBackend();
   const cache = new RedisCacheBackend("vf:test:");
-  (cache as unknown as { client: RedisClient }).client = {
+  injectRedisClient(cache, {
     scan: () => Promise.reject(new Error("redis scan failed")),
-  } as unknown as RedisClient;
+  });
 
   await assertRejects(
     () => cache.delByPattern("*"),
     Error,
     "redis scan failed",
   );
+});
+
+Deno.test("RedisCacheBackend reacquires a client after command failure", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  let active = 0;
+  let disconnects = 0;
+  const written: string[] = [];
+  const clients = [
+    injectRedisClient({}, {
+      set: () => Promise.reject(new Error("stale connection")),
+    }),
+    injectRedisClient({}, {
+      set: (key) => {
+        written.push(key);
+        return Promise.resolve("OK");
+      },
+    }),
+  ];
+  const manager: RedisClientManager = {
+    getClient: () => Promise.resolve(clients[Math.min(active, clients.length - 1)]!),
+    disconnect: () => {
+      disconnects++;
+      active++;
+      return Promise.resolve();
+    },
+    isConfigured: () => true,
+  };
+  const cache = new RedisCacheBackend("vf:test:", { clientManager: manager });
+
+  await assertRejects(() => cache.set("page", "first"), Error, "stale connection");
+  await cache.set("page", "second");
+
+  assertEquals(disconnects, 1);
+  assertEquals(written, ["vf:test:page"]);
+});
+
+Deno.test("RedisCacheBackend escapes only its literal prefix in SCAN patterns", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:te*st?:");
+  let match = "";
+  injectRedisClient(cache, {
+    scan: (_cursor, options) => {
+      match = options?.MATCH ?? "";
+      return Promise.resolve({ cursor: 0, keys: [] });
+    },
+  });
+
+  assertEquals(await cache.delByPattern("project:*"), 0);
+  assertEquals(match, "vf:te\\*st\\?:project:*");
+});
+
+Deno.test("RedisCacheBackend rejects repeated SCAN cursors before deleting", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  let deletes = 0;
+  injectRedisClient(cache, {
+    scan: () => Promise.resolve({ cursor: 1, keys: ["vf:test:page"] }),
+    del: () => {
+      deletes++;
+      return Promise.resolve(1);
+    },
+  });
+
+  await assertRejects(
+    () => cache.delByPattern("*"),
+    Error,
+    "repeated a cursor",
+  );
+  assertEquals(deletes, 0);
+});
+
+Deno.test("RedisCacheBackend completes SCAN before bounded deletion", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  let scans = 0;
+  let deletes = 0;
+  injectRedisClient(cache, {
+    scan: () => {
+      scans++;
+      assertEquals(deletes, 0);
+      return Promise.resolve({
+        cursor: scans === 1 ? 7 : 0,
+        keys: [`vf:test:${scans}`],
+      });
+    },
+    del: (keys) => {
+      deletes++;
+      return Promise.resolve(Array.isArray(keys) ? keys.length : 1);
+    },
+  });
+
+  assertEquals(await cache.delByPattern("*"), 2);
+  assertEquals(scans, 2);
+  assertEquals(deletes, 1);
+});
+
+Deno.test("RedisCacheBackend rejects invalid DEL counts", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  injectRedisClient(cache, { del: () => Promise.resolve(2) });
+
+  await assertRejects(() => cache.del("page"), TypeError, "invalid count");
 });
 
 Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded batches", async () => {
@@ -838,7 +1460,7 @@ Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded b
     expire: () => Promise.resolve(0),
   } satisfies RedisClient;
 
-  (cache as unknown as { client: RedisClient }).client = client;
+  injectRedisClient(cache, client);
 
   const deleted = await cache.delByPattern("*");
 
@@ -877,7 +1499,7 @@ Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", a
     expire: () => Promise.resolve(0),
   } satisfies RedisClient;
 
-  (cache as unknown as { client: RedisClient }).client = client;
+  injectRedisClient(cache, client);
 
   const deleted = await cache.delByPattern("*");
 
@@ -940,7 +1562,7 @@ Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", asy
     expire: () => Promise.resolve(0),
   } satisfies RedisClient;
 
-  (cache as unknown as { client: RedisClient }).client = client;
+  injectRedisClient(cache, client);
 
   const results = await cache.getBatch(["a", "b", "c"]);
 
@@ -974,7 +1596,7 @@ Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async 
     expire: () => Promise.resolve(0),
   } satisfies RedisClient;
 
-  (cache as unknown as { client: RedisClient }).client = client;
+  injectRedisClient(cache, client);
 
   const results = await cache.getBatch(["a", "b", "c"]);
 
@@ -984,11 +1606,35 @@ Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async 
   assertEquals(results.get("c"), "value-c");
 });
 
-Deno.test("RedisCacheBackend setBatch is no-op without client", async () => {
+Deno.test("RedisCacheBackend setBatch rejects without a configured client", async () => {
   const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
-  await cache.setBatch([{ key: "k", value: "v" }]); // Should not throw
+  await assertRejects(
+    () => cache.setBatch([{ key: "k", value: "v" }]),
+    Error,
+    "not configured",
+  );
+});
+
+Deno.test("RedisCacheBackend validates batch TTLs without an initialized client", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend();
+
+  await assertRejects(
+    () => cache.setBatch([{ key: "k", value: "v", ttl: Number.NaN }]),
+    RangeError,
+    "finite number of seconds",
+  );
+  await assertRejects(
+    () =>
+      cache.setBatch([
+        { key: "valid", value: "v", ttl: 60 },
+        { key: "unsafe", value: "v", ttl: MAX_CACHE_TTL_SECONDS + 1 },
+      ]),
+    RangeError,
+    "finite number of seconds at most",
+  );
 });
 
 Deno.test("RedisCacheBackend setBatch is no-op for empty entries", async () => {
@@ -1026,12 +1672,18 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { isDistributedBackend, MemoryCacheBackend, RedisCacheBackend, ApiCacheBackend } =
-      await importBackend();
+    const {
+      isDistributedBackend,
+      MemoryCacheBackend,
+      RedisCacheBackend,
+      ApiCacheBackend,
+      DiskCacheBackend,
+    } = await importBackend();
 
     assertEquals(isDistributedBackend(new MemoryCacheBackend()), false);
     assertEquals(isDistributedBackend(new RedisCacheBackend()), true);
     assertEquals(isDistributedBackend(new ApiCacheBackend({})), true);
+    assertEquals(isDistributedBackend(new DiskCacheBackend()), false);
   },
 });
 
@@ -1132,17 +1784,19 @@ Deno.test({
 });
 
 Deno.test({
-  name: "createDistributedCacheAccessor does not retry for memory-only backend",
+  name: "createDistributedCacheAccessor retries after a transient memory fallback",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const { createDistributedCacheAccessor, MemoryCacheBackend } = await importBackend();
+    const { ApiCacheBackend, createDistributedCacheAccessor, MemoryCacheBackend } =
+      await importBackend();
 
     let callCount = 0;
+    const recovered = new ApiCacheBackend({});
     const accessor = createDistributedCacheAccessor(
       () => {
         callCount++;
-        return Promise.resolve(new MemoryCacheBackend());
+        return Promise.resolve(callCount === 1 ? new MemoryCacheBackend() : recovered);
       },
       "test-no-retry-memory",
     );
@@ -1150,12 +1804,11 @@ Deno.test({
     assertEquals(await accessor(), null);
     assertEquals(callCount, 1);
 
-    // Even after time passes, memory-only result should not retry
     const originalDateNow = Date.now;
     try {
       Date.now = () => originalDateNow() + 60_000;
-      assertEquals(await accessor(), null);
-      assertEquals(callCount, 1);
+      assertEquals(await accessor(), recovered);
+      assertEquals(callCount, 2);
     } finally {
       Date.now = originalDateNow;
     }

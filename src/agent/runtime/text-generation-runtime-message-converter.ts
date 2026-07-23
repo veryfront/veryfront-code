@@ -11,6 +11,8 @@ import type {
   TextGenerationRuntimeAssistantMessage,
   TextGenerationRuntimeFilePart,
   TextGenerationRuntimeMessage,
+  TextGenerationRuntimeProviderToolCall,
+  TextGenerationRuntimeReasoningPart,
   TextGenerationRuntimeTextPart,
   TextGenerationRuntimeToolCallPart,
   TextGenerationRuntimeToolMessage,
@@ -59,6 +61,63 @@ function getProviderExecutedToolCallId(part: unknown): string | undefined {
   return getToolCallId(part);
 }
 
+function getSettledProviderToolCallId(part: unknown): string | undefined {
+  if (
+    !isRecord(part) || !isProviderExecutedToolPart(part) ||
+    part.type !== "tool-result" && part.type !== "tool_result"
+  ) {
+    return undefined;
+  }
+
+  return getToolCallId(part);
+}
+
+function getToolName(part: Record<string, unknown>): string | undefined {
+  return getStringPartField(part, "toolName") ??
+    getStringPartField(part, "tool_name") ??
+    getStringPartField(part, "name") ??
+    (typeof part.type === "string" && part.type.startsWith("tool-") &&
+        part.type !== "tool-call" && part.type !== "tool-result"
+      ? part.type.replace(/^tool-/, "")
+      : undefined);
+}
+
+function getProviderToolCall(part: unknown): TextGenerationRuntimeProviderToolCall | undefined {
+  if (!isRecord(part) || !isProviderExecutedToolPart(part)) return undefined;
+  const toolCallId = getToolCallId(part);
+  const toolName = getToolName(part);
+  if (!toolCallId || !toolName) return undefined;
+
+  return {
+    toolCallId,
+    toolName,
+    input: getToolInputRecord(part),
+    ...(part.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+  };
+}
+
+function getMessageProviderMetadata(message: Message): Record<string, unknown> | undefined {
+  const metadata = isRecord(message.metadata) ? message.metadata : undefined;
+  return isRecord(metadata?.providerMetadata) ? metadata.providerMetadata : undefined;
+}
+
+function getMessageProviderToolCalls(message: Message): TextGenerationRuntimeProviderToolCall[] {
+  return message.parts.flatMap((part) => {
+    const toolCall = getProviderToolCall(part);
+    return toolCall ? [toolCall] : [];
+  });
+}
+
+function attachProviderAssistantHistory(
+  target: TextGenerationRuntimeAssistantMessage,
+  message: Message,
+): void {
+  const providerToolCalls = getMessageProviderToolCalls(message);
+  const providerMetadata = getMessageProviderMetadata(message);
+  if (providerToolCalls.length > 0) target.providerToolCalls = providerToolCalls;
+  if (providerMetadata) target.providerMetadata = providerMetadata;
+}
+
 function shouldSkipProviderExecutedToolResult(
   part: unknown,
   providerExecutedToolCallIds: Set<string>,
@@ -103,12 +162,7 @@ function getTextGenerationToolCallPart(
   }
 
   const toolCallId = getToolCallId(part);
-  const toolName = getStringPartField(part, "toolName") ??
-    getStringPartField(part, "tool_name") ??
-    getStringPartField(part, "name") ??
-    (part.type.startsWith("tool-") && part.type !== "tool-call"
-      ? part.type.replace(/^tool-/, "")
-      : undefined);
+  const toolName = getToolName(part);
 
   if (!toolCallId || !toolName) {
     return null;
@@ -119,6 +173,28 @@ function getTextGenerationToolCallPart(
     toolCallId,
     toolName,
     input: getToolInputRecord(part),
+  };
+}
+
+function getTextGenerationReasoningPart(
+  part: unknown,
+): TextGenerationRuntimeReasoningPart | null {
+  if (!isRecord(part) || part.type !== "reasoning") {
+    return null;
+  }
+
+  const text = getStringPartField(part, "text");
+  const signature = getStringPartField(part, "signature");
+  const redactedData = getStringPartField(part, "redactedData");
+  if (!text && !signature && !redactedData) {
+    return null;
+  }
+
+  return {
+    type: "reasoning",
+    ...(text ? { text } : {}),
+    ...(signature ? { signature } : {}),
+    ...(redactedData ? { redactedData } : {}),
   };
 }
 
@@ -260,11 +336,17 @@ export function convertToTextGenerationRuntimeMessage(
     }
 
     case "assistant": {
-      const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart> = [];
+      const content: TextGenerationRuntimeAssistantMessage["content"] = [];
 
       for (const part of msg.parts) {
         if (part.type === "text" && "text" in part) {
           content.push({ type: "text", text: (part as { text: string }).text });
+          continue;
+        }
+
+        const reasoningPart = getTextGenerationReasoningPart(part);
+        if (reasoningPart) {
+          content.push(reasoningPart);
           continue;
         }
 
@@ -290,6 +372,7 @@ export function convertToTextGenerationRuntimeMessage(
         role: "assistant",
         content,
       };
+      attachProviderAssistantHistory(assistantMessage, msg);
       return assistantMessage;
     }
 
@@ -331,6 +414,10 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
         (part as { text: string }).text.length > 0;
     }
 
+    if (getTextGenerationReasoningPart(part)) {
+      return true;
+    }
+
     return getTextGenerationToolCallPart(part) !== null;
   });
 }
@@ -365,7 +452,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   };
 
   const pushAssistantPart = (
-    part: TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart,
+    part:
+      | TextGenerationRuntimeTextPart
+      | TextGenerationRuntimeReasoningPart
+      | TextGenerationRuntimeToolCallPart,
   ) => {
     if (part.type === "tool-call") {
       providerExecutedToolCallIds.delete(part.toolCallId);
@@ -416,6 +506,12 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       continue;
     }
 
+    const reasoningPart = getTextGenerationReasoningPart(part);
+    if (reasoningPart) {
+      pushAssistantPart(reasoningPart);
+      continue;
+    }
+
     const toolCallPart = getTextGenerationToolCallPart(part);
     if (toolCallPart) {
       pushAssistantPart(toolCallPart);
@@ -436,6 +532,14 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   flushToolMessage();
   flushAssistantMessage(deferredAssistantContent);
 
+  const firstAssistantMessage = messages.find(
+    (candidate): candidate is TextGenerationRuntimeAssistantMessage =>
+      candidate.role === "assistant",
+  );
+  if (firstAssistantMessage) {
+    attachProviderAssistantHistory(firstAssistantMessage, message);
+  }
+
   return messages;
 }
 
@@ -447,8 +551,17 @@ export function convertToTextGenerationRuntimeMessages(
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
   const providerExecutedToolCallIds = new Set<string>();
+  const lastUserMessageIndex = messages.findLastIndex((message) => message.role === "user");
+  const settledProviderToolCallIds = new Set(
+    messages.slice(lastUserMessageIndex + 1).flatMap((message) =>
+      message.parts.flatMap((part) => {
+        const toolCallId = getSettledProviderToolCallId(part);
+        return toolCallId ? [toolCallId] : [];
+      })
+    ),
+  );
 
-  for (const message of messages) {
+  for (const [messageIndex, message] of messages.entries()) {
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
@@ -467,6 +580,23 @@ export function convertToTextGenerationRuntimeMessages(
     const convertedMessages = message.role === "assistant"
       ? convertAssistantMessageToTextGenerationRuntimeMessages(message, providerExecutedToolCallIds)
       : [convertToTextGenerationRuntimeMessage(message, { providerExecutedToolCallIds })];
+
+    for (const convertedMessage of convertedMessages) {
+      if (convertedMessage.role === "assistant") {
+        if (messageIndex < lastUserMessageIndex) {
+          delete convertedMessage.providerToolCalls;
+        }
+
+        if (convertedMessage.providerToolCalls) {
+          convertedMessage.providerToolCalls = convertedMessage.providerToolCalls.filter(
+            (toolCall) => !settledProviderToolCallIds.has(toolCall.toolCallId),
+          );
+          if (convertedMessage.providerToolCalls.length === 0) {
+            delete convertedMessage.providerToolCalls;
+          }
+        }
+      }
+    }
 
     for (const convertedMessage of convertedMessages) {
       if (convertedMessage.role === "tool" && convertedMessage.content.length === 0) {

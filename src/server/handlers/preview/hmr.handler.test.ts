@@ -9,6 +9,10 @@ import {
   type RuntimeAdapter,
   type WebSocketConnection,
 } from "#veryfront/platform/adapters/base.ts";
+import { cacheRegistry } from "#veryfront/cache";
+import type { RedisCacheProjectIdentity } from "#veryfront/cache/backends/redis-keyspace.ts";
+import { ReloadNotifier } from "../../reload-notifier.ts";
+import { addClient } from "./hmr-client-manager.ts";
 import { HMRHandler } from "./hmr.handler.ts";
 
 const encoder = new TextEncoder();
@@ -131,8 +135,9 @@ function createMockSocket(): {
 }
 
 describe("server/handlers/preview/hmr.handler", () => {
-  afterEach(() => {
-    HMRHandler.shutdown();
+  afterEach(async () => {
+    await HMRHandler.shutdown();
+    ReloadNotifier.reset();
   });
 
   describe("metadata", () => {
@@ -170,19 +175,264 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals("lastBroadcastTime" in metrics, true);
     });
 
-    it("registerExternalBroadcastSource returns unsubscribe", () => {
+    it("registerExternalBroadcastSource returns unsubscribe", async () => {
       const unsub = HMRHandler.registerExternalBroadcastSource();
       assertEquals(typeof unsub, "function");
-      unsub();
+      await unsub();
     });
 
-    it("shutdown does not throw", () => {
-      HMRHandler.shutdown();
+    it("external registrations eagerly install exactly one reload listener", async () => {
+      const initialListeners = ReloadNotifier.getListenerCount();
+      const releaseFirst = HMRHandler.registerExternalBroadcastSource();
+      const releaseSecond = HMRHandler.registerExternalBroadcastSource();
+
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners + 1);
+      await releaseFirst();
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners + 1);
+      await releaseSecond();
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners);
     });
 
-    it("multiple shutdowns are safe", () => {
-      HMRHandler.shutdown();
-      HMRHandler.shutdown();
+    it("retains initialized globals until the last server lifecycle owner exits", async () => {
+      const initialListeners = ReloadNotifier.getListenerCount();
+      const releaseFirst = HMRHandler.registerLifecycleOwner();
+      const releaseSecond = HMRHandler.registerLifecycleOwner();
+      const handler = new HMRHandler();
+      await handler.handle(
+        new Request("http://localhost/_ws"),
+        makeCtx({ isLocalProject: true }),
+      );
+
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners + 1);
+      await releaseFirst();
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners + 1);
+      await releaseSecond();
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners);
+    });
+
+    it("releases subscription, timer state, and clients when the last owner exits", async () => {
+      const initialListeners = ReloadNotifier.getListenerCount();
+      const release = HMRHandler.registerExternalBroadcastSource();
+      const handler = new HMRHandler();
+      await handler.handle(
+        new Request("http://localhost/_ws"),
+        makeCtx({ isLocalProject: true }),
+      );
+
+      let closeCalls = 0;
+      const { socket } = createMockSocket();
+      socket.close = () => {
+        closeCalls++;
+      };
+      addClient({
+        id: "owned-client",
+        socket,
+        connectedAt: Date.now(),
+        lastActivity: Date.now(),
+      });
+
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners + 1);
+      assertEquals(HMRHandler.getClientCount(), 1);
+      await release();
+
+      assertEquals(ReloadNotifier.getListenerCount(), initialListeners);
+      assertEquals(HMRHandler.getClientCount(), 0);
+      assertEquals(closeCalls, 1);
+    });
+
+    it("shutdown does not throw", async () => {
+      await HMRHandler.shutdown();
+    });
+
+    it("multiple shutdowns are safe", async () => {
+      await Promise.all([HMRHandler.shutdown(), HMRHandler.shutdown()]);
+    });
+  });
+
+  describe("reload invalidation ordering", () => {
+    it("waits for Redis invalidation before an external unfiltered broadcast", async () => {
+      const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
+      let capturedIdentity: RedisCacheProjectIdentity | undefined;
+      let deleteCalls = 0;
+      let markDeleteStarted!: () => void;
+      const deleteStarted = new Promise<void>((resolve) => {
+        markDeleteStarted = resolve;
+      });
+      let releaseDelete!: () => void;
+      const deleteReleased = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+
+      cacheRegistry.deleteRedisKeysForProject = async (identity) => {
+        deleteCalls++;
+        capturedIdentity = typeof identity === "string" ? { projectId: identity } : identity;
+        markDeleteStarted();
+        await deleteReleased;
+        return 1;
+      };
+
+      const { socket, sentMessages } = createMockSocket();
+      let markBroadcast!: () => void;
+      const broadcast = new Promise<void>((resolve) => {
+        markBroadcast = resolve;
+      });
+      const originalSend = socket.send.bind(socket);
+      socket.send = (message) => {
+        originalSend(message);
+        markBroadcast();
+      };
+      const now = Date.now();
+      addClient({
+        id: "unscoped-external-client",
+        socket,
+        connectedAt: now,
+        lastActivity: now,
+      });
+      const releaseExternalSource = HMRHandler.registerExternalBroadcastSource();
+
+      try {
+        ReloadNotifier.triggerReload(["src/page.tsx"], {
+          projectId: "target-id",
+          projectSlug: "target-slug",
+        });
+
+        await deleteStarted;
+        await Promise.resolve();
+        assertEquals(sentMessages, []);
+        assertEquals(deleteCalls, 1);
+        assertEquals(capturedIdentity, {
+          projectId: "target-id",
+          projectSlug: "target-slug",
+        });
+
+        releaseDelete();
+        await broadcast;
+        assertEquals(sentMessages.length, 1);
+        assertEquals(JSON.parse(sentMessages[0]!), {
+          type: "update",
+          path: "src/page.tsx",
+          timestamp: JSON.parse(sentMessages[0]!).timestamp,
+        });
+      } finally {
+        releaseDelete();
+        await releaseExternalSource();
+        cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+      }
+    });
+
+    it("suppresses a failed invalidation and broadcasts only a later successful reload", async () => {
+      const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
+      let deleteCalls = 0;
+      let markFirstDeleteStarted!: () => void;
+      const firstDeleteStarted = new Promise<void>((resolve) => {
+        markFirstDeleteStarted = resolve;
+      });
+
+      cacheRegistry.deleteRedisKeysForProject = () => {
+        deleteCalls++;
+        if (deleteCalls === 1) {
+          markFirstDeleteStarted();
+          return Promise.reject(new Error("Redis unavailable"));
+        }
+        return Promise.resolve(1);
+      };
+
+      const { socket, sentMessages } = createMockSocket();
+      let markBroadcast!: () => void;
+      const broadcast = new Promise<void>((resolve) => {
+        markBroadcast = resolve;
+      });
+      const originalSend = socket.send.bind(socket);
+      socket.send = (message) => {
+        originalSend(message);
+        markBroadcast();
+      };
+      const now = Date.now();
+      addClient({
+        id: "failed-invalidation-client",
+        socket,
+        connectedAt: now,
+        lastActivity: now,
+      });
+      const releaseExternalSource = HMRHandler.registerExternalBroadcastSource();
+
+      try {
+        ReloadNotifier.triggerReload(["src/failed.tsx"], {
+          projectId: "target-id",
+          projectSlug: "target-slug",
+        });
+        await firstDeleteStarted;
+
+        ReloadNotifier.triggerReload(["src/recovered.tsx"], {
+          projectId: "target-id",
+          projectSlug: "target-slug",
+        });
+        await broadcast;
+
+        assertEquals(deleteCalls, 2);
+        assertEquals(sentMessages.length, 1);
+        assertEquals(JSON.parse(sentMessages[0]!), {
+          type: "update",
+          path: "src/recovered.tsx",
+          timestamp: JSON.parse(sentMessages[0]!).timestamp,
+        });
+      } finally {
+        await releaseExternalSource();
+        cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+      }
+    });
+
+    it("drains in-flight invalidation and suppresses its broadcast during shutdown", async () => {
+      const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
+      let markDeleteStarted!: () => void;
+      const deleteStarted = new Promise<void>((resolve) => {
+        markDeleteStarted = resolve;
+      });
+      let releaseDelete!: () => void;
+      const deleteReleased = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+      cacheRegistry.deleteRedisKeysForProject = async () => {
+        markDeleteStarted();
+        await deleteReleased;
+        return 1;
+      };
+
+      const { socket, sentMessages } = createMockSocket();
+      const now = Date.now();
+      addClient({
+        id: "shutdown-tail-client",
+        socket,
+        projectSlug: "target-slug",
+        connectedAt: now,
+        lastActivity: now,
+      });
+      HMRHandler.registerExternalBroadcastSource();
+
+      try {
+        ReloadNotifier.triggerReload(["src/in-flight.tsx"], {
+          projectId: "target-id",
+          projectSlug: "target-slug",
+        });
+        await deleteStarted;
+
+        let shutdownSettled = false;
+        const shutdown = HMRHandler.shutdown().then(() => {
+          shutdownSettled = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        assertEquals(shutdownSettled, false);
+
+        releaseDelete();
+        await shutdown;
+        assertEquals(sentMessages, []);
+        assertEquals(HMRHandler.getClientCount(), 0);
+      } finally {
+        releaseDelete();
+        await HMRHandler.shutdown();
+        cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+      }
     });
   });
 
@@ -226,11 +476,12 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when mode is preview", async () => {
+    it("proceeds only from a server-resolved preview context", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws");
       const ctx = makeCtx({
         isLocalProject: false,
+        projectSlug: "demo-project",
         requestContext: { mode: "preview" } as any,
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
@@ -238,31 +489,35 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when x-environment=preview query param is set", async () => {
+    it("does not let x-environment=preview promote a production request", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws?x-environment=preview");
       const ctx = makeCtx({
         isLocalProject: false,
+        projectSlug: "demo-project",
+        requestContext: { mode: "production" } as any,
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
-    it("proceeds when host header is localhost", async () => {
+    it("does not let a caller-supplied Host header authorize preview HMR", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: { host: "localhost:3000" },
       });
       const ctx = makeCtx({
         isLocalProject: false,
+        projectSlug: "demo-project",
+        requestContext: { mode: "production" } as any,
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
-    it("proceeds when x-forwarded-host is a local preview host AND request is proxy-trusted", async () => {
+    it("accepts a cryptographically trusted proxy request in resolved preview scope", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
@@ -273,6 +528,8 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const ctx = makeCtx({
         isLocalProject: false,
+        projectSlug: "demo-project",
+        resolvedEnvironment: "preview",
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
@@ -331,7 +588,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("HONOURS x-forwarded-host: localhost when request IS proxy-trusted", async () => {
+    it("accepts trusted forwarded scope only when the server context is preview", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://internal.proxy/_ws", {
         headers: {
@@ -342,6 +599,8 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const ctx = makeCtx({
         isLocalProject: false,
+        projectSlug: "demo-project",
+        resolvedEnvironment: "preview",
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
@@ -375,17 +634,58 @@ describe("server/handlers/preview/hmr.handler", () => {
       },
     );
 
-    it("HONOURS raw Host: localhost even without proxy trust (bare-metal local dev)", async () => {
+    it("does not infer local-project authority from a raw localhost Host header", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://localhost:3000/_ws", {
         headers: { host: "localhost:3000" },
       });
       const ctx = makeCtx({
         isLocalProject: false,
+        projectSlug: "demo-project",
+        requestContext: { mode: "production" } as any,
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
+    });
+
+    it("rejects an untrusted query-string project selector in preview mode", async () => {
+      const handler = new HMRHandler();
+      const req = new Request(
+        "http://preview.example.com/_ws?x-project-slug=attacker-selected",
+      );
+      const result = await handler.handle(
+        req,
+        makeCtx({
+          isLocalProject: false,
+          projectSlug: "attacker-selected",
+          resolvedEnvironment: "preview",
+        }),
+      );
+      assertEquals(result.continue, true);
+    });
+
+    it("never spends a host-level API token while accepting an unauthenticated preview socket", async () => {
+      let fsCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.exists = () => {
+        fsCalls++;
+        return Promise.resolve(false);
+      };
+
+      const result = await new HMRHandler().handle(
+        new Request("http://demo.preview.example.com/_ws"),
+        makeCtx({
+          isLocalProject: false,
+          projectSlug: "demo-project",
+          proxyToken: "broad-host-token",
+          resolvedEnvironment: "preview",
+          adapter,
+        }),
+      );
+
+      assertEquals(result.response?.status, 426);
+      assertEquals(fsCalls, 0);
     });
 
     it('treats "localhost.evil.com" as non-local (must not match by prefix)', async () => {

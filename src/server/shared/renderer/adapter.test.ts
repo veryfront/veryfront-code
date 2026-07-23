@@ -19,14 +19,36 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
+interface RendererCallCounts {
+  renderPage: number;
+  resolvePageData: number;
+  getAllPages: number;
+  clearCache: number;
+  getVirtualModuleSystem: number;
+  initializeComponents: number;
+  releaseContext: number;
+  destroy: number;
+}
+
 /** Minimal mock Renderer that records calls. */
-function createMockRenderer(): Renderer & { calls: Record<string, number> } {
-  const calls: Record<string, number> = {
+function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
+  const calls: RendererCallCounts = {
     renderPage: 0,
     resolvePageData: 0,
     getAllPages: 0,
     clearCache: 0,
+    getVirtualModuleSystem: 0,
+    initializeComponents: 0,
+    releaseContext: 0,
     destroy: 0,
+  };
+
+  const virtualModules = {
+    handleRequest: () => null,
+    register: () => Promise.resolve("/_veryfront/modules/id"),
+    registerModule: () => Promise.resolve("/_veryfront/modules/id"),
+    getModule: () => undefined,
+    clear: () => {},
   };
 
   return {
@@ -50,12 +72,25 @@ function createMockRenderer(): Renderer & { calls: Record<string, number> } {
     async clearCache(_ctx: any, _slug?: string) {
       calls.clearCache++;
     },
+    // deno-lint-ignore no-explicit-any
+    getVirtualModuleSystem(_ctx: any) {
+      calls.getVirtualModuleSystem++;
+      return virtualModules;
+    },
+    // deno-lint-ignore no-explicit-any
+    async initializeComponents(_ctx: any) {
+      calls.initializeComponents++;
+    },
+    // deno-lint-ignore no-explicit-any
+    async releaseContext(_ctx: any) {
+      calls.releaseContext++;
+    },
     async destroy() {
       calls.destroy++;
     },
     // deno-lint-ignore no-explicit-any
     async initialize(_opts?: any) {},
-  } as unknown as Renderer & { calls: Record<string, number> };
+  } as unknown as Renderer & { calls: RendererCallCounts };
 }
 
 /**
@@ -145,7 +180,7 @@ function stubHandlerContext(): any {
 // ---------------------------------------------------------------------------
 
 describe("RendererAdapter with RendererInitializer", () => {
-  let mockRenderer: Renderer & { calls: Record<string, number> };
+  let mockRenderer: Renderer & { calls: RendererCallCounts };
   let mockInit: RendererInitializer & { initCount: number; destroyCount: number };
 
   beforeEach(() => {
@@ -297,47 +332,47 @@ describe("RendererAdapter with RendererInitializer", () => {
   describe("RendererAdapterImpl methods", () => {
     it("clearCache delegates to renderer.clearCache", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
-      adapter.clearCache("some-slug");
-      // clearCache fires async — give it a tick to resolve
-      await new Promise((r) => setTimeout(r, 10));
+      await adapter.clearCache("some-slug");
       assertEquals(mockRenderer.calls.clearCache, 1);
     });
 
     it("clearCache without slug also calls renderer", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
-      adapter.clearCache();
-      await new Promise((r) => setTimeout(r, 10));
+      await adapter.clearCache();
       assertEquals(mockRenderer.calls.clearCache, 1);
     });
 
     it("clearAllState delegates to clearCache", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
-      adapter.clearAllState();
-      await new Promise((r) => setTimeout(r, 10));
+      await adapter.clearAllState();
       assertEquals(mockRenderer.calls.clearCache, 1);
     });
 
-    it("getVirtualModuleSystem returns stub methods", async () => {
+    it("getVirtualModuleSystem delegates to the project renderer", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
       const vms = adapter.getVirtualModuleSystem();
 
       assertEquals(vms.handleRequest(new Request("http://localhost/test")), null);
-      assertEquals(await vms.register("id", "source", "/dir"), "");
-      assertEquals(await vms.registerModule("id", "source", "/dir"), "");
+      assertEquals(await vms.register("id", "source", "/dir"), "/_veryfront/modules/id");
+      assertEquals(
+        await vms.registerModule("id", "source", "/dir"),
+        "/_veryfront/modules/id",
+      );
       assertEquals(vms.getModule("id"), undefined);
-      // clear should not throw
       vms.clear();
+      assertEquals(mockRenderer.calls.getVirtualModuleSystem, 1);
     });
 
-    it("initializeComponents resolves without error", async () => {
+    it("initializeComponents delegates to the project renderer", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
       await adapter.initializeComponents();
-      // No error thrown = success
+      assertEquals(mockRenderer.calls.initializeComponents, 1);
     });
 
-    it("destroy resolves without error", async () => {
+    it("destroy releases only the adapter project context", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
       await adapter.destroy();
+      assertEquals(mockRenderer.calls.releaseContext, 1);
     });
 
     it("resolvePageData delegates to renderer", async () => {
@@ -475,7 +510,7 @@ describe("RendererAdapter with RendererInitializer", () => {
       assertEquals(ctx.enriched.projectId, "my-special-project");
     });
 
-    it("clearCache handles renderer.clearCache rejection silently", async () => {
+    it("clearCache propagates renderer.clearCache failures", async () => {
       // Create a renderer whose clearCache rejects
       const failingRenderer = createMockRenderer();
       (failingRenderer as any).clearCache = async () => {
@@ -485,10 +520,11 @@ describe("RendererAdapter with RendererInitializer", () => {
       setRendererInitializer(failingInit);
 
       const adapter = await getRendererForProject(stubHandlerContext());
-      // Should not throw
-      adapter.clearCache("test-slug");
-      await new Promise((r) => setTimeout(r, 20));
-      // Just verify it didn't crash
+      await assertRejects(
+        () => adapter.clearCache("test-slug"),
+        Error,
+        "cache clear fail",
+      );
     });
   });
 

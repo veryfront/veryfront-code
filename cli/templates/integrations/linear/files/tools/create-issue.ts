@@ -1,43 +1,64 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createIssue } from "../../lib/linear-client.ts";
+import { createLinearClient } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "create-issue",
   description:
     "Create a new Linear issue in a specified team. You can optionally set priority, assign to someone, add to a project, and attach labels.",
-  inputSchema: defineSchema((v) => v.object({
-    teamId: v
-      .string()
-      .describe(
-        "The ID of the team to create the issue in. Use list-projects tool first if you need to find team IDs.",
+  inputSchema: defineSchema((v) =>
+    v.object({
+      teamId: v
+        .string()
+        .describe(
+          "The ID of the team to create the issue in. Use list-projects tool first if you need to find team IDs.",
+        ),
+      title: v.string().describe("Title of the issue"),
+      description: v
+        .string()
+        .optional()
+        .describe("Detailed description of the issue (supports markdown)"),
+      priority: v
+        .number()
+        .min(0)
+        .max(4)
+        .optional()
+        .describe(
+          "Priority level: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low",
+        ),
+      stateId: v
+        .string()
+        .optional()
+        .describe('Workflow state ID (e.g., "Todo", "In Progress", "Done")'),
+      assigneeId: v.string().optional().describe(
+        "User ID to assign the issue to",
       ),
-    title: v.string().describe("Title of the issue"),
-    description: v
-      .string()
-      .optional()
-      .describe("Detailed description of the issue (supports markdown)"),
-    priority: v
-      .number()
-      .min(0)
-      .max(4)
-      .optional()
-      .describe("Priority level: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low"),
-    stateId: v
-      .string()
-      .optional()
-      .describe('Workflow state ID (e.g., "Todo", "In Progress", "Done")'),
-    assigneeId: v.string().optional().describe("User ID to assign the issue to"),
-    projectId: v.string().optional().describe("Project ID to add the issue to"),
-    labelIds: v
-      .array(v.string())
-      .optional()
-      .describe("Array of label IDs to attach to the issue"),
-  }))(),
+      projectId: v.string().optional().describe(
+        "Project ID to add the issue to",
+      ),
+      labelIds: v
+        .array(v.string())
+        .optional()
+        .describe("Array of label IDs to attach to the issue"),
+    })
+  )(),
   async execute(
-    { teamId, title, description, priority, stateId, assigneeId, projectId, labelIds },
+    {
+      teamId,
+      title,
+      description,
+      priority,
+      stateId,
+      assigneeId,
+      projectId,
+      labelIds,
+    },
+    context,
   ) {
-    const issue = await createIssue({
+    const userId = requireUserIdFromContext(context);
+    const client = createLinearClient(userId);
+    const issue = await client.createIssue({
       teamId,
       title,
       description,

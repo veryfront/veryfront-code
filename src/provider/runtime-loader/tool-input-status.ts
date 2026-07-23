@@ -67,6 +67,7 @@ export async function* withToolInputStatusTransitions(
   const toolStates = new Map<string, ToolInputStatusState>();
   const buffered: unknown[] = [];
   let nextPartPromise: Promise<IteratorResult<unknown>> | null = null;
+  let sourceDone = false;
 
   const readPartIfReady = async (): Promise<IteratorResult<unknown> | null> => {
     if (!nextPartPromise) {
@@ -170,83 +171,92 @@ export async function* withToolInputStatusTransitions(
     }
   };
 
-  while (true) {
-    if (buffered.length > 0) {
-      yield buffered.shift();
-      continue;
-    }
-
-    if (!nextPartPromise) {
-      nextPartPromise = iterator.next();
-    }
-
-    const nextDueAt = [...toolStates.values()]
-      .map((state) => state.dueAt)
-      .filter((value): value is number => value !== null)
-      .sort((left, right) => left - right)[0] ?? null;
-
-    if (nextDueAt !== null) {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      // Clear the timer in finally so it is released even when the race
-      // rejects (iterator error) or the generator is abandoned mid-await
-      // (consumer break/return), not just on the happy path.
-      let timeoutResult:
-        | { kind: "part"; result: IteratorResult<unknown> }
-        | { kind: "timeout" };
-      try {
-        timeoutResult = await Promise.race([
-          nextPartPromise.then((result) => ({ kind: "part" as const, result })),
-          new Promise<{ kind: "timeout" }>((resolve) => {
-            timeoutId = setTimeout(
-              () => resolve({ kind: "timeout" }),
-              Math.max(0, nextDueAt - Date.now()),
-            );
-          }),
-        ]);
-      } finally {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
-        }
-      }
-
-      if (timeoutResult.kind === "timeout") {
-        const readyResult = await readPartIfReady();
-        if (readyResult) {
-          if (readyResult.done) {
-            buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
-            while (buffered.length > 0) {
-              yield buffered.shift();
-            }
-            return;
-          }
-
-          processPart(readyResult.value);
-          continue;
-        }
-
-        buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+  try {
+    while (true) {
+      if (buffered.length > 0) {
+        yield buffered.shift();
         continue;
       }
 
-      nextPartPromise = null;
-      if (timeoutResult.result.done) {
-        buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
-        while (buffered.length > 0) {
-          yield buffered.shift();
+      if (!nextPartPromise) {
+        nextPartPromise = iterator.next();
+      }
+
+      const nextDueAt = [...toolStates.values()]
+        .map((state) => state.dueAt)
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right)[0] ?? null;
+
+      if (nextDueAt !== null) {
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        // Clear the timer in finally so it is released even when the race
+        // rejects (iterator error) or the generator is abandoned mid-await
+        // (consumer break/return), not just on the happy path.
+        let timeoutResult:
+          | { kind: "part"; result: IteratorResult<unknown> }
+          | { kind: "timeout" };
+        try {
+          timeoutResult = await Promise.race([
+            nextPartPromise.then((result) => ({ kind: "part" as const, result })),
+            new Promise<{ kind: "timeout" }>((resolve) => {
+              timeoutId = setTimeout(
+                () => resolve({ kind: "timeout" }),
+                Math.max(0, nextDueAt - Date.now()),
+              );
+            }),
+          ]);
+        } finally {
+          if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+          }
         }
+
+        if (timeoutResult.kind === "timeout") {
+          const readyResult = await readPartIfReady();
+          if (readyResult) {
+            if (readyResult.done) {
+              sourceDone = true;
+              buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+              while (buffered.length > 0) {
+                yield buffered.shift();
+              }
+              return;
+            }
+
+            processPart(readyResult.value);
+            continue;
+          }
+
+          buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+          continue;
+        }
+
+        nextPartPromise = null;
+        if (timeoutResult.result.done) {
+          sourceDone = true;
+          buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+          while (buffered.length > 0) {
+            yield buffered.shift();
+          }
+          return;
+        }
+
+        processPart(timeoutResult.result.value);
+        continue;
+      }
+
+      const result = await nextPartPromise;
+      nextPartPromise = null;
+      if (result.done) {
+        sourceDone = true;
         return;
       }
 
-      processPart(timeoutResult.result.value);
-      continue;
+      processPart(result.value);
     }
-
-    const result = await nextPartPromise;
-    nextPartPromise = null;
-    if (result.done) {
-      return;
+  } finally {
+    if (!sourceDone) {
+      await iterator.return?.();
     }
-
-    processPart(result.value);
   }
 }

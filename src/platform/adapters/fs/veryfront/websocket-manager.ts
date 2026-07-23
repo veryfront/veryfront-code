@@ -615,7 +615,12 @@ export class WebSocketManager {
 
     this.invalidationTimer = setTimeout(() => {
       this.invalidationTimer = null;
-      this.performInvalidation();
+      void this.performInvalidation().catch((error) => {
+        logger.error("Full WebSocket invalidation failed", {
+          projectSlug: this.deps.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
@@ -632,7 +637,13 @@ export class WebSocketManager {
 
     this.selectiveInvalidationTimer = setTimeout(() => {
       this.selectiveInvalidationTimer = null;
-      this.performSelectiveInvalidation();
+      void this.performSelectiveInvalidation().catch((error) => {
+        logger.error("Selective WebSocket invalidation failed", {
+          projectSlug: this.deps.projectSlug,
+          changedPaths: [...this.pendingChangedPaths],
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
@@ -688,7 +699,7 @@ export class WebSocketManager {
         prefixes: ["file:", "stat:", "dir:"],
       });
 
-      this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
+      await this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
 
       const projectId = this.deps.client.getProjectId();
       logger.debug("Clearing SSR module cache for HMR", {
@@ -708,7 +719,7 @@ export class WebSocketManager {
       }
 
       if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+        await this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
       }
 
       if (contentContext?.sourceType === "branch") {
@@ -831,7 +842,7 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.clearModulePathCache?.();
 
       if (this.deps.invalidationCallbacks.clearSnippetCacheForProject && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
+        await this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
       }
 
       if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
@@ -839,7 +850,7 @@ export class WebSocketManager {
       }
 
       if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+        await this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
       }
 
       const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;

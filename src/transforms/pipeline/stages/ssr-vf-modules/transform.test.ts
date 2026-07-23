@@ -21,6 +21,23 @@ import {
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { resolveVeryfrontSourcePath } from "./path-resolver.ts";
 
+const TEST_IMPORT_MAP = { imports: {}, scopes: {} } as const;
+const TEST_IMPORT_MAP_FINGERPRINT = "f".repeat(64);
+
+function createTestTransformContext(
+  reactVersion: string,
+  projectDir: string,
+  fs = createFileSystem(),
+) {
+  return {
+    reactVersion,
+    projectDir,
+    fs,
+    importMap: TEST_IMPORT_MAP,
+    importMapFingerprint: TEST_IMPORT_MAP_FINGERPRINT,
+  };
+}
+
 describe("reactReExportToEsmUrl", () => {
   const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);
 
@@ -98,12 +115,12 @@ describe("transformFrameworkCode depth-limit fallback", {
       await transformFrameworkCode(
         source,
         sourcePath,
-        { reactVersion: "18.3.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("18.3.1", tmp),
       );
       await transformFrameworkCode(
         source,
         sourcePath,
-        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.2.4", tmp),
       );
 
       const matchingKeys = [...frameworkFileCache.keys()].filter((key) => key.includes(sourcePath));
@@ -126,8 +143,20 @@ describe("transformFrameworkCode depth-limit fallback", {
     await Deno.mkdir(projectA);
     await Deno.mkdir(projectB);
 
-    const keyA = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectA, source);
-    const keyB = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectB, source);
+    const keyA = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      TEST_IMPORT_MAP_FINGERPRINT,
+    );
+    const keyB = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectB,
+      source,
+      TEST_IMPORT_MAP_FINGERPRINT,
+    );
 
     try {
       assertEquals(keyA === keyB, false);
@@ -135,12 +164,12 @@ describe("transformFrameworkCode depth-limit fallback", {
       await transformFrameworkCode(
         source,
         sourcePath,
-        { reactVersion: "19.2.4", projectDir: projectA, fs: createFileSystem() },
+        createTestTransformContext("19.2.4", projectA),
       );
       await transformFrameworkCode(
         source,
         sourcePath,
-        { reactVersion: "19.2.4", projectDir: projectB, fs: createFileSystem() },
+        createTestTransformContext("19.2.4", projectB),
       );
 
       assertEquals(frameworkFileCache.has(keyA), true);
@@ -150,6 +179,26 @@ describe("transformFrameworkCode depth-limit fallback", {
       frameworkFileCache.delete(keyB);
       await Deno.remove(tmp, { recursive: true });
     }
+  });
+
+  it("isolates framework transform keys by import-map snapshot", () => {
+    const source = "export const marker = 1;\n";
+    const keyA = buildFrameworkTransformCacheKey(
+      "/framework/module.ts",
+      "19.2.4",
+      "/project",
+      source,
+      "a".repeat(64),
+    );
+    const keyB = buildFrameworkTransformCacheKey(
+      "/framework/module.ts",
+      "19.2.4",
+      "/project",
+      source,
+      "b".repeat(64),
+    );
+
+    assertEquals(keyA === keyB, false);
   });
 
   it("coalesces concurrent transforms instead of reporting a false cycle", async () => {
@@ -186,7 +235,7 @@ describe("transformFrameworkCode depth-limit fallback", {
         return typeof value === "function" ? value.bind(target) : value;
       },
     });
-    const ctx = { reactVersion: "19.2.4", projectDir: tmp, fs };
+    const ctx = createTestTransformContext("19.2.4", tmp, fs);
 
     try {
       const first = transformFrameworkCode(source, sourcePath, ctx);
@@ -219,13 +268,12 @@ describe("transformFrameworkCode depth-limit fallback", {
       "19.2.4",
       tmp,
       source,
+      TEST_IMPORT_MAP_FINGERPRINT,
     );
 
     try {
       const result = await transformFrameworkCode(source, sourcePath, {
-        reactVersion: "19.2.4",
-        projectDir: tmp,
-        fs: createFileSystem(),
+        ...createTestTransformContext("19.2.4", tmp),
         transformAncestry: new Set([transformKey]),
       });
 
@@ -238,7 +286,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   it("invalidates a same-path transform when its source content changes", async () => {
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-source-cache-" });
     const sourcePath = `${tmp}/framework-module.js`;
-    const ctx = { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() };
+    const ctx = createTestTransformContext("19.2.4", tmp);
 
     try {
       const first = await transformFrameworkCode(
@@ -276,7 +324,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         source,
         sourcePath,
-        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.2.4", tmp),
       );
 
       assertStringIncludes(transformed, "typed = value");
@@ -309,7 +357,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         ownerContent,
         ownerPath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.1.1", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -348,7 +396,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         ownerContent,
         ownerPath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.1.1", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -389,7 +437,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       await transformFrameworkCode(
         ownerContent,
         ownerPath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.1.1", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -406,6 +454,7 @@ describe("transformFrameworkCode depth-limit fallback", {
             "19.1.1",
             tmp,
             "export const X = 1;\n",
+            TEST_IMPORT_MAP_FINGERPRINT,
           ),
         ),
         false,
@@ -413,7 +462,13 @@ describe("transformFrameworkCode depth-limit fallback", {
       );
       assertEquals(
         newKeys.includes(
-          buildFrameworkTransformCacheKey(ownerPath, "19.1.1", tmp, ownerContent),
+          buildFrameworkTransformCacheKey(
+            ownerPath,
+            "19.1.1",
+            tmp,
+            ownerContent,
+            TEST_IMPORT_MAP_FINGERPRINT,
+          ),
         ),
         false,
         `fallback poisoned frameworkFileCache with ${ownerPath}`,
@@ -438,7 +493,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         sourceContent,
         sourcePath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.1.1", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -468,6 +523,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       "19.1.1",
       tmp,
       "export const X = 42;\n",
+      TEST_IMPORT_MAP_FINGERPRINT,
     );
     frameworkFileCache.set(depCacheKey, placeholder);
 
@@ -479,7 +535,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         ownerContent,
         ownerPath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.1.1", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -563,7 +619,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         ownerContent,
         ownerPath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.1.1", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -595,7 +651,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         sourceContent,
         sourcePath,
-        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.2.4", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
@@ -632,7 +688,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         sourceContent,
         sourcePath,
-        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+        createTestTransformContext("19.2.4", tmp),
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );

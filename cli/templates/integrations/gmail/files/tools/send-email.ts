@@ -10,28 +10,42 @@ function formatRecipients(value?: string | string[]): string | undefined {
 
 export default tool({
   id: "send-email",
-  description: "Send an email via Gmail. Can send to multiple recipients with CC and BCC support.",
-  inputSchema: defineSchema((v) => v.object({
-    to: v.union([v.string().email(), v.array(v.string().email())]).describe("Email recipient(s)"),
-    subject: v.string().min(1).describe("Email subject line"),
-    body: v.string().min(1).describe("Email body content"),
-    cc: v
-      .union([v.string().email(), v.array(v.string().email())])
-      .optional()
-      .describe("CC recipient(s)"),
-    bcc: v
-      .union([v.string().email(), v.array(v.string().email())])
-      .optional()
-      .describe("BCC recipient(s)"),
-    isHtml: v.boolean().default(false).describe("Whether the body contains HTML"),
-  }))(),
+  description:
+    "Send an email via Gmail. Can send to multiple recipients with CC and BCC support.",
+  inputSchema: defineSchema((v) =>
+    v.object({
+      to: v.union([v.string().email(), v.array(v.string().email())]).describe(
+        "Email recipient(s)",
+      ),
+      subject: v.string().min(1).describe("Email subject line"),
+      body: v.string().min(1).describe("Email body content"),
+      cc: v
+        .union([v.string().email(), v.array(v.string().email())])
+        .optional()
+        .describe("CC recipient(s)"),
+      bcc: v
+        .union([v.string().email(), v.array(v.string().email())])
+        .optional()
+        .describe("BCC recipient(s)"),
+      isHtml: v.boolean().default(false).describe(
+        "Whether the body contains HTML",
+      ),
+    })
+  )(),
   execute: async ({ to, subject, body, cc, bcc, isHtml }, context) => {
     const userId = resolveUserId(context);
 
     try {
       const gmail = createGmailClient(userId);
 
-      const result = await gmail.sendEmail({ to, subject, body, cc, bcc, isHtml });
+      const result = await gmail.sendEmail({
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        isHtml,
+      });
 
       const toFormatted = formatRecipients(to) ?? "";
 

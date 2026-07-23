@@ -98,8 +98,8 @@ describe("dynamic-route-matcher", () => {
       expect(extractParams("blog/[...slug]", "blog/post")).toEqual({ slug: ["post"] });
     });
 
-    it("should extract empty catch-all as empty array", () => {
-      expect(extractParams("blog/[...slug]", "blog")).toEqual({ slug: [] });
+    it("should require at least one segment for a required catch-all", () => {
+      expect(extractParams("blog/[...slug]", "blog")).toBeNull();
     });
 
     it("should handle catch-all at root level", () => {
@@ -172,6 +172,15 @@ describe("dynamic-route-matcher", () => {
       });
     });
 
+    it("should preserve hyphenated and Unicode parameter names", () => {
+      expect(extractParams("users/[user-id]", "users/42")).toEqual({
+        "user-id": "42",
+      });
+      expect(extractParams("users/[användare]", "users/anna")).toEqual({
+        användare: "anna",
+      });
+    });
+
     it("should handle very long paths", () => {
       expect(extractParams("a/[b]/c/[d]/e/[f]", "a/B/c/D/e/F")).toEqual({
         b: "B",
@@ -210,6 +219,45 @@ describe("dynamic-route-matcher", () => {
 
     it("should extract optional catch-all without leading slashes", () => {
       expect(extractParams("blog/[[...slug]]", "blog/a/b/c")).toEqual({ slug: ["a", "b", "c"] });
+    });
+
+    it("should backtrack a required catch-all to match a static suffix", () => {
+      expect(
+        extractParams("docs/[...slug]/edit", "docs/api/reference/edit"),
+      ).toEqual({ slug: ["api", "reference"] });
+      expect(extractParams("docs/[...slug]/edit", "docs/edit")).toBeNull();
+    });
+
+    it("should backtrack an optional catch-all to match a static suffix", () => {
+      expect(extractParams("docs/[[...slug]]/edit", "docs/edit")).toEqual({
+        slug: [],
+      });
+      expect(
+        extractParams("docs/[[...slug]]/edit", "docs/api/reference/edit"),
+      ).toEqual({ slug: ["api", "reference"] });
+    });
+
+    it("should match dynamic segments after a catch-all suffix", () => {
+      expect(
+        extractParams(
+          "[...path]/download/[file]",
+          "assets/images/download/logo.svg",
+        ),
+      ).toEqual({
+        path: ["assets", "images"],
+        file: "logo.svg",
+      });
+      expect(extractParams("[...path]/download/[file]", "download/logo.svg"))
+        .toBeNull();
+    });
+
+    it("should reject patterns with more than one catch-all", () => {
+      expect(
+        extractParams(
+          "[...first]/middle/[[...second]]",
+          "a/b/middle/c/d",
+        ),
+      ).toBeNull();
     });
   });
 

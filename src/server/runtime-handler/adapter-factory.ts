@@ -24,6 +24,7 @@ import {
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import type { RequestTokenProvenance } from "../context/request-context.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -58,6 +59,8 @@ interface AdapterResolutionOptions {
   projectId: string | undefined;
   /** Proxy token */
   proxyToken: string | undefined;
+  /** Whether proxy verification bound the token to the resolved project. */
+  tokenProvenance?: RequestTokenProvenance;
   /** Release ID */
   releaseId: string | undefined;
   /** Environment (preview/production) */
@@ -197,6 +200,7 @@ export async function resolveAdapter(
               releaseId: opts.releaseId,
               branch: opts.branch ?? opts.parsedDomain.branch ?? null,
               environmentName: opts.environmentName,
+              tokenProvenance: opts.tokenProvenance,
             },
           );
         }

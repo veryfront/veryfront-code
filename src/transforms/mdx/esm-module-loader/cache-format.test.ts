@@ -26,7 +26,7 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
   });
 
   describe("buildMdxEsmTransformCacheKey", () => {
-    it("includes all inputs and the ssr suffix in order", () => {
+    it("uses a full digest and the ssr suffix", () => {
       const key = buildMdxEsmTransformCacheKey(
         "proj1",
         "src1",
@@ -35,8 +35,8 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
         "hashA",
       );
       assertEquals(
-        key,
-        `${MDX_ESM_CACHE_NAMESPACE}:proj1:src1:19.1.1:_vf_modules/pages/index.js:hashA:ssr`,
+        new RegExp(`^${MDX_ESM_CACHE_NAMESPACE}:transform:[a-f0-9]{64}:ssr$`).test(key),
+        true,
       );
     });
 
@@ -62,20 +62,18 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
   });
 
   describe("buildMdxEsmPathCacheKey", () => {
-    it("includes namespace, react version, and path", () => {
+    it("uses a framed namespace, react version, path, and source digest", () => {
       assertEquals(
-        buildMdxEsmPathCacheKey("/a.js", "19.1.1"),
-        `${MDX_ESM_CACHE_NAMESPACE}:19.1.1:/a.js`,
+        buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash"),
+        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","/a.js","source-hash"]`,
       );
     });
 
     it("defaults the react version when omitted", () => {
       const key = buildMdxEsmPathCacheKey("/a.js");
       assertEquals(key.startsWith(`${MDX_ESM_CACHE_NAMESPACE}:`), true);
-      assertEquals(key.endsWith(":/a.js"), true);
-      // Default version segment is non-empty.
-      const segments = key.split(":");
-      assertEquals(segments[1]!.length > 0, true);
+      assertEquals(key.includes('"/a.js"'), true);
+      assertEquals(key.endsWith(",null]"), true);
     });
   });
 
@@ -93,11 +91,18 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
   });
 
   describe("buildMdxEsmModuleRecoveryCacheKey", () => {
-    it("includes namespace, ids, file name, and vfmod suffix", () => {
+    it("uses a full tenant/file digest and vfmod suffix", () => {
+      const key = buildMdxEsmModuleRecoveryCacheKey("proj1", "src1", "vfmod-x.mjs");
       assertEquals(
-        buildMdxEsmModuleRecoveryCacheKey("proj1", "src1", "vfmod-x.mjs"),
-        `${MDX_ESM_CACHE_NAMESPACE}:proj1:src1:vfmod-x.mjs:vfmod`,
+        new RegExp(`^${MDX_ESM_CACHE_NAMESPACE}:recovery:[a-f0-9]{64}:vfmod$`).test(key),
+        true,
       );
+    });
+
+    it("frames delimiter-bearing tenant ids without collisions", () => {
+      const first = buildMdxEsmModuleRecoveryCacheKey("a:b", "c", "vfmod-x.mjs");
+      const second = buildMdxEsmModuleRecoveryCacheKey("a", "b:c", "vfmod-x.mjs");
+      assertEquals(first === second, false);
     });
   });
 

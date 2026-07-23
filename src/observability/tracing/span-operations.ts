@@ -1,7 +1,16 @@
 import { serverLogger } from "#veryfront/utils";
+import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telemetry-error.ts";
 import type { Context, OpenTelemetryAPI, Span, SpanKind, SpanOptions, Tracer } from "./types.ts";
 
 const logger = serverLogger.component("tracing");
+
+function reportTelemetryFailure(message: string, error: unknown): void {
+  try {
+    logger.debug(message, error);
+  } catch (_) {
+    /* expected: telemetry and logging failures must not affect application work */
+  }
+}
 
 export class SpanOperations {
   constructor(
@@ -11,37 +20,52 @@ export class SpanOperations {
 
   startSpan(name: string, options: SpanOptions = {}): Span | null {
     try {
+      const parent = this.resolveParent(options.parent);
       return this.tracer.startSpan(
         name,
         {
           kind: this.mapSpanKind(options.kind),
-          attributes: options.attributes ?? {},
+          attributes: sanitizeTelemetryAttributes(options.attributes) ?? {},
         },
-        options.parent as Context | undefined,
+        parent,
       );
     } catch (error) {
-      logger.debug("Failed to start span", { name, error });
+      reportTelemetryFailure("Failed to start span", error);
       return null;
     }
   }
 
-  endSpan(span: Span | null, error?: Error): void {
+  endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
     if (!span) return;
 
-    try {
-      if (error) {
-        span.recordException(error);
+    if (failure.length > 0) {
+      const error = failure[0];
+      const telemetryError = sanitizeErrorForTelemetry(error);
+      try {
+        span.recordException(telemetryError);
+      } catch (recordError) {
+        reportTelemetryFailure("Failed to record span exception", recordError);
+      }
+      try {
         span.setStatus({
           code: this.api.SpanStatusCode.ERROR,
-          message: error.message,
+          message: telemetryError.message,
         });
-      } else {
-        span.setStatus({ code: this.api.SpanStatusCode.OK });
+      } catch (statusError) {
+        reportTelemetryFailure("Failed to set span error status", statusError);
       }
+    } else {
+      try {
+        span.setStatus({ code: this.api.SpanStatusCode.OK });
+      } catch (statusError) {
+        reportTelemetryFailure("Failed to set span status", statusError);
+      }
+    }
 
+    try {
       span.end();
-    } catch (error) {
-      logger.debug("Failed to end span", error);
+    } catch (endError) {
+      reportTelemetryFailure("Failed to end span", endError);
     }
   }
 
@@ -49,9 +73,9 @@ export class SpanOperations {
     if (!span) return;
 
     try {
-      span.setAttributes(attributes);
+      span.setAttributes(sanitizeTelemetryAttributes(attributes));
     } catch (error) {
-      logger.debug("Failed to set span attributes", error);
+      reportTelemetryFailure("Failed to set span attributes", error);
     }
   }
 
@@ -63,9 +87,9 @@ export class SpanOperations {
     if (!span) return;
 
     try {
-      span.addEvent(name, attributes);
+      span.addEvent(name, sanitizeTelemetryAttributes(attributes));
     } catch (error) {
-      logger.debug("Failed to add span event", error);
+      reportTelemetryFailure("Failed to add span event", error);
     }
   }
 
@@ -76,7 +100,7 @@ export class SpanOperations {
       const parentContext = this.api.trace.setSpan(this.api.context.active(), parentSpan);
       return this.startSpan(name, { ...options, parent: parentContext });
     } catch (error) {
-      logger.debug("Failed to create child span", error);
+      reportTelemetryFailure("Failed to create child span", error);
       return null;
     }
   }
@@ -98,5 +122,11 @@ export class SpanOperations {
       default:
         return this.api.SpanKind.INTERNAL;
     }
+  }
+
+  private resolveParent(parent: SpanOptions["parent"]): Context | undefined {
+    if (!parent) return undefined;
+    if (typeof (parent as Span).spanContext !== "function") return parent as Context;
+    return this.api.trace.setSpan(this.api.context.active(), parent as Span);
   }
 }

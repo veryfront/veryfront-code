@@ -13,6 +13,12 @@ import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { getEnvValue } from "./helpers.ts";
+import {
+  buildRedisCacheKeyPrefix,
+  RedisCacheNamespace,
+  type RedisCacheOwnershipMatcher,
+  registerOwnedRedisCacheNamespace,
+} from "./redis-keyspace.ts";
 
 const logger = baseLogger.component("cache-backend");
 
@@ -26,7 +32,15 @@ export interface CacheBackendConfig {
   memoryMaxEntries?: number;
   preferredBackend?: "api" | "redis" | "disk" | "memory";
   apiBaseUrl?: string;
+  /** Project identity bound to process-level API credentials. */
+  projectRef?: string;
   circuitBreakerName?: string;
+  /**
+   * Exact parser for project ownership in a configured Redis namespace.
+   * Without one, custom namespace keys are intentionally excluded from
+   * project-scoped Redis listing and deletion.
+   */
+  redisProjectOwnershipMatcher?: RedisCacheOwnershipMatcher;
 }
 
 export function isApiCacheAvailable(): boolean {
@@ -51,7 +65,9 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
     memoryMaxEntries = DEFAULT_MEMORY_MAX_ENTRIES,
     preferredBackend,
     apiBaseUrl,
+    projectRef,
     circuitBreakerName,
+    redisProjectOwnershipMatcher,
   } = config;
 
   return withSpan(
@@ -62,17 +78,25 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       if (shouldUseApi) {
         logger.debug("Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
-        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName });
+        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName, projectRef });
       }
 
       const shouldUseRedis = preferredBackend === "redis" ||
         (!preferredBackend && isRedisConfigured());
       if (shouldUseRedis) {
-        const redisBackend = new RedisCacheBackend(keyPrefix ? `vf:${keyPrefix}:` : "vf:cache:");
+        const redisKeyPrefix = buildRedisCacheKeyPrefix(keyPrefix);
+        registerOwnedRedisCacheNamespace({
+          prefix: redisKeyPrefix,
+          matchProjectOwnership: redisProjectOwnershipMatcher,
+        });
+        const redisBackend = new RedisCacheBackend(redisKeyPrefix);
         if (await redisBackend.initialize()) {
           logger.debug("Using Redis backend");
           span?.setAttribute("cache.backend.type", "redis");
           return redisBackend;
+        }
+        if (preferredBackend === "redis") {
+          throw new Error("Explicit Redis cache backend could not be initialized");
         }
       }
 
@@ -97,7 +121,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
 }
 
 export function isDistributedBackend(backend: CacheBackend): boolean {
-  return backend.type !== "memory";
+  return backend.type === "redis" || backend.type === "api";
 }
 
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
@@ -107,14 +131,14 @@ export function createDistributedCacheAccessor(
   name: string,
 ): () => Promise<CacheBackend | null> {
   let backend: CacheBackend | null | undefined;
-  let lastFailureTime = 0;
+  let lastFailureTime: number | undefined;
 
   let inflight: Promise<CacheBackend | null> | null = null;
 
   return () => {
     if (backend !== undefined) {
       if (
-        backend === null && lastFailureTime > 0 &&
+        backend === null && lastFailureTime !== undefined &&
         Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
       ) {
         backend = undefined;
@@ -130,17 +154,19 @@ export function createDistributedCacheAccessor(
           const b = await factory();
           if (!isDistributedBackend(b)) {
             backend = null;
-            lastFailureTime = 0;
-            logger.debug(`[${name}] No distributed cache available (memory only)`);
+            lastFailureTime = Date.now();
+            logger.debug(`[${name}] Distributed cache degraded to memory; retry scheduled`);
             return null;
           }
 
           backend = b;
-          lastFailureTime = 0;
+          lastFailureTime = undefined;
           logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
           return b;
         } catch (error) {
-          logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+          logger.debug(`[${name}] Failed to initialize distributed cache`, {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
           backend = null;
           lastFailureTime = Date.now();
           return null;
@@ -155,15 +181,18 @@ export function createDistributedCacheAccessor(
 }
 
 export const CacheBackends = {
-  transform: () => createCacheBackend({ keyPrefix: "transform" }),
+  transform: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.TRANSFORM }),
   file: () => createCacheBackend(),
-  module: () => createCacheBackend({ keyPrefix: "module" }),
-  render: () => createCacheBackend({ keyPrefix: "render" }),
+  module: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.MODULE }),
+  render: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.RENDER }),
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
   httpModule: () =>
-    createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
-  ssrModule: () => createCacheBackend({ keyPrefix: "ssr-module" }),
-  projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
+    createCacheBackend({
+      keyPrefix: RedisCacheNamespace.HTTP_MODULE,
+      circuitBreakerName: "api-cache-http",
+    }),
+  ssrModule: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.SSR_MODULE }),
+  projectCSS: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.PROJECT_CSS }),
 
   /**
    * Create a TokenizingCacheGateway for code storage.

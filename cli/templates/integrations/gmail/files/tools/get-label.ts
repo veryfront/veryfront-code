@@ -6,9 +6,11 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "get-label",
   description: "Get a Gmail label by ID.",
-  inputSchema: defineSchema((v) => v.object({
-    labelId: v.string().min(1).describe("Gmail label ID"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      labelId: v.string().min(1).describe("Gmail label ID"),
+    })
+  )(),
   execute: async ({ labelId }, context) => {
     const userId = resolveUserId(context);
 

@@ -6,11 +6,15 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "list-drafts",
   description: "List Gmail draft messages.",
-  inputSchema: defineSchema((v) => v.object({
-    maxResults: v.number().min(1).max(500).default(10).describe("Maximum number of drafts"),
-    query: v.string().optional().describe("Gmail search query"),
-    pageToken: v.string().optional().describe("Page token for pagination"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      maxResults: v.number().min(1).max(500).default(10).describe(
+        "Maximum number of drafts",
+      ),
+      query: v.string().optional().describe("Gmail search query"),
+      pageToken: v.string().optional().describe("Page token for pagination"),
+    })
+  )(),
   execute: async ({ maxResults, query, pageToken }, context) => {
     const userId = resolveUserId(context);
 

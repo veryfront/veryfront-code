@@ -33,6 +33,14 @@ export function getClientCount(): number {
   return clientsMap.size;
 }
 
+export function getClientCountForProject(projectSlug: string | undefined): number {
+  let count = 0;
+  for (const client of clientsMap.values()) {
+    if (client.projectSlug === projectSlug) count++;
+  }
+  return count;
+}
+
 export function addClient(info: HMRClientInfo): void {
   clientsMap.set(info.id, info);
 }
@@ -70,11 +78,17 @@ export function getClientDetails(): HMRClientDetail[] {
  * Get all open WebSocket connections, optionally filtered by projectSlug.
  * This replaces the old exported `clientSockets` Set that drifted out of sync.
  */
-export function getOpenSockets(projectSlug?: string): WebSocketConnection[] {
+export function getOpenSockets(
+  projectSlug?: string,
+  options: { includeUnscoped?: boolean } = {},
+): WebSocketConnection[] {
   const sockets: WebSocketConnection[] = [];
   for (const client of clientsMap.values()) {
     if (client.socket.readyState !== WebSocket.OPEN) continue;
-    if (projectSlug && client.projectSlug !== projectSlug) continue;
+    if (
+      projectSlug && client.projectSlug !== projectSlug &&
+      !(options.includeUnscoped && client.projectSlug === undefined)
+    ) continue;
     sockets.push(client.socket);
   }
   return sockets;

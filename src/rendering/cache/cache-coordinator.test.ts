@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
+import type { CachePayload, CacheStore } from "./types.ts";
 
 function makeResult(html: string): RenderResult {
   return {
@@ -46,6 +47,22 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
 }
 
 describe("CacheCoordinator", () => {
+  it("rejects invalid TTL/stale durations", () => {
+    for (const ttlMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new CacheCoordinator({ ttlMs }), RangeError, "ttlMs");
+    }
+    for (const staleMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new CacheCoordinator({ staleMs }), RangeError, "staleMs");
+    }
+  });
+
+  it("treats a zero TTL as immediate expiry", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 0, staleMs: 0 });
+    await coordinator.persistResult(makeResult("zero"), "zero");
+    assertEquals((await coordinator.checkCache("zero")).cacheStatus, "expired");
+    await coordinator.destroy();
+  });
+
   it("returns cached result on second lookup", async () => {
     const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
     const slug = "home";
@@ -63,6 +80,27 @@ describe("CacheCoordinator", () => {
     assertEquals(typeof lookupHit.lookupDurationMs, "number");
 
     await coordinator.destroy();
+  });
+
+  it("evicts malformed store values and treats them as misses", async () => {
+    let deletedKey: string | undefined;
+    const store: CacheStore = {
+      get: () => Promise.resolve({} as CachePayload),
+      set: () => Promise.resolve(),
+      delete: (key) => {
+        deletedKey = key;
+        return Promise.resolve();
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "project" });
+
+    const lookup = await coordinator.checkCache("malformed");
+
+    assertEquals(lookup.cacheStatus, "miss");
+    assertEquals(lookup.cachedResult, undefined);
+    assertEquals(deletedKey, "project:draft:malformed");
   });
 
   it("respects TTL", async () => {
@@ -187,5 +225,88 @@ describe("CacheCoordinator", () => {
 
     await projectA.destroy();
     await projectB.destroy();
+  });
+
+  it("clearForProject spans every content source for the project", async () => {
+    const data = new Map<string, CachePayload>();
+    const store: CacheStore = {
+      get: (key) => Promise.resolve(data.get(key)),
+      set: (key, value) => {
+        data.set(key, value);
+        return Promise.resolve();
+      },
+      delete: (key) => {
+        data.delete(key);
+        return Promise.resolve();
+      },
+      deleteByPrefix: (prefix) => {
+        let deleted = 0;
+        for (const key of [...data.keys()]) {
+          if (!key.startsWith(prefix)) continue;
+          data.delete(key);
+          deleted++;
+        }
+        return Promise.resolve(deleted);
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const main = new CacheCoordinator({ store, projectId: "project:a", contentSourceId: "main" });
+    const draft = new CacheCoordinator({
+      store,
+      projectId: "project:a",
+      contentSourceId: "draft:feature",
+    });
+    const other = new CacheCoordinator({ store, projectId: "project:b", contentSourceId: "main" });
+    await main.persistResult(makeResult("main"), "home");
+    await draft.persistResult(makeResult("draft"), "home");
+    await other.persistResult(makeResult("other"), "home");
+
+    await main.clearForProject();
+
+    assertEquals((await main.checkCache("home")).cacheStatus, "miss");
+    assertEquals((await draft.checkCache("home")).cacheStatus, "miss");
+    assertEquals((await other.checkCache("home")).cachedResult?.html, "other");
+  });
+
+  it("clearSlug observes a delimiter boundary", async () => {
+    const coordinator = new CacheCoordinator({ projectId: "project", contentSourceId: "main" });
+    await coordinator.persistResult(makeResult("a"), "a");
+    await coordinator.persistResult(makeResult("about"), "about");
+
+    await coordinator.clearSlug("a");
+
+    assertEquals((await coordinator.checkCache("a")).cacheStatus, "miss");
+    assertEquals((await coordinator.checkCache("about")).cachedResult?.html, "about");
+    await coordinator.destroy();
+  });
+
+  it("clearForProject never broadens unsupported scoped invalidation to clearAll", async () => {
+    let clears = 0;
+    const store: CacheStore = {
+      get: () => Promise.resolve(undefined),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+      clear: () => {
+        clears++;
+        return Promise.resolve();
+      },
+      destroy: () => Promise.resolve(),
+    };
+
+    const withoutProject = new CacheCoordinator({ store });
+    await assertRejects(
+      () => withoutProject.clearForProject(),
+      TypeError,
+      "requires a projectId",
+    );
+
+    const withoutPrefixDeletion = new CacheCoordinator({ store, projectId: "project" });
+    await assertRejects(
+      () => withoutPrefixDeletion.clearForProject(),
+      TypeError,
+      "project-scoped invalidation",
+    );
+    assertEquals(clears, 0);
   });
 });

@@ -39,6 +39,53 @@ describe("pattern-route-matcher", () => {
       assertEquals(match?.route.page, "docs-single.tsx");
     });
 
+    it("uses lexicographic specificity instead of route length", () => {
+      const router = new PageRouteMatcher();
+      router.addRoute("/[section]/edit", "generic-edit.tsx");
+      router.addRoute("/docs/[page]", "docs-page.tsx");
+
+      assertEquals(router.match("/docs/edit")?.route.page, "docs-page.tsx");
+    });
+
+    it("prefers a static suffix after an empty optional catch-all", () => {
+      const router = new PageRouteMatcher();
+      router.addRoute("/docs/[page]", "dynamic.tsx");
+      router.addRoute("/docs/[[...parts]]/edit", "optional-suffix.tsx");
+
+      assertEquals(router.match("/docs/edit")?.route.page, "optional-suffix.tsx");
+    });
+
+    it("returns null for equal-shape ambiguity regardless of registration order", () => {
+      for (const patterns of [["/[id]", "/[slug]"], ["/[slug]", "/[id]"]]) {
+        const router = new PageRouteMatcher();
+        for (const pattern of patterns) router.addRoute(pattern, `${pattern}.tsx`);
+
+        assertEquals(router.match("/value"), null);
+      }
+    });
+
+    it("replaces an identical pattern registration without creating ambiguity", () => {
+      const router = new PageRouteMatcher();
+      router.addRoute("/users/[id]", "first.tsx");
+
+      assertEquals(router.match("/users/42")?.route.page, "first.tsx");
+
+      router.addRoute("/users/[id]", "replacement.tsx");
+
+      assertEquals(router.getRoutes().length, 1);
+      assertEquals(router.match("/users/42")?.route.page, "replacement.tsx");
+    });
+
+    it("preserves ordering after eighteen route segments", () => {
+      const prefix = Array.from({ length: 18 }, (_, index) => `[part${index}]`);
+      const slug = `/${[...new Array(18).fill("value"), "fixed"].join("/")}`;
+      const router = new PageRouteMatcher();
+      router.addRoute(`/${[...prefix, "[tail]"].join("/")}`, "dynamic-tail.tsx");
+      router.addRoute(`/${[...prefix, "fixed"].join("/")}`, "static-tail.tsx");
+
+      assertEquals(router.match(slug)?.route.page, "static-tail.tsx");
+    });
+
     it("should cache route matches", () => {
       const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");

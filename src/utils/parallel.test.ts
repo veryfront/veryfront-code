@@ -63,6 +63,24 @@ describe("parallel", () => {
 
       assertEquals(maxConcurrent, 2);
     });
+
+    it("should respect the concurrency option without an explicit semaphore", async () => {
+      let concurrent = 0;
+      let maxConcurrent = 0;
+
+      await parallelMap(
+        [1, 2, 3, 4],
+        async () => {
+          concurrent++;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          concurrent--;
+        },
+        { concurrency: 2 },
+      );
+
+      assertEquals(maxConcurrent, 2);
+    });
   });
 
   describe("parallelAll", () => {

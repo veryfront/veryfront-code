@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   checkMemoryPressure,
@@ -7,9 +7,11 @@ import {
   getCacheStats,
   getHeapStats,
   getInitialRapidHeapGrowthState,
+  getMemoryMonitoringConfig,
   getMemoryMonitoringLogContext,
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
+  getTopCacheStats,
   registerCache,
   setHeapWarningThreshold,
   startMemoryMonitoring,
@@ -129,6 +131,31 @@ describe("memory/profiler", () => {
       assertEquals(context.topCaches[0]?.name, "test-cache-2");
       assertEquals(context.topCaches[0]?.entries, 25);
     });
+
+    it("returns no caches for a negative top-cache limit", () => {
+      assertEquals(
+        getTopCacheStats([
+          { name: "cache-a", entries: 10 },
+          { name: "cache-b", entries: 5 },
+        ], -1),
+        [],
+      );
+    });
+  });
+
+  describe("getMemoryMonitoringConfig", () => {
+    it("rejects partially numeric intervals and uses the default", () => {
+      const config = getMemoryMonitoringConfig({
+        get(key) {
+          if (key === "ENABLE_MEMORY_MONITORING") return "true";
+          if (key === "MEMORY_MONITORING_INTERVAL_MS") return "100ms";
+          return undefined;
+        },
+      });
+
+      assertEquals(config.enabled, true);
+      assertEquals(config.intervalMs, 30_000);
+    });
   });
 
   describe("forceGC", () => {
@@ -234,6 +261,11 @@ describe("memory/profiler", () => {
   });
 
   describe("setHeapWarningThreshold", () => {
+    it("should reject non-finite thresholds", () => {
+      assertThrows(() => setHeapWarningThreshold(Number.NaN), RangeError);
+      assertThrows(() => setHeapWarningThreshold(Number.POSITIVE_INFINITY), RangeError);
+    });
+
     it("should not throw when setting valid thresholds", () => {
       setHeapWarningThreshold(0.5);
       setHeapWarningThreshold(0.9);
@@ -250,6 +282,12 @@ describe("memory/profiler", () => {
   });
 
   describe("startMemoryMonitoring / stopMemoryMonitoring", () => {
+    it("should reject invalid intervals", () => {
+      for (const interval of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => startMemoryMonitoring(interval), RangeError);
+      }
+    });
+
     it("should start and stop without errors", () => {
       startMemoryMonitoring(60000);
       stopMemoryMonitoring();

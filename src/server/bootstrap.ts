@@ -22,10 +22,8 @@ import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
-  setGlobalActiveSpanAccessor,
-  setGlobalContextAccessor,
-  setGlobalMetricsAPI,
-  setGlobalTracerProvider,
+  type GlobalTelemetryAPIInstallation,
+  installGlobalTelemetryAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getEnvironmentConfig,
@@ -57,10 +55,33 @@ import {
   createServerStyleInvalidationCallbacks,
 } from "./style-callbacks.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
+import { ExclusiveProcessOwner } from "./process-ownership.ts";
 
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
 const bootstrapProdLog = logger.component("bootstrap-prod");
+const bootstrapOwnership = new ExclusiveProcessOwner("Veryfront bootstrap");
+
+type ResourceDisposer = () => void | Promise<void>;
+
+/**
+ * A bootstrap operation failed and at least one owned resource could not be
+ * released. The process-wide bootstrap slot remains held. Call
+ * `retryCleanup()` until it succeeds before attempting another bootstrap.
+ */
+export class BootstrapCleanupError extends AggregateError {
+  constructor(
+    primaryError: unknown,
+    cleanupError: unknown,
+    readonly retryCleanup: () => Promise<void>,
+  ) {
+    super(
+      [primaryError, cleanupError],
+      `Bootstrap failed and cleanup is incomplete: ${getErrorMessage(primaryError)}`,
+    );
+    this.name = "BootstrapCleanupError";
+  }
+}
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -83,8 +104,16 @@ export interface BootstrapResult {
   extensionLoader: ExtensionLoader;
 
   /**
-   * Dispose bootstrap resources: tears down extensions (reverse order),
-   * then releases any FSAdapter resources (WebSocket connections, caches).
+   * Dispose all bootstrap-owned resources. The caller exclusively owns this
+   * result and must eventually dispose it. Passing it as
+   * `startProductionServer({ bootstrapResult })` transfers that ownership to
+   * the returned server handle; do not dispose it separately.
+   *
+   * Cleanup tears down extensions in reverse order, clears telemetry and file
+   * logging, releases FSAdapter resources, and frees the process-wide
+   * bootstrap slot. Concurrent calls share an in-flight attempt. A successful
+   * cleanup is idempotent; a failed cleanup retains ownership and a later call
+   * retries only the unfinished phases.
    */
   dispose?: () => void | Promise<void>;
 }
@@ -117,37 +146,80 @@ function assertRequiredContracts(): void {
   }
 }
 
-export function wireTracingShim(): void {
+/** Generation-owned installation of bootstrap telemetry globals. */
+export interface TracingShimInstallation {
+  /** Clear this installation if it is still current. */
+  dispose(): boolean;
+}
+
+let activeTracingShimInstallation: TracingShimInstallation | undefined;
+let activeLogEmitterOwner: symbol | undefined;
+
+export function wireTracingShim(): TracingShimInstallation {
   const tracing = tryResolve<TracingExporter>("TracingExporter");
+  let telemetryInstallation: GlobalTelemetryAPIInstallation;
+  let logRecordEmitter: ReturnType<NonNullable<TracingExporter["getLogRecordEmitter"]>> = null;
+
   if (tracing) {
-    setGlobalTracerProvider(
-      tracing.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
-    );
+    // Read every exporter getter before installing anything. A getter failure
+    // therefore leaves the previous telemetry generation wholly intact.
+    const tracerProvider = tracing.getProvider();
     const metricsApi = tracing.getMetricsAPI();
-    if (metricsApi) {
-      setGlobalMetricsAPI(
-        metricsApi as Parameters<typeof setGlobalMetricsAPI>[0],
+    const activeSpanAccessor = tracing.getTraceAPI?.() ?? null;
+    const contextAccessor = tracing.getContextAPI?.() ?? null;
+    const logRecordEmitterCandidate: unknown = tracing.getLogRecordEmitter?.() ?? null;
+
+    if (
+      tracerProvider === null || typeof tracerProvider !== "object" ||
+      typeof tracerProvider.getTracer !== "function"
+    ) {
+      throw new TypeError("TracingExporter.getProvider() must return a tracer provider");
+    }
+    if (logRecordEmitterCandidate !== null && typeof logRecordEmitterCandidate !== "function") {
+      throw new TypeError(
+        "TracingExporter.getLogRecordEmitter() must return a function or null",
       );
     }
-    const traceApi = tracing.getTraceAPI?.();
-    if (traceApi) {
-      setGlobalActiveSpanAccessor(
-        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
-      );
-    }
-    const contextApi = tracing.getContextAPI?.();
-    if (contextApi) {
-      setGlobalContextAccessor(
-        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
-      );
-    }
-    const logRecordEmitter = tracing.getLogRecordEmitter?.();
-    __registerLogRecordEmitter(logRecordEmitter ?? null);
+    logRecordEmitter = logRecordEmitterCandidate as typeof logRecordEmitter;
+
+    type TelemetryConfig = Parameters<typeof installGlobalTelemetryAPI>[0];
+    telemetryInstallation = installGlobalTelemetryAPI({
+      tracerProvider: tracerProvider as TelemetryConfig["tracerProvider"],
+      metricsApi: metricsApi as TelemetryConfig["metricsApi"],
+      activeSpanAccessor: activeSpanAccessor as TelemetryConfig["activeSpanAccessor"],
+      contextAccessor: contextAccessor as TelemetryConfig["contextAccessor"],
+    });
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
   } else {
-    __registerLogRecordEmitter(null);
+    telemetryInstallation = installGlobalTelemetryAPI({});
     bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }
+
+  const logEmitterOwner = Symbol("veryfront.bootstrap.log-emitter");
+  __registerLogRecordEmitter(logRecordEmitter);
+  activeLogEmitterOwner = logEmitterOwner;
+
+  const installation: TracingShimInstallation = Object.freeze({
+    dispose: (): boolean => {
+      const telemetryCleared = telemetryInstallation.dispose();
+      let emitterCleared = false;
+      if (activeLogEmitterOwner === logEmitterOwner) {
+        activeLogEmitterOwner = undefined;
+        __registerLogRecordEmitter(null);
+        emitterCleared = true;
+      }
+      if (activeTracingShimInstallation === installation) {
+        activeTracingShimInstallation = undefined;
+      }
+      return telemetryCleared || emitterCleared;
+    },
+  });
+  activeTracingShimInstallation = installation;
+  return installation;
+}
+
+function clearActiveTracingShimForExtensionTransition(): void {
+  activeTracingShimInstallation?.dispose();
 }
 
 function createBootstrapPrimeContracts(): Record<string, unknown> {
@@ -166,6 +238,9 @@ const DEFAULT_FILE_LOG_FORMAT = "json" as const;
 interface FileLogHandle {
   subscriber: FileLogSubscriber;
   unsubscribe: () => void;
+  unsubscribed?: boolean;
+  closed?: boolean;
+  disposePromise?: Promise<void>;
 }
 
 function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | null {
@@ -193,30 +268,201 @@ function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | 
 
 async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
   if (!handle) return;
-  handle.unsubscribe();
-  await handle.subscriber.close();
+  if (handle.unsubscribed && handle.closed) return;
+  if (handle.disposePromise) return await handle.disposePromise;
+
+  const attempt = (async () => {
+    const failures: unknown[] = [];
+    if (!handle.unsubscribed) {
+      try {
+        handle.unsubscribe();
+        handle.unsubscribed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (!handle.closed) {
+      try {
+        await handle.subscriber.close();
+        handle.closed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "File log cleanup failed");
+    }
+  })();
+  handle.disposePromise = attempt;
+  try {
+    await attempt;
+  } finally {
+    if (handle.disposePromise === attempt && !(handle.unsubscribed && handle.closed)) {
+      handle.disposePromise = undefined;
+    }
+  }
+}
+
+/**
+ * Prepare a replacement before retiring the current resource. If retirement
+ * fails, dispose the prepared candidate so ownership never leaks.
+ *
+ * @internal Exported for lifecycle regression tests.
+ */
+export async function replaceLifecycleResource<T>(
+  current: T | null,
+  createReplacement: () => T | null,
+  dispose: (resource: T) => void | Promise<void>,
+): Promise<T | null> {
+  const replacement = createReplacement();
+  if (current === null) return replacement;
+
+  try {
+    await dispose(current);
+  } catch (retirementError) {
+    if (replacement !== null && replacement !== current) {
+      try {
+        await dispose(replacement);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [retirementError, rollbackError],
+          "Lifecycle resource replacement and rollback failed",
+        );
+      }
+    }
+    throw retirementError;
+  }
+  return replacement;
 }
 
 function combineDispose(
   extensionLoader: ExtensionLoader,
-  fsDispose?: () => void,
+  fsDispose?: ResourceDisposer,
   fileLogHandle?: FileLogHandle | null,
+  tracingShimInstallation?: TracingShimInstallation,
+  releaseBootstrapOwnership?: () => void,
 ): () => Promise<void> {
-  return async () => {
-    try {
+  let extensionsDisposed = false;
+  let tracingDisposed = false;
+  let fileLogDisposed = false;
+  let fsDisposed = false;
+  let ownershipReleased = false;
+
+  return createRetryableDisposer(async () => {
+    if (!extensionsDisposed) {
       await extensionLoader.teardownAll();
-    } finally {
+      extensionsDisposed = true;
+    }
+    if (!tracingDisposed) {
+      tracingShimInstallation?.dispose();
+      tracingDisposed = true;
+    }
+    if (!fileLogDisposed) {
+      await teardownFileLog(fileLogHandle ?? null);
+      fileLogDisposed = true;
+    }
+    if (!fsDisposed) {
+      await fsDispose?.();
+      fsDisposed = true;
+    }
+    if (!ownershipReleased) {
+      releaseBootstrapOwnership?.();
+      ownershipReleased = true;
+    }
+  });
+}
+
+/**
+ * Serialize cleanup attempts, retaining successful completion while allowing
+ * an explicit retry after a failed attempt.
+ *
+ * Use this for resources whose ownership must remain held until cleanup is
+ * confirmed. The cleanup callback must be idempotent across failed attempts.
+ *
+ * @internal
+ */
+export function createRetryableDisposer(
+  dispose: () => void | Promise<void>,
+): () => Promise<void> {
+  let disposePromise: Promise<void> | undefined;
+  return () => {
+    if (disposePromise) return disposePromise;
+    const attempt = Promise.resolve().then(dispose);
+    disposePromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (disposePromise === attempt) disposePromise = undefined;
+      },
+    );
+    return attempt;
+  };
+}
+
+async function finalizeExtensionBootstrap(
+  extensionLoader: ExtensionLoader,
+  fsDispose: ResourceDisposer | undefined,
+  fileLogHandle: FileLogHandle | null,
+  releaseBootstrapOwnership: () => void,
+): Promise<() => Promise<void>> {
+  let tracingShimInstallation: TracingShimInstallation | undefined;
+  try {
+    tracingShimInstallation = wireTracingShim();
+    assertRequiredContracts();
+    return combineDispose(
+      extensionLoader,
+      fsDispose,
+      fileLogHandle,
+      tracingShimInstallation,
+      releaseBootstrapOwnership,
+    );
+  } catch (error) {
+    const retryCleanup = combineDispose(
+      extensionLoader,
+      fsDispose,
+      fileLogHandle,
+      tracingShimInstallation,
+      releaseBootstrapOwnership,
+    );
+    try {
+      await retryCleanup();
+    } catch (cleanupError) {
+      throw new BootstrapCleanupError(error, cleanupError, retryCleanup);
+    }
+    throw error;
+  }
+}
+
+/** @internal Exported for lifecycle regression tests. */
+export function createStartupFailureCleanup(
+  cleanupSteps: readonly ResourceDisposer[],
+  releaseBootstrapOwnership: () => void,
+): () => Promise<void> {
+  const completedSteps = new Set<number>();
+  let ownershipReleased = false;
+
+  return createRetryableDisposer(async () => {
+    const failures: unknown[] = [];
+    for (let index = 0; index < cleanupSteps.length; index++) {
+      if (completedSteps.has(index)) continue;
       try {
-        await teardownFileLog(fileLogHandle ?? null);
-      } finally {
-        try {
-          __registerLogRecordEmitter(null);
-        } finally {
-          if (fsDispose) fsDispose();
-        }
+        await cleanupSteps[index]!();
+        completedSteps.add(index);
+      } catch (error) {
+        failures.push(error);
       }
     }
-  };
+    if (failures.length > 0) {
+      throw failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, "Bootstrap resource cleanup failed");
+    }
+    if (!ownershipReleased) {
+      releaseBootstrapOwnership();
+      ownershipReleased = true;
+    }
+  });
 }
 
 /**
@@ -230,12 +476,18 @@ function combineDispose(
  */
 export async function orchestrateOrDisposeFS(
   orchestrate: () => Promise<ExtensionLoader>,
-  fsDispose: (() => void) | undefined,
+  fsDispose: ResourceDisposer | undefined,
 ): Promise<ExtensionLoader> {
   try {
     return await orchestrate();
   } catch (err) {
-    if (fsDispose) fsDispose();
+    try {
+      await fsDispose?.();
+    } catch (disposeError) {
+      bootstrapLog.warn("FS adapter cleanup failed after extension orchestration error", {
+        error: disposeError,
+      });
+    }
     throw err;
   }
 }
@@ -292,23 +544,27 @@ export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
+  const releaseBootstrapOwnership = bootstrapOwnership.acquire();
   bootstrapLog.debug("Starting framework initialization", {
     projectDir,
     runtime: adapter.id,
   });
 
-  // Initialize esbuild early - extracts binary from VFS if running as deno compile
-  // This must happen before any module imports esbuild
-  await initializeEsbuild();
-  await ensureEnvLoaded(projectDir, adapter);
-  ensureBuiltinSchemaValidator();
-
-  bootstrapLog.debug("Loading config with base adapter");
-  let config = await getConfig(projectDir, adapter);
-
-  let fileLog = maybeAttachFileLogSubscriber(config);
+  let fileLog: FileLogHandle | null = null;
+  let fsDispose: ResourceDisposer | undefined;
 
   try {
+    // Initialize esbuild early - extracts binary from VFS if running as deno compile
+    // This must happen before any module imports esbuild
+    await initializeEsbuild();
+    await ensureEnvLoaded(projectDir, adapter);
+    ensureBuiltinSchemaValidator();
+
+    bootstrapLog.debug("Loading config with base adapter");
+    let config = await getConfig(projectDir, adapter);
+
+    fileLog = maybeAttachFileLogSubscriber(config);
+
     const fsType = config.fs?.type;
     const needsFSAdapter = fsType != null && fsType !== "local";
 
@@ -321,15 +577,22 @@ export async function bootstrap(
         primeContracts: createBootstrapPrimeContracts(),
         builtinExtensions: createBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
+        beforeActivate: clearActiveTracingShimForExtensionTransition,
       });
-      wireTracingShim();
-      assertRequiredContracts();
+      const ownedFileLog = fileLog;
+      const dispose = await finalizeExtensionBootstrap(
+        extensionLoader,
+        undefined,
+        ownedFileLog,
+        releaseBootstrapOwnership,
+      );
+      fileLog = null;
       return {
         adapter,
         config,
         usingFSAdapter: false,
         extensionLoader,
-        dispose: combineDispose(extensionLoader, undefined, fileLog),
+        dispose,
       };
     }
 
@@ -359,6 +622,22 @@ export async function bootstrap(
       projectDir,
     );
 
+    // Capture ownership immediately after allocation. Config reload and file
+    // logging can still fail below, and those failures must not leak sockets,
+    // caches, or other adapter resources.
+    if (isExtendedFSAdapter(enhancedAdapter.fs)) {
+      const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
+      if (
+        "dispose" in underlying &&
+        typeof (underlying as { dispose?: ResourceDisposer }).dispose === "function"
+      ) {
+        const disposeUnderlying = (underlying as { dispose: ResourceDisposer }).dispose.bind(
+          underlying,
+        );
+        fsDispose = createRetryableDisposer(disposeUnderlying);
+      }
+    }
+
     if (enhancedAdapter === adapter) {
       bootstrapLog.debug("Framework initialized successfully", {
         projectDir,
@@ -373,15 +652,22 @@ export async function bootstrap(
         primeContracts: createBootstrapPrimeContracts(),
         builtinExtensions: createBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
+        beforeActivate: clearActiveTracingShimForExtensionTransition,
       });
-      wireTracingShim();
-      assertRequiredContracts();
+      const ownedFileLog = fileLog;
+      const dispose = await finalizeExtensionBootstrap(
+        extensionLoader,
+        fsDispose,
+        ownedFileLog,
+        releaseBootstrapOwnership,
+      );
+      fileLog = null;
       return {
         adapter,
         config,
         usingFSAdapter: false,
         extensionLoader,
-        dispose: combineDispose(extensionLoader, undefined, fileLog),
+        dispose,
       };
     }
 
@@ -416,12 +702,14 @@ export async function bootstrap(
         config = reloadedConfig;
       }
 
-      // Re-attach file log subscriber if config was reloaded with different settings
-      const newFileLog = maybeAttachFileLogSubscriber(config);
-      if (newFileLog) {
-        await teardownFileLog(fileLog);
-        fileLog = newFileLog;
-      }
+      // Prepare the new sink first. A disabled reloaded config intentionally
+      // transitions to null; a failed replacement is rolled back and cannot
+      // leak a second subscriber.
+      fileLog = await replaceLifecycleResource(
+        fileLog,
+        () => maybeAttachFileLogSubscriber(config),
+        teardownFileLog,
+      );
     }
 
     bootstrapLog.debug("Framework initialized successfully", {
@@ -429,17 +717,6 @@ export async function bootstrap(
       runtime: adapter.id,
       fsAdapter: fsType,
     });
-
-    let fsDispose: (() => void) | undefined;
-    if (isExtendedFSAdapter(enhancedAdapter.fs)) {
-      const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
-      if (
-        "dispose" in underlying &&
-        typeof (underlying as { dispose?: () => void }).dispose === "function"
-      ) {
-        fsDispose = () => (underlying as { dispose: () => void }).dispose();
-      }
-    }
 
     // If extension orchestration fails after the FS adapter has been wired up,
     // release the FS resources (WebSocket connections, caches) before
@@ -453,11 +730,18 @@ export async function bootstrap(
           primeContracts: createBootstrapPrimeContracts(),
           builtinExtensions: createBuiltinExtensions(),
           setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
+          beforeActivate: clearActiveTracingShimForExtensionTransition,
         }),
       fsDispose,
     );
-    wireTracingShim();
-    assertRequiredContracts();
+    const ownedFileLog = fileLog;
+    const dispose = await finalizeExtensionBootstrap(
+      extensionLoader,
+      fsDispose,
+      ownedFileLog,
+      releaseBootstrapOwnership,
+    );
+    fileLog = null;
 
     return {
       adapter: enhancedAdapter,
@@ -465,10 +749,26 @@ export async function bootstrap(
       usingFSAdapter: true,
       fsAdapterType: fsType,
       extensionLoader,
-      dispose: combineDispose(extensionLoader, fsDispose, fileLog),
+      dispose,
     };
   } catch (err) {
-    await teardownFileLog(fileLog);
+    // finalizeExtensionBootstrap already owns every remaining resource and
+    // exposes the only safe retry path. Running a second cleanup coordinator
+    // here would release the process slot independently of that ownership.
+    if (err instanceof BootstrapCleanupError) throw err;
+
+    const retryCleanup = createStartupFailureCleanup(
+      [
+        () => teardownFileLog(fileLog),
+        ...(fsDispose ? [fsDispose] : []),
+      ],
+      releaseBootstrapOwnership,
+    );
+    try {
+      await retryCleanup();
+    } catch (cleanupError) {
+      throw new BootstrapCleanupError(err, cleanupError, retryCleanup);
+    }
     throw err;
   }
 }

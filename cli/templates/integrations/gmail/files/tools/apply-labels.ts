@@ -3,15 +3,22 @@ import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
-const getLabelChangeInput = defineSchema((v) => v
-  .object({
-    messageId: v.string().min(1).describe("Gmail message ID"),
-    addLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to add"),
-    removeLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to remove"),
-  })
-  .refine((value) => value.addLabelIds?.length || value.removeLabelIds?.length, {
-    message: "At least one label must be added or removed",
-  }));
+const getLabelChangeInput = defineSchema((v) =>
+  v
+    .object({
+      messageId: v.string().min(1).describe("Gmail message ID"),
+      addLabelIds: v.array(v.string().min(1)).optional().describe(
+        "Label IDs to add",
+      ),
+      removeLabelIds: v.array(v.string().min(1)).optional().describe(
+        "Label IDs to remove",
+      ),
+    })
+    .refine((value) =>
+      Boolean(value.addLabelIds?.length || value.removeLabelIds?.length), {
+      message: "At least one label must be added or removed",
+    })
+);
 
 export default tool({
   id: "apply-labels",
@@ -22,7 +29,10 @@ export default tool({
 
     try {
       const gmail = createGmailClient(userId);
-      const message = await gmail.modifyMessageLabels(messageId, { addLabelIds, removeLabelIds });
+      const message = await gmail.modifyMessageLabels(messageId, {
+        addLabelIds,
+        removeLabelIds,
+      });
 
       return {
         success: true,

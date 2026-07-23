@@ -8,9 +8,8 @@ import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
-import { bootstrapDev } from "../bootstrap.ts";
+import { bootstrapDev, type BootstrapResult, createRetryableDisposer } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
-import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import type { DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
@@ -18,16 +17,20 @@ import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
 import { FileWatchSetup } from "./file-watch-setup.ts";
 import {
+  clearSSRServerPort,
+  disableSSRClientOnlyFetching,
+  disableSSRFetchInterception,
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
-import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
+import { ServerStartupCleanupError } from "../startup-cleanup-error.ts";
 
 const rscLog = logger.component("rsc");
 const fsAdapterLog = logger.component("fs-adapter");
@@ -64,21 +67,73 @@ export class DevServer {
   private _handler?: (req: Request) => Promise<Response>;
   readonly ready: Promise<void>;
   private _resolveReady!: () => void;
+  private _rejectReady!: (error: unknown) => void;
+  private readySettled = false;
   private _isReady = false;
-  private reloadUnsubscribe?: () => void;
   private invalidateUnsubscribe?: () => void;
-  private releaseExternalBroadcastSource?: () => void;
+  private releaseExternalBroadcastSource?: () => Promise<void>;
+  private bootstrapDispose?: BootstrapResult["dispose"];
+  private pipelineDisposed = false;
+  private ssrPortInstalledValue: number | undefined;
+  private ssrFetchInstalled = false;
+  private ssrClientOnlyInstalled = false;
+  private listeningPort: number;
+  private devPortEnvInstallation?: {
+    installedValue: string;
+    previousValue: string | undefined;
+  };
+  private startPromise?: Promise<void>;
+  private stopRequested = false;
+  private readonly stopLifecycle = createRetryableDisposer(() => this.stopAfterStartup());
 
   constructor(private options: DevServerOptions) {
-    this.ready = new Promise<void>((resolve) => {
+    this.listeningPort = options.port;
+    this.ready = new Promise<void>((resolve, reject) => {
       this._resolveReady = resolve;
+      this._rejectReady = reject;
     });
+    // startDevServer() cannot return the instance when start() rejects, so no
+    // external caller could observe `ready` in that path. Keep the promise
+    // rejectable for direct DevServer users without creating an unhandled
+    // rejection for the convenience API.
+    void this.ready.catch(() => undefined);
     this.router = new ApiRouteMatcher();
     this.pipeline = new MiddlewarePipeline();
   }
 
   private isDebug(): boolean {
     return this.adapter?.env.get("VERYFRONT_DEBUG") === "1";
+  }
+
+  /** Actual bound port, or the configured port in handler-only mode. */
+  get port(): number {
+    return this.listeningPort;
+  }
+
+  private installRuntimePort(port: number): void {
+    this.listeningPort = port;
+    const installedValue = String(port);
+    const installation = this.devPortEnvInstallation;
+    if (!installation) {
+      const previousValue = getEnv("VERYFRONT_DEV_PORT");
+      setEnv("VERYFRONT_DEV_PORT", installedValue);
+      this.devPortEnvInstallation = { installedValue, previousValue };
+    } else if (installation.installedValue !== installedValue) {
+      // Only replace the value this generation still owns. An unrelated
+      // process-wide mutation must not be overwritten by a late onListen.
+      if (getEnv("VERYFRONT_DEV_PORT") === installation.installedValue) {
+        setEnv("VERYFRONT_DEV_PORT", installedValue);
+        installation.installedValue = installedValue;
+      }
+    }
+
+    if (this.ssrPortInstalledValue !== port) {
+      if (this.ssrPortInstalledValue !== undefined) {
+        clearSSRServerPort(this.ssrPortInstalledValue);
+      }
+      setSSRServerPort(port);
+      this.ssrPortInstalledValue = port;
+    }
   }
 
   private async logRSCStatus(): Promise<void> {
@@ -92,186 +147,231 @@ export class DevServer {
     }
   }
 
-  async start(): Promise<void> {
-    const baseAdapter = await runtime.get();
-    logger.debug(`Using ${baseAdapter.name} runtime adapter`);
-
-    const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);
-    this.adapter = bootstrap.adapter;
-    this.appConfig = bootstrap.config;
-
-    // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
-    if (this.appConfig && this.options.enableHMR === false) {
-      this.appConfig = {
-        ...this.appConfig,
-        dev: {
-          ...this.appConfig.dev,
-          hmr: false,
-        },
-      };
+  start(): Promise<void> {
+    if (this.startPromise) return this.startPromise;
+    if (this.stopRequested) {
+      return Promise.reject(new Error("Cannot start a DevServer after shutdown has begun"));
     }
+    const startPromise = this.startInternal();
+    this.startPromise = startPromise;
+    return startPromise;
+  }
 
-    if (bootstrap.usingFSAdapter) {
-      fsAdapterLog.debug(`Using ${bootstrap.fsAdapterType} backend`);
-    }
+  private async startInternal(): Promise<void> {
+    try {
+      const baseAdapter = await runtime.get();
+      logger.debug(`Using ${baseAdapter.name} runtime adapter`);
 
-    logger.debug("Starting dev server", {
-      port: this.options.port,
-      bindAddress: this.options.bindAddress ?? LOCALHOST.IPV4,
-      projectDir: this.options.projectDir,
-      hmr: this.options.enableHMR,
-      fastRefresh: this.options.enableFastRefresh,
-    });
+      const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);
+      this.bootstrapDispose = bootstrap.dispose;
+      this.adapter = bootstrap.adapter;
+      this.appConfig = bootstrap.config;
 
-    // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
-    // This ensures the correct port is used when fetching modules via localhost
-    setEnv("VERYFRONT_DEV_PORT", String(this.options.port));
-
-    // Enable SSR fetch interception for local development
-    // This rewrites fetch URLs from project domains to localhost
-    setSSRServerPort(this.options.port);
-    enableSSRFetchInterception();
-    // Enable client-only fetching: API fetches don't complete during SSR,
-    // causing React Query to suspend and render fallbacks instead of data.
-    // This prevents hydration mismatches between SSR and client.
-    enableSSRClientOnlyFetching();
-
-    await this.logRSCStatus();
-
-    // Initialize disk cache in dev mode when explicitly configured
-    if (isDiskCacheConfigured()) {
-      void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
-        (error: unknown) => {
-          // Warn (not debug): the cache was explicitly configured, so a failure likely
-          // indicates a misconfiguration (wrong Redis host/password). Developers need
-          // to see this — a debug log is too easy to miss.
-          logger.warn(
-            "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
-            { error },
-          );
-        },
-      );
-    }
-
-    // Auto-discover runtime primitives (tools, agents, workflows, prompts, resources)
-    await this.runPrimitiveDiscovery();
-
-    if (this.options.enableHMR) {
-      await this.setupFileWatchers();
-
-      // Subscribe to immediate invalidation for cache clearing (fires immediately)
-      this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
-        devServerLog.debug("INVALIDATE callback triggered - clearing runtime handler");
-        this.requestHandler?.invalidateRuntimeHandler();
-      });
-
-      // Subscribe to debounced reload for broadcasting updates to connected HMR clients.
-      // This subscription must be eagerly registered here rather than lazily inside
-      // HMRHandler.initialize(), because HMRHandler.initialize() only runs when the
-      // first /_ws WebSocket request arrives. If that connection fails or hasn't
-      // happened yet, file changes are silently lost.
-      this.releaseExternalBroadcastSource = HMRHandler.registerExternalBroadcastSource();
-      this.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
-        hmrLog.debug("RELOAD callback triggered - broadcasting to HMR clients", {
-          changedPaths,
-          projectSlug: project?.projectSlug,
-        });
-        // Broadcast without projectSlug filter so that connectHMR() clients
-        // (which are registered without a projectSlug) also receive updates.
-        broadcastUpdate(changedPaths);
-      });
-
-      hmrLog.debug("ReloadNotifier subscriptions registered (invalidate + reload broadcast)");
-    }
-
-    const moduleServerUrl = buildLocalhostUrl(this.options.port);
-    const vendorBundleHash = "dev-vendor-bundle";
-
-    this.componentRegistry = new ComponentRegistry({
-      projectDir: this.options.projectDir,
-      adapter: this.adapter,
-      moduleServerUrl,
-      vendorBundleHash,
-    });
-
-    const routeDiscovery = new RouteDiscovery(
-      this.options.projectDir,
-      this.adapter,
-      this.router,
-      this.appConfig,
-    );
-
-    const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
-    if (isProxyMode) {
-      devServerLog.debug("Skipping component/route discovery in proxy mode");
-    } else {
-      await Promise.all([this.componentRegistry.discover(), routeDiscovery.discoverRoutes()]);
-    }
-
-    const defaultProjectSlug = await this.resolveDefaultProjectSlug(isProxyMode);
-    const localProjects = this.buildLocalProjects(defaultProjectSlug);
-
-    const requestHandler = new RequestHandler(
-      this.options.projectDir,
-      this.adapter,
-      () => this._isReady,
-      () => this.isDebug(),
-      this.appConfig,
-      defaultProjectSlug,
-      this.options.defaultProjectId,
-      localProjects,
-    );
-    this.requestHandler = requestHandler;
-
-    await setupMiddleware(
-      this.pipeline,
-      this.appConfig!,
-      (req) => requestHandler.handleRequest(req),
-    );
-
-    // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor
-    // creates a new Request object, which breaks Deno.upgradeWebSocket() - it needs
-    // the original request to maintain the connection.
-    const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
-    const interceptor = this.options.requestInterceptor;
-    const handler = interceptor
-      ? async (req: Request) => {
-        const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-        if (isWebSocketUpgrade) return baseHandler(req);
-
-        const interceptedReq = await interceptor(req);
-        return baseHandler(interceptedReq);
+      // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
+      if (this.appConfig && this.options.enableHMR === false) {
+        this.appConfig = {
+          ...this.appConfig,
+          dev: {
+            ...this.appConfig.dev,
+            hmr: false,
+          },
+        };
       }
-      : baseHandler;
 
-    this._handler = handler;
+      if (bootstrap.usingFSAdapter) {
+        fsAdapterLog.debug(`Using ${bootstrap.fsAdapterType} backend`);
+      }
 
-    if (this.options.handlerOnly) {
-      this._isReady = true;
-      this._resolveReady();
-      return;
-    }
+      logger.debug("Starting dev server", {
+        port: this.options.port,
+        bindAddress: this.options.bindAddress ?? LOCALHOST.IPV4,
+        projectDir: this.options.projectDir,
+        hmr: this.options.enableHMR,
+        fastRefresh: this.options.enableFastRefresh,
+      });
 
-    this.server = await this.adapter.serve(handler, {
-      port: this.options.port,
-      hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
-      signal: this.options.signal,
-      onListen: ({ port }: { hostname: string; port: number }) => {
-        const url = buildLocalhostUrl(port);
-        logger.info(`Dev server running at ${url}`);
+      // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
+      // This ensures the correct port is used when fetching modules via localhost
+      this.installRuntimePort(this.options.port);
 
-        try {
-          // _isReady must be set inside onListen — the server is only truly ready
-          // to accept connections once this callback fires. Setting it after
-          // adapter.serve() returns races with onListen on Deno (where serve is
-          // non-blocking) and would mark the server ready before it can accept.
-          this._isReady = true;
-          this._resolveReady();
-        } catch (error) {
-          devLog.debug("mark ready failed", error);
+      // Enable SSR fetch interception for local development
+      // This rewrites fetch URLs from project domains to localhost
+      enableSSRFetchInterception();
+      this.ssrFetchInstalled = true;
+      // Enable client-only fetching: API fetches don't complete during SSR,
+      // causing React Query to suspend and render fallbacks instead of data.
+      // This prevents hydration mismatches between SSR and client.
+      enableSSRClientOnlyFetching();
+      this.ssrClientOnlyInstalled = true;
+
+      await this.logRSCStatus();
+
+      // Initialize disk cache in dev mode when explicitly configured
+      if (isDiskCacheConfigured()) {
+        void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
+          (error: unknown) => {
+            // Warn (not debug): the cache was explicitly configured, so a failure likely
+            // indicates a misconfiguration (wrong Redis host/password). Developers need
+            // to see this — a debug log is too easy to miss.
+            logger.warn(
+              "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
+              { error },
+            );
+          },
+        );
+      }
+
+      // Auto-discover runtime primitives (tools, agents, workflows, prompts, resources)
+      await this.runPrimitiveDiscovery();
+
+      const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
+      const defaultProjectSlug = await this.resolveDefaultProjectSlug(isProxyMode);
+      const localProjects = this.buildLocalProjects(defaultProjectSlug);
+
+      if (this.options.enableHMR) {
+        await this.setupFileWatchers({
+          projectSlug: defaultProjectSlug,
+          projectId: this.options.defaultProjectId,
+          projectDir: this.options.projectDir,
+          environment: "preview",
+          branch: "main",
+          contentSourceId: "local-main",
+        });
+
+        // Subscribe to immediate invalidation for cache clearing (fires immediately)
+        this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
+          devServerLog.debug("INVALIDATE callback triggered - clearing runtime handler");
+          this.requestHandler?.invalidateRuntimeHandler();
+        });
+
+        // Eagerly activate the HMR handler's single debounced reload subscription.
+        // External mode keeps broadcasts unfiltered for connectHMR() clients that
+        // have no project slug, while the handler still owns the required
+        // invalidate -> broadcast ordering.
+        this.releaseExternalBroadcastSource = HMRHandler.registerExternalBroadcastSource();
+
+        hmrLog.debug("ReloadNotifier subscriptions registered (invalidate + ordered reload)");
+      }
+
+      const moduleServerUrl = buildLocalhostUrl(
+        this.options.moduleServerPort ?? this.listeningPort,
+      );
+      const vendorBundleHash = "dev-vendor-bundle";
+
+      this.componentRegistry = new ComponentRegistry({
+        projectDir: this.options.projectDir,
+        adapter: this.adapter,
+        moduleServerUrl,
+        vendorBundleHash,
+      });
+
+      const routeDiscovery = new RouteDiscovery(
+        this.options.projectDir,
+        this.adapter,
+        this.router,
+        this.appConfig,
+      );
+
+      if (isProxyMode) {
+        devServerLog.debug("Skipping component/route discovery in proxy mode");
+      } else {
+        await Promise.all([this.componentRegistry.discover(), routeDiscovery.discoverRoutes()]);
+      }
+
+      const requestHandler = new RequestHandler(
+        this.options.projectDir,
+        this.adapter,
+        () => this._isReady,
+        () => this.isDebug(),
+        this.appConfig,
+        defaultProjectSlug,
+        this.options.defaultProjectId,
+        localProjects,
+      );
+      this.requestHandler = requestHandler;
+
+      await setupMiddleware(
+        this.pipeline,
+        this.appConfig!,
+        (req) => requestHandler.handleRequest(req),
+      );
+
+      // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor
+      // creates a new Request object, which breaks Deno.upgradeWebSocket() - it needs
+      // the original request to maintain the connection.
+      const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
+      const interceptor = this.options.requestInterceptor;
+      const handler = interceptor
+        ? async (req: Request) => {
+          const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+          if (isWebSocketUpgrade) return baseHandler(req);
+
+          const interceptedReq = await interceptor(req);
+          return baseHandler(interceptedReq);
         }
-      },
-    });
+        : baseHandler;
+
+      this._handler = handler;
+
+      if (this.options.handlerOnly) {
+        if (!this.stopRequested) {
+          this._isReady = true;
+          this.resolveReady();
+        }
+        return;
+      }
+
+      this.server = await this.adapter.serve(handler, {
+        port: this.options.port,
+        hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
+        signal: this.options.signal,
+        onListen: ({ port }: { hostname: string; port: number }) => {
+          this.installRuntimePort(port);
+          const url = buildLocalhostUrl(port);
+          logger.info(`Dev server running at ${url}`);
+
+          try {
+            // _isReady must be set inside onListen — the server is only truly ready
+            // to accept connections once this callback fires. Setting it after
+            // adapter.serve() returns races with onListen on Deno (where serve is
+            // non-blocking) and would mark the server ready before it can accept.
+            if (!this.stopRequested) {
+              this._isReady = true;
+              this.resolveReady();
+            }
+          } catch (error) {
+            devLog.debug("mark ready failed", error);
+          }
+        },
+      });
+      this.installRuntimePort(this.server.addr.port);
+    } catch (error) {
+      this.stopRequested = true;
+      this.rejectReady(error);
+      try {
+        await this.stopInternal();
+      } catch (disposeError) {
+        throw new ServerStartupCleanupError(
+          "Dev server startup",
+          error,
+          disposeError,
+          () => this.stop(),
+        );
+      }
+      throw error;
+    }
+  }
+
+  private resolveReady(): void {
+    if (this.readySettled) return;
+    this.readySettled = true;
+    this._resolveReady();
+  }
+
+  private rejectReady(error: unknown): void {
+    if (this.readySettled) return;
+    this.readySettled = true;
+    this._rejectReady(error);
   }
 
   /** Return the request handler for use with external HTTP servers. */
@@ -424,7 +524,14 @@ export class DevServer {
     }
   }
 
-  private async setupFileWatchers(): Promise<void> {
+  private async setupFileWatchers(reloadProject: {
+    projectSlug?: string;
+    projectId?: string;
+    projectDir: string;
+    environment: "preview";
+    branch: string;
+    contentSourceId: string;
+  }): Promise<void> {
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
     if (isProxyMode) {
       devServerLog.debug("Skipping file watchers in proxy mode");
@@ -457,6 +564,7 @@ export class DevServer {
       () => this.requestHandler?.invalidateRuntimeHandler(),
       () => this.rediscoverPrimitives(),
       primitiveDirNames,
+      reloadProject,
     );
 
     await this.fileWatchSetup.setup();
@@ -466,33 +574,127 @@ export class DevServer {
     return this.fileWatchSetup?.getMetrics() ?? null;
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    this.stopRequested = true;
+    return this.stopLifecycle();
+  }
+
+  private async stopAfterStartup(): Promise<void> {
+    if (this.startPromise) {
+      try {
+        await this.startPromise;
+      } catch {
+        // startInternal() already performed its first cleanup attempt. A stop
+        // call after that rejection is an explicit retry of unfinished phases.
+      }
+    }
+    await this.stopInternal();
+  }
+
+  private async stopInternal(): Promise<void> {
     logger.info("Shutting down dev server...");
 
-    this.reloadUnsubscribe?.();
-    this.invalidateUnsubscribe?.();
-    this.releaseExternalBroadcastSource?.();
+    this._isReady = false;
+    this.rejectReady(new Error("Dev server stopped before becoming ready"));
+    const failures: unknown[] = [];
+    const cleanup = async (
+      label: string,
+      operation: () => void | Promise<void>,
+      onSuccess: () => void,
+    ): Promise<void> => {
+      try {
+        await operation();
+        onSuccess();
+      } catch (error) {
+        failures.push(error);
+        devServerLog.warn(`${label} cleanup failed`, { error });
+      }
+    };
+
+    const throwCleanupFailures = (): void => {
+      if (failures.length === 0) return;
+      const details = failures
+        .map((error) => error instanceof Error ? error.message : String(error))
+        .join("; ");
+      throw new AggregateError(
+        [...failures],
+        `Dev server cleanup failed${details ? `: ${details}` : ""}`,
+      );
+    };
+
+    // Do not dismantle watchers, HMR, or the request pipeline while the HTTP
+    // listener may still be accepting work. A failed close retains the whole
+    // generation so a later stop() call can retry safely.
+    if (this.server) {
+      await cleanup(
+        "HTTP server",
+        () => this.server?.stop(),
+        () => this.server = undefined,
+      );
+      throwCleanupFailures();
+    }
+
+    if (this.invalidateUnsubscribe) {
+      await cleanup(
+        "Invalidation subscription",
+        this.invalidateUnsubscribe,
+        () => this.invalidateUnsubscribe = undefined,
+      );
+    }
+    if (this.releaseExternalBroadcastSource) {
+      await cleanup(
+        "External broadcast source",
+        this.releaseExternalBroadcastSource,
+        () => this.releaseExternalBroadcastSource = undefined,
+      );
+    }
 
     if (this.fileWatchSetup) {
-      const metrics = this.fileWatchSetup.getMetrics();
-      if (metrics) {
-        hmrLog.debug("Final performance metrics", metrics);
-      }
-      this.fileWatchSetup.cleanup();
+      await cleanup("File watcher", () => {
+        const metrics = this.fileWatchSetup?.getMetrics();
+        if (metrics) {
+          hmrLog.debug("Final performance metrics", metrics);
+        }
+        this.fileWatchSetup?.cleanup();
+      }, () => this.fileWatchSetup = undefined);
     }
 
-    if (this.server) {
-      try {
-        await this.server.stop();
-      } catch (error) {
-        logger.warn("Error stopping server:", error);
-      }
+    if (!this.pipelineDisposed) {
+      await cleanup(
+        "Middleware pipeline",
+        () => this.pipeline.teardown(),
+        () => this.pipelineDisposed = true,
+      );
     }
 
-    try {
-      await this.pipeline.teardown();
-    } catch (error) {
-      devServerLog.debug("Pipeline teardown error (non-critical)", error);
+    throwCleanupFailures();
+
+    if (this.devPortEnvInstallation) {
+      const installation = this.devPortEnvInstallation;
+      if (getEnv("VERYFRONT_DEV_PORT") === installation.installedValue) {
+        if (installation.previousValue === undefined) deleteEnv("VERYFRONT_DEV_PORT");
+        else setEnv("VERYFRONT_DEV_PORT", installation.previousValue);
+      }
+      this.devPortEnvInstallation = undefined;
+    }
+
+    if (this.ssrClientOnlyInstalled) {
+      disableSSRClientOnlyFetching();
+      this.ssrClientOnlyInstalled = false;
+    }
+    if (this.ssrFetchInstalled) {
+      disableSSRFetchInterception();
+      this.ssrFetchInstalled = false;
+    }
+    if (this.ssrPortInstalledValue !== undefined) {
+      clearSSRServerPort(this.ssrPortInstalledValue);
+      this.ssrPortInstalledValue = undefined;
+    }
+
+    const bootstrapDispose = this.bootstrapDispose;
+    if (bootstrapDispose) {
+      await bootstrapDispose();
+      if (this.bootstrapDispose === bootstrapDispose) this.bootstrapDispose = undefined;
     }
   }
 }

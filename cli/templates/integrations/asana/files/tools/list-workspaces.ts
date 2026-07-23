@@ -1,11 +1,16 @@
 import { tool } from "veryfront/tool";
-import { listWorkspaces } from "../../lib/asana-client.ts";
+import { defineSchema } from "veryfront/schemas";
+import { createAsanaClient } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "list-workspaces",
   description: "List Asana workspaces accessible to the authenticated user.",
-  async execute() {
-    const workspaces = await listWorkspaces();
+  inputSchema: defineSchema((v) => v.object({}))(),
+  async execute(_input, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createAsanaClient(userId);
+    const workspaces = await client.listWorkspaces();
     return workspaces.map(({ gid, name }) => ({ gid, name }));
   },
 });

@@ -1,7 +1,17 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createGitHubClient } from "../../lib/github-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createGitHubClient } from "../lib/github-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+const REPOSITORY_TYPES = [
+  "all",
+  "owner",
+  "public",
+  "private",
+  "member",
+] as const;
+const REPOSITORY_SORTS = ["created", "updated", "pushed", "full_name"] as const;
 
 type GitHubRepo = {
   name: string;
@@ -43,7 +53,11 @@ export default tool({
 
     try {
       const github = createGitHubClient(userId);
-      const repos = await github.listRepos({ type, sort, perPage: limit });
+      const repos = await github.listRepos({
+        type: requireAllowedValue(type, REPOSITORY_TYPES, "type"),
+        sort: requireAllowedValue(sort, REPOSITORY_SORTS, "sort"),
+        perPage: limit,
+      });
 
       return {
         repositories: repos.map((repo: GitHubRepo) => ({

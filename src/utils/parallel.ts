@@ -50,7 +50,16 @@ export function parallelMap<T, R>(
     async () => {
       if (items.length === 0) return [];
 
-      const semaphore = options.semaphore ?? apiSemaphore;
+      if (
+        options.semaphore === undefined &&
+        options.concurrency !== undefined &&
+        (!Number.isInteger(options.concurrency) || options.concurrency <= 0)
+      ) {
+        throw new RangeError("parallelMap concurrency must be a positive integer");
+      }
+
+      const semaphore = options.semaphore ??
+        (options.concurrency === undefined ? apiSemaphore : new Semaphore(options.concurrency));
       const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
       const results: R[] = new Array(items.length);
 

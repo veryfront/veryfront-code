@@ -4,17 +4,7 @@
  * Provides a type-safe interface to GitHub API operations.
  */
 
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
+import { fetchOAuthJson, fetchOAuthText } from "./oauth.ts";
 
 const GITHUB_API_BASE = "https://api.github.com";
 
@@ -114,19 +104,6 @@ export interface GitHubUser {
   type: string;
 }
 
-/**
- * GitHub OAuth provider configuration
- */
-export const githubOAuthProvider = {
-  name: "github",
-  authorizationUrl: "https://github.com/login/oauth/authorize",
-  tokenUrl: "https://github.com/login/oauth/access_token",
-  clientId: getEnv("GITHUB_CLIENT_ID") ?? "",
-  clientSecret: getEnv("GITHUB_CLIENT_SECRET") ?? "",
-  scopes: ["repo", "read:user", "read:org"],
-  callbackPath: "/api/auth/github/callback",
-};
-
 export function createGitHubClient(userId: string): {
   listRepos(options?: {
     sort?: "created" | "updated" | "pushed" | "full_name";
@@ -224,57 +201,35 @@ export function createGitHubClient(userId: string): {
   getUser(): Promise<GitHubUser>;
   getUserByUsername(username: string): Promise<GitHubUser>;
 } {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(githubOAuthProvider, userId, "github");
-    if (!token) {
-      throw new Error(
-        "GitHub not connected. Please connect your GitHub account first.",
-      );
-    }
-    return token;
-  }
-
-  async function apiRequest<T>(
+  function apiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...options.headers,
+    return fetchOAuthJson<T>(
+      userId,
+      "github",
+      `${GITHUB_API_BASE}${endpoint}`,
+      {
+        ...options,
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          ...options.headers,
+        },
       },
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`GitHub API error: ${response.status} - ${error}`);
-    }
-
-    return response.json() as Promise<T>;
+    );
   }
 
-  async function apiTextRequest(
+  function apiTextRequest(
     endpoint: string,
     accept: string,
   ): Promise<string> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
+    return fetchOAuthText(userId, "github", `${GITHUB_API_BASE}${endpoint}`, {
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         Accept: accept,
         "X-GitHub-Api-Version": "2022-11-28",
       },
-    });
-
-    if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
-
-    return response.text();
+    }, 5 * 1024 * 1024);
   }
 
   function toQueryString(params: URLSearchParams): string {
@@ -380,7 +335,12 @@ export function createGitHubClient(userId: string): {
       });
     },
 
-    mergePullRequest(owner, repo, pullNumber, options = {}): Promise<GitHubMergeResult> {
+    mergePullRequest(
+      owner,
+      repo,
+      pullNumber,
+      options = {},
+    ): Promise<GitHubMergeResult> {
       return apiRequest<GitHubMergeResult>(
         `/repos/${owner}/${repo}/pulls/${pullNumber}/merge`,
         {

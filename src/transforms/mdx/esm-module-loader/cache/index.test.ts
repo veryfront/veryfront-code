@@ -25,8 +25,9 @@ import { rendererLogger as log } from "#veryfront/utils";
 import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import { hashString } from "../utils/hash.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 describe("MDX module path cache", () => {
   it("partitions SSR cache directories by runtime version", async () => {
@@ -36,8 +37,8 @@ describe("MDX module path cache", () => {
 
     try {
       await runWithCacheDir(cacheBase, () => {
-        const projectKey = hashCodeHex(projectId);
-        const sourceKey = hashCodeHex(contentSourceId);
+        const projectKey = hashString(projectId);
+        const sourceKey = hashString(contentSourceId);
         const versionKey = formatCacheVersionSegment(RUNTIME_VERSION);
         const currentDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
 
@@ -47,11 +48,13 @@ describe("MDX module path cache", () => {
         );
         assertEquals(
           getMdxEsmSsrCacheDirs(projectId, contentSourceId),
-          [
-            currentDir,
-            join(cacheBase, "veryfront-mdx-esm", projectKey, sourceKey),
-            join(cacheBase, "veryfront-mdx-esm", projectKey, contentSourceId),
-          ],
+          [currentDir],
+        );
+        assertEquals(
+          getMdxEsmSsrCacheDir("Aa", contentSourceId) ===
+            getMdxEsmSsrCacheDir("BB", contentSourceId),
+          false,
+          "known 32-bit hash collisions must not share a tenant directory",
         );
       });
     } finally {
@@ -69,38 +72,22 @@ describe("MDX module path cache", () => {
 
     try {
       await runWithCacheDir(cacheBase, async () => {
-        const cacheDir = join(
-          cacheBase,
-          "veryfront-mdx-esm",
-          encodeURIComponent(projectId),
-          encodeURIComponent(contentSourceId),
-        );
-        const ssrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+        const cacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
         const cachedPath = join(cacheDir, "stale.mjs");
-        const ssrCachedPath = join(ssrCacheDir, "stale-ssr.mjs");
 
         await getLocalFs().mkdir(cacheDir, { recursive: true });
-        await getLocalFs().mkdir(ssrCacheDir, { recursive: true });
         await writeTextFile(cachedPath, "export default function Stale() {}");
-        await writeTextFile(ssrCachedPath, "export default function StaleSSR() {}");
 
         const cache = await getModulePathCache(cacheDir);
         cache.set(cacheKey, cachedPath);
-        const ssrCache = await getModulePathCache(ssrCacheDir);
-        ssrCache.set(cacheKey, ssrCachedPath);
         verifiedModuleDeps.set(`${cachedPath}:${cacheKey}`, true);
-        verifiedModuleDeps.set(`${ssrCachedPath}:${cacheKey}`, true);
 
         await clearMdxEsmCacheNamespace(projectId, contentSourceId);
 
         assertEquals(await exists(cachedPath), false);
-        assertEquals(await exists(ssrCachedPath), false);
         assertEquals((await getModulePathCache(cacheDir)).get(cacheKey), undefined);
-        assertEquals((await getModulePathCache(ssrCacheDir)).get(cacheKey), undefined);
         assertEquals(verifiedModuleDeps.get(`${cachedPath}:${cacheKey}`), undefined);
-        assertEquals(verifiedModuleDeps.get(`${ssrCachedPath}:${cacheKey}`), undefined);
         assertEquals(await exists(cacheDir), true);
-        assertEquals(await exists(ssrCacheDir), true);
       });
     } finally {
       await remove(cacheBase, { recursive: true });
@@ -133,6 +120,8 @@ describe("MDX module path cache", () => {
         parentCache.set(cacheKey, parentCachedPath);
         const childCache = await getModulePathCache(childCacheDir);
         childCache.set(cacheKey, childCachedPath);
+        await writeTextFile(parentCachedPath, "export default 'parent';");
+        await writeTextFile(childCachedPath, "export default 'child';");
         verifiedModuleDeps.set(`${parentCachedPath}:${cacheKey}`, true);
         verifiedModuleDeps.set(`${childCachedPath}:${cacheKey}`, true);
 
@@ -151,7 +140,7 @@ describe("MDX module path cache", () => {
     }
   });
 
-  it("clears legacy raw SSR namespaces while preserving current hashed siblings", async () => {
+  it("does not guess ownership of legacy raw namespaces during targeted invalidation", async () => {
     clearModulePathCache();
 
     const cacheBase = await makeTempDir({ prefix: "vf-mdx-legacy-raw-namespace-clear-" });
@@ -184,20 +173,23 @@ describe("MDX module path cache", () => {
         legacyChildCache.set(cacheKey, legacyChildPath);
         const currentChildCache = await getModulePathCache(currentChildDir);
         currentChildCache.set(cacheKey, currentChildPath);
+        await writeTextFile(legacyParentPath, "export default 'legacy-parent';");
+        await writeTextFile(legacyChildPath, "export default 'legacy-child';");
+        await writeTextFile(currentChildPath, "export default 'current-child';");
         verifiedModuleDeps.set(`${legacyParentPath}:${cacheKey}`, true);
         verifiedModuleDeps.set(`${legacyChildPath}:${cacheKey}`, true);
         verifiedModuleDeps.set(`${currentChildPath}:${cacheKey}`, true);
 
         await clearMdxEsmCacheNamespace(projectId, parentSourceId);
 
-        assertEquals(await exists(legacyParentPath), false);
-        assertEquals(await exists(legacyChildPath), false);
+        assertEquals(await exists(legacyParentPath), true);
+        assertEquals(await exists(legacyChildPath), true);
         assertEquals(await exists(currentChildPath), true);
-        assertEquals((await getModulePathCache(legacyParentDir)).get(cacheKey), undefined);
-        assertEquals((await getModulePathCache(legacyChildDir)).get(cacheKey), undefined);
+        assertEquals((await getModulePathCache(legacyParentDir)).get(cacheKey), legacyParentPath);
+        assertEquals((await getModulePathCache(legacyChildDir)).get(cacheKey), legacyChildPath);
         assertEquals((await getModulePathCache(currentChildDir)).get(cacheKey), currentChildPath);
-        assertEquals(verifiedModuleDeps.get(`${legacyParentPath}:${cacheKey}`), undefined);
-        assertEquals(verifiedModuleDeps.get(`${legacyChildPath}:${cacheKey}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${legacyParentPath}:${cacheKey}`), true);
+        assertEquals(verifiedModuleDeps.get(`${legacyChildPath}:${cacheKey}`), true);
         assertEquals(verifiedModuleDeps.get(`${currentChildPath}:${cacheKey}`), true);
       });
     } finally {
@@ -213,22 +205,27 @@ describe("MDX module path cache", () => {
     const cacheDirB = await makeTempDir({ prefix: "vf-mdx-cache-b-" });
 
     try {
+      const cachedA = join(cacheDirA, "a.mjs");
+      const cachedB = join(cacheDirB, "b.mjs");
+      await writeTextFile(cachedA, "export default 'a';");
+      await writeTextFile(cachedB, "export default 'b';");
       await writeTextFile(
         join(cacheDirA, "_index.json"),
-        JSON.stringify({ "_vf_modules/pages/index.js": "/tmp/a.mjs" }),
+        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/index.js")]: cachedA }),
       );
       await writeTextFile(
         join(cacheDirB, "_index.json"),
-        JSON.stringify({ "_vf_modules/pages/index.js": "/tmp/b.mjs" }),
+        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/index.js")]: cachedB }),
       );
 
       const cacheA = await getModulePathCache(cacheDirA);
       const cacheB = await getModulePathCache(cacheDirB);
 
-      assertEquals(cacheA.get("_vf_modules/pages/index.js"), "/tmp/a.mjs");
-      assertEquals(cacheB.get("_vf_modules/pages/index.js"), "/tmp/b.mjs");
+      const indexKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js");
+      assertEquals(cacheA.get(indexKey), cachedA);
+      assertEquals(cacheB.get(indexKey), cachedB);
 
-      cacheA.set("_vf_modules/pages/about.js", "/tmp/a-about.mjs");
+      cacheA.set(buildMdxEsmPathCacheKey("_vf_modules/pages/about.js"), cachedA);
       await saveModulePathCache(cacheDirA);
 
       assertEquals(cacheB.get("_vf_modules/pages/about.js"), undefined);
@@ -248,13 +245,17 @@ describe("MDX module path cache", () => {
     const cacheDirB = await makeTempDir({ prefix: "vf-mdx-cache-stats-b-" });
 
     try {
+      const cachedA = join(cacheDirA, "a.mjs");
+      const cachedB = join(cacheDirB, "b.mjs");
+      await writeTextFile(cachedA, "export default 'a';");
+      await writeTextFile(cachedB, "export default 'b';");
       await writeTextFile(
         join(cacheDirA, "_index.json"),
-        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/a.js")]: "/tmp/a.mjs" }),
+        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/a.js")]: cachedA }),
       );
       await writeTextFile(
         join(cacheDirB, "_index.json"),
-        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/b.js")]: "/tmp/b.mjs" }),
+        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/b.js")]: cachedB }),
       );
 
       await getModulePathCache(cacheDirA);
@@ -343,7 +344,9 @@ describe("MDX module path cache", () => {
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-cache-bound-" });
     const index: Record<string, string> = {};
     for (let i = 0; i < 501; i++) {
-      index[buildMdxEsmPathCacheKey(`_vf_modules/pages/${i}.js`)] = `/tmp/${i}.mjs`;
+      const artifactPath = join(cacheDir, `${i}.mjs`);
+      await writeTextFile(artifactPath, `export default ${i};`);
+      index[buildMdxEsmPathCacheKey(`_vf_modules/pages/${i}.js`)] = artifactPath;
     }
 
     try {
@@ -360,7 +363,10 @@ describe("MDX module path cache", () => {
       assertEquals(pathCacheStats?.maxEntries, 500);
       assertEquals(pathCacheStats?.cacheDirs, 1);
       assertEquals(cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/0.js")), undefined);
-      assertEquals(cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/500.js")), "/tmp/500.mjs");
+      assertEquals(
+        cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/500.js")),
+        join(cacheDir, "500.mjs"),
+      );
     } finally {
       await remove(cacheDir, { recursive: true }).catch(() => {});
       clearModulePathCache();
@@ -393,7 +399,7 @@ describe("invalidateModulePaths — disk persistence", () => {
       );
 
       // Invalidate — simulates a poke with changedPaths: ["components/EmptyState.tsx"]
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // In-memory should be cleared
@@ -434,7 +440,7 @@ describe("invalidateModulePaths — disk persistence", () => {
       await getModulePathCache(cacheDir);
 
       // Invalidate
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // The .mjs file on disk should be deleted
@@ -475,7 +481,7 @@ describe("invalidateModulePaths — disk persistence", () => {
       assertEquals(await exists(oldCachePath!), true, "old .mjs should exist on disk");
 
       // Step 2: Invalidate via poke
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // Step 3: Cache the NEW module code (simulates re-fetch after source change)
@@ -741,7 +747,7 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
     }
   });
 
-  it("self-heals legacy raw slash-containing cache dirs", async () => {
+  it("does not infer ownership for legacy raw slash-containing cache dirs", async () => {
     clearModulePathCache();
 
     const cacheBase = await makeTempDir({ prefix: "vf-mdx-legacy-selfheal-" });
@@ -778,13 +784,13 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
           getMdxEsmSsrCacheDirs(projectId, contentSourceId),
         );
 
-        assertEquals(invalidated, true);
-        assertEquals(cache.get(key), undefined);
-        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), undefined);
+        assertEquals(invalidated, false);
+        assertEquals(cache.get(key), cachedPath);
+        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), true);
 
         await waitForDiskCleanup();
         clearModulePathCache();
-        assertEquals((await getModulePathCache(legacyRawCacheDir)).get(key), undefined);
+        assertEquals((await getModulePathCache(legacyRawCacheDir)).get(key), cachedPath);
       });
     } finally {
       await Promise.all([
@@ -811,8 +817,8 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
           cacheBase,
           "veryfront-mdx-esm",
           formatCacheVersionSegment("0.1.1030"),
-          hashCodeHex(projectId),
-          hashCodeHex(contentSourceId),
+          hashString(projectId),
+          hashString(contentSourceId),
         );
         const cachedPath = join(oldVersionCacheDir, buildMdxEsmModuleFileName("oldversion"));
 
@@ -874,7 +880,7 @@ describe("invalidateModulePaths — edge cases", () => {
       assertEquals(verifiedModuleDeps.get(verifyKey), true, "precondition: verifiedModuleDeps set");
 
       // Invalidate
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // verifiedModuleDeps must be cleared for this entry
@@ -917,8 +923,10 @@ describe("invalidateModulePaths — edge cases", () => {
       await getModulePathCache(cacheDirB);
 
       // Fire two invalidations rapidly without awaiting between them
-      invalidateModulePaths(["components/Header.tsx"]);
-      invalidateModulePaths(["components/Footer.tsx"]);
+      await Promise.all([
+        invalidateModulePaths(["components/Header.tsx"]),
+        invalidateModulePaths(["components/Footer.tsx"]),
+      ]);
       await waitForDiskCleanup();
 
       // Both .mjs files must be deleted
@@ -940,11 +948,11 @@ describe("invalidateModulePaths — edge cases", () => {
     }
   });
 
-  it("is a safe no-op when modulePathCaches is empty", () => {
+  it("is a safe no-op when modulePathCaches is empty", async () => {
     clearModulePathCache();
     // Must not throw
-    invalidateModulePaths(["components/EmptyState.tsx"]);
-    invalidateModulePaths([]);
+    await invalidateModulePaths(["components/EmptyState.tsx"]);
+    await invalidateModulePaths([]);
   });
 
   it("only removes matching entries, leaving unrelated entries intact", async () => {
@@ -971,7 +979,7 @@ describe("invalidateModulePaths — edge cases", () => {
       assertEquals(cache.size, 2, "precondition: both entries loaded");
 
       // Invalidate only EmptyState
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // EmptyState removed, Header untouched
@@ -1008,7 +1016,7 @@ describe("invalidateModulePaths — edge cases", () => {
       const cache = await getModulePathCache(cacheDir);
 
       // Invalidate "EmptyState" — must NOT match "EmptyStateNew"
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       assertEquals(
@@ -1040,7 +1048,7 @@ describe("invalidateModulePaths — edge cases", () => {
       const cache = await getModulePathCache(cacheDir);
 
       // Leading slash in changedPath (some APIs may include it)
-      invalidateModulePaths(["/components/EmptyState.tsx"]);
+      await invalidateModulePaths(["/components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       assertEquals(cache.get(versionedKey), undefined, "must match despite leading slash");
@@ -1069,7 +1077,7 @@ describe("invalidateModulePaths — edge cases", () => {
 
         await getModulePathCache(cacheDir);
 
-        invalidateModulePaths([`utils/helper${ext}`]);
+        await invalidateModulePaths([`utils/helper${ext}`]);
         await waitForDiskCleanup();
 
         clearModulePathCache();
@@ -1102,7 +1110,7 @@ describe("invalidateModulePaths — edge cases", () => {
 
       await getModulePathCache(cacheDir);
 
-      invalidateModulePaths(["lib/utils/formatting/date.tsx"]);
+      await invalidateModulePaths(["lib/utils/formatting/date.tsx"]);
       await waitForDiskCleanup();
 
       clearModulePathCache();
@@ -1133,7 +1141,7 @@ describe("invalidateModulePaths — edge cases", () => {
       const cacheA = await getModulePathCache(cacheDirA);
       const cacheB = await getModulePathCache(cacheDirB);
 
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // Both cache dirs must be invalidated
@@ -1179,7 +1187,7 @@ describe("invalidateModulePaths — edge cases", () => {
       assertEquals(loaded1.get(versionedKey), oldPath, "phase 1: _index.json has old entry");
 
       // Phase 2: Invalidate (simulates poke)
-      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await invalidateModulePaths(["components/EmptyState.tsx"]);
       await waitForDiskCleanup();
 
       // Verify disk is clean

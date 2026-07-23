@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { LRUCache } from "./lru-wrapper.ts";
@@ -14,7 +14,12 @@ describe("LRUCache", () => {
   });
 
   function createCache<K, V>(
-    options?: { maxEntries?: number; ttlMs?: number; cleanupIntervalMs?: number },
+    options?: {
+      maxEntries?: number;
+      maxSizeBytes?: number;
+      ttlMs?: number;
+      cleanupIntervalMs?: number;
+    },
   ): LRUCache<K, V> {
     const cache = new LRUCache<K, V>(options);
     caches.push(cache);
@@ -193,6 +198,13 @@ describe("LRUCache", () => {
   });
 
   describe("Default options and edge cases", () => {
+    it("rejects non-positive or non-finite timing options", () => {
+      for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => createCache({ ttlMs: value }), RangeError);
+        assertThrows(() => createCache({ cleanupIntervalMs: value }), RangeError);
+      }
+    });
+
     it("default options", (): void => {
       const cache = createCache<string, number>();
 
@@ -230,6 +242,39 @@ describe("LRUCache", () => {
 
       cache.clear();
       assertEquals(cache.size, 0);
+    });
+
+    it("preserves generic key identity without string collisions", (): void => {
+      const firstObject = { id: 1 };
+      const secondObject = { id: 1 };
+      const cache = createCache<string | number | { id: number }, string>({ maxEntries: 4 });
+
+      cache.set("1", "string");
+      cache.set(1, "number");
+      cache.set(firstObject, "first-object");
+      cache.set(secondObject, "second-object");
+
+      assertEquals(cache.get("1"), "string");
+      assertEquals(cache.get(1), "number");
+      assertEquals(cache.get(firstObject), "first-object");
+      assertEquals(cache.get(secondObject), "second-object");
+      assertEquals([...cache.keys()], ["1", 1, firstObject, secondObject]);
+      assertEquals([...cache.entries()], [
+        ["1", "string"],
+        [1, "number"],
+        [firstObject, "first-object"],
+        [secondObject, "second-object"],
+      ]);
+    });
+
+    it("reports a stored undefined value as present and deletable", (): void => {
+      const cache = createCache<string, undefined>({ maxEntries: 1 });
+
+      cache.set("present", undefined);
+
+      assertEquals(cache.has("present"), true);
+      assertEquals(cache.delete("present"), true);
+      assertEquals(cache.has("present"), false);
     });
   });
 });

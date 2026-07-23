@@ -18,6 +18,8 @@ import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-for
 import { hasUnresolvedImports } from "./nested-imports.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
+import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
@@ -27,13 +29,27 @@ export function normalizePath(modulePath: string, parentModulePath?: string): st
   // and cause issues with cache key validation (? is not an allowed character)
   let normalizedPath = modulePath.replace(/\?.*$/, "").replace(/^\//, "");
 
-  if (!parentModulePath) return normalizedPath;
-  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) return normalizedPath;
+  if (!parentModulePath) return assertSafeModulePath(normalizedPath);
+  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) {
+    return assertSafeModulePath(normalizedPath);
+  }
 
   const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
   normalizedPath = posix.normalize(posix.join(parentDir, modulePath));
 
   if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
+  return assertSafeModulePath(normalizedPath);
+}
+
+function assertSafeModulePath(normalizedPath: string): string {
+  if (
+    normalizedPath.length === 0 ||
+    normalizedPath.length > 4096 ||
+    normalizedPath.includes("\0") ||
+    normalizedPath.split("/").some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new TypeError(`Unsafe module path: ${normalizedPath.slice(0, 120)}`);
+  }
   return normalizedPath;
 }
 
@@ -51,8 +67,12 @@ export async function cacheModule(
   pathCache: Map<string, string>,
   log: Logger,
   reactVersion = REACT_DEFAULT_VERSION,
+  sourceContentHash?: string,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
+  if (utf8ByteLength(moduleCode) > MAX_MDX_MODULE_CODE_BYTES) {
+    throw new RangeError(`Transformed MDX module exceeds ${MAX_MDX_MODULE_CODE_BYTES} bytes`);
+  }
 
   const unresolved = hasUnresolvedImports(moduleCode);
   if (unresolved.count > 0) {
@@ -63,9 +83,17 @@ export async function cacheModule(
     return null;
   }
 
-  const contentHash = hashString(normalizedPath + moduleCode);
+  // Derive the artifact identity from portable code so every pod computes the
+  // same filename after cache-path tokenization. This also lets distributed
+  // recovery verify that the payload belongs to the requested filename.
+  const portableCode = tokenizeAllVeryFrontPaths(moduleCode);
+  const contentHash = hashString(normalizedPath + portableCode);
   const cachePath = join(esmCacheDir, buildMdxEsmModuleFileName(contentHash));
-  const pathCacheKey = buildMdxEsmPathCacheKey(normalizedPath, reactVersion);
+  const pathCacheKey = buildMdxEsmPathCacheKey(
+    normalizedPath,
+    reactVersion,
+    sourceContentHash,
+  );
 
   const localFs = getLocalFs();
   try {

@@ -33,6 +33,11 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     await Bun.write(path, content);
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    const { rename } = await import("node:fs/promises");
+    await rename(from, to);
+  }
+
   async exists(path: string): Promise<boolean> {
     const { stat } = await import("node:fs/promises");
 
@@ -71,10 +76,33 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
         isSymlink: stats.isSymbolicLink(),
         mtime: stats.mtime,
       };
-    } catch (_) {
-      /* expected: stat fails when file does not exist */
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== "ENOENT") throw error;
       throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
     }
+  }
+
+  async lstat(path: string): Promise<FileInfo> {
+    const { lstat } = await import("node:fs/promises");
+
+    try {
+      const stats = await lstat(path);
+      return {
+        size: stats.size,
+        isFile: stats.isFile(),
+        isDirectory: stats.isDirectory(),
+        isSymlink: stats.isSymbolicLink(),
+        mtime: stats.mtime,
+      };
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== "ENOENT") throw error;
+      throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
+    }
+  }
+
+  async realPath(path: string): Promise<string> {
+    const { realpath } = await import("node:fs/promises");
+    return await realpath(path);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {

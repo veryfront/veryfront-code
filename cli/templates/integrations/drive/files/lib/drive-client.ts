@@ -1,14 +1,7 @@
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-  return undefined;
-}
+import { fetchOAuthJson, fetchOAuthText } from "./oauth.ts";
 
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
+const MAX_UPLOAD_CONTENT_LENGTH = 10 * 1024 * 1024;
 
 export interface DriveFile {
   id: string;
@@ -80,18 +73,6 @@ export interface SearchFilesOptions {
   orderBy?: string;
 }
 
-export const driveOAuthProvider = {
-  name: "drive",
-  authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenUrl: "https://oauth2.googleapis.com/token",
-  clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
-  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
-  scopes: [
-    "https://www.googleapis.com/auth/drive",
-  ],
-  callbackPath: "/api/auth/drive/callback",
-};
-
 export function createDriveClient(userId: string): {
   listFiles(options?: ListFilesOptions): Promise<DriveFileList>;
   getFile(fileId: string): Promise<DriveFile>;
@@ -106,33 +87,17 @@ export function createDriveClient(userId: string): {
     updates: { name?: string; description?: string; starred?: boolean },
   ): Promise<DriveFile>;
 } {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(driveOAuthProvider, userId, "drive");
-    if (!token) {
-      throw new Error("Google Drive not connected. Please connect your Google account first.");
-    }
-    return token;
-  }
-
-  async function driveApiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${DRIVE_API_BASE}${endpoint}`, {
+  function driveApiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    return fetchOAuthJson<T>(userId, "drive", `${DRIVE_API_BASE}${endpoint}`, {
       ...options,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         ...options.headers,
       },
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Drive API error: ${response.status} - ${error}`);
-    }
-
-    if (response.status === 204) return undefined as T;
-    return response.json();
   }
 
   function buildMetadata(options: {
@@ -156,7 +121,7 @@ export function createDriveClient(userId: string): {
     "id,name,mimeType,kind,createdTime,modifiedTime,size,webViewLink,webContentLink,iconLink,thumbnailLink,parents,starred,trashed,shared,owners,lastModifyingUser,capabilities";
 
   return {
-    async listFiles(options: ListFilesOptions = {}): Promise<DriveFileList> {
+    listFiles(options: ListFilesOptions = {}): Promise<DriveFileList> {
       const params = new URLSearchParams({
         fields: `nextPageToken,incompleteSearch,files(${fileFields})`,
         pageSize: String(options.pageSize ?? 100),
@@ -173,12 +138,14 @@ export function createDriveClient(userId: string): {
       return driveApiRequest<DriveFileList>(`/files?${params.toString()}`);
     },
 
-    async getFile(fileId: string): Promise<DriveFile> {
+    getFile(fileId: string): Promise<DriveFile> {
       const params = new URLSearchParams({ fields: fileFields });
-      return driveApiRequest<DriveFile>(`/files/${fileId}?${params.toString()}`);
+      return driveApiRequest<DriveFile>(
+        `/files/${fileId}?${params.toString()}`,
+      );
     },
 
-    async searchFiles(options: SearchFilesOptions): Promise<DriveFileList> {
+    searchFiles(options: SearchFilesOptions): Promise<DriveFileList> {
       const params = new URLSearchParams({
         fields:
           "nextPageToken,incompleteSearch,files(id,name,mimeType,kind,createdTime,modifiedTime,size,webViewLink,webContentLink,iconLink,thumbnailLink,parents,starred,trashed)",
@@ -192,7 +159,7 @@ export function createDriveClient(userId: string): {
       return driveApiRequest<DriveFileList>(`/files?${params.toString()}`);
     },
 
-    async createFolder(options: CreateFolderOptions): Promise<DriveFile> {
+    createFolder(options: CreateFolderOptions): Promise<DriveFile> {
       const metadata = buildMetadata({
         name: options.name,
         mimeType: "application/vnd.google-apps.folder",
@@ -207,7 +174,11 @@ export function createDriveClient(userId: string): {
     },
 
     async uploadFile(options: UploadFileOptions): Promise<DriveFile> {
-      const accessToken = await getAccessToken();
+      if (options.content.length > MAX_UPLOAD_CONTENT_LENGTH) {
+        throw new RangeError(
+          `Upload content exceeds ${MAX_UPLOAD_CONTENT_LENGTH} characters`,
+        );
+      }
 
       const boundary = "-------314159265358979323846";
       const delimiter = `\r\n--${boundary}\r\n`;
@@ -220,8 +191,7 @@ export function createDriveClient(userId: string): {
         description: options.description,
       });
 
-      const multipartRequestBody =
-        delimiter +
+      const multipartRequestBody = delimiter +
         "Content-Type: application/json\r\n\r\n" +
         JSON.stringify(metadata) +
         delimiter +
@@ -229,46 +199,39 @@ export function createDriveClient(userId: string): {
         options.content +
         closeDelimiter;
 
-      const response = await fetch(
+      return await fetchOAuthJson<DriveFile>(
+        userId,
+        "drive",
         "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,kind,createdTime,modifiedTime,size,webViewLink,webContentLink",
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
             "Content-Type": `multipart/related; boundary=${boundary}`,
           },
           body: multipartRequestBody,
         },
       );
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Drive upload error: ${response.status} - ${error}`);
-      }
-
-      return response.json();
     },
 
-    async downloadFile(fileId: string): Promise<string> {
-      const accessToken = await getAccessToken();
-
-      const response = await fetch(`${DRIVE_API_BASE}/files/${fileId}?alt=media`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Drive download error: ${response.status} - ${error}`);
-      }
-
-      return response.text();
+    downloadFile(fileId: string): Promise<string> {
+      return fetchOAuthText(
+        userId,
+        "drive",
+        `${DRIVE_API_BASE}/files/${fileId}?alt=media`,
+        {},
+        10 * 1024 * 1024,
+      );
     },
 
     async deleteFile(fileId: string): Promise<void> {
       await driveApiRequest(`/files/${fileId}`, { method: "DELETE" });
     },
 
-    async copyFile(fileId: string, name: string, parentId?: string): Promise<DriveFile> {
+    copyFile(
+      fileId: string,
+      name: string,
+      parentId?: string,
+    ): Promise<DriveFile> {
       const metadata: Record<string, unknown> = { name };
       if (parentId) metadata.parents = [parentId];
 
@@ -278,7 +241,7 @@ export function createDriveClient(userId: string): {
       });
     },
 
-    async updateFile(
+    updateFile(
       fileId: string,
       updates: { name?: string; description?: string; starred?: boolean },
     ): Promise<DriveFile> {

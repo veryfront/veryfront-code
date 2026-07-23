@@ -133,6 +133,57 @@ defineConfig({
 });
 ```
 
+### Render cache
+
+`cache.render` selects the render-result cache and defines its logical freshness window.
+
+```ts
+defineConfig({
+  cache: {
+    render: {
+      type: "redis",
+      ttl: 300_000,
+      redisUrl: "redis://127.0.0.1:6379",
+      redisKeyPrefix: "my-app",
+      public: {
+        enabled: true,
+        varyHeaders: ["accept-language"],
+      },
+    },
+  },
+});
+```
+
+| Option               | Contract                                                                                                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`               | One of `memory`, `filesystem`, `kv`, or `redis`.                                                                                                                                                                            |
+| `ttl`                | Positive finite milliseconds. Zero, negative, and non-finite values are rejected.                                                                                                                                           |
+| `maxEntries`         | Maximum entry count for the memory store.                                                                                                                                                                                   |
+| `kvPath`             | Storage path used by the KV store.                                                                                                                                                                                          |
+| `redisUrl`           | Redis connection URL used by the Redis store.                                                                                                                                                                               |
+| `redisKeyPrefix`     | Non-blank Redis namespace prefix. A missing trailing `:` is added automatically. The canonical prefix is at most 512 UTF-8 bytes and cannot contain control characters or overlap another registered or reserved namespace. |
+| `public.enabled`     | Explicitly permits shared caching for production SSR requests. It is disabled by default; authenticated requests, cookie-bearing requests, previews, streams, and Studio variants still bypass it.                          |
+| `public.varyHeaders` | Header names whose values affect public HTML. List every header read by project data hooks that can change the response. The request origin and configured query-parameter identity are included automatically.             |
+
+Enable `public` only when the rendered route is safe for unrelated visitors to
+share. This setting is a project contract: if a data hook reads a request header
+that changes HTML, that header must appear in `varyHeaders`. Veryfront stores a
+nonce-free canonical document and injects the current response's CSP nonce only
+after the cache lookup, so nonces are never shared between requests.
+
+For compatibility, an existing value such as `redisKeyPrefix: "my-app"` remains
+valid and is canonicalized to `my-app:`. Redis entries written by older versions
+with verbatim, undelimited keys are not reused after this normalization and
+expire according to their existing Redis TTL.
+
+Related cache TTL fields have separate contracts:
+
+| Option                     | Contract                                                             |
+| -------------------------- | -------------------------------------------------------------------- |
+| `cache.bundleManifest.ttl` | Non-negative safe-integer milliseconds. Zero means immediate expiry. |
+| `fs.veryfront.cache.ttl`   | Positive safe-integer milliseconds.                                  |
+| `fs.github.cache.ttl`      | Positive safe-integer milliseconds.                                  |
+
 ### AI discovery
 
 Control which directories are scanned for AI primitives:

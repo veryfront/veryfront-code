@@ -1,6 +1,8 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listProjects } from "../../lib/gitlab-client.ts";
+import { createGitLabClient } from "../lib/gitlab-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "list-projects",
@@ -24,12 +26,18 @@ export default tool({
       ),
     })
   )(),
-  async execute({ search, membership, orderBy, sort, limit }) {
-    const projects = await listProjects({
+  async execute({ search, membership, orderBy, sort, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createGitLabClient(userId);
+    const projects = await client.listProjects({
       search,
       membership,
-      orderBy,
-      sort,
+      orderBy: requireAllowedValue(
+        orderBy,
+        ["id", "name", "created_at", "updated_at", "last_activity_at"],
+        "project order",
+      ),
+      sort: requireAllowedValue(sort, ["asc", "desc"], "sort direction"),
       perPage: limit,
     });
 

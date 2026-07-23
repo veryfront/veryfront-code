@@ -1,5 +1,5 @@
-import { computeShortContentHash } from "../esm/transform-utils.ts";
 import { DEFAULT_REACT_VERSION } from "../esm/package-registry.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import type {
   TransformContext,
   TransformOptions,
@@ -46,7 +46,7 @@ export async function createTransformContext(
   options: TransformOptions,
 ): Promise<TransformContext> {
   const [contentHash, reactVersion] = await Promise.all([
-    computeShortContentHash(source),
+    computeHash(source),
     Promise.resolve(options.reactVersion ?? DEFAULT_REACT_VERSION),
   ]);
 

@@ -38,6 +38,10 @@ import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { ssrVfModulesPlugin } from "../../pipeline/stages/ssr-vf-modules.ts";
+import {
+  fingerprintPipelineImportMap,
+  snapshotImportMap,
+} from "../../pipeline/cache-identity.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
 import {
@@ -109,7 +113,8 @@ export async function doLoadModuleESM(
 
     const projectDir = resolveProjectDir(context);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap START`, { projectSlug });
-    const importMap = await loadImportMap(projectDir, adapter);
+    const importMap = snapshotImportMap(await loadImportMap(projectDir, adapter));
+    const importMapFingerprint = await fingerprintPipelineImportMap(importMap);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap DONE`, { projectSlug });
 
     rewritten = transformImports(rewritten, importMap);
@@ -333,6 +338,8 @@ export async function doLoadModuleESM(
           projectDir,
           target: "ssr" as const,
           reactVersion: context.reactVersion ?? REACT_DEFAULT_VERSION,
+          importMap,
+          importMapFingerprint,
         } as Parameters<typeof ssrVfModulesPlugin.transform>[0];
 
         rewritten = await ssrVfModulesPlugin.transform(transformCtx);

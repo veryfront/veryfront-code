@@ -55,6 +55,12 @@ describe("id", () => {
   });
 
   describe("createIdGenerator", () => {
+    it("should reject invalid sizes", () => {
+      for (const size of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => createIdGenerator({ size }), RangeError);
+      }
+    });
+
     it("should create generator with prefix", () => {
       const generate = createIdGenerator({ prefix: "test" });
       assertMatch(generate(), /^test-[0-9a-zA-Z]{16}$/);

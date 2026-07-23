@@ -52,8 +52,10 @@ export function selectContractProviders(
 
 function providedContractNames(extension: Extension): string[] {
   return [
-    ...Object.keys(extension.provides ?? {}),
-    ...(extension.contracts?.provides ?? []),
+    ...new Set([
+      ...Object.keys(extension.provides ?? {}),
+      ...(extension.contracts?.provides ?? []),
+    ]),
   ];
 }
 
@@ -67,9 +69,16 @@ function validateContractList(
     issues.push(`${field} must be an array`);
     return;
   }
+  const seen = new Set<string>();
   for (let i = 0; i < value.length; i++) {
-    if (typeof value[i] !== "string" || value[i].length === 0) {
+    if (typeof value[i] !== "string" || value[i].trim().length === 0) {
       issues.push(`${field}[${i}] must be a non-empty string`);
+      continue;
+    }
+    if (seen.has(value[i])) {
+      issues.push(`${field}[${i}] duplicates "${value[i]}"`);
+    } else {
+      seen.add(value[i]);
     }
   }
 }
@@ -91,11 +100,11 @@ export function validateExtension(ext: unknown): string[] {
 
   const candidate = ext as Partial<Extension>;
 
-  if (typeof candidate.name !== "string" || candidate.name.length === 0) {
+  if (typeof candidate.name !== "string" || candidate.name.trim().length === 0) {
     issues.push("name must be a non-empty string");
   }
 
-  if (typeof candidate.version !== "string" || candidate.version.length === 0) {
+  if (typeof candidate.version !== "string" || candidate.version.trim().length === 0) {
     issues.push("version must be a non-empty string");
   }
 
@@ -110,7 +119,7 @@ export function validateExtension(ext: unknown): string[] {
       issues.push(`capabilities[${i}] must be an object`);
       continue;
     }
-    if (typeof cap.type !== "string" || cap.type.length === 0) {
+    if (typeof cap.type !== "string" || cap.type.trim().length === 0) {
       issues.push(`capabilities[${i}].type must be a non-empty string`);
     }
   }
@@ -134,6 +143,33 @@ export function validateExtension(ext: unknown): string[] {
         issues,
       );
     }
+  }
+
+  if (candidate.setup !== undefined && typeof candidate.setup !== "function") {
+    issues.push("setup must be a function");
+  }
+
+  if (candidate.teardown !== undefined && typeof candidate.teardown !== "function") {
+    issues.push("teardown must be a function");
+  }
+
+  if (
+    candidate.provides !== undefined &&
+    (typeof candidate.provides !== "object" ||
+      candidate.provides === null ||
+      Array.isArray(candidate.provides))
+  ) {
+    issues.push("provides must be an object");
+  } else if (candidate.provides !== undefined) {
+    for (const contract of Object.keys(candidate.provides)) {
+      if (contract.trim().length === 0) {
+        issues.push("provides key must be a non-empty string");
+      }
+    }
+  }
+
+  if (candidate.extends !== undefined && !Array.isArray(candidate.extends)) {
+    issues.push("extends must be an array");
   }
 
   return issues;

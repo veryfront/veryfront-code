@@ -8,7 +8,7 @@
     "type": "oauth2",
     "provider": "hubspot",
     "authorizationUrl": "https://app.hubspot.com/oauth/authorize",
-    "tokenUrl": "https://api.hubapi.com/oauth/v1/token",
+    "tokenUrl": "https://api.hubapi.com/oauth/v3/token",
     "scopes": [
       "oauth",
       "crm.objects.contacts.read"
@@ -18,7 +18,7 @@
       "crm.objects.leads.read",
       "crm.objects.leads.write"
     ],
-    "callbackPath": "/oauth/callback/hubspot",
+    "callbackPath": "/api/auth/hubspot/callback",
     "tokenAuthMethod": "request_body",
     "supportsRefreshToken": true,
     "requiredApis": [

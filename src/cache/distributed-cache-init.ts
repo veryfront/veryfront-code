@@ -69,7 +69,7 @@ async function initializeDistributedCachesWithInitializers(
     if (result && result.status === "rejected") {
       logger.error(`Cache initialization failed: ${cacheNames[i]}`, {
         backend,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        errorName: result.reason instanceof Error ? result.reason.name : typeof result.reason,
       });
     }
   }

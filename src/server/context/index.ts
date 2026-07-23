@@ -4,4 +4,11 @@
  * @module server/context
  */
 
-export { createRequestContext, type RequestContext } from "./request-context.ts";
+export {
+  bindRequestTokenToProject,
+  createRequestContext,
+  getRequestTokenProvenance,
+  type RequestContext,
+  type RequestTokenProvenance,
+  type RequestTokenSource,
+} from "./request-context.ts";

@@ -38,7 +38,13 @@ export {
 export type { LogEntry, Logger, RequestContext } from "./logger/index.ts";
 
 // Redaction / URL sanitization helpers
-export { redactSensitive, sanitizeUrlCredentials, sanitizeUrlForSpan } from "./logger/redact.ts";
+export {
+  type RedactedValue,
+  redactForSerialization,
+  redactSensitive,
+  sanitizeUrlCredentials,
+  sanitizeUrlForSpan,
+} from "./logger/redact.ts";
 
 export {
   BREAKPOINT_LG,

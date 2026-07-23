@@ -1,10 +1,12 @@
 # Confluence Integration for Veryfront
 
-A complete Confluence integration for Veryfront that enables AI agents to search, read, create, and update documentation in Confluence spaces.
+A complete Confluence integration for Veryfront that enables AI agents to
+search, read, create, and update documentation in Confluence spaces.
 
 ## Features
 
-- **OAuth 2.0 Authentication**: Secure authentication using Atlassian's OAuth 2.0 flow
+- **OAuth 2.0 Authentication**: Secure authentication using Atlassian's OAuth
+  2.0 flow
 - **Search Content**: Search for pages and blog posts across Confluence spaces
 - **Read Pages**: Retrieve full page content with metadata
 - **Create Pages**: Create new pages in any accessible space
@@ -20,8 +22,9 @@ confluence/
 │   ├── _env.example                        # Environment variables template
 │   ├── lib/
 │   │   ├── confluence-client.ts            # Confluence API client
-│   │   ├── oauth.ts                        # OAuth 2.0 utilities
-│   │   └── token-store.ts                  # Token management (in-memory)
+│   │   ├── oauth-store.ts                  # Fail-closed store binding
+│   │   ├── oauth-store-registry.ts         # Durable store injection contract
+│   │   └── user-id.ts                      # Verified identity binding
 │   ├── app/api/auth/confluence/
 │   │   ├── route.ts                        # OAuth initialization endpoint
 │   │   └── callback/route.ts               # OAuth callback handler
@@ -37,7 +40,8 @@ confluence/
 
 ### 1. Create an Atlassian OAuth 2.0 App
 
-1. Go to [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
+1. Go to
+   [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)
 2. Click "Create" → "OAuth 2.0 integration"
 3. Name your app (e.g., "Veryfront Confluence Integration")
 4. Add the following settings:
@@ -59,6 +63,8 @@ Add the following to your `.env` file:
 ```bash
 ATLASSIAN_CLIENT_ID=your_client_id_here
 ATLASSIAN_CLIENT_SECRET=your_client_secret_here
+# Required only when the authenticated user can access multiple Confluence sites:
+CONFLUENCE_CLOUD_ID=your_atlassian_site_id
 ```
 
 ### 3. Install the Integration
@@ -71,61 +77,67 @@ veryfront add integration confluence
 
 ## API Client Usage
 
+Create the client inside an authenticated tool or server handler. Never use a
+shared or placeholder user id:
+
+```typescript
+import type { ToolExecutionContext } from "veryfront/tool";
+import { createConfluenceClient } from "./lib/confluence-client.ts";
+import { requireUserIdFromContext } from "./lib/user-id.ts";
+
+function confluenceFor(context: ToolExecutionContext) {
+  return createConfluenceClient(requireUserIdFromContext(context));
+}
+```
+
 ### Search Content
 
 ```typescript
-import { searchContent } from './lib/confluence-client.ts'
-
-const results = await searchContent('API documentation', {
-  spaceKey: 'DEV',
-  limit: 10
-})
+const results = await confluenceFor(context).searchContent("API documentation", {
+  spaceKey: "DEV",
+  limit: 10,
+});
 ```
 
 ### Get Page Content
 
 ```typescript
-import { getPageContent, extractPlainText } from './lib/confluence-client.ts'
-
-const page = await getPageContent('page-id-here')
-const plainText = extractPlainText(page.body?.storage?.value || '')
+const confluence = confluenceFor(context);
+const page = await confluence.getPageContent("page-id-here");
+const plainText = confluence.extractPlainText(page.body?.storage?.value || "");
 ```
 
 ### Create Page
 
 ```typescript
-import { createPage } from './lib/confluence-client.ts'
-
-const newPage = await createPage({
-  spaceKey: 'TEAM',
-  title: 'Meeting Notes',
-  content: '<p>Meeting notes content here</p>',
-  parentId: 'optional-parent-page-id'
-})
+const newPage = await confluenceFor(context).createPage({
+  spaceKey: "TEAM",
+  title: "Meeting Notes",
+  content: "<p>Meeting notes content here</p>",
+  parentId: "optional-parent-page-id",
+});
 ```
 
 ### Update Page
 
 ```typescript
-import { updatePage, getPage } from './lib/confluence-client.ts'
-
-const currentPage = await getPage('page-id')
-const updated = await updatePage('page-id', {
-  content: '<p>Updated content</p>',
+const confluence = confluenceFor(context);
+const currentPage = await confluence.getPage("page-id");
+const updated = await confluence.updatePage("page-id", {
+  title: currentPage.title,
+  content: "<p>Updated content</p>",
   version: currentPage.version.number + 1,
-  versionMessage: 'Updated via API'
-})
+  versionMessage: "Updated via API",
+});
 ```
 
 ### List Spaces
 
 ```typescript
-import { listSpaces } from './lib/confluence-client.ts'
-
-const spaces = await listSpaces({
-  type: 'global',
-  limit: 25
-})
+const spaces = await confluenceFor(context).listSpaces({
+  type: "global",
+  limit: 25,
+});
 ```
 
 ## AI Tools
@@ -135,6 +147,7 @@ const spaces = await listSpaces({
 Search for pages and blog posts in Confluence.
 
 **Parameters:**
+
 - `query` (string): Search query
 - `spaceKey` (string, optional): Limit to specific space
 - `limit` (number, default: 10): Max results
@@ -144,6 +157,7 @@ Search for pages and blog posts in Confluence.
 Get the full content of a Confluence page.
 
 **Parameters:**
+
 - `pageId` (string): The page ID to retrieve
 
 ### create-page
@@ -151,6 +165,7 @@ Get the full content of a Confluence page.
 Create a new page in a Confluence space.
 
 **Parameters:**
+
 - `spaceKey` (string): Space key (e.g., "TEAM")
 - `title` (string): Page title
 - `content` (string): Page content (plain text or HTML)
@@ -162,6 +177,7 @@ Create a new page in a Confluence space.
 Update an existing Confluence page.
 
 **Parameters:**
+
 - `pageId` (string): Page ID to update
 - `title` (string, optional): New title
 - `content` (string, optional): New content
@@ -172,6 +188,7 @@ Update an existing Confluence page.
 List all accessible Confluence spaces.
 
 **Parameters:**
+
 - `type` (enum, default: "all"): "global", "personal", or "all"
 - `limit` (number, default: 25): Max spaces to return
 
@@ -183,22 +200,22 @@ List all accessible Confluence spaces.
 4. Atlassian redirects to `/api/auth/confluence/callback`
 5. Callback exchanges code for access token
 6. System retrieves accessible Confluence sites (cloud IDs)
-7. Tokens stored in token store (in-memory by default)
+7. Tokens stored in the installed application OAuth store
 8. User redirected to application home page
 
 ## Token Storage
 
-The default implementation uses an in-memory token store suitable for development. For production:
-
-1. Implement a database-backed token store
-2. Store tokens per user
-3. Handle token refresh with `refresh_token`
-4. Implement proper token expiration checks
+Production refuses to load OAuth routes until application instrumentation has
+installed a durable `ApplicationOAuthTokenStore` and a verified session/JWT
+identity resolver. The store owns per-user encrypted tokens, one-shot state,
+revisioned compare-and-set, and a bounded distributed refresh lease. The shared
+`OAuthService` owns expiration checks and refresh.
 
 ## API Details
 
 - **Base URL**: `https://api.atlassian.com/ex/confluence/{cloudId}`
-- **API Version**: Confluence Cloud REST API v1
+- **API Version**: Confluence Cloud REST API v2 for spaces/pages/blogposts,
+  with the documented v1 search endpoint where Confluence has no v2 equivalent
 - **Authentication**: Bearer token
 - **Rate Limits**: Respect Atlassian API rate limits
 
@@ -213,16 +230,19 @@ Confluence uses "storage format" (XHTML) for content:
 ## Suggested Integrations
 
 This integration works well with:
+
 - **Jira**: Link documentation to issues
 - **Slack**: Share documentation in channels
 - **Notion**: Sync documentation between platforms
 
 ## Notes
 
-- Shares OAuth credentials with Jira integration (`ATLASSIAN_CLIENT_ID` and `ATLASSIAN_CLIENT_SECRET`)
+- Shares OAuth credentials with Jira integration (`ATLASSIAN_CLIENT_ID` and
+  `ATLASSIAN_CLIENT_SECRET`)
 - Requires OAuth app to have Confluence API access enabled
 - Supports both Confluence Cloud and multi-site access
-- Uses the first accessible site by default (can be extended for multi-site support)
+- Automatically uses the only accessible site; multi-site users must configure
+  and authorize `CONFLUENCE_CLOUD_ID`
 
 ## TypeScript
 
@@ -237,6 +257,7 @@ All files are strongly typed with detailed TypeScript interfaces:
 ## Error Handling
 
 All API calls include proper error handling:
+
 - Authentication errors: "Not authenticated" message
 - API errors: Include status code and error message
 - Token exchange errors: Detailed OAuth error messages
@@ -244,8 +265,8 @@ All API calls include proper error handling:
 ## Security Considerations
 
 1. Store credentials securely (use environment variables)
-2. Implement CSRF protection (state parameter in OAuth)
+2. Keep the generated state validation and verified identity resolver enabled
 3. Use HTTPS for all API calls
 4. Validate all user inputs
-5. Implement proper token storage in production
-6. Handle token expiration and refresh
+5. Install a durable, encrypted `ApplicationOAuthTokenStore` in production
+6. Preserve revisioned refresh and the distributed refresh lease contract

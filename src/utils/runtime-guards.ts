@@ -38,11 +38,11 @@ export function hasDenoRuntime(global: unknown): global is GlobalWithDeno {
 export function hasNodeProcess(global: unknown): global is GlobalWithProcess {
   if (!isObject(global) || !("process" in global)) return false;
   const processObj = global.process as GlobalWithProcess["process"];
-  return typeof processObj?.env === "object";
+  return isObject(processObj?.env);
 }
 
 /** Check whether Bun runtime is present. */
 export function hasBunRuntime(global: unknown): global is GlobalWithBun {
   if (!isObject(global) || !("Bun" in global)) return false;
-  return global.Bun !== undefined;
+  return isObject(global.Bun) && typeof global.Bun.version === "string";
 }

@@ -29,6 +29,21 @@ describe("validateExtension", () => {
     assertEquals(issues.some((i) => i.includes("name")), true);
   });
 
+  it("rejects whitespace-only identifiers", () => {
+    const issues = validateExtension({
+      name: "   ",
+      version: "\t",
+      capabilities: [{ type: "\n" }],
+      contracts: { provides: ["  "], requires: ["\t"] },
+      provides: { " ": {} },
+    });
+
+    for (const field of ["name", "version", "capabilities[0].type", "contracts.provides"]) {
+      assertEquals(issues.some((issue) => issue.includes(field)), true);
+    }
+    assertEquals(issues.some((issue) => issue.includes("provides key")), true);
+  });
+
   it("rejects missing version", () => {
     const issues = validateExtension({
       name: "test-ext",
@@ -106,6 +121,23 @@ describe("validateExtension", () => {
       issues.some((issue) => issue.includes("contracts.requires[0]")),
       true,
     );
+  });
+
+  it("rejects malformed lifecycle and composition fields", () => {
+    const issues = validateExtension({
+      name: "test-ext",
+      version: "1.0.0",
+      capabilities: [],
+      setup: "not-a-function",
+      teardown: 42,
+      provides: [],
+      extends: {},
+    });
+
+    assertEquals(issues.some((issue) => issue.includes("setup")), true);
+    assertEquals(issues.some((issue) => issue.includes("teardown")), true);
+    assertEquals(issues.some((issue) => issue.includes("provides")), true);
+    assertEquals(issues.some((issue) => issue.includes("extends")), true);
   });
 
   it("rejects null input", () => {
@@ -232,6 +264,22 @@ describe("detectConflicts", () => {
 
     assertEquals(conflicts.length, 1);
     assertEquals(conflicts[0]?.contract, "CacheStore");
+  });
+
+  it("does not report one extension twice when static and dynamic metadata overlap", () => {
+    const conflicts = detectConflicts([{
+      extension: {
+        name: "ext-a",
+        version: "1.0.0",
+        capabilities: [],
+        provides: { CacheStore: {} },
+        contracts: { provides: ["CacheStore", "CacheStore"] },
+      },
+      source: "package",
+      origin: "node_modules/ext-a",
+    }]);
+
+    assertEquals(conflicts, []);
   });
 
   it("returns empty for empty extension list", () => {

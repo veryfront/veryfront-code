@@ -194,25 +194,24 @@ async function doFetchAndCacheModule(
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
-  const cachedPath = await readValidCachedModulePath({
-    normalizedPath,
-    pathCache,
-    versionedKey,
-    log,
-    recoveryOptions: context.contentSourceId
-      ? {
-        projectId: context.projectId,
-        contentSourceId: context.contentSourceId,
-      }
-      : undefined,
-  });
-  if (cachedPath) return cachedPath;
 
   try {
     const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
 
     if (!resolved) {
+      const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
+      const cachedPath = await readValidCachedModulePath({
+        normalizedPath,
+        cacheDir: esmCacheDir,
+        pathCache,
+        versionedKey,
+        log,
+        recoveryOptions: context.contentSourceId
+          ? { projectId: context.projectId, contentSourceId: context.contentSourceId }
+          : undefined,
+      });
+      if (cachedPath) return cachedPath;
+
       return await resolveUnresolvedModuleViaHttpFallback({
         normalizedPath,
         adapter,
@@ -231,6 +230,23 @@ async function doFetchAndCacheModule(
     const { sourceCode, actualFilePath } = resolved;
 
     const contentHash = hashString(sourceCode);
+    const versionedKey = getVersionedPathCacheKey(
+      normalizedPath,
+      effectiveReactVersion,
+      contentHash,
+    );
+    const cachedPath = await readValidCachedModulePath({
+      normalizedPath,
+      cacheDir: esmCacheDir,
+      pathCache,
+      versionedKey,
+      log,
+      recoveryOptions: context.contentSourceId
+        ? { projectId: context.projectId, contentSourceId: context.contentSourceId }
+        : undefined,
+    });
+    if (cachedPath) return cachedPath;
+
     const transformCacheKey = contentSourceId
       ? getTransformCacheKey(
         projectId,
@@ -300,6 +316,7 @@ async function doFetchAndCacheModule(
       log,
       projectSlug,
       reactVersion: effectiveReactVersion,
+      sourceContentHash: contentHash,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId

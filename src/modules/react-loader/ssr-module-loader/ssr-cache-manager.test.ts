@@ -16,6 +16,11 @@ import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cach
 import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  createMdxModuleRecoveryPayload,
+  serializeMdxModuleRecoveryPayload,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/recovery-payload.ts";
 
 class FakeDistributedCache implements CacheBackend {
   readonly type = "redis" as const;
@@ -37,13 +42,35 @@ class FakeDistributedCache implements CacheBackend {
 }
 
 describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("uses full SHA-256 identities for both small and large module content", async () => {
+    const manager = new SSRCacheManager({
+      projectDir: "/project",
+      projectId: "project",
+      contentSourceId: "preview",
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const small = "export const value = 1;";
+    const large = small.repeat(1_000);
+
+    assertEquals(await manager.hashContentAsync(small), await computeHash(small));
+    assertEquals(await manager.hashContentAsync(large), await computeHash(large));
+    assertEquals((await manager.hashContentAsync(small)).length, 64);
+  });
+
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const distributedCache = new FakeDistributedCache();
     const projectId = `project-${crypto.randomUUID()}`;
     const contentSourceId = `preview-${crypto.randomUUID()}`;
     const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
-    const childPath = join(vfmodDir, "vfmod-child.mjs");
+    const childPayload = createMdxModuleRecoveryPayload(
+      projectId,
+      contentSourceId,
+      "_vf_modules/child.js",
+      tokenizeAllVeryFrontPaths(`export default "recovered";`),
+    );
+    const childPath = join(vfmodDir, childPayload.fileName);
     const stablePath = join(projectDir, "stable.mjs");
 
     try {
@@ -51,8 +78,8 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       await writeTextFile(stablePath, `export default "stable";`);
 
       await distributedCache.set(
-        buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, "vfmod-child.mjs"),
-        tokenizeAllVeryFrontPaths(`export default "recovered";`),
+        buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, childPayload.fileName),
+        serializeMdxModuleRecoveryPayload(childPayload),
       );
 
       const cacheManager = new SSRCacheManager({

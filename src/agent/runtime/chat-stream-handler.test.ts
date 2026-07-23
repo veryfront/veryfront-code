@@ -10,11 +10,14 @@ import {
   SpanKind,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
+import { createRuntimeJsonSchema } from "./runtime-tool-builder.ts";
 import {
   createStreamState,
   processStream,
   summarizeProviderToolDebugValue,
 } from "./chat-stream-handler.ts";
+import { streamText } from "../../runtime/runtime-bridge.ts";
+import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -62,6 +65,20 @@ describe("chat-stream-handler", () => {
       );
     });
 
+    it("normalizes non-JSON provider debug values for serialization", () => {
+      assertEquals(
+        summarizeProviderToolDebugValue({ count: 42n, callback: () => "ignored" }),
+        { count: "42", callback: "[REDACTED]" },
+      );
+    });
+
+    it("fails closed for revoked provider debug proxies", () => {
+      const revoked = Proxy.revocable({ token: "provider-secret" }, {});
+      revoked.revoke();
+
+      assertEquals(summarizeProviderToolDebugValue(revoked.proxy), "[REDACTED]");
+    });
+
     it("sanitizes URL credentials in provider tool debug errors", () => {
       const error = new Error("GET https://example.test/path?access_token=secret failed");
       const summary = summarizeProviderToolDebugValue(error) as { message: string; stack: string };
@@ -86,7 +103,7 @@ describe("chat-stream-handler", () => {
   });
 
   describe("processStream", () => {
-    it("starts the model stream trace as a GenAI client span", async () => {
+    it("retains final GenAI attributes across provider-only fallback awaits", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
       const attributes: Record<string, unknown> = {};
@@ -519,6 +536,151 @@ describe("chat-stream-handler", () => {
           input: { min: 3, max: 9 },
         },
       ]);
+    });
+
+    it("drains mixed provider activity through a delayed terminal finish", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerMetadata = {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "server-search",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }, {
+            type: "tool_use",
+            id: "local-lookup",
+            name: "local_lookup",
+            input: { query: "runtime" },
+          }]],
+        },
+      };
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "tool-call",
+              toolCallId: "server-search",
+              toolName: "web_search",
+              input: { query: "Veryfront" },
+              providerExecuted: true,
+              supportsDeferredResults: true,
+            };
+            yield {
+              type: "tool-call",
+              toolCallId: "local-lookup",
+              toolName: "local_lookup",
+              input: { query: "runtime" },
+            };
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            yield {
+              type: "finish",
+              finishReason: "tool-calls",
+              totalUsage: null,
+              providerMetadata,
+            };
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      await processStream(result, state, controller, encoder, "t", {
+        streamIdleTimeoutMs: 1_000,
+      });
+
+      assertEquals(state.finishReason, "tool-calls");
+      assertEquals(state.providerMetadata, providerMetadata);
+      assertEquals(state.toolCalls.get("server-search")?.providerExecuted, true);
+      assertEquals(state.toolCalls.get("local-lookup")?.inputAvailable, true);
+    });
+
+    it("retains a deferred provider result before finishing a mixed provider and local tool turn", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerMetadata = {
+        anthropic: { requestId: "request-mixed-tools" },
+      };
+      const inputSchema = createRuntimeJsonSchema({
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      });
+      const outputSchema = createRuntimeJsonSchema({
+        type: "object",
+        properties: { matches: { type: "integer" } },
+        required: ["matches"],
+        additionalProperties: false,
+      });
+      const model = createStreamModel("test", "test/mixed-tool-finish-order", async () => ({
+        stream: ReadableStream.from([
+          {
+            type: "tool-call",
+            toolCallId: "server-search",
+            toolName: "web_search",
+            input: { query: "Veryfront" },
+            providerExecuted: true,
+          },
+          {
+            type: "tool-call",
+            toolCallId: "local-lookup",
+            toolName: "local_lookup",
+            input: { query: "runtime" },
+          },
+          {
+            type: "finish",
+            finishReason: "tool-calls",
+            providerMetadata,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "server-search",
+            toolName: "web_search",
+            result: { matches: 2 },
+            providerExecuted: true,
+          },
+        ]),
+      }));
+      const result = streamText({
+        model,
+        messages: [{ role: "user", content: "Search and inspect" }],
+        tools: {
+          web_search: {
+            type: "provider",
+            id: "anthropic.web_search_20250305",
+            args: {},
+            inputSchema: () => inputSchema,
+            outputSchema: () => outputSchema,
+            supportsDeferredResults: true,
+          },
+          local_lookup: {
+            description: "Inspect local runtime data",
+            inputSchema,
+          },
+        },
+      });
+
+      await processStream(result, state, controller, encoder, "t", {
+        streamIdleTimeoutMs: 1_000,
+      });
+
+      assertEquals(state.finishReason, "tool-calls");
+      assertEquals(state.providerMetadata, providerMetadata);
+      assertEquals(state.toolCalls.get("local-lookup")?.inputAvailable, true);
+      assertEquals(state.toolResults, [{
+        toolCallId: "server-search",
+        toolName: "web_search",
+        output: { matches: 2 },
+        providerExecuted: true,
+        supportsDeferredResults: true,
+      }]);
+      assertEquals(
+        events.some((event) =>
+          event.type === "tool-output-available" && event.toolCallId === "server-search"
+        ),
+        true,
+      );
     });
 
     it("finalizes streamed local tool input when the provider emits tool-input-end without a tool-call part", async () => {

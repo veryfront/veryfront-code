@@ -12,6 +12,9 @@ import {
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
+  buildModuleTransformCacheKey,
+  buildSSRModuleCacheKey,
+  buildTransformCacheKey,
   CacheKeyPrefix,
   computeContentSourceId,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
@@ -38,6 +41,34 @@ describe("cache/keys", () => {
 
     it("should have FILE prefix", () => {
       assertEquals(CacheKeyPrefix.FILE, "file");
+    });
+  });
+
+  describe("module cache identities", () => {
+    it("builds strict-backend-safe SSR keys without delimiter aliases", () => {
+      const first = buildSSRModuleCacheKey("1", "project:one", "preview:path.tsx");
+      const second = buildSSRModuleCacheKey("1", "project", "one:preview:path.tsx");
+
+      assertNotEquals(first, second);
+      assertMatch(first, /^[a-zA-Z0-9_:.-]+$/);
+      assertEquals(first.includes("project:one"), false);
+    });
+
+    it("frames module-transform identities instead of preserving raw paths", () => {
+      const first = buildModuleTransformCacheKey("project:one", "path:@/page.tsx", true);
+      const second = buildModuleTransformCacheKey("project", "one:path:@/page.tsx", true);
+
+      assertNotEquals(first, second);
+      assertMatch(first, /^[a-zA-Z0-9_:.-]+$/);
+      assertEquals(first.includes("@"), false);
+    });
+
+    it("rejects composed transform keys that exceed the backend limit", () => {
+      assertThrows(
+        () => buildTransformCacheKey("\0".repeat(16_384), "content", true),
+        RangeError,
+        "Transform cache key",
+      );
     });
   });
 
@@ -412,6 +443,24 @@ describe("cache/keys", () => {
       const left = sanitizeQueryParamsForCacheKey(new URL("https://example.com/page?q=a/b"));
       const right = sanitizeQueryParamsForCacheKey(new URL("https://example.com/page?q=a:b"));
       assertNotEquals(left, right);
+    });
+
+    it("should not confuse segment data with pair delimiters", () => {
+      const hyphenInKey = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a-b=c"),
+      );
+      const hyphenInValue = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a=b-c"),
+      );
+      const underscoreInValue = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a=b_c-d"),
+      );
+      const separatePairs = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a=b&c=d"),
+      );
+
+      assertNotEquals(hyphenInKey, hyphenInValue);
+      assertNotEquals(underscoreInValue, separatePairs);
     });
 
     it("should respect ignore-all policy", () => {

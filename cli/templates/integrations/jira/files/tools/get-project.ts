@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getProject } from "../../lib/jira-client.ts";
+import { createJiraClient } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-project",
@@ -10,8 +11,10 @@ export default tool({
       projectIdOrKey: v.string().describe('Project key or ID (e.g., "PROJ")'),
     })
   )(),
-  async execute({ projectIdOrKey }) {
-    const project = await getProject(projectIdOrKey);
+  async execute({ projectIdOrKey }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createJiraClient(userId);
+    const project = await client.getProject(projectIdOrKey);
 
     return {
       key: project.key,

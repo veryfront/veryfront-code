@@ -32,7 +32,7 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
-import { sha256Short } from "#veryfront/cache/hash.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   getReleaseDependencyRewriteManifestState,
   hasReleaseDependencyImportSpecifiers,
@@ -289,7 +289,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const { getCompiledSnippetAsync } = await import(
           "#veryfront/rendering/snippet-renderer.ts"
         );
-        const snippetCode = await getCompiledSnippetAsync(hash);
+        const snippetProjectScope = options.projectSlug?.trim() ||
+          options.projectUUID?.trim() || projectId;
+        const snippetCode = await getCompiledSnippetAsync(hash, snippetProjectScope);
 
         if (!snippetCode) {
           logger.warn("Snippet not found in cache", { hash });
@@ -299,7 +301,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         }
 
-        const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
+        const { slug: domainProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
+        const snippetProjectSlug = options.projectSlug ?? domainProjectSlug;
 
         const isSSR = isSSRModuleRequest(req, url);
 
@@ -484,7 +487,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
       }
       const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule
-        ? buildReleaseModuleResponseCacheKey({
+        ? await buildReleaseModuleResponseCacheKey({
           projectIdentity: effectiveProjectId,
           projectDir,
           projectSlug,
@@ -663,7 +666,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
 
         if (canCacheModuleResponse && method === "GET") {
-          void rememberReleaseModuleResponse(releaseModuleResponseCacheKey, {
+          await rememberReleaseModuleResponse(releaseModuleResponseCacheKey, {
             body: code,
             status: HTTP_OK,
             headers: Object.entries(headers),
@@ -726,7 +729,7 @@ function createSSRTargetCacheBusterResolver(options: {
       promise = (async () => {
         if (options.crossProjectRef) {
           const source = await fetchCrossProjectSource(options.crossProjectRef, targetPath);
-          return source === null ? undefined : await sha256Short(`${targetPath}\0${source}`);
+          return source === null ? undefined : await computeHash(`${targetPath}\0${source}`);
         }
 
         const findResult = await findSourceFile(
@@ -745,7 +748,7 @@ function createSSRTargetCacheBusterResolver(options: {
         if (!findResult) return undefined;
 
         const source = await readSourceFileForVersion(options.secureFs, findResult);
-        return await sha256Short(`${findResult.path}\0${source}`);
+        return await computeHash(`${findResult.path}\0${source}`);
       })();
       versions.set(key, promise);
     }

@@ -13,6 +13,9 @@ export interface RuntimeGenerateToolCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
+  supportsDeferredResults?: boolean;
 }
 
 export interface RuntimeGenerateToolResult {
@@ -21,6 +24,13 @@ export interface RuntimeGenerateToolResult {
   result: unknown;
   isError?: boolean;
   providerExecuted?: boolean;
+  dynamic?: boolean;
+  supportsDeferredResults?: boolean;
+}
+
+export interface RuntimeQuarantinedToolResult {
+  toolCallId: string;
+  toolName: string;
 }
 
 export interface RuntimeGenerateUsage {
@@ -51,8 +61,10 @@ export interface RuntimeGenerateTextResult {
   text: string;
   toolCalls?: RuntimeGenerateToolCall[];
   toolResults?: RuntimeGenerateToolResult[];
+  quarantinedToolResults?: RuntimeQuarantinedToolResult[];
   usage?: RuntimeGenerateUsage;
   finishReason?: string | null;
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface RuntimeRepairToolCall {
@@ -61,6 +73,8 @@ export interface RuntimeRepairToolCall {
   toolName: string;
   input: unknown;
   providerExecuted?: boolean;
+  dynamic?: boolean;
+  supportsDeferredResults?: boolean;
 }
 
 export interface RuntimeToolCallRepairContext {
@@ -91,6 +105,7 @@ export type RuntimeStreamPart =
     toolName: string;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    supportsDeferredResults?: boolean;
   }
   | { type: "tool-input-delta"; id: string; delta: string }
   | { type: "tool-input-end"; id: string }
@@ -102,6 +117,7 @@ export type RuntimeStreamPart =
     input: unknown;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    supportsDeferredResults?: boolean;
   }
   | {
     type: "tool-call";
@@ -110,6 +126,7 @@ export type RuntimeStreamPart =
     input: unknown;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    supportsDeferredResults?: boolean;
   }
   | {
     type: "tool-result";
@@ -126,6 +143,7 @@ export type RuntimeStreamPart =
     input?: unknown;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    supportsDeferredResults?: boolean;
     preliminary?: boolean;
     isError?: boolean;
   }
@@ -137,12 +155,14 @@ export type RuntimeStreamPart =
     input?: unknown;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    supportsDeferredResults?: boolean;
     preliminary?: boolean;
     isError?: boolean;
   }
   | {
     type: "finish";
     finishReason?: string | null;
+    providerMetadata?: Record<string, unknown>;
     totalUsage?: {
       inputTokens?: number;
       outputTokens?: number;

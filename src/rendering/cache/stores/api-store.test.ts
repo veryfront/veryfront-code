@@ -1,461 +1,414 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { MAX_CACHE_TTL_SECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { CachePayload } from "../types.ts";
 import { APICacheStore } from "./api-store.ts";
+import { escapeRedisCacheGlobLiteral } from "#veryfront/cache/backends/redis-keyspace.ts";
 
-async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
-  const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
-  const previousEnv = Deno.env.get("VF_DISABLE_LRU_INTERVAL");
+function payload(html: string, overrides: Partial<CachePayload> = {}): CachePayload {
+  return {
+    result: {
+      html,
+      css: "body{}",
+      frontmatter: { tags: ["Original"] },
+      headings: [{ id: "heading", text: "Original", level: 1 }],
+      nodeMap: new Map([[1, { type: "heading" }]]),
+      stream: null,
+      pageModule: { slug: "page", code: "export default {}", type: "mdx" },
+      ssrHash: "hash",
+    },
+    storedAt: Date.now(),
+    ...overrides,
+  };
+}
 
-  (globalThis as Record<string, unknown>).__vfDisableLruInterval = false;
-  Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+class FakeApiBackend implements CacheBackend {
+  readonly type = "api" as const;
+  readonly values = new Map<string, string>();
+  readonly setTtls: number[] = [];
+  readonly patterns: string[] = [];
+  getCount = 0;
+  failGet: Error | null = null;
+  failSet: Error | null = null;
+  failDelete: Error | null = null;
+  failPatternDelete: Error | null = null;
 
-  try {
-    await fn();
-  } finally {
-    if (previousGlobal === undefined) {
-      delete (globalThis as Record<string, unknown>).__vfDisableLruInterval;
-    } else {
-      (globalThis as Record<string, unknown>).__vfDisableLruInterval = previousGlobal;
+  get(key: string): Promise<string | null> {
+    this.getCount++;
+    if (this.failGet) return Promise.reject(this.failGet);
+    return Promise.resolve(this.values.get(key) ?? null);
+  }
+
+  set(key: string, value: string, ttlSeconds = 300): Promise<void> {
+    if (this.failSet) return Promise.reject(this.failSet);
+    this.values.set(key, value);
+    this.setTtls.push(ttlSeconds);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    if (this.failDelete) return Promise.reject(this.failDelete);
+    this.values.delete(key);
+    return Promise.resolve();
+  }
+
+  delByPattern(pattern: string): Promise<number> {
+    this.patterns.push(pattern);
+    if (this.failPatternDelete) return Promise.reject(this.failPatternDelete);
+    const prefix = decodeLiteralPrefixPattern(pattern);
+    let deleted = 0;
+    for (const key of [...this.values.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      this.values.delete(key);
+      deleted++;
     }
-
-    if (previousEnv === undefined) {
-      Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
-    } else {
-      Deno.env.set("VF_DISABLE_LRU_INTERVAL", previousEnv);
-    }
+    return Promise.resolve(deleted);
   }
 }
 
+function decodeLiteralPrefixPattern(pattern: string): string {
+  if (!pattern.endsWith("*")) {
+    throw new TypeError("fake backend only supports suffix wildcards");
+  }
+  const literal = pattern.slice(0, -1);
+  let prefix = "";
+  for (let index = 0; index < literal.length; index++) {
+    const char = literal[index]!;
+    if (char === "\\") {
+      const escaped = literal[++index];
+      if (escaped === undefined || !"\\*?[]".includes(escaped)) {
+        throw new TypeError("fake backend received an invalid glob escape");
+      }
+      prefix += escaped;
+      continue;
+    }
+    if ("*?[]".includes(char)) {
+      throw new TypeError("fake backend only supports an escaped literal prefix");
+    }
+    prefix += char;
+  }
+  return prefix;
+}
+
+function storeWith(
+  backend: CacheBackend,
+  options: Omit<ConstructorParameters<typeof APICacheStore>[0], "backendFactory"> = {},
+): APICacheStore {
+  return new APICacheStore({ ...options, backendFactory: () => Promise.resolve(backend) });
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("rendering/cache/stores/api-store", () => {
-  describe("APICacheStore constructor", () => {
-    it("should create with default options", () => {
-      const store = new APICacheStore();
-      assertEquals(store instanceof APICacheStore, true);
-    });
-
-    it("should create with custom keyPrefix", () => {
-      const store = new APICacheStore({ keyPrefix: "custom" });
-      assertEquals(store instanceof APICacheStore, true);
-    });
-
-    it("should create with custom ttlSeconds", () => {
-      const store = new APICacheStore({ ttlSeconds: 7200 });
-      assertEquals(store instanceof APICacheStore, true);
-    });
-
-    it("should create with local cache disabled", () => {
-      const store = new APICacheStore({ enableLocalCache: false });
-      assertEquals(store instanceof APICacheStore, true);
-    });
-
-    it("should create with custom localMaxEntries", () => {
-      const store = new APICacheStore({ localMaxEntries: 50 });
-      assertEquals(store instanceof APICacheStore, true);
-    });
-  });
-
-  describe("operations (without distributed backend)", () => {
-    it("should return undefined for missing key", async () => {
-      const store = new APICacheStore();
-      const result = await store.get("missing-key");
-      assertEquals(result, undefined);
-    });
-
-    it("should clear without error", async () => {
-      const store = new APICacheStore();
-      await store.clear();
-    });
-
-    it("should destroy without error", async () => {
-      const store = new APICacheStore();
-      await store.destroy();
-    });
-
-    it("should delete without error", async () => {
-      const store = new APICacheStore();
-      await store.delete("some-key");
-    });
-  });
-
-  describe("serialize/deserialize round-trip", () => {
-    interface TestPayload {
-      result: {
-        html: string;
-        css?: string;
-        frontmatter: Record<string, unknown>;
-        headings?: Array<{ id: string; text: string; level: number }>;
-        nodeMap?: Map<number, unknown>;
-        stream: null;
-        pageModule?: { slug: string; code: string; type: "mdx" | "component" };
-        ssrHash?: string;
-      };
-      storedAt: number;
-      expiresAt?: number;
-      staleUntil?: number;
-    }
-
-    function makePayload(overrides: Record<string, unknown> = {}): TestPayload {
-      return {
-        result: {
-          html: "<h1>Test</h1>",
-          frontmatter: { title: "Test" },
-          headings: [],
-          stream: null,
-          ...overrides,
-        },
-        storedAt: Date.now(),
-      };
-    }
-
-    it("round-trips basic HTML payload", () => {
-      const store = new APICacheStore();
-      const payload = makePayload();
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.html, "<h1>Test</h1>");
-      assertEquals(deserialized.result.frontmatter.title, "Test");
-      assertEquals(deserialized.storedAt, payload.storedAt);
-    });
-
-    it("round-trips payload with nodeMap", () => {
-      const store = new APICacheStore();
-      const nodeMap = new Map<number, unknown>([
-        [1, { type: "div" }],
-        [2, { type: "span" }],
-      ]);
-      const payload = makePayload({ nodeMap });
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.nodeMap instanceof Map, true);
-      assertEquals(deserialized.result.nodeMap.size, 2);
+  describe("constructor", () => {
+    it("accepts valid options", () => {
+      assertEquals(new APICacheStore() instanceof APICacheStore, true);
       assertEquals(
-        (deserialized.result.nodeMap.get(1) as Record<string, string>).type,
-        "div",
+        new APICacheStore({
+          keyPrefix: "custom:render",
+          ttlSeconds: 7_200,
+          localMaxEntries: 50,
+          enableLocalCache: false,
+        }) instanceof APICacheStore,
+        true,
       );
     });
 
-    it("round-trips payload with ssrHash and css", () => {
-      const store = new APICacheStore();
-      const payload = makePayload({ ssrHash: "hash123", css: "body{}" });
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.ssrHash, "hash123");
-      assertEquals(deserialized.result.css, "body{}");
-    });
-
-    it("round-trips payload with pageModule", () => {
-      const store = new APICacheStore();
-      const payload = makePayload({
-        pageModule: { slug: "index", code: "export default {}", type: "mdx" as const },
-      });
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.pageModule.slug, "index");
-      assertEquals(deserialized.result.pageModule.type, "mdx");
-    });
-
-    it("deserializes stream as null (streams are not cacheable)", () => {
-      const store = new APICacheStore();
-      const payload = makePayload();
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.result.stream, null);
-    });
-
-    it("preserves expiresAt field", () => {
-      const store = new APICacheStore();
-      const payload = { ...makePayload(), expiresAt: Date.now() + 60000 };
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.expiresAt, payload.expiresAt);
-    });
-
-    it("preserves staleUntil field for stale-while-refresh cache entries", () => {
-      const store = new APICacheStore();
-      const payload = {
-        ...makePayload(),
-        expiresAt: Date.now() - 1,
-        staleUntil: Date.now() + 60_000,
-      };
-      const serialized = (store as any).serialize(payload);
-      const deserialized = (store as any).deserialize(serialized);
-      assertEquals(deserialized.expiresAt, payload.expiresAt);
-      assertEquals(deserialized.staleUntil, payload.staleUntil);
+    it("rejects unsafe prefixes, TTLs, and capacities", () => {
+      for (const keyPrefix of ["", " render", "render*", "render?", "render[all]"]) {
+        assertThrows(() => new APICacheStore({ keyPrefix }), TypeError, "glob-free");
+      }
+      for (const ttlSeconds of [0, -1, 1.5, Infinity, MAX_CACHE_TTL_SECONDS + 1]) {
+        assertThrows(() => new APICacheStore({ ttlSeconds }), RangeError);
+      }
+      for (const localMaxEntries of [0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        assertThrows(() => new APICacheStore({ localMaxEntries }), RangeError);
+      }
     });
   });
 
-  describe("local cache operations", () => {
-    it("set then get returns value from local cache", async () => {
-      const store = new APICacheStore({ enableLocalCache: true });
-      const payload = {
-        result: {
-          html: "<p>cached</p>",
-          frontmatter: {},
-          headings: [],
-          stream: null,
-        },
-        storedAt: Date.now(),
-      } as any;
+  describe("authoritative and local behavior", () => {
+    it("round-trips the full payload and returns detached local snapshots", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      const original = payload("<h1>Original</h1>");
 
-      await store.set("local-key", payload);
-      const result = await store.get("local-key");
-      assertEquals(result?.result.html, "<p>cached</p>");
-    });
+      await store.set("page", original);
+      (original.result.frontmatter as { tags: string[] }).tags[0] = "input mutation";
+      (original.result.nodeMap?.get(1) as { type: string }).type = "input mutation";
 
-    it("skips caching when result has a stream", async () => {
-      const store = new APICacheStore({ enableLocalCache: true });
-      const payload = {
-        result: {
-          html: "<p>stream</p>",
-          frontmatter: {},
-          headings: [],
-          stream: {} as ReadableStream,
-        },
-        storedAt: Date.now(),
-      } as any;
-
-      await store.set("stream-key", payload);
-      const result = await store.get("stream-key");
-      assertEquals(result, undefined);
-    });
-
-    it("delete removes from local cache", async () => {
-      const store = new APICacheStore({ enableLocalCache: true });
-      const payload = {
-        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now(),
-      } as any;
-
-      await store.set("del-key", payload);
-      await store.delete("del-key");
-      const result = await store.get("del-key");
-      assertEquals(result, undefined);
-    });
-
-    it("deleteByPrefix removes matching keys from local cache", async () => {
-      const store = new APICacheStore({ enableLocalCache: true });
-      const payload = {
-        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now(),
-      } as any;
-
-      await store.set("proj:page:a", payload);
-      await store.set("proj:page:b", payload);
-      await store.set("other:page:c", payload);
-
-      const deleted = await store.deleteByPrefix("proj:");
-      assertEquals(deleted >= 2, true);
-
-      const a = await store.get("proj:page:a");
-      assertEquals(a, undefined);
-      const c = await store.get("other:page:c");
-      assertEquals(c?.result.html, "<p>x</p>");
-    });
-
-    it("clear empties local cache", async () => {
-      const store = new APICacheStore({ enableLocalCache: true });
-      const payload = {
-        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now(),
-      } as any;
-
-      await store.set("clear-key", payload);
-      await store.clear();
-      const result = await store.get("clear-key");
-      assertEquals(result, undefined);
-    });
-
-    it("returns undefined when local cache is disabled", async () => {
-      const store = new APICacheStore({ enableLocalCache: false });
-      const payload = {
-        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now(),
-      } as any;
-
-      await store.set("no-local", payload);
-      const result = await store.get("no-local");
-      assertEquals(result, undefined);
-    });
-
-    it("waits for distributed writes when local cache is disabled", async () => {
-      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      const globals = globalThis as Record<string, unknown>;
-      const originalAdapter = globals.__vf_multi_project_adapter;
-
-      let releaseSet: () => void = () => {};
-      let setStarted = false;
-      let setCompleted = false;
-      const server = Deno.serve(
-        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        async (request) => {
-          const url = new URL(request.url);
-          if (
-            request.method !== "POST" ||
-            url.pathname !== "/projects/api-store-test-project/cache/set"
-          ) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-
-          setStarted = true;
-          await new Promise<void>((resolve) => {
-            releaseSet = resolve;
-          });
-          setCompleted = true;
-          return Response.json({ success: true });
-        },
+      const first = await store.get("page");
+      assertEquals(first?.result.html, "<h1>Original</h1>");
+      assertEquals(
+        (first?.result.frontmatter as { tags: string[] }).tags[0],
+        "Original",
       );
-      const addr = server.addr as Deno.NetAddr;
-      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-      globals.__vf_multi_project_adapter = {
-        getCurrentRequestContext: () => ({
-          token: "request-token",
-          projectSlug: "api-store-test-project",
-          productionMode: true,
-        }),
-      };
-      const store = new APICacheStore({ enableLocalCache: false });
-      const payload = {
-        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now(),
-      } as any;
-
-      try {
-        let setResolved = false;
-        const setPromise = store.set("distributed-key", payload).then(() => {
-          setResolved = true;
-        });
-
-        for (let attempts = 0; attempts < 50 && !setStarted; attempts++) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-        assertEquals(setStarted, true);
-        assertEquals(setResolved, false);
-        assertEquals(setCompleted, false);
-
-        releaseSet();
-        await setPromise;
-
-        assertEquals(setCompleted, true);
-        assertEquals(setResolved, true);
-      } finally {
-        releaseSet();
-        await store.destroy();
-        await server.shutdown();
-        if (previousApiBaseUrl === undefined) {
-          Deno.env.delete("VERYFRONT_API_BASE_URL");
-        } else {
-          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
-        }
-        if (previousApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
-        }
-        if (originalAdapter === undefined) {
-          delete globals.__vf_multi_project_adapter;
-        } else {
-          globals.__vf_multi_project_adapter = originalAdapter;
-        }
+      assertEquals((first?.result.nodeMap?.get(1) as { type: string }).type, "heading");
+      if (first) {
+        (first.result.frontmatter as { tags: string[] }).tags[0] = "output mutation";
+        (first.result.nodeMap?.get(1) as { type: string }).type = "output mutation";
       }
+
+      const second = await store.get("page");
+      assertEquals(
+        (second?.result.frontmatter as { tags: string[] }).tags[0],
+        "Original",
+      );
+      assertEquals((second?.result.nodeMap?.get(1) as { type: string }).type, "heading");
+      assertEquals(backend.getCount, 0);
+
+      const serialized = JSON.parse(backend.values.get("page")!);
+      assertEquals(Array.isArray(serialized.nodeMapEntries), true);
+      assertEquals("nodeMap" in serialized.result, false);
     });
 
-    it("retains distributed entries through staleUntil instead of only the fresh TTL", async () => {
-      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      const globals = globalThis as Record<string, unknown>;
-      const originalAdapter = globals.__vf_multi_project_adapter;
+    it("reads through and populates local cache when enabled", async () => {
+      const backend = new FakeApiBackend();
+      const writer = storeWith(backend, { enableLocalCache: false });
+      await writer.set("page", payload("distributed"));
 
-      let receivedTtl: number | undefined;
-      let receivedValue = "";
-      const server = Deno.serve(
-        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        async (request) => {
-          const url = new URL(request.url);
-          if (
-            request.method !== "POST" ||
-            url.pathname !== "/projects/api-store-test-project/cache/set"
-          ) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
+      const reader = storeWith(backend, { enableLocalCache: true });
+      assertEquals((await reader.get("page"))?.result.html, "distributed");
+      assertEquals((await reader.get("page"))?.result.html, "distributed");
+      assertEquals(backend.getCount, 1);
+    });
 
-          const body = await request.json() as { ttl?: number; value?: string };
-          receivedTtl = body.ttl;
-          receivedValue = body.value ?? "";
-          return Response.json({ success: true });
-        },
-      );
-      const addr = server.addr as Deno.NetAddr;
-      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-      globals.__vf_multi_project_adapter = {
-        getCurrentRequestContext: () => ({
-          token: "request-token",
-          projectSlug: "api-store-test-project",
-          productionMode: true,
-        }),
-      };
+    it("evicts malformed distributed payloads", async () => {
+      const backend = new FakeApiBackend();
+      backend.values.set("broken-json", "{not-json");
+      backend.values.set("broken-shape", JSON.stringify({ storedAt: "invalid" }));
+      const store = storeWith(backend, { enableLocalCache: false });
 
-      const store = new APICacheStore({ enableLocalCache: false, ttlSeconds: 5 });
+      assertEquals(await store.get("broken-json"), undefined);
+      assertEquals(await store.get("broken-shape"), undefined);
+      assertEquals(backend.values.has("broken-json"), false);
+      assertEquals(backend.values.has("broken-shape"), false);
+    });
+
+    it("propagates authoritative corruption-eviction failures", async () => {
+      const backend = new FakeApiBackend();
+      backend.values.set("broken", "{not-json");
+      backend.failDelete = new Error("eviction unavailable");
+      const store = storeWith(backend, { enableLocalCache: false });
+
+      await assertRejects(() => store.get("broken"), Error, "eviction unavailable");
+      assertEquals(backend.values.has("broken"), true);
+    });
+
+    it("fails reads open when the distributed backend is unavailable", async () => {
+      const backend = new FakeApiBackend();
+      backend.failGet = new Error("read unavailable");
+      const store = storeWith(backend, { enableLocalCache: false });
+
+      assertEquals(await store.get("page"), undefined);
+    });
+
+    it("commits distributed writes before exposing them locally", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      await store.set("page", payload("old"));
+      backend.failSet = new Error("write unavailable");
+
+      await assertRejects(() => store.set("page", payload("new")), Error, "write unavailable");
+
+      assertEquals((await store.get("page"))?.result.html, "old");
+      assertEquals(JSON.parse(backend.values.get("page")!).result.html, "old");
+    });
+
+    it("rejects streams instead of reporting a successful no-op", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      const streamed = payload("stream");
+      streamed.result.stream = new ReadableStream();
+
+      await assertRejects(() => store.set("stream", streamed), TypeError, "stream");
+      assertEquals(backend.values.has("stream"), false);
+    });
+
+    it("extends the authoritative TTL through staleUntil", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend, { ttlSeconds: 5 });
       const staleUntil = Date.now() + 60_000;
-      const payload = {
-        result: { html: "<p>stale</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now() - 10_000,
-        expiresAt: Date.now() - 1,
-        staleUntil,
-      } as any;
 
+      await store.set(
+        "page",
+        payload("stale", {
+          expiresAt: Date.now() + 5_000,
+          staleUntil,
+        }),
+      );
+
+      assertEquals(backend.setTtls.length, 1);
+      assertEquals(backend.setTtls[0]! > 5, true);
+    });
+
+    it("retains local stale data for the full stale window", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend, { ttlSeconds: 1 });
+      const originalNow = Date.now;
+      let now = 10_000;
+      Date.now = () => now;
       try {
-        await store.set("distributed-stale-key", payload);
+        await store.set(
+          "page",
+          payload("stale", {
+            storedAt: now,
+            expiresAt: now + 500,
+            staleUntil: now + 60_000,
+          }),
+        );
+        backend.values.delete("page");
+        now += 2_000;
 
-        assertEquals(receivedTtl !== undefined && receivedTtl > 5, true);
-        assertEquals(receivedValue.includes('"staleUntil"'), true);
+        assertEquals((await store.get("page"))?.result.html, "stale");
+        assertEquals(backend.getCount, 0);
       } finally {
-        await store.destroy();
-        await server.shutdown();
-        if (previousApiBaseUrl === undefined) {
-          Deno.env.delete("VERYFRONT_API_BASE_URL");
-        } else {
-          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
-        }
-        if (previousApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
-        }
-        if (originalAdapter === undefined) {
-          delete globals.__vf_multi_project_adapter;
-        } else {
-          globals.__vf_multi_project_adapter = originalAdapter;
-        }
+        Date.now = originalNow;
       }
     });
 
-    it("expires local entries without payload expiresAt using store TTL", async () => {
-      await withStoreTtlEnabled(async () => {
-        const store = new APICacheStore({ enableLocalCache: true, ttlSeconds: 1 });
-        try {
-          const payload = {
-            result: {
-              html: "<p>ttl</p>",
-              frontmatter: {},
-              headings: [],
-              stream: null,
-            },
-            storedAt: Date.now(),
-          } as any;
+    it("turns an already-retention-expired write into a delete", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      await store.set("page", payload("old"));
+      const setCount = backend.setTtls.length;
+      const now = Date.now();
 
-          await store.set("ttl-key", payload);
-          await new Promise((resolve) => setTimeout(resolve, 1_100));
+      await store.set(
+        "page",
+        payload("expired", { storedAt: now - 2, expiresAt: now - 1 }),
+      );
 
-          const result = await store.get("ttl-key");
-          assertEquals(result, undefined);
-        } finally {
-          await store.destroy();
-        }
+      assertEquals(backend.values.has("page"), false);
+      assertEquals(backend.setTtls.length, setCount);
+      assertEquals(store.getStats().size, 0);
+    });
+  });
+
+  describe("initialization and invalidation", () => {
+    it("singleflights concurrent initialization", async () => {
+      const opening = deferred<CacheBackend>();
+      const backend = new FakeApiBackend();
+      let opens = 0;
+      const store = new APICacheStore({
+        enableLocalCache: false,
+        backendFactory: () => {
+          opens++;
+          return opening.promise;
+        },
       });
+
+      const first = store.get("a");
+      const second = store.get("b");
+      await Promise.resolve();
+      assertEquals(opens, 1);
+      opening.resolve(backend);
+      await Promise.all([first, second]);
+      assertEquals(opens, 1);
+    });
+
+    it("resets a rejected initialization promise and recovers", async () => {
+      const backend = new FakeApiBackend();
+      let opens = 0;
+      const store = new APICacheStore({
+        backendFactory: () => {
+          opens++;
+          return opens === 1 ? Promise.reject(new Error("init failed")) : Promise.resolve(backend);
+        },
+      });
+
+      await assertRejects(() => store.set("page", payload("first")), Error, "init failed");
+      await store.set("page", payload("recovered"));
+      assertEquals(opens, 2);
+      assertEquals((await store.get("page"))?.result.html, "recovered");
+    });
+
+    it("propagates delete failures while removing stale local copies", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      await store.set("page", payload("value"));
+      backend.failDelete = new Error("delete unavailable");
+
+      await assertRejects(() => store.delete("page"), Error, "delete unavailable");
+      assertEquals(store.getStats().size, 0);
+    });
+
+    it("clears distributed and local entries by prefix and namespace", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      await store.set("project:a", payload("a"));
+      await store.set("project:b", payload("b"));
+      await store.set("other:c", payload("c"));
+
+      assertEquals(await store.deleteByPrefix("project:"), 4);
+      assertEquals(backend.values.has("project:a"), false);
+      assertEquals(backend.values.has("other:c"), true);
+
+      await store.clear();
+      assertEquals(backend.patterns.at(-1), "*");
+      assertEquals(backend.values.size, 0);
+      assertEquals(store.getStats().size, 0);
+    });
+
+    it("escapes glob metacharacters when deleting a literal prefix", async () => {
+      const backend = new FakeApiBackend();
+      const store = storeWith(backend);
+      const prefix = "route:[slug]?*\\";
+      await store.set(`${prefix}page`, payload("match"));
+      await store.set("route:other", payload("keep"));
+
+      assertEquals(await store.deleteByPrefix(prefix), 2);
+      assertEquals(backend.patterns.at(-1), `${escapeRedisCacheGlobLiteral(prefix)}*`);
+      assertEquals(backend.values.has(`${prefix}page`), false);
+      assertEquals(backend.values.has("route:other"), true);
+    });
+
+    it("rejects unsupported and failed distributed bulk invalidation", async () => {
+      const backend = new FakeApiBackend();
+      const withoutPattern = new Proxy(backend, {
+        get(target, property) {
+          if (property === "delByPattern") return undefined;
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as CacheBackend;
+      const unsupportedStore = storeWith(withoutPattern);
+      await unsupportedStore.set("page", payload("value"));
+      await assertRejects(
+        () => unsupportedStore.clear(),
+        TypeError,
+        "does not support clearing",
+      );
+      assertEquals(unsupportedStore.getStats().size, 0);
+
+      const failingBackend = new FakeApiBackend();
+      const failingStore = storeWith(failingBackend);
+      await failingStore.set("project:a", payload("value"));
+      failingBackend.failPatternDelete = new Error("bulk delete unavailable");
+      await assertRejects(
+        () => failingStore.deleteByPrefix("project:"),
+        Error,
+        "bulk delete unavailable",
+      );
+      assertEquals(failingStore.getStats().size, 0);
+    });
+
+    it("rejects operations after destroy", async () => {
+      const store = storeWith(new FakeApiBackend());
+      await store.destroy();
+      await store.destroy();
+
+      await assertRejects(() => store.get("page"), Error, "has been destroyed");
+      await assertRejects(() => store.set("page", payload("value")), Error, "has been destroyed");
+      await assertRejects(() => store.delete("page"), Error, "has been destroyed");
     });
   });
 });

@@ -20,20 +20,20 @@ import { GoogleFonts } from "veryfront/fonts";
     { name: "Inter", weights: [400, 500, 700], variable: "--font-inter" },
     { name: "Fira Code", weights: [400], variable: "--font-mono" },
   ]}
-/>
+/>;
 ```
 
 ## Exports
 
 ### Components
 
-| Name | Description | Source |
-|------|-------------|--------|
+| Name          | Description          | Source                                                                                       |
+| ------------- | -------------------- | -------------------------------------------------------------------------------------------- |
 | `GoogleFonts` | Render Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L88) |
 
 ### Types
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `Font` | Public API contract for font. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L23) |
+| Name               | Description                     | Source                                                                                       |
+| ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Font`             | Public API contract for font.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L23) |
 | `GoogleFontsProps` | Props accepted by Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L31) |

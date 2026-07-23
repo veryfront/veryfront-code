@@ -46,6 +46,7 @@ export const getToolCallPartWithArgsSchema = defineSchema((v) =>
     args: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -57,6 +58,7 @@ export const getToolCallPartWithInputSchema = defineSchema((v) =>
     input: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 

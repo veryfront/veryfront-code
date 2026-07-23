@@ -29,6 +29,9 @@ import { compileMarkdown } from "./compiler/markdown-compile.ts";
 import { getRehypePlugins, getRemarkPlugins } from "./plugins/plugin-loader.ts";
 
 class MdxContentProcessor implements ContentProcessor {
+  readonly cacheIdentity = "@veryfront/ext-content-mdx@0.1.0";
+  readonly resultIsolation = "structured-clone" as const;
+
   compileMdx(options: ContentCompileOptions): Promise<ContentProcessingResult> {
     return compileMdx(options);
   }

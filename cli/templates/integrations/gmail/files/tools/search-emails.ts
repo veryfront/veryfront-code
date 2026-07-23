@@ -7,20 +7,22 @@ export default tool({
   id: "search-emails",
   description:
     "Search emails using Gmail's search syntax. Supports queries like 'from:person@email.com', 'subject:meeting', 'after:2024/01/01', etc.",
-  inputSchema: defineSchema((v) => v.object({
-    query: v
-      .string()
-      .min(1)
-      .describe(
-        "Search query using Gmail search syntax (e.g., 'from:boss@company.com subject:urgent')",
-      ),
-    maxResults: v
-      .number()
-      .min(1)
-      .max(50)
-      .default(10)
-      .describe("Maximum number of results to return"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v
+        .string()
+        .min(1)
+        .describe(
+          "Search query using Gmail search syntax (e.g., 'from:boss@company.com subject:urgent')",
+        ),
+      maxResults: v
+        .number()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Maximum number of results to return"),
+    })
+  )(),
   execute: async ({ query, maxResults }, context) => {
     const userId = resolveUserId(context);
     const gmail = createGmailClient(userId);

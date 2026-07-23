@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
 import type { CachePayload, CacheStore } from "../cache/types.ts";
@@ -85,6 +85,15 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
 
 describe("rendering/shared/context-aware-cache", () => {
   describe("ContextAwareCacheCoordinator", () => {
+    it("rejects invalid TTL/stale durations", () => {
+      for (const ttlMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => new ContextAwareCacheCoordinator({ ttlMs }), RangeError, "ttlMs");
+      }
+      for (const staleMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => new ContextAwareCacheCoordinator({ staleMs }), RangeError, "staleMs");
+      }
+    });
+
     it("should create with default options", () => {
       const cache = new ContextAwareCacheCoordinator();
       assertEquals(cache instanceof ContextAwareCacheCoordinator, true);
@@ -107,6 +116,27 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(typeof result.lookupDurationMs, "number");
       assertEquals(result.cachedResult, undefined);
       assertEquals(typeof result.cacheKey, "string");
+    });
+
+    it("evicts malformed store values and reports a miss", async () => {
+      let deletedKey: string | undefined;
+      const store: CacheStore = {
+        get: () => Promise.resolve({} as CachePayload),
+        set: () => Promise.resolve(),
+        delete: (key) => {
+          deletedKey = key;
+          return Promise.resolve();
+        },
+        clear: () => Promise.resolve(),
+        destroy: () => Promise.resolve(),
+      };
+      const cache = new ContextAwareCacheCoordinator({ store });
+
+      const lookup = await cache.checkCache("malformed", makeMockCtx());
+
+      assertEquals(lookup.hit, false);
+      assertEquals(lookup.status, "miss");
+      assertEquals(deletedKey, lookup.cacheKey);
     });
 
     it("should persist and retrieve cached results", async () => {
@@ -360,6 +390,40 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(afterClear.hit, false);
     });
 
+    it("clears a slug without deleting sibling slug prefixes", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const result = (html: string) => ({
+        html,
+        frontmatter: {},
+        headings: [],
+        stream: null,
+      });
+      await cache.persistResult(result("a"), "a", ctx);
+      await cache.persistResult(result("about"), "about", ctx);
+
+      await cache.clearSlug("a", ctx);
+
+      assertEquals((await cache.checkCache("a", ctx)).hit, false);
+      assertEquals((await cache.checkCache("about", ctx)).cachedResult?.html, "about");
+    });
+
+    it("encodes project IDs for project-scoped invalidation", async () => {
+      const store = createInMemoryStore();
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const projectId = "project:west/one";
+      const ctx = makeMockCtx({
+        projectId,
+        cachePrefix: `${encodeURIComponent(projectId)}:production:release-1`,
+      });
+      await cache.persistResult({ html: "value", frontmatter: {}, stream: null }, "page", ctx);
+
+      await cache.clearForProject(projectId);
+
+      assertEquals((await cache.checkCache("page", ctx)).hit, false);
+    });
+
     it("should clear slug without deleteByPrefix (fallback to individual deletes)", async () => {
       // Create a store WITHOUT deleteByPrefix
       const data = new Map<string, CachePayload>();
@@ -411,6 +475,34 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(lookup.hit, false);
     });
 
+    it("rejects unsupported scoped invalidation instead of reporting success", async () => {
+      const store: CacheStore = {
+        get: () => Promise.resolve(undefined),
+        set: () => Promise.resolve(),
+        delete: () => Promise.resolve(),
+        clear: () => Promise.resolve(),
+        destroy: () => Promise.resolve(),
+      };
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+
+      await assertRejects(
+        () => cache.clearForContext(ctx),
+        TypeError,
+        "context-scoped invalidation",
+      );
+      await assertRejects(
+        () => cache.clearForProject(ctx.projectId),
+        TypeError,
+        "project-scoped invalidation",
+      );
+      await assertRejects(
+        () => cache.clearForProject(""),
+        TypeError,
+        "non-empty projectId",
+      );
+    });
+
     it("should return stats with populated store that has size method", async () => {
       const baseStore = createInMemoryStore();
       const store = {
@@ -458,25 +550,56 @@ describe("rendering/shared/context-aware-cache", () => {
       const cache = new ContextAwareCacheCoordinator({ store });
       const ctx = makeMockCtx();
 
+      const nestedFrontmatter = { seo: { title: "Original" } };
+      const node = { attrs: { className: "original" } };
       const original = {
         html: "<h1>Original</h1>",
-        frontmatter: { title: "Original" },
-        headings: [{ level: 1, text: "Original" }],
+        frontmatter: nestedFrontmatter,
+        headings: [{ id: "original", level: 1, text: "Original" }],
+        nodeMap: new Map([[1, node]]),
         stream: null,
         ssrHash: "orig",
       };
 
       await cache.persistResult(original as any, "clone-test", ctx);
+      nestedFrontmatter.seo.title = "Mutated input";
+      node.attrs.className = "mutated-input";
 
       const lookup = await cache.checkCache("clone-test", ctx);
       assertEquals(lookup.hit, true);
+      assertEquals(
+        (lookup.cachedResult?.frontmatter as unknown as { seo: { title: string } }).seo.title,
+        "Original",
+      );
+      assertEquals(
+        (lookup.cachedResult?.nodeMap?.get(1) as { attrs: { className: string } }).attrs
+          .className,
+        "original",
+      );
 
       if (lookup.cachedResult) {
         lookup.cachedResult.html = "MUTATED";
+        (lookup.cachedResult.frontmatter as unknown as { seo: { title: string } }).seo.title =
+          "Mutated output";
+        if (lookup.cachedResult.headings?.[0]) {
+          lookup.cachedResult.headings[0].text = "Mutated output";
+        }
+        (lookup.cachedResult.nodeMap?.get(1) as { attrs: { className: string } }).attrs.className =
+          "mutated-output";
       }
 
       const reLookup = await cache.checkCache("clone-test", ctx);
       assertEquals(reLookup.cachedResult?.html, "<h1>Original</h1>");
+      assertEquals(
+        (reLookup.cachedResult?.frontmatter as unknown as { seo: { title: string } }).seo.title,
+        "Original",
+      );
+      assertEquals(reLookup.cachedResult?.headings?.[0]?.text, "Original");
+      assertEquals(
+        (reLookup.cachedResult?.nodeMap?.get(1) as { attrs: { className: string } }).attrs
+          .className,
+        "original",
+      );
     });
   });
 });

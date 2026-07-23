@@ -9,12 +9,14 @@ export type HmrClientMessageSocket = {
   close(code?: number, reason?: string): void;
 };
 
+const utf8Encoder = new TextEncoder();
+
 type HmrClientRateLimiter<TSocket> = {
   check(socket: TSocket): boolean;
 };
 
 export function getHmrWebSocketMessageSize(data: unknown): number {
-  if (typeof data === "string") return data.length;
+  if (typeof data === "string") return utf8Encoder.encode(data).byteLength;
   if (data instanceof ArrayBuffer) return data.byteLength;
   if (ArrayBuffer.isView(data)) return data.byteLength;
   if (data instanceof Blob) return data.size;

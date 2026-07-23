@@ -13,8 +13,12 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils";
-import { getSpecificityScore, parseRoute } from "#veryfront/routing/matchers/route-parser.ts";
-import { matchRoute } from "#veryfront/routing/matchers/route-matcher.ts";
+import { parseRoute } from "#veryfront/routing/matchers/route-parser.ts";
+import { matchRouteWithSpecificity } from "#veryfront/routing/matchers/route-matcher.ts";
+import {
+  compareRouteSpecificity,
+  type RouteSpecificity,
+} from "#veryfront/utils/route-path-utils.ts";
 
 const logger = baseLogger.component("get-entity-by-slug");
 
@@ -419,7 +423,11 @@ async function findDynamicPageEntity(
   pagesDirectory = "pages",
 ): Promise<EntityInfo | null> {
   const slugParts = normalizedSlug === "" ? [] : normalizedSlug.split("/");
-  const candidates: Array<{ path: string; pattern: string; specificity: number }> = [];
+  const candidates: Array<{
+    path: string;
+    pattern: string;
+    specificity: RouteSpecificity;
+  }> = [];
 
   // Begin at the slug's own directory so an optional catch-all can match zero
   // remaining segments, e.g. `/optional` resolving
@@ -445,12 +453,13 @@ async function findDynamicPageEntity(
         const routeStem = entry.name.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
         const routePattern = parentPath ? `${parentPath}/${routeStem}` : routeStem;
         const route = parseRoute(routePattern, candidatePath);
-        if (!matchRoute(normalizedSlug, route)) continue;
+        const match = matchRouteWithSpecificity(normalizedSlug, route);
+        if (!match) continue;
 
         candidates.push({
           path: candidatePath,
           pattern: routePattern,
-          specificity: getSpecificityScore(route),
+          specificity: match.specificity,
         });
       }
     } catch (error) {
@@ -461,12 +470,12 @@ async function findDynamicPageEntity(
 
   if (candidates.length === 0) return null;
 
-  const bestSpecificity = candidates.reduce(
-    (highest, candidate) => Math.max(highest, candidate.specificity),
-    Number.NEGATIVE_INFINITY,
+  const bestCandidate = candidates.reduce(
+    (best, candidate) =>
+      compareRouteSpecificity(candidate.specificity, best.specificity) > 0 ? candidate : best,
   );
   const bestCandidates = candidates.filter(
-    (candidate) => candidate.specificity === bestSpecificity,
+    (candidate) => compareRouteSpecificity(candidate.specificity, bestCandidate.specificity) === 0,
   );
 
   if (bestCandidates.length !== 1) {

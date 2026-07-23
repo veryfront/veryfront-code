@@ -8,6 +8,13 @@ const logger = rendererLogger.component("module-loader");
 
 type PathResolver = (path: string) => string;
 
+function esmArtifactCacheKey(tmpDir: string, url: string): string {
+  // The pod-level ESM cache is shared by every renderer. A URL alone is not a
+  // usable artifact identity because its file lives inside a project/source
+  // specific temporary directory.
+  return JSON.stringify([tmpDir, url]);
+}
+
 /**
  * Specifiers `code` imports statically, as opposed to through `import(...)` or
  * merely mentioning in a string.
@@ -77,8 +84,22 @@ export async function fetchEsmModule(
   localAdapter: RuntimeAdapter,
   esmCache: Map<string, string>,
 ): Promise<string> {
-  const cached = esmCache.get(url);
-  if (cached) return cached;
+  const cacheKey = esmArtifactCacheKey(tmpDir, url);
+  const cached = esmCache.get(cacheKey);
+  if (cached) {
+    try {
+      if (await localAdapter.fs.exists(cached)) return cached;
+    } catch (error) {
+      logger.debug("Could not validate cached esm.sh artifact", {
+        url,
+        artifactPath: cached,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // The temporary directory may have been cleaned independently of the
+    // process-wide LRU. Never return a path that no longer exists.
+    esmCache.delete(cacheKey);
+  }
 
   logger.debug("Fetching esm.sh module:", url);
 
@@ -146,6 +167,6 @@ export async function fetchEsmModule(
   const tempFilePath = `${tmpDir}/esm-${hash}.js`;
   await localAdapter.fs.writeFile(tempFilePath, code);
 
-  esmCache.set(url, tempFilePath);
+  esmCache.set(cacheKey, tempFilePath);
   return tempFilePath;
 }
