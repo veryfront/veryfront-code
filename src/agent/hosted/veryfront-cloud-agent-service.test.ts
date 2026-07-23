@@ -158,9 +158,9 @@ Deno.test("hosted child project agents request only materialized skill and deleg
   );
 });
 
-Deno.test("hosted scoped delegate tools opt out of legacy invoke_agent", () => {
+Deno.test("hosted scoped delegate tools replace legacy invoke_agent", () => {
   assertEquals(
-    veryfrontCloudAgentServiceInternals.shouldExposeLegacyInvokeAgent({
+    veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
       id: "job-submission-orchestrator",
       name: "Job submission orchestrator",
       description: "Coordinate job submission specialists.",
@@ -174,10 +174,18 @@ Deno.test("hosted scoped delegate tools opt out of legacy invoke_agent", () => {
         "get_file",
       ],
     }),
-    false,
+    {
+      kind: "scoped",
+      delegateIds: [
+        "ingestion-agent",
+        "extraction-agent",
+        "enrichment-agent",
+        "submission-agent",
+      ],
+    },
   );
   assertEquals(
-    veryfrontCloudAgentServiceInternals.shouldExposeLegacyInvokeAgent({
+    veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
       id: "legacy-agent",
       name: "Legacy agent",
       description: "Uses legacy delegation.",
@@ -185,7 +193,17 @@ Deno.test("hosted scoped delegate tools opt out of legacy invoke_agent", () => {
       skills: ["legacy-workflow"],
       tools: ["get_file"],
     }),
-    true,
+    { kind: "legacy" },
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedDelegationBinding({
+      id: "no-delegation-agent",
+      name: "No delegation agent",
+      description: "Cannot delegate.",
+      instructions: "Work directly.",
+      delegates: [],
+    }),
+    { kind: "scoped", delegateIds: [] },
   );
 });
 
