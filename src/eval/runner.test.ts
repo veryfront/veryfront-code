@@ -66,6 +66,31 @@ describe("eval/runner", () => {
     ]);
   });
 
+  it("matches an agent's strict JSON text as structured output", async () => {
+    const definition = evalAgent({
+      id: "eval:structured-answer",
+      target: "agent:orchestrator",
+      dataset: datasets.inline([{
+        id: "run-1",
+        input: "Report terminal counts",
+        reference: { claimed_elsewhere: 2, failed: 0, succeeded: 1 },
+      }]),
+      metrics: [metrics.answer.jsonMatch().gate()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({
+          text: '{"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        }),
+      },
+    });
+
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.summary.failed, 0);
+    assertEquals(report.summary.metrics[0]?.name, "answer.jsonMatch");
+  });
+
   it("records check assertions alongside metric results", async () => {
     const definition = evalAgent({
       id: "eval:check-api",
@@ -330,6 +355,28 @@ describe("eval/runner", () => {
         metadata: { durationMs: 12 },
       },
     ]);
+  });
+
+  it("keeps direct tool string outputs as JSON string values", async () => {
+    const definition = evalTool({
+      id: "eval:string-tool",
+      target: "tool:string_value",
+      dataset: datasets.inline([{
+        id: "string-1",
+        input: null,
+        reference: "not-json",
+      }]),
+      metrics: [metrics.answer.jsonMatch().gate()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async () => ({ output: "not-json" }),
+      },
+    });
+
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.summary.failed, 0);
   });
 
   it("preserves mapped undefined tool input in direct tool traces", async () => {
