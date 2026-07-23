@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { extractDescriptionText, getIssue } from "../../lib/jira-client.ts";
+import { createJiraClient } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "get-issue",
@@ -11,8 +12,10 @@ export default tool({
       issueKey: v.string().describe('The issue key (e.g., "PROJ-123") or ID'),
     })
   )(),
-  async execute({ issueKey }) {
-    const issue = await getIssue(issueKey);
+  async execute({ issueKey }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createJiraClient(userId);
+    const issue = await client.getIssue(issueKey);
     const { fields } = issue;
 
     const priority = fields.priority
@@ -39,7 +42,7 @@ export default tool({
       key: issue.key,
       id: issue.id,
       summary: fields.summary,
-      description: extractDescriptionText(fields.description),
+      description: client.extractDescriptionText(fields.description),
       status: fields.status.name,
       statusCategory: fields.status.statusCategory.name,
       type: {

@@ -886,4 +886,91 @@ describe("WebSocketManager", () => {
 
     manager.dispose();
   });
+
+  it("awaits distributed CSS invalidation before reload, acknowledgement, and eviction", async () => {
+    const events: string[] = [];
+    const cssStarted = Promise.withResolvers<void>();
+    const releaseCss = Promise.withResolvers<void>();
+    const reloadTriggered = Promise.withResolvers<void>();
+    const manager = createWebSocketManager({
+      invalidationCallbacks: {
+        clearProjectCSSCache: async () => {
+          events.push("css:start");
+          cssStarted.resolve();
+          await releaseCss.promise;
+          events.push("css:done");
+        },
+        triggerReload: () => {
+          events.push("reload");
+          reloadTriggered.resolve();
+        },
+        evictCurrentAdapter: () => events.push("evict"),
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.send = () => events.push("ack");
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await cssStarted.promise;
+    await flushMicrotasks();
+    assertEquals(events, ["css:start"]);
+
+    releaseCss.resolve();
+    await reloadTriggered.promise;
+    await flushMicrotasks();
+    assertEquals(events, ["css:start", "css:done", "reload", "ack", "evict"]);
+    manager.dispose();
+  });
+
+  it("fails closed when distributed CSS invalidation rejects", async () => {
+    let reloadCalls = 0;
+    let evictionCalls = 0;
+    const cssCalled = Promise.withResolvers<void>();
+    const manager = createWebSocketManager({
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          cssCalled.resolve();
+          return Promise.reject(new Error("distributed CSS unavailable"));
+        },
+        triggerReload: () => {
+          reloadCalls++;
+        },
+        evictCurrentAdapter: () => {
+          evictionCalls++;
+        },
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await cssCalled.promise;
+    await flushMicrotasks();
+
+    assertEquals(reloadCalls, 0);
+    assertEquals(evictionCalls, 0);
+    assertEquals(manager.getPokeMetrics().invalidationsTriggered, 0);
+    manager.dispose();
+  });
 });

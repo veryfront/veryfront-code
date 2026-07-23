@@ -49,11 +49,11 @@ export const state: MetricsState = {
 };
 
 export function getSSRBoundaries(): number[] {
-  return SSR_BOUNDARIES_MS;
+  return [...SSR_BOUNDARIES_MS];
 }
 
 export function getContentNetworkBoundaries(): number[] {
-  return CONTENT_NETWORK_BOUNDARIES_MS;
+  return [...CONTENT_NETWORK_BOUNDARIES_MS];
 }
 
 export function createSnapshot(): VeryfrontMetrics {

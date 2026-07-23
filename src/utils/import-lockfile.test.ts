@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { resolve } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import {
   computeIntegrity,
   createEmptyLockfile,
@@ -31,6 +34,50 @@ function createMockFS(files: Record<string, string> = {}): FSAdapter {
       return Promise.resolve();
     },
   };
+}
+
+function createAtomicMockFS(files: Record<string, string> = {}): {
+  adapter: FSAdapter;
+  failRename: { value: boolean };
+  renames: Array<{ source: string; destination: string }>;
+  store: Map<string, string>;
+} {
+  const store = new Map<string, string>(Object.entries(files));
+  const failRename = { value: false };
+  const renames: Array<{ source: string; destination: string }> = [];
+  const adapter: FSAdapter = {
+    readFile(path) {
+      const content = store.get(path);
+      return content === undefined
+        ? Promise.reject(new Error(`ENOENT: ${path}`))
+        : Promise.resolve(content);
+    },
+    writeFile(path, content) {
+      store.set(path, content);
+      return Promise.resolve();
+    },
+    exists: (path) => Promise.resolve(store.has(path)),
+    remove(path) {
+      store.delete(path);
+      return Promise.resolve();
+    },
+    writeFileExclusive(path, content) {
+      if (store.has(path)) return Promise.resolve(false);
+      store.set(path, content);
+      return Promise.resolve(true);
+    },
+    rename(source, destination) {
+      if (failRename.value) return Promise.reject(new Error("rename failed"));
+      const content = store.get(source);
+      if (content === undefined) return Promise.reject(new Error(`ENOENT: ${source}`));
+      renames.push({ source, destination });
+      store.set(destination, content);
+      store.delete(source);
+      return Promise.resolve();
+    },
+  };
+
+  return { adapter, failRename, renames, store };
 }
 
 describe("import-lockfile", () => {
@@ -156,6 +203,19 @@ describe("import-lockfile", () => {
   });
 
   describe("createLockfileManager", () => {
+    it("resolves relative project directories from the runtime working directory", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("relative-project", fs);
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
+      await mgr.flush();
+
+      const expectedPath = resolve(cwd(), "relative-project", "veryfront.lock");
+      assertEquals(JSON.parse(await fs.readFile(expectedPath)).version, 1);
+    });
+
     it("should return null for read when no lockfile exists", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
       assertEquals(await mgr.read(), null);
@@ -201,6 +261,173 @@ describe("import-lockfile", () => {
       assertEquals(await mgr.has(specifier), true);
     });
 
+    it("should not treat Object.prototype properties as lockfile entries", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
+
+      assertEquals(await mgr.has("toString"), false);
+      assertEquals(await mgr.get("toString"), null);
+    });
+
+    it("should persist special property names as ordinary specifiers", async () => {
+      const fs = createMockFS();
+      const entry = { resolved: "https://cdn.com/proto.ts", integrity: "sha256-proto" };
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.set("__proto__", entry);
+      await mgr.flush();
+
+      const reloaded = createLockfileManager("/project", fs);
+      assertEquals(await reloaded.has("__proto__"), true);
+      assertEquals(await reloaded.get("__proto__"), entry);
+    });
+
+    it("should preserve concurrent first writes", async () => {
+      const fs = createMockFS();
+      const pendingExists: Array<(exists: boolean) => void> = [];
+      fs.exists = () =>
+        new Promise<boolean>((resolve) => {
+          pendingExists.push(resolve);
+        });
+      const mgr = createLockfileManager("/project", fs);
+
+      const first = mgr.set("https://cdn.com/a.ts", {
+        resolved: "https://cdn.com/a.ts",
+        integrity: "sha256-a",
+      });
+      const second = mgr.set("https://cdn.com/b.ts", {
+        resolved: "https://cdn.com/b.ts",
+        integrity: "sha256-b",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (const resolve of pendingExists) resolve(false);
+      await Promise.all([first, second]);
+      fs.exists = () => Promise.resolve(false);
+      await mgr.flush();
+
+      const written = JSON.parse(await fs.readFile("/project/veryfront.lock"));
+      assertEquals(Object.keys(written.imports), [
+        "https://cdn.com/a.ts",
+        "https://cdn.com/b.ts",
+      ]);
+    });
+
+    it("merges flushes from independent managers for the same canonical path", async () => {
+      const fs = createMockFS();
+      const first = createLockfileManager("/project/./nested/..", fs);
+      const second = createLockfileManager("/project", fs);
+
+      await Promise.all([
+        first.set("https://cdn.com/a.ts", {
+          resolved: "https://cdn.com/a.ts",
+          integrity: "sha256-a",
+        }),
+        second.set("https://cdn.com/b.ts", {
+          resolved: "https://cdn.com/b.ts",
+          integrity: "sha256-b",
+        }),
+      ]);
+      await Promise.all([first.flush(), second.flush()]);
+
+      const written = JSON.parse(await fs.readFile("/project/veryfront.lock"));
+      assertEquals(Object.keys(written.imports), [
+        "https://cdn.com/a.ts",
+        "https://cdn.com/b.ts",
+      ]);
+    });
+
+    it("writes through a same-directory temporary file and releases its process lock", async () => {
+      const { adapter, renames, store } = createAtomicMockFS();
+      const mgr = createLockfileManager("/project", adapter);
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-mod",
+      });
+
+      await mgr.flush();
+
+      assertEquals(renames.length, 1);
+      assertEquals(renames[0]?.destination, "/project/veryfront.lock");
+      assertEquals(renames[0]?.source.startsWith("/project/veryfront.lock.tmp."), true);
+      assertEquals(store.has("/project/veryfront.lock.lock"), false);
+      assertEquals([...store.keys()].some((path) => path.includes(".tmp.")), false);
+    });
+
+    it("cleans temporary and process-lock files after an atomic rename failure", async () => {
+      const original = {
+        version: 1,
+        imports: {
+          "https://cdn.com/original.ts": {
+            resolved: "https://cdn.com/original.ts",
+            integrity: "sha256-original",
+          },
+        },
+      };
+      const { adapter, failRename, store } = createAtomicMockFS({
+        "/project/veryfront.lock": JSON.stringify(original),
+      });
+      const mgr = createLockfileManager("/project", adapter);
+      await mgr.set("https://cdn.com/new.ts", {
+        resolved: "https://cdn.com/new.ts",
+        integrity: "sha256-new",
+      });
+      failRename.value = true;
+
+      await assertRejects(() => mgr.flush(), Error, "rename failed");
+
+      assertEquals(JSON.parse(store.get("/project/veryfront.lock")!), original);
+      assertEquals(store.has("/project/veryfront.lock.lock"), false);
+      assertEquals([...store.keys()].some((path) => path.includes(".tmp.")), false);
+
+      failRename.value = false;
+      await mgr.flush();
+      const recovered = JSON.parse(store.get("/project/veryfront.lock")!);
+      assertEquals(Object.keys(recovered.imports), [
+        "https://cdn.com/new.ts",
+        "https://cdn.com/original.ts",
+      ]);
+    });
+
+    it("coordinates independent managers through the production filesystem adapter", async () => {
+      const systemFs = createFileSystem();
+      const projectDir = await systemFs.makeTempDir({ prefix: "veryfront-lockfile-test-" });
+      try {
+        const first = createLockfileManager(projectDir);
+        const second = createLockfileManager(`${projectDir}/.`);
+        await Promise.all([
+          first.set("https://cdn.com/a.ts", {
+            resolved: "https://cdn.com/a.ts",
+            integrity: "sha256-a",
+          }),
+          second.set("https://cdn.com/b.ts", {
+            resolved: "https://cdn.com/b.ts",
+            integrity: "sha256-b",
+          }),
+        ]);
+        await Promise.all([first.flush(), second.flush()]);
+
+        const reloaded = createLockfileManager(projectDir);
+        assertEquals(Object.keys((await reloaded.read())?.imports ?? {}), [
+          "https://cdn.com/a.ts",
+          "https://cdn.com/b.ts",
+        ]);
+      } finally {
+        await systemFs.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should reject malformed lockfile data", async () => {
+      const fs = createMockFS({
+        "/project/veryfront.lock": JSON.stringify({ version: 1, imports: [] }),
+      });
+      const mgr = createLockfileManager("/project", fs);
+
+      await assertRejects(() => mgr.read(), Error, "Invalid lockfile");
+    });
+
     it("should clear lockfile data", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
       const specifier = "https://cdn.com/mod.ts";
@@ -230,6 +457,90 @@ describe("import-lockfile", () => {
 
       await mgr.flush();
       assertEquals(await fs.exists("/project/veryfront.lock"), false);
+    });
+
+    it("serializes flushes so an older write cannot overwrite newer entries", async () => {
+      const store = new Map<string, string>();
+      let releaseFirstWrite: (() => void) | undefined;
+      const firstWriteGate = new Promise<void>((resolve) => {
+        releaseFirstWrite = resolve;
+      });
+      let writeCount = 0;
+      let activeWrites = 0;
+      let maxActiveWrites = 0;
+      const fs: FSAdapter = {
+        readFile: (path) => Promise.resolve(store.get(path)!),
+        exists: (path) => Promise.resolve(store.has(path)),
+        writeFile: async (path, content) => {
+          const writeNumber = ++writeCount;
+          activeWrites++;
+          maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+          if (writeNumber === 1) await firstWriteGate;
+          store.set(path, content);
+          activeWrites--;
+        },
+      };
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.set("https://cdn.com/a.ts", {
+        resolved: "https://cdn.com/a.ts",
+        integrity: "sha256-a",
+      });
+      const firstFlush = mgr.flush();
+      await Promise.resolve();
+      await mgr.set("https://cdn.com/b.ts", {
+        resolved: "https://cdn.com/b.ts",
+        integrity: "sha256-b",
+      });
+      const secondFlush = mgr.flush();
+      await Promise.resolve();
+      releaseFirstWrite?.();
+      await Promise.all([firstFlush, secondFlush]);
+
+      const written = JSON.parse(store.get("/project/veryfront.lock")!);
+      assertEquals(Object.keys(written.imports), [
+        "https://cdn.com/a.ts",
+        "https://cdn.com/b.ts",
+      ]);
+      assertEquals(maxActiveWrites, 1);
+    });
+
+    it("does not let an in-flight flush recreate a cleared lockfile", async () => {
+      const store = new Map<string, string>();
+      let releaseWrite: (() => void) | undefined;
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      let notifyWriteStarted: (() => void) | undefined;
+      const writeStarted = new Promise<void>((resolve) => {
+        notifyWriteStarted = resolve;
+      });
+      const fs: FSAdapter = {
+        readFile: (path) => Promise.resolve(store.get(path)!),
+        exists: (path) => Promise.resolve(store.has(path)),
+        writeFile: async (path, content) => {
+          notifyWriteStarted?.();
+          await writeGate;
+          store.set(path, content);
+        },
+        remove: (path) => {
+          store.delete(path);
+          return Promise.resolve();
+        },
+      };
+      const mgr = createLockfileManager("/project", fs);
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-mod",
+      });
+
+      const flush = mgr.flush();
+      await writeStarted;
+      const clear = mgr.clear();
+      releaseWrite?.();
+      await Promise.all([flush, clear]);
+
+      assertEquals(store.has("/project/veryfront.lock"), false);
     });
 
     it("should reset to empty lockfile on version mismatch", async () => {

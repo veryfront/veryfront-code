@@ -206,23 +206,19 @@ export async function storePreparedProjectCSS(
 }
 
 export function invalidatePreparedProjectCSS(projectSlug: string): void {
+  void invalidatePreparedProjectCSSAsync(projectSlug).catch((error) => {
+    logger.debug("Failed to invalidate prepared project CSS", { projectSlug, error });
+  });
+}
+
+/** Clear local and distributed prepared CSS, propagating backend failures. */
+export async function invalidatePreparedProjectCSSAsync(projectSlug: string): Promise<void> {
   for (const key of localPreparedProjectCSS.keys()) {
     if (key.startsWith(`${projectSlug}:`)) {
       localPreparedProjectCSS.delete(key);
     }
   }
 
-  invalidatePreparedProjectCSSAsync(projectSlug).catch((error) => {
-    logger.debug("Failed to invalidate prepared project CSS", { projectSlug, error });
-  });
-}
-
-export async function invalidatePreparedProjectCSSAsync(projectSlug: string): Promise<void> {
   if (!preparedProjectCSSBackend?.delByPattern) return;
-
-  try {
-    await preparedProjectCSSBackend.delByPattern(`${projectSlug}:*`);
-  } catch (error) {
-    logger.debug("Failed to delete prepared project CSS", { projectSlug, error });
-  }
+  await preparedProjectCSSBackend.delByPattern(`${projectSlug}:*`);
 }

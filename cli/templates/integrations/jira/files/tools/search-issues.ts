@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { extractDescriptionText, searchIssues } from "../../lib/jira-client.ts";
+import { createJiraClient } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "search-issues",
@@ -27,8 +28,10 @@ export default tool({
         ),
     })
   )(),
-  async execute({ jql, maxResults, fields }) {
-    const result = await searchIssues(jql, { maxResults, fields });
+  async execute({ jql, maxResults, fields }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createJiraClient(userId);
+    const result = await client.searchIssues(jql, { maxResults, fields });
 
     return {
       total: result.total,
@@ -39,7 +42,7 @@ export default tool({
           key: issue.key,
           id: issue.id,
           summary: issueFields.summary,
-          description: extractDescriptionText(issueFields.description),
+          description: client.extractDescriptionText(issueFields.description),
           status: issueFields.status.name,
           statusCategory: issueFields.status.statusCategory.name,
           type: issueFields.issuetype.name,

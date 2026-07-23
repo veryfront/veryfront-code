@@ -1,10 +1,12 @@
 import { type Span, SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { endSpan, setSpanAttributes, SpanNames, startSpan, withSpan } from "../tracing/index.ts";
 import { recordRenderError } from "../metrics/index.ts";
+import { sanitizeErrorForTelemetry } from "../telemetry-error.ts";
 
 /** Instrument a React render operation. */
 export function instrumentReactRender<T>(
-  renderFn: () => Promise<T> | T,
+  renderFn: () => PromiseLike<T> | T,
   componentName: string,
 ): Promise<T> {
   return withSpan(
@@ -13,8 +15,7 @@ export function instrumentReactRender<T>(
       const startTime = performance.now();
 
       try {
-        const result = renderFn();
-        const resolved = result instanceof Promise ? await result : result;
+        const resolved = await Promise.resolve(renderFn());
 
         recordRenderDuration(span, startTime);
         return resolved;
@@ -36,7 +37,13 @@ export function instrumentErrorHandler(
   captureToSpan = true,
 ): (error: Error, request?: Request) => Promise<Response> | Response {
   return (error: Error, request?: Request): Promise<Response> | Response => {
-    if (captureToSpan) captureErrorToSpan(error, request);
+    if (captureToSpan) {
+      try {
+        captureErrorToSpan(error, request);
+      } catch (_) {
+        /* expected: telemetry failures must not prevent error handling */
+      }
+    }
     return handler(error, request);
   };
 }
@@ -48,8 +55,17 @@ function handleRenderError(span: Span | null, error: unknown, componentName: str
   // but we need to record the exception and status
   if (!span) return;
 
-  span.recordException(error as Error);
-  span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
+  const telemetryError = sanitizeErrorForTelemetry(error);
+  try {
+    span.recordException(telemetryError);
+  } catch (_) {
+    /* expected: telemetry failures must not replace render failures */
+  }
+  try {
+    span.setStatus({ code: SpanStatusCode.ERROR, message: telemetryError.message });
+  } catch (_) {
+    /* expected: telemetry failures must not replace render failures */
+  }
 }
 
 function recordRenderDuration(span: Span | null, startTime: number): void {
@@ -58,12 +74,13 @@ function recordRenderDuration(span: Span | null, startTime: number): void {
 }
 
 function captureErrorToSpan(error: Error, request?: Request): void {
+  const telemetryError = sanitizeErrorForTelemetry(error);
   const span = startSpan("error.handler", {
     kind: "internal",
     attributes: {
-      "error.type": error.constructor.name,
-      "error.message": error.message,
-      "error.stack": error.stack ?? "",
+      "error.type": telemetryError.name,
+      "error.message": telemetryError.message,
+      "error.stack": telemetryError.stack ?? "",
     },
   });
 
@@ -71,10 +88,10 @@ function captureErrorToSpan(error: Error, request?: Request): void {
     const url = new URL(request.url);
     setSpanAttributes(span, {
       "http.method": request.method,
-      "http.url": request.url,
+      "http.url": sanitizeUrlForSpan(request.url),
       "http.path": url.pathname,
     });
   }
 
-  endSpan(span, error);
+  endSpan(span, telemetryError);
 }

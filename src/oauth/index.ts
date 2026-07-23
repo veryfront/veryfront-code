@@ -9,12 +9,16 @@
  * ```typescript
  * // Create OAuth routes with pre-configured providers
  * import { createOAuthInitHandler, createOAuthCallbackHandler, gmailConfig } from "veryfront/oauth";
+ * import { tokenStore } from "./persistent-token-store.ts";
  *
  * // app/api/auth/gmail/route.ts
- * export const GET = createOAuthInitHandler(gmailConfig);
+ * export const GET = createOAuthInitHandler(gmailConfig, {
+ *   tokenStore,
+ *   getUserId: (request) => getSessionUserId(request),
+ * });
  *
  * // app/api/auth/gmail/callback/route.ts
- * export const GET = createOAuthCallbackHandler(gmailConfig);
+ * export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
  * ```
  *
  * @module oauth
@@ -26,12 +30,32 @@ export type {
   OAuthServiceConfig,
   OAuthState,
   OAuthTokens,
+  OAuthTokenSnapshot,
+  RefreshCapableTokenStore,
+  StoredOAuthState,
   TokenExchangeOptions,
   TokenExchangeResult,
   TokenStore,
 } from "./types.ts";
 
 export { OAuthProvider, OAuthService } from "./providers/base.ts";
+
+export {
+  AuthorizationUrlOptionsSchema,
+  getAuthorizationUrlOptionsSchema,
+  getOAuthProviderConfigSchema,
+  getOAuthServiceConfigSchema,
+  getOAuthStateSchema,
+  getOAuthTokensSchema,
+  getTokenExchangeOptionsSchema,
+  getTokenExchangeResultSchema,
+  OAuthProviderConfigSchema,
+  OAuthServiceConfigSchema,
+  OAuthStateSchema,
+  OAuthTokensSchema,
+  TokenExchangeOptionsSchema,
+  TokenExchangeResultSchema,
+} from "./schemas/index.ts";
 
 export {
   airtableConfig,
@@ -41,6 +65,7 @@ export {
   calendarConfig,
   clickupConfig,
   confluenceConfig,
+  docsGoogleConfig,
   driveConfig,
   figmaConfig,
   freshdeskConfig,
@@ -79,6 +104,9 @@ export {
   createOAuthDisconnectHandler,
   createOAuthInitHandler,
   createOAuthStatusHandler,
+  type GetUserIdFn,
   type OAuthCallbackHandlerOptions,
+  type OAuthDisconnectHandlerOptions,
   type OAuthInitHandlerOptions,
+  type OAuthStatusHandlerOptions,
 } from "./handlers/index.ts";

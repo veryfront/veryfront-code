@@ -11,7 +11,8 @@ export const githubConfig: OAuthServiceConfig = {
   clientIdEnvVar: "GITHUB_CLIENT_ID",
   clientSecretEnvVar: "GITHUB_CLIENT_SECRET",
   apiBaseUrl: "https://api.github.com",
-  defaultScopes: ["repo", "user"],
+  defaultScopes: ["repo", "read:user", "read:org"],
+  pkceMode: "supported",
 };
 
 /** Configuration used by slack. */
@@ -24,6 +25,9 @@ export const slackConfig: OAuthServiceConfig = {
   clientIdEnvVar: "SLACK_CLIENT_ID",
   clientSecretEnvVar: "SLACK_CLIENT_SECRET",
   apiBaseUrl: "https://slack.com/api",
+  useBasicAuth: true,
+  pkceMode: "supported",
+  scopeSeparator: ",",
   defaultScopes: [
     "channels:history",
     "channels:read",
@@ -50,6 +54,14 @@ export const notionConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.notion.com/v1",
   defaultScopes: [],
   useBasicAuth: true,
+  pkceMode: "unsupported",
+  tokenRequestFormat: "json",
+  tokenRequestHeaders: {
+    "Notion-Version": "2026-03-11",
+  },
+  apiHeaders: {
+    "Notion-Version": "2026-03-11",
+  },
   additionalAuthParams: {
     owner: "user",
   },
@@ -61,10 +73,12 @@ export const figmaConfig: OAuthServiceConfig = {
   serviceId: "figma",
   displayName: "Figma",
   authorizationUrl: "https://www.figma.com/oauth",
-  tokenUrl: "https://www.figma.com/api/oauth/token",
+  tokenUrl: "https://api.figma.com/v1/oauth/token",
   clientIdEnvVar: "FIGMA_CLIENT_ID",
   clientSecretEnvVar: "FIGMA_CLIENT_SECRET",
   apiBaseUrl: "https://api.figma.com/v1",
+  useBasicAuth: true,
+  pkceMode: "supported",
   defaultScopes: [
     "current_user:read",
     "file_content:read",
@@ -83,7 +97,9 @@ export const linearConfig: OAuthServiceConfig = {
   clientIdEnvVar: "LINEAR_CLIENT_ID",
   clientSecretEnvVar: "LINEAR_CLIENT_SECRET",
   apiBaseUrl: "https://api.linear.app",
+  scopeSeparator: ",",
   defaultScopes: ["read", "write"],
+  pkceMode: "supported",
 };
 
 /** Configuration used by gitlab. */
@@ -96,7 +112,8 @@ export const gitlabConfig: OAuthServiceConfig = {
   clientIdEnvVar: "GITLAB_CLIENT_ID",
   clientSecretEnvVar: "GITLAB_CLIENT_SECRET",
   apiBaseUrl: "https://gitlab.com/api/v4",
-  defaultScopes: ["read_user", "api"],
+  defaultScopes: ["api", "read_user", "read_repository"],
+  pkceMode: "supported",
 };
 
 /** Configuration used by airtable. */
@@ -116,6 +133,7 @@ export const airtableConfig: OAuthServiceConfig = {
     "schema.bases:write",
   ],
   useBasicAuth: true,
+  pkceMode: "required",
 };
 
 /** Configuration used by hubspot. */
@@ -124,7 +142,7 @@ export const hubspotConfig: OAuthServiceConfig = {
   serviceId: "hubspot",
   displayName: "HubSpot",
   authorizationUrl: "https://app.hubspot.com/oauth/authorize",
-  tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+  tokenUrl: "https://api.hubapi.com/oauth/v3/token",
   clientIdEnvVar: "HUBSPOT_CLIENT_ID",
   clientSecretEnvVar: "HUBSPOT_CLIENT_SECRET",
   apiBaseUrl: "https://api.hubapi.com",
@@ -132,6 +150,7 @@ export const hubspotConfig: OAuthServiceConfig = {
     "oauth",
     "crm.objects.contacts.read",
   ],
+  pkceMode: "unsupported",
 };
 
 /** Configuration used by salesforce. */
@@ -145,6 +164,7 @@ export const salesforceConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "SALESFORCE_CLIENT_SECRET",
   apiBaseUrl: "https://login.salesforce.com/services/data/v59.0",
   defaultScopes: ["api", "refresh_token"],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by twitter. */
@@ -152,13 +172,14 @@ export const twitterConfig: OAuthServiceConfig = {
   providerId: "twitter",
   serviceId: "twitter",
   displayName: "Twitter/X",
-  authorizationUrl: "https://twitter.com/i/oauth2/authorize",
-  tokenUrl: "https://api.twitter.com/2/oauth2/token",
+  authorizationUrl: "https://x.com/i/oauth2/authorize",
+  tokenUrl: "https://api.x.com/2/oauth2/token",
   clientIdEnvVar: "TWITTER_CLIENT_ID",
   clientSecretEnvVar: "TWITTER_CLIENT_SECRET",
-  apiBaseUrl: "https://api.twitter.com/2",
+  apiBaseUrl: "https://api.x.com/2",
   defaultScopes: ["tweet.read", "users.read", "offline.access"],
   useBasicAuth: true,
+  pkceMode: "required",
 };
 
 /** Configuration used by asana. */
@@ -172,6 +193,7 @@ export const asanaConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "ASANA_CLIENT_SECRET",
   apiBaseUrl: "https://app.asana.com/api/1.0",
   defaultScopes: ["default"],
+  pkceMode: "supported",
 };
 
 /** Configuration used by monday. */
@@ -185,6 +207,7 @@ export const mondayConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "MONDAY_CLIENT_SECRET",
   apiBaseUrl: "https://api.monday.com/v2",
   defaultScopes: ["me:read", "boards:read", "boards:write"],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by zoom. */
@@ -197,8 +220,15 @@ export const zoomConfig: OAuthServiceConfig = {
   clientIdEnvVar: "ZOOM_CLIENT_ID",
   clientSecretEnvVar: "ZOOM_CLIENT_SECRET",
   apiBaseUrl: "https://api.zoom.us/v2",
-  defaultScopes: ["meeting:read", "meeting:write", "user:read"],
+  defaultScopes: [
+    "user:read:user",
+    "meeting:read:meeting",
+    "meeting:read:list_meetings",
+    "meeting:write:meeting",
+    "cloud_recording:read:list_user_recordings",
+  ],
   useBasicAuth: true,
+  pkceMode: "supported",
 };
 
 /** Configuration used by intercom. */
@@ -212,6 +242,8 @@ export const intercomConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "INTERCOM_CLIENT_SECRET",
   apiBaseUrl: "https://api.intercom.io",
   defaultScopes: [],
+  pkceMode: "unsupported",
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by freshdesk. */
@@ -225,6 +257,7 @@ export const freshdeskConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "FRESHDESK_CLIENT_SECRET",
   apiBaseUrl: "https://domain.freshdesk.com/api/v2",
   defaultScopes: ["freshdesk"],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by mailchimp. */
@@ -238,6 +271,7 @@ export const mailchimpConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "MAILCHIMP_CLIENT_SECRET",
   apiBaseUrl: "https://server.api.mailchimp.com/3.0",
   defaultScopes: [],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by shopify. */
@@ -251,6 +285,7 @@ export const shopifyConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "SHOPIFY_CLIENT_SECRET",
   apiBaseUrl: "https://shop.myshopify.com/admin/api/2024-01",
   defaultScopes: ["read_products", "write_products", "read_orders"],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by quickbooks. */
@@ -263,7 +298,9 @@ export const quickbooksConfig: OAuthServiceConfig = {
   clientIdEnvVar: "QUICKBOOKS_CLIENT_ID",
   clientSecretEnvVar: "QUICKBOOKS_CLIENT_SECRET",
   apiBaseUrl: "https://quickbooks.api.intuit.com/v3",
+  useBasicAuth: true,
   defaultScopes: ["com.intuit.quickbooks.accounting"],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by xero. */
@@ -276,6 +313,7 @@ export const xeroConfig: OAuthServiceConfig = {
   clientIdEnvVar: "XERO_CLIENT_ID",
   clientSecretEnvVar: "XERO_CLIENT_SECRET",
   apiBaseUrl: "https://api.xero.com/api.xro/2.0",
+  useBasicAuth: true,
   defaultScopes: [
     "openid",
     "profile",
@@ -283,6 +321,7 @@ export const xeroConfig: OAuthServiceConfig = {
     "accounting.transactions",
     "offline_access",
   ],
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by box. */
@@ -296,6 +335,8 @@ export const boxConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "BOX_CLIENT_SECRET",
   apiBaseUrl: "https://api.box.com/2.0",
   defaultScopes: [],
+  pkceMode: "unsupported",
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by webex. */
@@ -308,7 +349,13 @@ export const webexConfig: OAuthServiceConfig = {
   clientIdEnvVar: "WEBEX_CLIENT_ID",
   clientSecretEnvVar: "WEBEX_CLIENT_SECRET",
   apiBaseUrl: "https://webexapis.com/v1",
-  defaultScopes: ["spark:all", "spark:kms"],
+  defaultScopes: [
+    "spark:messages_read",
+    "spark:messages_write",
+    "spark:rooms_read",
+    "spark:people_read",
+  ],
+  pkceMode: "supported",
 };
 
 /** Configuration used by trello. */
@@ -325,6 +372,7 @@ export const trelloConfig: OAuthServiceConfig = {
   additionalAuthParams: {
     expiration: "never",
   },
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by clickup. */
@@ -338,6 +386,8 @@ export const clickupConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "CLICKUP_CLIENT_SECRET",
   apiBaseUrl: "https://api.clickup.com/api/v2",
   defaultScopes: [],
+  pkceMode: "unsupported",
+  runtimeSupport: "provider-adapter-required",
 };
 
 /** Configuration used by pipedrive. */
@@ -351,6 +401,7 @@ export const pipedriveConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "PIPEDRIVE_CLIENT_SECRET",
   apiBaseUrl: "https://api.pipedrive.com/v1",
   defaultScopes: [],
+  runtimeSupport: "provider-adapter-required",
 };
 
 const allCommonServices = {

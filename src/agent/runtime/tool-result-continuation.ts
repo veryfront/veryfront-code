@@ -147,13 +147,49 @@ export function shouldOmitRecoverablePlaceholderToolCall(
     isClientRecoverablePlaceholderToolCall(toolCall);
 }
 
+export function shouldContinueAfterToolStep(options: {
+  finishReason: string | null | undefined;
+  toolCalls: Iterable<{
+    toolCallId: string;
+    providerExecuted?: boolean;
+    supportsDeferredResults?: boolean;
+  }>;
+  toolResultIds: ReadonlySet<string>;
+}): boolean {
+  if (
+    options.finishReason !== "tool-calls" && options.finishReason !== "pause_turn" &&
+    options.finishReason !== "stop"
+  ) {
+    return false;
+  }
+
+  const toolCalls = [...options.toolCalls];
+  if (toolCalls.length === 0) return false;
+
+  // Provider-owned calls are terminal for this model response. Replaying them
+  // would bill and execute the same server tool again because provider-owned
+  // call/result history is intentionally omitted from subsequent prompts.
+  // A missing result is also terminal (and is surfaced as an error by the
+  // runtime bridge), never a successful reason to continue.
+  for (const toolCall of toolCalls) {
+    if (
+      toolCall.providerExecuted === true &&
+      !options.toolResultIds.has(toolCall.toolCallId) &&
+      !(toolCall.supportsDeferredResults === true &&
+        (options.finishReason === "tool-calls" || options.finishReason === "pause_turn"))
+    ) {
+      return false;
+    }
+  }
+
+  return toolCalls.some((toolCall) => toolCall.providerExecuted !== true);
+}
+
 export function shouldContinueAfterStreamStep(
   state:
     & Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">
     & Partial<Pick<ChatStreamState, "suppressedToolCalls">>,
 ): boolean {
-  const hasAssistantText = hasSubstantiveAssistantText(state.accumulatedText);
-
   if (!state.toolCalls.size) {
     return state.finishReason === "tool-calls" && Boolean(state.suppressedToolCalls?.length);
   }
@@ -162,9 +198,6 @@ export function shouldContinueAfterStreamStep(
   const hasIncompleteToolCall = streamedToolCalls.some(isStreamedToolCallIncomplete);
   const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
     toolCall.inputAvailable === true && toolCall.providerExecuted !== true
-  );
-  const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.providerExecuted === true
   );
   // A non-finalized call whose only accumulated arguments are a bare
   // empty-object placeholder is provisional streamed input the model never
@@ -184,45 +217,29 @@ export function shouldContinueAfterStreamStep(
     if (hasIncompleteDeadToolCall) {
       return false;
     }
-    if (hasProviderExecutedToolCall && !hasFinalizedClientToolCall) {
-      return false;
-    }
     if (hasRecoverablePlaceholderToolCall && !hasFinalizedClientToolCall) {
       return true;
     }
-    return !hasIncompleteToolCall && hasFinalizedClientToolCall;
+    if (hasIncompleteToolCall) return false;
   }
 
-  if (state.finishReason !== "stop") {
-    return false;
-  }
-
-  if (hasAssistantText) {
+  if (
+    state.finishReason !== "tool-calls" && state.finishReason !== "pause_turn" &&
+    state.finishReason !== "stop"
+  ) {
     return false;
   }
 
   const finalToolResults = collectFinalStreamToolResults(state);
-  if (!finalToolResults.size) {
-    for (const toolCall of state.toolCalls.values()) {
-      if (toolCall.inputAvailable !== true || toolCall.providerExecuted === true) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  for (const [toolCallId, toolCall] of state.toolCalls) {
-    const toolResult = finalToolResults.get(toolCallId);
-    if (!toolResult) {
-      return false;
-    }
-
-    if (toolCall.providerExecuted !== true && toolResult.providerExecuted !== true) {
-      return false;
-    }
-  }
-
-  return true;
+  return shouldContinueAfterToolStep({
+    finishReason: state.finishReason,
+    toolCalls: Array.from(state.toolCalls.values(), (toolCall) => ({
+      toolCallId: toolCall.id,
+      ...(toolCall.providerExecuted === true ? { providerExecuted: true } : {}),
+      ...(toolCall.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+    })),
+    toolResultIds: new Set(finalToolResults.keys()),
+  });
 }
 
 export function captureStreamedToolCallInput(
@@ -273,16 +290,23 @@ export type StreamedToolCallMaterialization =
 export function materializeStreamedToolCall(
   tc: StreamingToolCall,
 ): StreamedToolCallMaterialization {
-  const providerExecutedPart: { providerExecuted?: true } = tc.providerExecuted === true
-    ? { providerExecuted: true }
-    : {};
-  const basePart: MessagePart & { providerExecuted?: true } = {
+  const providerToolMetadata: {
+    providerExecuted?: true;
+    supportsDeferredResults?: true;
+  } = {
+    ...(tc.providerExecuted === true ? { providerExecuted: true } : {}),
+    ...(tc.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+  };
+  const basePart: MessagePart & {
+    providerExecuted?: true;
+    supportsDeferredResults?: true;
+  } = {
     type: `tool-${tc.name}`,
     toolCallId: tc.id,
     toolName: tc.name,
     args: {},
     ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
-    ...providerExecutedPart,
+    ...providerToolMetadata,
   };
 
   if (isStreamedToolCallIncomplete(tc)) {
@@ -295,13 +319,16 @@ export function materializeStreamedToolCall(
   }
 
   const capturedInput = captureStreamedToolCallInput(tc);
-  const part: MessagePart & { providerExecuted?: true } = {
+  const part: MessagePart & {
+    providerExecuted?: true;
+    supportsDeferredResults?: true;
+  } = {
     type: `tool-${tc.name}`,
     toolCallId: tc.id,
     toolName: tc.name,
     args: capturedInput.args,
     ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
-    ...providerExecutedPart,
+    ...providerToolMetadata,
   };
 
   if (capturedInput.parseError) {

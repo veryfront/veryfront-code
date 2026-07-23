@@ -12,8 +12,6 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
-import { computeDepsHash } from "#veryfront/cache/dependency-graph.ts";
 import type {
   PipelineConfig,
   TransformOptions,
@@ -32,10 +30,20 @@ import {
   ssrHttpStubPlugin,
   ssrVfModulesPlugin,
 } from "./stages/index.ts";
-import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { exists } from "#veryfront/platform/compat/fs.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
 import { extractFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
+import { createPipelineReadFile } from "./read-file.ts";
+import { computeDependencyCacheIdentity } from "./dependency-cache-identity.ts";
+import {
+  computePipelineConfigIdentity,
+  fingerprintPipelineImportMap,
+  getCustomPluginCacheIdentity,
+  snapshotImportMap,
+} from "./cache-identity.ts";
+import { loadImportMap as loadProjectImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -163,30 +171,74 @@ export function runPipeline(
       ctx.debug = config?.debug ?? false;
       ctx.onProgress?.({ phase: "pipeline:context", filePath });
 
-      const configHash = await computeConfigHash({
+      const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
+      const pipeline = config?.plugins
+        ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
+        : basePipeline;
+      const pluginIdentity = getCustomPluginCacheIdentity(config?.plugins);
+
+      let importMapFingerprint: string | undefined;
+      if (options.ssr) {
+        const rawImportMap = await (options.loadImportMap?.() ?? loadProjectImportMap(projectDir));
+        ctx.importMap = snapshotImportMap(rawImportMap);
+        // Keep the metadata entry during the transition for internal consumers
+        // that have not yet adopted the typed context field.
+        ctx.metadata.set("importMap", ctx.importMap);
+        importMapFingerprint = await fingerprintPipelineImportMap(ctx.importMap);
+        ctx.importMapFingerprint = importMapFingerprint;
+      }
+
+      const configHash = await computePipelineConfigIdentity({
         reactVersion: ctx.reactVersion,
         jsxImportSource: ctx.jsxImportSource,
-        studioEmbed: ctx.studioEmbed,
+        studioEmbed: ctx.studioEmbed ?? false,
         dev: ctx.dev,
+        ssr: options.ssr ?? false,
+        projectDir,
+        moduleServerUrl: ctx.moduleServerUrl,
+        vendorBundleHash: ctx.vendorBundleHash,
+        apiBaseUrl: ctx.apiBaseUrl,
+        importMapFingerprint,
+        customPlugins: pluginIdentity.cacheable ? pluginIdentity.identity : [],
       });
 
-      const depsHash = await computeDepsHashSafe(
+      const dependencyIdentity = await computeDependencyCacheIdentity(
         filePath,
         projectDir,
         options.readFile,
         options.dependencyHashCache,
+        ctx.importMap,
+        importMapFingerprint,
       );
 
-      const cacheKey = generateCacheKey(
-        filePath,
-        ctx.contentHash,
-        options.ssr ?? false,
-        options.studioEmbed ?? false,
-        { depsHash, configHash, projectId: options.projectId },
-      );
+      if (!dependencyIdentity.cacheable) {
+        const { error } = dependencyIdentity;
+        logger.warn("Dependency hash computation failed; bypassing transform cache", {
+          file: filePath.slice(-60),
+          errorName: error instanceof Error ? error.name : typeof error,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
-      const cached = await getCachedTransformAsync(cacheKey);
-      if (cached) {
+      if (!pluginIdentity.cacheable) {
+        logger.warn("Custom transform plugin has no stable identity; bypassing transform cache", {
+          file: filePath.slice(-60),
+          reason: pluginIdentity.reason,
+        });
+      }
+
+      const cacheKey = dependencyIdentity.cacheable && pluginIdentity.cacheable
+        ? generateCacheKey(
+          filePath,
+          ctx.contentHash,
+          options.ssr ?? false,
+          options.studioEmbed ?? false,
+          { depsHash: dependencyIdentity.depsHash, configHash, projectId: options.projectId },
+        )
+        : undefined;
+
+      const cached = cacheKey === undefined ? undefined : await getCachedTransformAsync(cacheKey);
+      if (cached && cacheKey !== undefined) {
         // For SSR transforms, validate bundles exist before returning cached code
         if (options.ssr) {
           const httpBundlesValid = await validateCachedBundles(
@@ -234,11 +286,6 @@ export function runPipeline(
         }
       }
 
-      const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
-      const pipeline = config?.plugins
-        ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
-        : basePipeline;
-
       for (const plugin of pipeline) {
         if (plugin.condition?.(ctx) === false) continue;
 
@@ -265,12 +312,23 @@ export function runPipeline(
 
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
       const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
-      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
-        .catch(
-          (error) => {
-            logger.debug("Failed to cache transform", { error });
-          },
-        );
+      if (cacheKey !== undefined) {
+        try {
+          await setCachedTransformAsync(
+            cacheKey,
+            ctx.code,
+            ctx.contentHash,
+            undefined,
+            bundleManifestId,
+          );
+        } catch (error) {
+          logger.warn("Failed to cache transform", {
+            file: filePath.slice(-60),
+            errorName: error instanceof Error ? error.name : typeof error,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       const totalMs = performance.now() - transformStart;
 
@@ -296,25 +354,6 @@ export function runPipeline(
   );
 }
 
-async function computeDepsHashSafe(
-  filePath: string,
-  projectDir: string,
-  readFile?: (path: string) => Promise<string>,
-  dependencyHashCache?: TransformOptions["dependencyHashCache"],
-): Promise<string | undefined> {
-  if (!readFile) return undefined;
-
-  try {
-    return await computeDepsHash(filePath, readFile, projectDir, dependencyHashCache);
-  } catch (err) {
-    logger.debug("depsHash computation failed, skipping", {
-      file: filePath.slice(-60),
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return undefined;
-  }
-}
-
 export async function transformToESM(
   source: string,
   filePath: string,
@@ -324,45 +363,15 @@ export async function transformToESM(
 ): Promise<string> {
   if (filePath.endsWith(".css") || filePath.endsWith(".json")) return source;
 
-  const enrichedOptions: TransformOptions = options.readFile
-    ? options
-    : { ...options, readFile: buildReadFile(adapter, projectDir) };
+  const enrichedOptions: TransformOptions = {
+    ...options,
+    readFile: options.readFile ?? createPipelineReadFile(adapter, projectDir),
+    loadImportMap: options.loadImportMap ??
+      (() => loadProjectImportMap(projectDir, adapter as RuntimeAdapter)),
+  };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
-}
-
-/** Extract readFile from adapter if available, for dependency hash computation. */
-function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) | undefined {
-  const a = adapter as { fs?: { readFile?: (path: string) => Promise<string> } } | null;
-  const readFile = a?.fs?.readFile;
-  if (typeof readFile !== "function") return undefined;
-  return (path: string) => readFile.call(a!.fs, path);
-}
-
-/**
- * Build a readFile helper that avoids routing local framework paths
- * through the remote adapter.
- *
- * This prevents API fetches for file:// or absolute paths outside projectDir
- * (e.g. framework files under /usr/local/lib/node_modules/veryfront).
- */
-function buildReadFile(adapter: unknown, projectDir: string): (path: string) => Promise<string> {
-  const adapterRead = extractReadFile(adapter);
-  const fs = createFileSystem();
-  const normalizedProjectDir = projectDir.replace(/\/+$/, "");
-
-  return async (path: string): Promise<string> => {
-    const normalizedPath = path.startsWith("file://") ? path.slice("file://".length) : path;
-
-    const isOutsideProject = normalizedPath.startsWith("/") &&
-      normalizedProjectDir.length > 0 &&
-      !normalizedPath.startsWith(normalizedProjectDir);
-
-    if (isOutsideProject) return fs.readTextFile(normalizedPath);
-    if (adapterRead) return adapterRead(normalizedPath);
-    return fs.readTextFile(normalizedPath);
-  };
 }
 
 export type {

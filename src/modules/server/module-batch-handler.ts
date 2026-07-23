@@ -38,7 +38,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
-import { sha256Short } from "#veryfront/cache/hash.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   buildSourceMissCacheKey,
   clearSourceMissCache,
@@ -458,7 +458,7 @@ function createBatchSSRTargetCacheBusterResolver(options: {
           targetPath,
         );
         if (!resolved) return undefined;
-        return await sha256Short(`${resolved.path}\0${resolved.source}`);
+        return await computeHash(`${resolved.path}\0${resolved.source}`);
       })();
       versions.set(targetPath, promise);
     }

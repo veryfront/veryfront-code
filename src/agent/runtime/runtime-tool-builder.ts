@@ -1,9 +1,13 @@
+import type { JsonSchemaValidationFunction } from "#veryfront/extensions/schema/index.ts";
+import { tryCompileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
 import type { JsonSchema } from "#veryfront/tool/schema";
 import type { RuntimeToolSet } from "./runtime-tool-types.ts";
 
-interface RuntimeJsonSchema<T = unknown> extends Record<string, unknown> {
+export interface RuntimeJsonSchema<T = unknown> extends Record<string, unknown> {
   readonly jsonSchema: JsonSchema | PromiseLike<JsonSchema>;
-  validate?: (value: unknown) => T | PromiseLike<T>;
+  /** Provider-compatible schema used only for model transmission. */
+  readonly modelJsonSchema?: JsonSchema | PromiseLike<JsonSchema>;
+  readonly validate: JsonSchemaValidationFunction<T>;
 }
 
 type RuntimeLazySchema<T = unknown> = () => RuntimeJsonSchema<T>;
@@ -34,10 +38,22 @@ interface RuntimeProviderToolDefinition {
   supportsDeferredResults?: boolean;
 }
 
-export function createRuntimeJsonSchema(json: JsonSchema): RuntimeJsonSchema {
+export function createRuntimeJsonSchema(
+  json: JsonSchema,
+  modelJsonSchema?: JsonSchema,
+): RuntimeJsonSchema {
+  const validate = tryCompileJsonSchemaValidator(json) ?? (() => {
+    throw new Error(
+      "The registered SchemaValidator cannot compile JSON Schema. " +
+        "Use a validator extension that implements compileJsonSchema().",
+    );
+  });
+
   return {
     ...json,
     jsonSchema: json,
+    ...(modelJsonSchema ? { modelJsonSchema } : {}),
+    validate,
   };
 }
 

@@ -8,8 +8,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
-import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
-import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
+import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
+import type { Extension, ExtensionContext, ExtensionSource, ResolvedExtension } from "./types.ts";
+
+type AbortAwareExtensionContext = ExtensionContext & {
+  readonly signal?: AbortSignal;
+};
 
 function makeResolved(
   ext: Extension,
@@ -94,6 +98,38 @@ describe("ExtensionLoader", () => {
       assertEquals(sorted[0]?.extension.name, "shared");
     });
 
+    it("keeps the higher-priority extension when a preset child reuses its name", () => {
+      const configExtension = makeExt("shared");
+      const projectExtension = makeExt("shared");
+      const projectPreset = makeExt("project-preset", {
+        extends: [projectExtension],
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const sorted = loader.topologicalSort(loader.flattenPresets([
+        makeResolved(configExtension, "config"),
+        makeResolved(projectPreset, "project"),
+      ]));
+
+      assertEquals(sorted.length, 1);
+      assertEquals(sorted[0]?.source, "config");
+      assertEquals(sorted[0]?.extension, configExtension);
+    });
+
+    it("rejects distinct same-priority extensions with the same name", () => {
+      const loader = new ExtensionLoader(noopLogger);
+
+      assertThrows(
+        () =>
+          loader.topologicalSort([
+            makeResolved(makeExt("shared"), "config"),
+            makeResolved(makeExt("shared"), "config"),
+          ]),
+        Error,
+        'Duplicate extension name "shared"',
+      );
+    });
+
     it("should throw on circular dependencies", () => {
       const a = makeExt("ext-a", {
         provides: { A: {} },
@@ -149,6 +185,48 @@ describe("ExtensionLoader", () => {
       assertEquals(order, ["setup", "teardown", "setup"]);
     });
 
+    it("serializes overlapping setupAll calls on the same loader", async () => {
+      const firstStarted = Promise.withResolvers<void>();
+      const releaseFirst = Promise.withResolvers<void>();
+      const order: string[] = [];
+      const first = makeExt("first", {
+        async setup() {
+          order.push("first:setup");
+          firstStarted.resolve();
+          await releaseFirst.promise;
+          order.push("first:ready");
+        },
+        teardown() {
+          order.push("first:teardown");
+        },
+      });
+      const second = makeExt("second", {
+        setup() {
+          order.push("second:setup");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const firstSetup = loader.setupAll([makeResolved(first)], {});
+      await firstStarted.promise;
+
+      const secondSetup = loader.setupAll([makeResolved(second)], {});
+      await Promise.resolve();
+      await Promise.resolve();
+      const secondStartedBeforeFirstSettled = order.includes("second:setup");
+
+      releaseFirst.resolve();
+      await Promise.all([firstSetup, secondSetup]);
+
+      assertEquals(secondStartedBeforeFirstSettled, false);
+      assertEquals(order, [
+        "first:setup",
+        "first:ready",
+        "first:teardown",
+        "second:setup",
+      ]);
+    });
+
     it("should throw on contract conflicts", async () => {
       const a = makeExt("ext-a", { provides: { Bundler: {} } });
       const b = makeExt("ext-b", { provides: { Bundler: {} } });
@@ -198,6 +276,121 @@ describe("ExtensionLoader", () => {
       await loader.setupAll([makeResolved(consumer), makeResolved(provider)], {});
 
       assertEquals(order, ["provider", "consumer:dynamic"]);
+    });
+
+    it("orders consumers after the priority-winning provider and its prerequisites", async () => {
+      const order: string[] = [];
+      const winner = makeExt("winner", {
+        contracts: { provides: ["Cache"], requires: ["Seed"] },
+        setup: (ctx) => {
+          ctx.require("Seed");
+          order.push("winner");
+          ctx.provide("Cache", { id: "winner" });
+        },
+      });
+      const loser = makeExt("loser", {
+        contracts: { provides: ["Cache"] },
+        setup: (ctx) => {
+          order.push("loser");
+          ctx.provide("Cache", { id: "loser" });
+        },
+      });
+      const seed = makeExt("seed", {
+        contracts: { provides: ["Seed"] },
+        setup: (ctx) => {
+          order.push("seed");
+          ctx.provide("Seed", { ready: true });
+        },
+      });
+      const consumer = makeExt("consumer", {
+        contracts: { requires: ["Cache"] },
+        setup: (ctx) => {
+          const cache = ctx.require<{ id: string }>("Cache");
+          order.push(`consumer:${cache.id}`);
+        },
+      });
+      const extensions = [
+        makeResolved(winner, "config"),
+        makeResolved(loser, "project"),
+        makeResolved(seed, "config"),
+        makeResolved(consumer, "config"),
+      ];
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertEquals(
+        loader.topologicalSort(extensions).map((entry) => entry.extension.name),
+        ["loser", "seed", "winner", "consumer"],
+      );
+      await loader.setupAll(extensions, {});
+
+      assertEquals(order, ["loser", "seed", "winner", "consumer:winner"]);
+    });
+
+    it("rejects missing required contracts before replacing the active generation", async () => {
+      let activeTeardownCalls = 0;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("active", {
+          provides: { ActiveContract: { active: true } },
+          teardown: () => {
+            activeTeardownCalls++;
+          },
+        })),
+      ], {});
+
+      await assertRejects(
+        () =>
+          loader.setupAll([
+            makeResolved(makeExt("consumer", {
+              contracts: { requires: ["MissingContract"] },
+            })),
+          ], {}),
+        Error,
+        '"consumer" requires "MissingContract"',
+      );
+
+      assertEquals(activeTeardownCalls, 0);
+      assertEquals(tryResolve("ActiveContract"), { active: true });
+    });
+
+    it("rolls back a provider that finishes without its declared contract", async () => {
+      let teardownCalls = 0;
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () =>
+          loader.setupAll([
+            makeResolved(makeExt("incomplete-provider", {
+              contracts: { provides: ["CacheStore"] },
+              setup: () => {},
+              teardown: () => {
+                teardownCalls++;
+              },
+            })),
+          ], {}),
+        Error,
+        'completed setup without providing declared contract: "CacheStore"',
+      );
+
+      assertEquals(teardownCalls, 1);
+      assertEquals(tryResolve("CacheStore"), undefined);
+    });
+
+    it("accepts a primed contract as a preflighted requirement", async () => {
+      const marker = { seeded: true };
+      let observed: unknown;
+      const loader = new ExtensionLoader(noopLogger);
+      loader.primeContracts({ Seeded: marker });
+
+      await loader.setupAll([
+        makeResolved(makeExt("consumer", {
+          contracts: { requires: ["Seeded"] },
+          setup: (ctx) => {
+            observed = ctx.require("Seeded");
+          },
+        })),
+      ], {});
+
+      assertEquals(observed, marker);
     });
   });
 
@@ -249,6 +442,229 @@ describe("ExtensionLoader", () => {
       // to mutate the contract registry through its stale context.
       capturedProvide?.("LateContract", { id: "poisoned" });
       assertEquals(tryResolve("LateContract"), undefined);
+    });
+
+    it("revokes every registry operation on a timed-out setup context", async () => {
+      let capturedContext: AbortAwareExtensionContext | undefined;
+      const hanging = makeExt("stale-context", {
+        setup: (ctx) => {
+          capturedContext = ctx as AbortAwareExtensionContext;
+          return new Promise<void>(() => {});
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(hanging)], {}, { setupTimeoutMs: 20 }),
+        Error,
+        "stale-context",
+      );
+
+      const marker = { generation: "new" };
+      register("FreshContract", marker);
+      capturedContext?.provide("ZombieContract", { poisoned: true });
+
+      assertEquals(capturedContext?.signal?.aborted, true);
+      assertEquals(capturedContext?.get("FreshContract"), undefined);
+      assertThrows(
+        () => capturedContext?.require("FreshContract"),
+        Error,
+        "no longer active",
+      );
+      assertEquals(tryResolve("ZombieContract"), undefined);
+      assertEquals(tryResolve("FreshContract"), marker);
+    });
+
+    it("does not teardown an abort-aware timed-out setup twice", async () => {
+      let teardownCount = 0;
+      const abortAware = makeExt("abort-aware", {
+        setup(ctx) {
+          return new Promise<void>((_, reject) => {
+            ctx.signal!.addEventListener(
+              "abort",
+              () => reject(new Error("setup aborted")),
+              { once: true },
+            );
+          });
+        },
+        teardown() {
+          teardownCount++;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(abortAware)], {}, { setupTimeoutMs: 20 }),
+        Error,
+        "abort-aware",
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      assertEquals(teardownCount, 1);
+    });
+
+    it("rejects on the setup deadline while a hanging rollback stays quarantined", async () => {
+      const setupStarted = Promise.withResolvers<void>();
+      const releaseSetup = Promise.withResolvers<void>();
+      const teardownStarted = Promise.withResolvers<void>();
+      const releaseTeardown = Promise.withResolvers<void>();
+      let teardownCount = 0;
+      let replacementStarted = false;
+      const late = makeExt("slow-rollback", {
+        async setup() {
+          setupStarted.resolve();
+          await releaseSetup.promise;
+        },
+        async teardown() {
+          teardownCount++;
+          teardownStarted.resolve();
+          await releaseTeardown.promise;
+        },
+      });
+      const replacement = makeExt("replacement", {
+        setup() {
+          replacementStarted = true;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const timedOut = loader.setupAll(
+        [makeResolved(late)],
+        {},
+        { setupTimeoutMs: 20 },
+      );
+      await setupStarted.promise;
+
+      let deadlineId: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        timedOut.then(
+          () => "resolved" as const,
+          () => "rejected" as const,
+        ),
+        new Promise<"pending">((resolve) => {
+          deadlineId = setTimeout(() => resolve("pending"), 100);
+        }),
+      ]);
+      clearTimeout(deadlineId);
+
+      assertEquals(outcome, "rejected");
+      assertEquals(teardownCount, 0);
+
+      const replacementSetup = loader.setupAll([makeResolved(replacement)], {});
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(replacementStarted, false);
+
+      releaseSetup.resolve();
+      await teardownStarted.promise;
+      assertEquals(teardownCount, 1);
+      releaseTeardown.resolve();
+      await replacementSetup;
+
+      assertEquals(teardownCount, 1);
+      assertEquals(replacementStarted, true);
+    });
+
+    it("quarantines the next generation until late setup cleanup finishes", async () => {
+      const setupStarted = Promise.withResolvers<void>();
+      const releaseSetup = Promise.withResolvers<void>();
+      let resourceOpen = false;
+      let teardownCount = 0;
+      let replacementStarted = false;
+      const late = makeExt("late-resource", {
+        async setup() {
+          setupStarted.resolve();
+          await releaseSetup.promise;
+          resourceOpen = true;
+        },
+        teardown() {
+          teardownCount++;
+          resourceOpen = false;
+        },
+      });
+      const replacement = makeExt("replacement", {
+        setup() {
+          replacementStarted = true;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const timedOut = loader.setupAll(
+        [makeResolved(late)],
+        {},
+        { setupTimeoutMs: 20 },
+      );
+      await setupStarted.promise;
+      await assertRejects(() => timedOut, Error, "late-resource");
+
+      assertEquals(resourceOpen, false);
+      assertEquals(teardownCount, 0);
+
+      const replacementSetup = loader.setupAll([makeResolved(replacement)], {});
+      await Promise.resolve();
+      await Promise.resolve();
+      const startedBeforeLateCleanup = replacementStarted;
+
+      releaseSetup.resolve();
+      await replacementSetup;
+
+      assertEquals(startedBeforeLateCleanup, false);
+      assertEquals(resourceOpen, false);
+      assertEquals(teardownCount, 1);
+      assertEquals(replacementStarted, true);
+    });
+
+    it("keeps the loader quarantined when late setup cleanup fails", async () => {
+      const setupStarted = Promise.withResolvers<void>();
+      const releaseSetup = Promise.withResolvers<void>();
+      let resourceOpen = false;
+      let teardownCount = 0;
+      let replacementStarted = false;
+      const late = makeExt("late-cleanup-failure", {
+        async setup() {
+          setupStarted.resolve();
+          await releaseSetup.promise;
+          resourceOpen = true;
+        },
+        teardown() {
+          teardownCount++;
+          throw new Error("late cleanup failed");
+        },
+      });
+      const replacement = makeExt("replacement", {
+        setup() {
+          replacementStarted = true;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const timedOut = loader.setupAll(
+        [makeResolved(late)],
+        {},
+        { setupTimeoutMs: 20 },
+      );
+      await setupStarted.promise;
+      await assertRejects(() => timedOut, Error, "late-cleanup-failure");
+
+      const replacementSetup = loader.setupAll([makeResolved(replacement)], {});
+      releaseSetup.resolve();
+      await assertRejects(
+        () => replacementSetup,
+        Error,
+        "late cleanup failed",
+      );
+
+      assertEquals(resourceOpen, true);
+      assertEquals(teardownCount, 1);
+      assertEquals(replacementStarted, false);
+
+      await assertRejects(
+        () => loader.setupAll([makeResolved(replacement)], {}),
+        Error,
+        "late cleanup failed",
+      );
+      assertEquals(replacementStarted, false);
     });
 
     it("should rollback already-loaded extensions on timeout of a later one", async () => {
@@ -315,6 +731,180 @@ describe("ExtensionLoader", () => {
       await loader.setupAll([makeResolved(a), makeResolved(b)], {});
       await loader.teardownAll();
       assertEquals(order, ["b", "a"]);
+    });
+
+    it("revokes a successful setup context before teardown", async () => {
+      let capturedContext: AbortAwareExtensionContext | undefined;
+      const ext = makeExt("captures-context", {
+        setup(ctx) {
+          capturedContext = ctx as AbortAwareExtensionContext;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(ext)], {});
+      await loader.teardownAll();
+
+      const marker = { generation: "new" };
+      register("FreshContract", marker);
+      capturedContext?.provide("ZombieContract", { poisoned: true });
+
+      assertEquals(capturedContext?.signal?.aborted, true);
+      assertEquals(capturedContext?.get("FreshContract"), undefined);
+      assertThrows(
+        () => capturedContext?.require("FreshContract"),
+        Error,
+        "no longer active",
+      );
+      assertEquals(tryResolve("ZombieContract"), undefined);
+      assertEquals(tryResolve("FreshContract"), marker);
+    });
+
+    it("keeps dependency contracts available through reverse teardown", async () => {
+      const marker = { ready: true };
+      const observations: unknown[] = [];
+      const provider = makeExt("provider", {
+        provides: { SharedDependency: marker },
+        teardown() {
+          observations.push(tryResolve("SharedDependency"));
+        },
+      });
+      const consumer = makeExt("consumer", {
+        contracts: { requires: ["SharedDependency"] },
+        teardown() {
+          observations.push(tryResolve("SharedDependency"));
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(consumer), makeResolved(provider)], {});
+      await loader.teardownAll();
+
+      assertEquals(observations, [marker, marker]);
+      assertEquals(tryResolve("SharedDependency"), undefined);
+    });
+
+    it("attempts every teardown, propagates all failures, and quarantines replacement", async () => {
+      const order: string[] = [];
+      let replacementStarted = false;
+      const firstFailure = new Error("first teardown failed");
+      const secondFailure = new Error("second teardown failed");
+      const first = makeExt("first", {
+        teardown() {
+          order.push("first");
+          throw firstFailure;
+        },
+      });
+      const second = makeExt("second", {
+        teardown() {
+          order.push("second");
+          throw secondFailure;
+        },
+      });
+      const replacement = makeExt("replacement", {
+        setup() {
+          replacementStarted = true;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(first), makeResolved(second)], {});
+      const failure = await assertRejects(
+        () => loader.teardownAll(),
+        AggregateError,
+        "Extension teardown failed",
+      );
+
+      assertEquals(order, ["second", "first"]);
+      assertEquals((failure as AggregateError).errors, [secondFailure, firstFailure]);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(replacement)], {}),
+        AggregateError,
+        "Extension teardown failed",
+      );
+      assertEquals(replacementStarted, false);
+    });
+
+    it("retains failed teardown ownership and permits an explicit cleanup retry", async () => {
+      const dependency = { generation: "retiring" };
+      let teardownAttempts = 0;
+      let replacementStarted = false;
+      const retryable = makeExt("retryable", {
+        provides: { RetiringDependency: dependency },
+        teardown() {
+          teardownAttempts++;
+          assertEquals(tryResolve("RetiringDependency"), dependency);
+          if (teardownAttempts === 1) {
+            throw new Error("transient teardown failure");
+          }
+        },
+      });
+      const replacement = makeExt("replacement", {
+        setup() {
+          replacementStarted = true;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(retryable)], {});
+      await assertRejects(
+        () => loader.teardownAll(),
+        AggregateError,
+        "transient teardown failure",
+      );
+
+      assertEquals(tryResolve("RetiringDependency"), dependency);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(replacement)], {}),
+        AggregateError,
+        "transient teardown failure",
+      );
+      assertEquals(replacementStarted, false);
+
+      await loader.teardownAll();
+      assertEquals(teardownAttempts, 2);
+      assertEquals(tryResolve("RetiringDependency"), undefined);
+
+      await loader.setupAll([makeResolved(replacement)], {});
+      assertEquals(replacementStarted, true);
+      await loader.teardownAll();
+    });
+
+    it("waits for timed-out setup cleanup and invokes teardown exactly once", async () => {
+      const setupStarted = Promise.withResolvers<void>();
+      const releaseSetup = Promise.withResolvers<void>();
+      let teardownCount = 0;
+      const late = makeExt("late", {
+        async setup() {
+          setupStarted.resolve();
+          await releaseSetup.promise;
+        },
+        teardown() {
+          teardownCount++;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const setup = loader.setupAll(
+        [makeResolved(late)],
+        {},
+        { setupTimeoutMs: 10 },
+      );
+      await setupStarted.promise;
+      await assertRejects(() => setup, Error, "late");
+
+      let teardownSettled = false;
+      const teardown = loader.teardownAll().then(() => {
+        teardownSettled = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(teardownSettled, false);
+      assertEquals(teardownCount, 0);
+
+      releaseSetup.resolve();
+      await teardown;
+      assertEquals(teardownCount, 1);
     });
   });
 
@@ -532,6 +1122,119 @@ describe("ExtensionLoader", () => {
         "boom",
       );
     });
+
+    it("clears first-extension static and dynamic registrations on failure", async () => {
+      let teardownCount = 0;
+      const failing = makeExt("first-failing", {
+        provides: { StaticLeak: { leaked: true } },
+        setup(ctx) {
+          ctx.provide("DynamicLeak", { leaked: true });
+          throw new Error("first-failure");
+        },
+        teardown() {
+          teardownCount++;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(failing)], {}),
+        Error,
+        "first-failure",
+      );
+
+      assertEquals(teardownCount, 1);
+      assertEquals(tryResolve("StaticLeak"), undefined);
+      assertEquals(tryResolve("DynamicLeak"), undefined);
+    });
+
+    it("prevalidates the whole plan before starting any extension", async () => {
+      let teardownCount = 0;
+      const valid = makeExt("valid", {
+        provides: { ValidContract: { active: true } },
+        teardown() {
+          teardownCount++;
+        },
+      });
+      const invalid = {
+        name: "invalid",
+        version: "1.0.0",
+        capabilities: "not-an-array",
+      } as unknown as Extension;
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(valid), makeResolved(invalid)], {}),
+        Error,
+        'Extension "invalid" is invalid',
+      );
+
+      assertEquals(teardownCount, 0);
+      assertEquals(tryResolve("ValidContract"), undefined);
+    });
+
+    it("does not tear down the active generation when replacement preflight fails", async () => {
+      let teardownCount = 0;
+      const active = makeExt("active", {
+        provides: { ActiveContract: { active: true } },
+        teardown() {
+          teardownCount++;
+        },
+      });
+      const invalid = {
+        name: "invalid",
+        version: "1.0.0",
+        capabilities: [],
+        setup: "not-a-function",
+      } as unknown as Extension;
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+
+      await assertRejects(
+        () => loader.setupAll([makeResolved(invalid)], {}),
+        Error,
+        'Extension "invalid" is invalid',
+      );
+
+      assertEquals(teardownCount, 0);
+      assertEquals(
+        tryResolve("ActiveContract"),
+        { active: true },
+      );
+    });
+
+    it("rejects invalid timeout values before replacing the active generation", async () => {
+      let teardownCount = 0;
+      const active = makeExt("active", {
+        provides: { ActiveContract: { active: true } },
+        teardown() {
+          teardownCount++;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+
+      for (const setupTimeoutMs of [-1, 0.5, Number.NaN, 2_147_483_648]) {
+        await assertRejects(
+          () =>
+            loader.setupAll(
+              [makeResolved(makeExt("replacement"))],
+              {},
+              { setupTimeoutMs },
+            ),
+          Error,
+          "setupTimeoutMs",
+        );
+      }
+
+      assertEquals(teardownCount, 0);
+      assertEquals(
+        tryResolve("ActiveContract"),
+        { active: true },
+      );
+    });
   });
 });
 
@@ -557,5 +1260,16 @@ describe("ExtensionLoader primeContracts", () => {
     await loader.setupAll([resolved], {});
     assertEquals(observed, marker);
     assertEquals(resolveContract("Primed"), marker);
+  });
+
+  it("clears primed-only registrations during teardown", async () => {
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ PrimedOnly: { value: true } });
+
+    await loader.setupAll([], {});
+    assertEquals(tryResolve("PrimedOnly"), { value: true });
+
+    await loader.teardownAll();
+    assertEquals(tryResolve("PrimedOnly"), undefined);
   });
 });

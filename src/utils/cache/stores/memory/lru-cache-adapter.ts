@@ -4,16 +4,87 @@ import { LRUNode } from "./lru-node.ts";
 import { LRUListManager } from "./lru-list-manager.ts";
 import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 
 const logger = serverLogger.component("cache");
 
 const MAX_ESTIMATION_DEPTH = 10;
+const MAX_ESTIMATION_NODES = 100_000;
+const MAX_TAGS_PER_ENTRY = 100;
+const MAX_TAG_CODE_UNITS = 256;
+const MAX_KEY_CODE_UNITS = 16_384;
 
 const OBJECT_OVERHEAD_BYTES = 32;
 const ARRAY_OVERHEAD_BYTES = 24;
+const MAP_OVERHEAD_BYTES = 48;
+const SET_OVERHEAD_BYTES = 40;
 const STRING_OVERHEAD_BYTES = 16;
 
-function estimateSizeRecursive(value: unknown, depth: number, seen: WeakSet<object>): number {
+function requirePositiveSafeInteger(value: number, option: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${option} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function requireCacheTtl(value: number, option: string): number {
+  if (
+    !Number.isFinite(value) || value <= 0 ||
+    value > MAX_CACHE_TTL_MILLISECONDS
+  ) {
+    throw new RangeError(
+      `${option} must be a positive finite number no greater than ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+  return value;
+}
+
+interface SizeEstimationState {
+  readonly seen: WeakSet<object>;
+  visited: number;
+}
+
+function retainEstimationWork(state: SizeEstimationState, amount = 1): void {
+  state.visited += amount;
+  if (state.visited > MAX_ESTIMATION_NODES) {
+    throw new RangeError("Cache value is too complex to estimate safely");
+  }
+}
+
+function propertyIdentitySize(key: PropertyKey): number {
+  return typeof key === "string" ? key.length * 2 + 8 : 16;
+}
+
+function estimateOwnProperties(
+  value: object,
+  depth: number,
+  state: SizeEstimationState,
+  ignoredKeys: ReadonlySet<PropertyKey> = new Set(),
+): number {
+  const keys = Reflect.ownKeys(value).filter((key) => !ignoredKeys.has(key));
+  retainEstimationWork(state, keys.length);
+  let size = 0;
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    size += propertyIdentitySize(key);
+    if ("value" in descriptor) {
+      size += estimateSizeRecursive(descriptor.value, depth + 1, state);
+    } else {
+      // Accessors are retained as function references, but sizing must never
+      // execute application code merely because a value is cached.
+      size += 64;
+    }
+  }
+  return size;
+}
+
+function estimateSizeRecursive(
+  value: unknown,
+  depth: number,
+  state: SizeEstimationState,
+): number {
+  retainEstimationWork(state);
   if (value == null) return 0;
 
   const type = typeof value;
@@ -24,33 +95,75 @@ function estimateSizeRecursive(value: unknown, depth: number, seen: WeakSet<obje
 
   if (value instanceof Uint8Array || ArrayBuffer.isView(value)) return value.byteLength;
   if (value instanceof ArrayBuffer) return value.byteLength;
+  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    return value.byteLength;
+  }
   if (typeof Blob !== "undefined" && value instanceof Blob) return value.size;
 
   if (depth >= MAX_ESTIMATION_DEPTH) return OBJECT_OVERHEAD_BYTES * 2;
   if (type !== "object") return 64;
 
-  if (seen.has(value)) return 0;
-  seen.add(value);
+  if (state.seen.has(value)) return 0;
+  state.seen.add(value);
 
   if (Array.isArray(value)) {
-    let size = ARRAY_OVERHEAD_BYTES + value.length * 8;
-    for (const item of value) {
-      size += estimateSizeRecursive(item, depth + 1, seen);
+    return ARRAY_OVERHEAD_BYTES + value.length * 8 +
+      estimateOwnProperties(value, depth, state, new Set<PropertyKey>(["length"]));
+  }
+
+  if (value instanceof Map) {
+    retainEstimationWork(state, value.size);
+    let size = MAP_OVERHEAD_BYTES + value.size * 16;
+    const entries = Map.prototype.entries.call(value) as IterableIterator<[unknown, unknown]>;
+    for (const [key, child] of entries) {
+      size += estimateSizeRecursive(key, depth + 1, state);
+      size += estimateSizeRecursive(child, depth + 1, state);
     }
     return size;
   }
 
-  let size = OBJECT_OVERHEAD_BYTES;
-  for (const key in value) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-    size += key.length * 2 + 8;
-    size += estimateSizeRecursive((value as Record<string, unknown>)[key], depth + 1, seen);
+  if (value instanceof Set) {
+    retainEstimationWork(state, value.size);
+    let size = SET_OVERHEAD_BYTES + value.size * 8;
+    const values = Set.prototype.values.call(value) as IterableIterator<unknown>;
+    for (const child of values) size += estimateSizeRecursive(child, depth + 1, state);
+    return size;
   }
-  return size;
+
+  return OBJECT_OVERHEAD_BYTES + estimateOwnProperties(value, depth, state);
 }
 
 function defaultSizeEstimator(value: unknown): number {
-  return estimateSizeRecursive(value, 0, new WeakSet());
+  return estimateSizeRecursive(value, 0, { seen: new WeakSet(), visited: 0 });
+}
+
+function validateKey(key: string): void {
+  if (typeof key !== "string" || key.length > MAX_KEY_CODE_UNITS) {
+    throw new RangeError(`Cache key must contain at most ${MAX_KEY_CODE_UNITS} characters`);
+  }
+}
+
+function normalizeTags(tags: string[] | undefined): string[] | undefined {
+  if (tags === undefined) return undefined;
+  if (!Array.isArray(tags)) throw new TypeError("Cache tags must be an array of strings");
+  if (tags.length > MAX_TAGS_PER_ENTRY) {
+    throw new RangeError(`Cache entries may have at most ${MAX_TAGS_PER_ENTRY} tags`);
+  }
+
+  const normalized = [...new Set(tags)];
+  for (const tag of normalized) {
+    if (
+      typeof tag !== "string" ||
+      tag.length === 0 ||
+      tag.length > MAX_TAG_CODE_UNITS ||
+      /\p{Cc}/u.test(tag)
+    ) {
+      throw new RangeError(
+        `Cache tags must contain 1-${MAX_TAG_CODE_UNITS} characters without control characters`,
+      );
+    }
+  }
+  return normalized;
 }
 
 export class LRUCacheAdapter implements CacheAdapter {
@@ -66,9 +179,14 @@ export class LRUCacheAdapter implements CacheAdapter {
   private readonly onEvict?: (key: string, value: unknown) => void;
 
   constructor(options: LRUCacheOptions = {}) {
-    this.maxEntries = options.maxEntries || 1000;
-    this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024;
-    this.defaultTtlMs = options.ttlMs;
+    this.maxEntries = requirePositiveSafeInteger(options.maxEntries ?? 1000, "maxEntries");
+    this.maxSizeBytes = requirePositiveSafeInteger(
+      options.maxSizeBytes ?? 50 * 1024 * 1024,
+      "maxSizeBytes",
+    );
+    this.defaultTtlMs = options.ttlMs === undefined
+      ? undefined
+      : requireCacheTtl(options.ttlMs, "ttlMs");
     this.onEvict = options.onEvict;
 
     const estimateSizeOf = options.estimateSizeOf ?? defaultSizeEstimator;
@@ -80,11 +198,15 @@ export class LRUCacheAdapter implements CacheAdapter {
     this.entryManager = new EntryManager(estimateSizeOf);
   }
 
+  private isExpired(entry: LRUEntry<unknown>, now = Date.now()): boolean {
+    return typeof entry.expiry === "number" && now >= entry.expiry;
+  }
+
   get<T>(key: string): T | undefined {
     const node = this.store.get(key);
     if (!node) return undefined;
 
-    if (this.evictionManager.isExpired(node.entry)) {
+    if (this.isExpired(node.entry)) {
       this.delete(key);
       return undefined;
     }
@@ -94,6 +216,9 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   set<T>(key: string, value: T, ttlMs?: number, tags?: string[]): void {
+    validateKey(key);
+    if (ttlMs !== undefined) requireCacheTtl(ttlMs, "ttlMs");
+    const normalizedTags = normalizeTags(tags);
     const existingNode = this.store.get(key);
 
     if (existingNode) {
@@ -101,7 +226,7 @@ export class LRUCacheAdapter implements CacheAdapter {
         existingNode,
         value,
         ttlMs,
-        tags,
+        normalizedTags,
         this.defaultTtlMs,
         this.listManager,
         this.tagIndex,
@@ -112,7 +237,7 @@ export class LRUCacheAdapter implements CacheAdapter {
         key,
         value,
         ttlMs,
-        tags,
+        normalizedTags,
         this.defaultTtlMs,
         this.listManager,
         this.store,
@@ -120,7 +245,9 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.currentSize += size;
     }
 
-    if (tags?.length) this.entryManager.updateTagIndex(tags, key, this.tagIndex);
+    if (normalizedTags?.length) {
+      this.entryManager.updateTagIndex(normalizedTags, key, this.tagIndex);
+    }
 
     this.currentSize = this.evictionManager.enforceMemoryLimits(
       this.listManager,
@@ -169,7 +296,14 @@ export class LRUCacheAdapter implements CacheAdapter {
   clear(): void {
     if (this.onEvict) {
       for (const [key, node] of this.store) {
-        this.onEvict(key, node.entry.value);
+        try {
+          this.onEvict(key, node.entry.value);
+        } catch (error) {
+          logger.warn("onEvict callback threw during clear", {
+            key,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
 
@@ -194,7 +328,7 @@ export class LRUCacheAdapter implements CacheAdapter {
     let cleaned = 0;
 
     for (const [key, node] of this.store) {
-      if (typeof node.entry.expiry !== "number" || now <= node.entry.expiry) continue;
+      if (!this.isExpired(node.entry, now)) continue;
       this.delete(key);
       cleaned++;
     }
@@ -208,13 +342,21 @@ export class LRUCacheAdapter implements CacheAdapter {
 
   *entries<T>(): IterableIterator<[string, T]> {
     for (const [key, node] of this.store) {
-      if (!this.evictionManager.isExpired(node.entry)) {
-        yield [key, node.entry.value as T];
-      }
+      if (this.isExpired(node.entry)) continue;
+      yield [key, node.entry.value as T];
     }
   }
 
   has(key: string): boolean {
-    return this.get(key) !== undefined;
+    const node = this.store.get(key);
+    if (!node) return false;
+
+    if (this.isExpired(node.entry)) {
+      this.delete(key);
+      return false;
+    }
+
+    this.listManager.moveToFront(node);
+    return true;
   }
 }

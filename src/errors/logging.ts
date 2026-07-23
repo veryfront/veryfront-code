@@ -7,7 +7,7 @@
 
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
 import { VeryfrontError } from "./types.ts";
 
 export interface ErrorLogEntry {
@@ -57,7 +57,7 @@ export function logError(
   const mergedContext = mergeContext(error.context, context);
   // Redact once and reuse for both the production JSON entry and the dev-mode
   // human-readable dump, so neither path can emit unredacted credentials.
-  const safeContext = redactSensitive(mergedContext);
+  const safeContext = toContextRecord(redactForSerialization(mergedContext));
   const entry: ErrorLogEntry = {
     level: "error",
     slug: error.slug,

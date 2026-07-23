@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimePromptMessage } from "veryfront/provider/shared";
 import { buildAnthropicMessagesRequest } from "./anthropic-request-builder.ts";
@@ -213,6 +213,147 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "topP",
       "responseFormat",
     ]);
+  });
+
+  it("replays raw mixed server/client assistant blocks before the local tool result", () => {
+    const rawAssistantMessages = [[{
+      type: "server_tool_use",
+      id: "server_search_1",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "tool_use",
+      id: "local_lookup_1",
+      name: "local_lookup",
+      input: { query: "runtime" },
+    }]];
+    const [rawAssistantContent] = rawAssistantMessages;
+    assertExists(rawAssistantContent);
+    const prompt = [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        input: { query: "runtime" },
+      }],
+      providerMetadata: { anthropic: { rawAssistantMessages } },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        output: { type: "json", value: { matches: 1 } },
+      }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt, maxOutputTokens: 64 },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: rawAssistantContent,
+    }, {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "local_lookup_1",
+        content: '{"matches":1}',
+      }],
+    }]);
+  });
+
+  it("compacts raw provider tool history after the turn has completed", () => {
+    const prompt: RuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        input: { query: "runtime" },
+      }],
+      providerToolCalls: [{
+        toolCallId: "server_search_1",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        supportsDeferredResults: true,
+      }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "server_search_1",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }, {
+            type: "tool_use",
+            id: "local_lookup_1",
+            name: "local_lookup",
+            input: { query: "runtime" },
+          }]],
+        },
+      },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        output: { type: "json", value: { matches: 1 } },
+      }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Combined both results." }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "web_search_tool_result",
+            tool_use_id: "server_search_1",
+            content: [{ type: "web_search_result", url: "https://veryfront.com" }],
+          }, {
+            type: "text",
+            text: "Combined both results.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Summarize that" }],
+    }];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Combined both results." }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Summarize that" }],
+    }]);
   });
 
   it("treats provider-option thinking as enabled while shaping sampling settings", () => {

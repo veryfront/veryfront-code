@@ -1,9 +1,8 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import {
-  formatMergeRequestForDisplay,
-  listMergeRequests,
-} from "../../lib/gitlab-client.ts";
+import { createGitLabClient } from "../lib/gitlab-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "list-merge-requests",
@@ -32,10 +31,20 @@ export default tool({
       ),
     })
   )(),
-  async execute({ scope, state, labels, projectId, limit }) {
-    const mergeRequests = await listMergeRequests({
-      scope,
-      state,
+  async execute({ scope, state, labels, projectId, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createGitLabClient(userId);
+    const mergeRequests = await client.listMergeRequests({
+      scope: requireAllowedValue(
+        scope,
+        ["created_by_me", "assigned_to_me", "all"],
+        "merge request scope",
+      ),
+      state: requireAllowedValue(
+        state,
+        ["opened", "closed", "merged", "all"],
+        "merge request state",
+      ),
       labels,
       projectId,
       perPage: limit,
@@ -86,7 +95,9 @@ export default tool({
           description: truncatedDescription,
         };
       }),
-      summary: mergeRequests.map(formatMergeRequestForDisplay).join("\n\n"),
+      summary: mergeRequests.map(client.formatMergeRequestForDisplay).join(
+        "\n\n",
+      ),
     };
   },
 });

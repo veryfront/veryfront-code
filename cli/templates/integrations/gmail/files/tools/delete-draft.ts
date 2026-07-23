@@ -6,9 +6,11 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "delete-draft",
   description: "Permanently delete a Gmail draft.",
-  inputSchema: defineSchema((v) => v.object({
-    draftId: v.string().min(1).describe("Gmail draft ID"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      draftId: v.string().min(1).describe("Gmail draft ID"),
+    })
+  )(),
   execute: async ({ draftId }, context) => {
     const userId = resolveUserId(context);
 

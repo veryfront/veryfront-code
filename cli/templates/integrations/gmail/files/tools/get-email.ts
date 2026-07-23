@@ -1,23 +1,33 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
+import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { resolveUserId } from "../lib/context.ts";
+
+const MESSAGE_FORMATS = ["full", "metadata", "minimal", "raw"] as const;
 
 export default tool({
   id: "get-email",
-  description: "Get a Gmail message by ID, including headers, labels, snippet, and payload data.",
-  inputSchema: defineSchema((v) => v.object({
-    messageId: v.string().min(1).describe("Gmail message ID"),
-    format: v.enum(["full", "metadata", "minimal", "raw"]).default("full").describe(
-      "Message format",
-    ),
-  }))(),
+  description:
+    "Get a Gmail message by ID, including headers, labels, snippet, and payload data.",
+  inputSchema: defineSchema((v) =>
+    v.object({
+      messageId: v.string().min(1).describe("Gmail message ID"),
+      format: v.enum(["full", "metadata", "minimal", "raw"]).default("full")
+        .describe(
+          "Message format",
+        ),
+    })
+  )(),
   execute: async ({ messageId, format }, context) => {
     const userId = resolveUserId(context);
 
     try {
       const gmail = createGmailClient(userId);
-      const message = await gmail.getMessage(messageId, format);
+      const message = await gmail.getMessage(
+        messageId,
+        requireAllowedValue(format, MESSAGE_FORMATS, "format"),
+      );
       const headers = parseEmailHeaders(message.payload?.headers ?? []);
 
       return {

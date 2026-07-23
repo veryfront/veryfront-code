@@ -20,7 +20,7 @@ export function encodeBase64(value: string): string {
     try {
       return globalThis.btoa(value);
     } catch (_) {
-      /* expected: non-Latin1 string — fall back to UTF-8 bytes */
+      /* expected: non-Latin1 string; fall back to UTF-8 bytes */
       return encodeBase64Bytes(new TextEncoder().encode(value));
     }
   }
@@ -40,20 +40,47 @@ export function encodeBase64Bytes(bytes: Uint8Array): string {
   if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
 
   if (typeof globalThis.btoa === "function") {
-    let binary = "";
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return globalThis.btoa(binary);
+    // The chunk size stays below engine argument limits and is divisible by
+    // three, so only the final base64 chunk can contain padding.
+    const chunkSize = 24 * 1024;
+    let encoded = "";
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      encoded += globalThis.btoa(
+        String.fromCharCode(...bytes.subarray(offset, offset + chunkSize)),
+      );
+    }
+    return encoded;
   }
 
   throw new Error("Base64 encoding is not supported in this runtime");
 }
 
-/** Encode a string as unpadded base64url. */
+/** Encode a UTF-8 string as unpadded base64url. */
 export function base64urlEncode(input: string): string {
-  return toBase64Url(encodeBase64(input));
+  return base64urlEncodeBytes(new TextEncoder().encode(input));
 }
 
 /** Encode raw bytes as unpadded base64url. */
 export function base64urlEncodeBytes(bytes: Uint8Array): string {
   return toBase64Url(encodeBase64Bytes(bytes));
+}
+
+/** Decode canonical unpadded base64url into uninterpreted bytes. */
+export function base64urlDecodeBytes(encoded: string): Uint8Array | undefined {
+  if (!/^[A-Za-z0-9_-]*$/.test(encoded) || encoded.length % 4 === 1) return undefined;
+
+  const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/") +
+    "=".repeat((4 - (encoded.length % 4)) % 4);
+
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    if (base64urlEncodeBytes(bytes) !== encoded) return undefined;
+    return bytes;
+  } catch {
+    return undefined;
+  }
 }

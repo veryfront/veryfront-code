@@ -6,6 +6,7 @@ import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 import { invalidateModulePaths } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
+import type { ReloadProjectInfo } from "../reload-notifier.ts";
 
 const hmrLog = logger.component("hmr");
 const fileWatchSetupLog = logger.component("file-watch-setup");
@@ -122,6 +123,7 @@ export class FileWatchSetup {
     private invalidateHandler: () => void = () => {},
     private rediscoverPrimitives?: () => Promise<void>,
     primitiveDirNames?: string[],
+    private reloadProject?: ReloadProjectInfo,
   ) {
     this.primitiveDirs = new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS);
   }
@@ -223,7 +225,7 @@ export class FileWatchSetup {
     // Invalidate on-disk ESM cache for changed files immediately,
     // before the browser reloads, so the next SSR render picks up fresh content.
     const relativePaths = paths.map((p) => relative(this.projectDir, p).split(sep).join("/"));
-    invalidateModulePaths(relativePaths);
+    await invalidateModulePaths(relativePaths);
 
     const display = paths.map((p) => p.replace(this.projectDir, ".")).join(", ");
     logger.debug(logMessage, { files: display });
@@ -231,7 +233,7 @@ export class FileWatchSetup {
     // Single source of truth for HMR signaling:
     // ReloadNotifier immediately invalidates runtime caches and then sends
     // one debounced browser update for both local dev and preview clients.
-    ReloadNotifier.triggerReload(relativePaths);
+    ReloadNotifier.triggerReload(relativePaths, this.reloadProject);
   }
 
   /**

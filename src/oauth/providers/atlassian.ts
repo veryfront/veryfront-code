@@ -12,11 +12,14 @@ const atlassianBase = {
     audience: "api.atlassian.com",
     prompt: "consent",
   },
+  tokenRequestFormat: "json",
+  pkceMode: "unsupported",
 } satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
 
 /** Configuration used by jira. */
 export const jiraConfig: OAuthServiceConfig = {
   ...atlassianBase,
+  additionalAuthParams: { ...atlassianBase.additionalAuthParams },
   serviceId: "jira",
   displayName: "Jira",
   apiBaseUrl: "https://api.atlassian.com/ex/jira",
@@ -31,6 +34,7 @@ export const jiraConfig: OAuthServiceConfig = {
 /** Configuration used by confluence. */
 export const confluenceConfig: OAuthServiceConfig = {
   ...atlassianBase,
+  additionalAuthParams: { ...atlassianBase.additionalAuthParams },
   serviceId: "confluence",
   displayName: "Confluence",
   apiBaseUrl: "https://api.atlassian.com/ex/confluence",
@@ -57,11 +61,12 @@ export const bitbucketConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "BITBUCKET_CLIENT_SECRET",
   apiBaseUrl: "https://api.bitbucket.org/2.0",
   additionalAuthParams: {},
+  tokenRequestFormat: "form",
+  useBasicAuth: true,
   defaultScopes: [
     "repository",
-    "repository:write",
-    "pullrequest",
     "pullrequest:write",
+    "issue",
     "account",
   ],
 };

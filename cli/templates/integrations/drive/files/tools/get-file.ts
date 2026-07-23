@@ -1,27 +1,29 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createDriveClient } from "../../lib/drive-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createDriveClient } from "../lib/drive-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export default tool({
   id: "get-file",
   description:
     "Get detailed metadata about a specific file or folder in Google Drive. Returns detailed information including sharing settings, owners, and capabilities.",
-  inputSchema: defineSchema((v) => v.object({
-    fileId: v.string().describe("The ID of the file or folder to retrieve"),
-  }))(),
-  async execute({ fileId }) {
-    const client = createDriveClient(DEFAULT_USER_ID);
+  inputSchema: defineSchema((v) =>
+    v.object({
+      fileId: v.string().describe("The ID of the file or folder to retrieve"),
+    })
+  )(),
+  async execute({ fileId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createDriveClient(userId);
     const file = await client.getFile(fileId);
 
     const lastModifyingUser = file.lastModifyingUser
       ? {
-          name: file.lastModifyingUser.displayName,
-          email: file.lastModifyingUser.emailAddress,
-          photoLink: file.lastModifyingUser.photoLink,
-        }
+        name: file.lastModifyingUser.displayName,
+        email: file.lastModifyingUser.emailAddress,
+        photoLink: file.lastModifyingUser.photoLink,
+      }
       : undefined;
 
     return {

@@ -13,6 +13,8 @@ export {
   createOAuthDisconnectHandler,
   createOAuthInitHandler,
   createOAuthStatusHandler,
+  type GetUserIdFn,
+  type OAuthDisconnectHandlerOptions,
   type OAuthInitHandlerOptions,
   type OAuthStatusHandlerOptions,
 } from "./init-handler.ts";

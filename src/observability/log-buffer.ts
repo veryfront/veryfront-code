@@ -1,5 +1,6 @@
-import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
 import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
+import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
 
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -25,6 +26,13 @@ export interface LogFilter {
 /** Public API contract for log subscriber. */
 export type LogSubscriber = (entry: LogEntry) => void;
 
+function snapshotEntry(entry: LogEntry): LogEntry {
+  return {
+    ...entry,
+    data: entry.data ? sanitizeStructuredTelemetryData(entry.data) : entry.data,
+  };
+}
+
 /** Implement log buffer. */
 export class LogBuffer {
   private entries: LogEntry[] = [];
@@ -33,7 +41,11 @@ export class LogBuffer {
   private maxSize: number;
 
   constructor(options: { maxSize?: number } = {}) {
-    this.maxSize = options.maxSize ?? 1000;
+    const maxSize = options.maxSize ?? 1000;
+    if (!Number.isSafeInteger(maxSize) || maxSize < 0) {
+      throw new RangeError("LogBuffer maxSize must be a non-negative integer");
+    }
+    this.maxSize = maxSize;
   }
 
   private generateId(): string {
@@ -45,7 +57,9 @@ export class LogBuffer {
       ...entry,
       // Redact credential-like keys before the entry is buffered, surfaced to
       // subscribers, or written to disk by the file subscriber (#1989).
-      data: entry.data ? redactSensitive(entry.data) : entry.data,
+      data: entry.data ? sanitizeStructuredTelemetryData(entry.data) : entry.data,
+      message: sanitizeUrlCredentials(entry.message),
+      source: sanitizeUrlCredentials(entry.source),
       id: this.generateId(),
       timestamp: Date.now(),
     };
@@ -58,7 +72,7 @@ export class LogBuffer {
 
     this.subscribers.notify(fullEntry);
 
-    return fullEntry;
+    return snapshotEntry(fullEntry);
   }
 
   debug(message: string, source = "server", data?: Record<string, unknown>): LogEntry {
@@ -78,7 +92,7 @@ export class LogBuffer {
   }
 
   query(filter?: LogFilter): LogEntry[] {
-    if (!filter) return [...this.entries];
+    if (!filter) return this.getAll();
 
     let results = [...this.entries];
 
@@ -99,7 +113,15 @@ export class LogBuffer {
         const lower = pattern.toLowerCase();
         results = results.filter((e) => e.message.toLowerCase().includes(lower));
       } else {
-        results = results.filter((e) => pattern.test(e.message));
+        const initialLastIndex = pattern.lastIndex;
+        try {
+          results = results.filter((e) => {
+            pattern.lastIndex = 0;
+            return pattern.test(e.message);
+          });
+        } finally {
+          pattern.lastIndex = initialLastIndex;
+        }
       }
     }
 
@@ -108,18 +130,20 @@ export class LogBuffer {
     }
 
     if (filter.limit != null) {
-      results = results.slice(-filter.limit);
+      const limit = Number.isFinite(filter.limit) ? Math.max(0, Math.floor(filter.limit)) : 0;
+      results = limit === 0 ? [] : results.slice(-limit);
     }
 
-    return results;
+    return results.map(snapshotEntry);
   }
 
   tail(count = 50): LogEntry[] {
-    return this.entries.slice(-count);
+    const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    return normalizedCount === 0 ? [] : this.entries.slice(-normalizedCount).map(snapshotEntry);
   }
 
   getAll(): LogEntry[] {
-    return [...this.entries];
+    return this.entries.map(snapshotEntry);
   }
 
   clear(): void {
@@ -141,7 +165,7 @@ export class LogBuffer {
   }
 
   subscribe(callback: LogSubscriber): () => void {
-    return this.subscribers.subscribe(callback);
+    return this.subscribers.subscribe((entry) => callback(snapshotEntry(entry)));
   }
 
   toJSON(): LogEntry[] {
@@ -164,6 +188,34 @@ export class LogBuffer {
 
 let globalBuffer: LogBuffer | null = null;
 
+type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
+type ConsoleFunction = (...args: unknown[]) => void;
+
+interface ConsoleInterceptOwner {
+  readonly generation: number;
+  active: boolean;
+}
+
+interface ConsoleWrapperMetadata {
+  readonly owner: ConsoleInterceptOwner;
+  readonly previous: ConsoleFunction;
+}
+
+let consoleInterceptGeneration = 0;
+const consoleWrapperMetadata = new WeakMap<ConsoleFunction, ConsoleWrapperMetadata>();
+
+function resolveLiveConsoleFunction(candidate: ConsoleFunction): ConsoleFunction {
+  let current = candidate;
+  const seen = new Set<ConsoleFunction>();
+  while (!seen.has(current)) {
+    seen.add(current);
+    const metadata = consoleWrapperMetadata.get(current);
+    if (!metadata || metadata.owner.active) return current;
+    current = metadata.previous;
+  }
+  return candidate;
+}
+
 /** Return log buffer. */
 export function getLogBuffer(): LogBuffer {
   globalBuffer ??= new LogBuffer();
@@ -178,12 +230,16 @@ export function resetLogBuffer(): void {
 
 /** Capture console output in the log buffer. */
 export function interceptConsole(buffer: LogBuffer, source = "console"): () => void {
-  const original = {
+  const previous: Record<ConsoleMethod, ConsoleFunction> = {
     log: console.log,
     info: console.info,
     warn: console.warn,
     error: console.error,
     debug: console.debug,
+  };
+  const owner: ConsoleInterceptOwner = {
+    generation: ++consoleInterceptGeneration,
+    active: true,
   };
 
   function formatArgs(...args: unknown[]): string {
@@ -194,32 +250,57 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
         try {
           // Redact object args before they are folded into the message string,
           // where the per-entry data redaction can no longer reach them (#1989).
-          return JSON.stringify(redactSensitive(a));
+          return JSON.stringify(sanitizeStructuredTelemetryData(a));
         } catch (_) {
           /* expected: circular references or non-serializable values */
-          return String(a);
+          try {
+            return String(a);
+          } catch (_) {
+            return "[Unserializable]";
+          }
         }
       })
       .join(" ");
   }
 
   function wrap(
-    method: keyof typeof original,
+    method: ConsoleMethod,
     log: (message: string, source: string) => LogEntry,
-  ): (...args: unknown[]) => void {
-    return (...args: unknown[]) => {
-      log(formatArgs(...args), source);
-      original[method].apply(console, args);
+  ): ConsoleFunction {
+    const wrapper: ConsoleFunction = (...args: unknown[]) => {
+      if (owner.active) {
+        try {
+          log(formatArgs(...args), source);
+        } catch (_) {
+          /* expected: interception must never block the underlying console */
+        }
+      }
+      Reflect.apply(resolveLiveConsoleFunction(previous[method]), console, args);
     };
+    consoleWrapperMetadata.set(wrapper, { owner, previous: previous[method] });
+    return wrapper;
   }
 
-  console.log = wrap("log", buffer.info.bind(buffer));
-  console.info = wrap("info", buffer.info.bind(buffer));
-  console.warn = wrap("warn", buffer.warn.bind(buffer));
-  console.error = wrap("error", buffer.error.bind(buffer));
-  console.debug = wrap("debug", buffer.debug.bind(buffer));
+  const wrappers: Record<ConsoleMethod, ConsoleFunction> = {
+    log: wrap("log", buffer.info.bind(buffer)),
+    info: wrap("info", buffer.info.bind(buffer)),
+    warn: wrap("warn", buffer.warn.bind(buffer)),
+    error: wrap("error", buffer.error.bind(buffer)),
+    debug: wrap("debug", buffer.debug.bind(buffer)),
+  };
+
+  console.log = wrappers.log;
+  console.info = wrappers.info;
+  console.warn = wrappers.warn;
+  console.error = wrappers.error;
+  console.debug = wrappers.debug;
 
   return () => {
-    Object.assign(console, original);
+    if (!owner.active) return;
+    owner.active = false;
+    for (const method of Object.keys(wrappers) as ConsoleMethod[]) {
+      if (console[method] !== wrappers[method]) continue;
+      console[method] = resolveLiveConsoleFunction(previous[method]);
+    }
   };
 }

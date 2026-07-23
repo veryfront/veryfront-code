@@ -293,6 +293,94 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(delivery, "string");
       });
 
+      it("does not opt request-aware SSR into shared caching by default", async () => {
+        let cacheKey: string | undefined;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            cacheKey = options?.cacheKey;
+            return Promise.resolve({ html: "<html>rendered</html>", frontmatter: {} });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        await service.renderPage(makeCtx(), makeRenderOptions());
+        assertEquals(cacheKey, undefined);
+      });
+
+      it("builds an explicit public identity including declared vary headers", async () => {
+        const cacheKeys: Array<string | undefined> = [];
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            cacheKeys.push(options?.cacheKey);
+            return Promise.resolve({ html: "<html>rendered</html>", frontmatter: {} });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+        const ctx = makeCtx({
+          projectId: "project-a",
+          projectSlug: "project-a",
+          resolvedEnvironment: "production",
+          config: {
+            cache: {
+              render: {
+                public: { enabled: true, varyHeaders: ["accept-language"] },
+              },
+            },
+          } as HandlerContext["config"],
+        });
+
+        for (const language of ["en", "sv"]) {
+          const url = new URL("https://project-a.example/docs?section=intro");
+          await service.renderPage(
+            ctx,
+            makeRenderOptions({
+              request: new Request(url, { headers: { "accept-language": language } }),
+              url,
+              slug: "/docs",
+            }),
+          );
+        }
+
+        assertEquals(cacheKeys.length, 2);
+        assertEquals(cacheKeys.every((key) => /^public-[a-f0-9]{64}$/.test(key ?? "")), true);
+        assertEquals(cacheKeys[0] === cacheKeys[1], false);
+      });
+
+      it("refuses public caching when the request carries sensitive state", async () => {
+        let cacheKey: string | undefined;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            cacheKey = options?.cacheKey;
+            return Promise.resolve({ html: "<html>private</html>", frontmatter: {} });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+        const ctx = makeCtx({
+          projectId: "project-a",
+          resolvedEnvironment: "production",
+          config: {
+            cache: { render: { public: { enabled: true } } },
+          } as HandlerContext["config"],
+        });
+        const url = new URL("https://project-a.example/private");
+
+        await service.renderPage(
+          ctx,
+          makeRenderOptions({
+            request: new Request(url, { headers: { cookie: "session=secret" } }),
+            url,
+          }),
+        );
+
+        assertEquals(cacheKey, undefined);
+      });
+
       it("keeps streaming delivery for no-cache responses", async () => {
         let delivery: unknown;
         const adapter = createMockRendererAdapter({

@@ -41,6 +41,13 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    },
+    {
+      "name": "JIRA_CLOUD_ID",
+      "description": "Optional Atlassian site ID; required when the user can access multiple Jira sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/#get-list-of-resources"
     }
   ],
   "tools": [

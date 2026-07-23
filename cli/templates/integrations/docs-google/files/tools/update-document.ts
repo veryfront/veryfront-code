@@ -1,110 +1,95 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createDocsClient, type Request } from "../../lib/docs-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createDocsClient, type Request } from "../lib/docs-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "update-document",
   description:
-    "Update a Google Docs document using batch requests. Supports inserting text, deleting content, replacing text, and more.",
-  inputSchema: defineSchema((v) => v
-    .object({
-      documentId: v.string().describe("The ID of the document to update"),
-      requests: v
-        .array(v.any())
-        .describe(
-          "Array of batch update requests. See Google Docs API documentation for request types: insertText, deleteContentRange, replaceAllText, etc.",
-        ),
+    "Update a Google Docs document with validated insert, delete, or replace operations.",
+  inputSchema: defineSchema((v) =>
+    v.object({
+      documentId: v.string().min(1).describe(
+        "The ID of the document to update",
+      ),
+      operations: v.array(v.union([
+        v.object({
+          insertText: v.object({
+            text: v.string().min(1).describe("Text to insert"),
+            index: v.number().int().positive().describe(
+              "Position to insert at (1 = start of document)",
+            ),
+          }),
+        }),
+        v.object({
+          deleteContent: v.object({
+            startIndex: v.number().int().positive().describe(
+              "Start position of content to delete",
+            ),
+            endIndex: v.number().int().positive().describe(
+              "Exclusive end position of content to delete",
+            ),
+          }).refine(
+            ({ startIndex, endIndex }) => endIndex > startIndex,
+            { message: "endIndex must be greater than startIndex" },
+          ),
+        }),
+        v.object({
+          replaceAllText: v.object({
+            searchText: v.string().min(1).describe("Text to search for"),
+            replaceText: v.string().describe("Replacement text"),
+            matchCase: v.boolean().default(false).describe(
+              "Whether to match case",
+            ),
+          }),
+        }),
+      ])).min(1).describe("Validated Google Docs update operations"),
     })
-    .or(
-      v.object({
-        documentId: v.string().describe("The ID of the document to update"),
-        operation: v
-          .object({
-            type: v
-              .enum(["insertText", "deleteContent", "replaceAllText"])
-              .describe("Type of operation to perform"),
-            insertText: v
-              .object({
-                text: v.string().describe("Text to insert"),
-                index: v.number().describe("Position to insert at (1 = start of document)"),
-              })
-              .optional()
-              .describe("Parameters for insertText operation"),
-            deleteContent: v
-              .object({
-                startIndex: v.number().describe("Start position of content to delete"),
-                endIndex: v.number().describe("End position of content to delete"),
-              })
-              .optional()
-              .describe("Parameters for deleteContent operation"),
-            replaceAllText: v
-              .object({
-                searchText: v.string().describe("Text to search for"),
-                replaceText: v.string().describe("Text to replace with"),
-                matchCase: v.boolean().default(false).describe("Whether to match case"),
-              })
-              .optional()
-              .describe("Parameters for replaceAllText operation"),
-          })
-          .describe("Simple operation to perform"),
-      }),
-    ))(),
-  async execute(input): Promise<{
+  )(),
+  async execute({ documentId, operations }, context): Promise<{
     documentId: string;
     success: true;
     replies: unknown;
     writeControl?: unknown;
   }> {
-    const client = createDocsClient(DEFAULT_USER_ID);
-
-    if (!("operation" in input)) {
-      const { documentId, requests } = input;
-      const result = await client.updateDocument(documentId, requests as Request[]);
-
+    const userId = requireUserIdFromContext(context);
+    const client = createDocsClient(userId);
+    const requests: Request[] = operations.map((operation) => {
+      if ("insertText" in operation) {
+        return {
+          insertText: {
+            text: operation.insertText.text,
+            location: { index: operation.insertText.index },
+          },
+        };
+      }
+      if ("deleteContent" in operation) {
+        return {
+          deleteContentRange: {
+            range: {
+              startIndex: operation.deleteContent.startIndex,
+              endIndex: operation.deleteContent.endIndex,
+            },
+          },
+        };
+      }
       return {
-        documentId: result.documentId,
-        success: true,
-        replies: result.replies,
-        writeControl: result.writeControl,
+        replaceAllText: {
+          containsText: {
+            text: operation.replaceAllText.searchText,
+            matchCase: operation.replaceAllText.matchCase,
+          },
+          replaceText: operation.replaceAllText.replaceText,
+        },
       };
-    }
+    });
+    const result = await client.updateDocument(documentId, requests);
 
-    const { documentId, operation } = input;
-
-    switch (operation.type) {
-      case "insertText": {
-        const params = operation.insertText;
-        if (!params) throw new Error("insertText parameters required");
-
-        const result = await client.insertText(documentId, params.text, params.index);
-        return { documentId: result.documentId, success: true, replies: result.replies };
-      }
-
-      case "deleteContent": {
-        const params = operation.deleteContent;
-        if (!params) throw new Error("deleteContent parameters required");
-
-        const result = await client.deleteContent(documentId, params.startIndex, params.endIndex);
-        return { documentId: result.documentId, success: true, replies: result.replies };
-      }
-
-      case "replaceAllText": {
-        const params = operation.replaceAllText;
-        if (!params) throw new Error("replaceAllText parameters required");
-
-        const result = await client.replaceAllText(
-          documentId,
-          params.searchText,
-          params.replaceText,
-          params.matchCase,
-        );
-        return { documentId: result.documentId, success: true, replies: result.replies };
-      }
-
-      default:
-        throw new Error(`Unknown operation type: ${operation.type}`);
-    }
+    return {
+      documentId: result.documentId,
+      success: true,
+      replies: result.replies,
+      writeControl: result.writeControl,
+    };
   },
 });

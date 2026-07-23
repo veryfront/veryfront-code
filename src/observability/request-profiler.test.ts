@@ -68,6 +68,57 @@ describe("request profiler", () => {
     assertEquals(result.phases["render.cache_hit"], 0);
   });
 
+  it("returns detached records and normalizes explicit phase durations", async () => {
+    const returned = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: "/profiled",
+      },
+      async () => {
+        markRequestProfilePhase("invalid", -5);
+        markRequestProfilePhase("invalid", Number.POSITIVE_INFINITY);
+        return finalizeRequestProfiling(200);
+      },
+    );
+    assertExists(returned);
+    returned.pathname = "/mutated";
+    returned.phases.invalid = 99;
+
+    const firstSnapshot = snapshotRequestProfiles();
+    assertEquals(firstSnapshot.records[0]?.pathname, "/profiled");
+    assertEquals(firstSnapshot.records[0]?.phases.invalid, 0);
+
+    const firstRecord = firstSnapshot.records[0];
+    assertExists(firstRecord);
+    firstRecord.pathname = "/snapshot-mutated";
+    firstRecord.phases.invalid = 100;
+
+    const secondSnapshot = snapshotRequestProfiles();
+    assertEquals(secondSnapshot.records[0]?.pathname, "/profiled");
+    assertEquals(secondSnapshot.records[0]?.phases.invalid, 0);
+  });
+
+  it("saturates accumulated phase durations at a finite safe bound", async () => {
+    const record = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: "/profiled",
+      },
+      async () => {
+        markRequestProfilePhase("overflow", Number.MAX_SAFE_INTEGER);
+        markRequestProfilePhase("overflow", Number.MAX_SAFE_INTEGER);
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertExists(record);
+    assertEquals(record.phases.overflow, Number.MAX_SAFE_INTEGER);
+    assert(Number.isFinite(record.totalMs));
+    assert(record.totalMs <= Number.MAX_SAFE_INTEGER);
+  });
+
   it("profiles page-data requests when Server-Timing diagnostics are enabled", () => {
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
 

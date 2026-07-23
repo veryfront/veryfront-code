@@ -61,6 +61,66 @@ describe("cache/request-cache-batcher", () => {
       assertNotEquals(caught, null);
       assertEquals(caught!.message, "test error");
     });
+
+    it("should finish queued reads when the callback returns without awaiting them", async () => {
+      const backend = createMockBackend({ key: "value" });
+      let pending!: Promise<string | null>;
+
+      await runWithCacheBatching(async () => {
+        pending = getCachedWithBatching(backend, "key");
+      });
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          pending,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("queued read did not finish")), 100);
+          }),
+        ]);
+        assertEquals(result, "value");
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    });
+
+    it("should not resolve until queued reads have been flushed", async () => {
+      let markBackendStarted!: () => void;
+      const backendStarted = new Promise<void>((resolve) => {
+        markBackendStarted = resolve;
+      });
+      let releaseBackend!: () => void;
+      const backendReleased = new Promise<void>((resolve) => {
+        releaseBackend = resolve;
+      });
+      const backend: CacheBackend = {
+        type: "memory",
+        async get() {
+          markBackendStarted();
+          await backendReleased;
+          return "value";
+        },
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+      let pending!: Promise<string | null>;
+      let wrapperSettled = false;
+
+      const wrapped = runWithCacheBatching(async () => {
+        pending = getCachedWithBatching(backend, "key");
+      });
+      void wrapped.then(() => {
+        wrapperSettled = true;
+      });
+
+      await backendStarted;
+      await Promise.resolve();
+      assertEquals(wrapperSettled, false);
+
+      releaseBackend();
+      await wrapped;
+      assertEquals(await pending, "value");
+    });
   });
 
   describe("getRequestCacheContext", () => {
@@ -95,10 +155,11 @@ describe("cache/request-cache-batcher", () => {
     });
 
     it("should reflect stored entries count", async () => {
+      const backend = createMockBackend();
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
-        setInRequestCache("key1", "value1");
-        setInRequestCache("key2", "value2");
+        setInRequestCache(backend, "key1", "value1");
+        setInRequestCache(backend, "key2", "value2");
 
         const stats = getRequestCacheStats();
         assertExists(stats);
@@ -109,13 +170,14 @@ describe("cache/request-cache-batcher", () => {
 
   describe("setInRequestCache", () => {
     it("should be a no-op outside of batching context", () => {
-      setInRequestCache("key", "value");
+      setInRequestCache(createMockBackend(), "key", "value");
     });
 
     it("should set value in the request cache", async () => {
+      const backend = createMockBackend();
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
-        setInRequestCache("myKey", "myValue");
+        setInRequestCache(backend, "myKey", "myValue");
 
         const ctx = getRequestCacheContext();
         assertExists(ctx);
@@ -124,14 +186,45 @@ describe("cache/request-cache-batcher", () => {
     });
 
     it("should allow null values", async () => {
+      const backend = createMockBackend();
       // deno-lint-ignore require-await
       await runWithCacheBatching(async () => {
-        setInRequestCache("nullKey", null);
+        setInRequestCache(backend, "nullKey", null);
 
         const ctx = getRequestCacheContext();
         assertExists(ctx);
         assertEquals(ctx.cache.has("nullKey"), true);
         assertEquals(ctx.cache.get("nullKey"), null);
+      });
+    });
+
+    it("bounds retained keys and generation metadata within one request", async () => {
+      const backend = createMockBackend();
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
+        for (let index = 0; index < 1_100; index++) {
+          setInRequestCache(backend, `key-${index}`, `value-${index}`);
+        }
+
+        const ctx = getRequestCacheContext();
+        assertExists(ctx);
+        assertEquals(ctx.cache.size <= 1_000, true);
+        assertEquals(ctx.explicitCacheKeys.size <= 1_000, true);
+        assertEquals(ctx.generations.size <= 1_000, true);
+      });
+    });
+
+    it("bounds backend-specific state within one request", async () => {
+      const backends = Array.from({ length: 40 }, () => createMockBackend());
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
+        for (const [index, backend] of backends.entries()) {
+          setInRequestCache(backend, "key", `value-${index}`);
+        }
+
+        const ctx = getRequestCacheContext();
+        assertExists(ctx);
+        assertEquals(ctx.additionalBackends.size <= 31, true);
       });
     });
   });
@@ -156,7 +249,7 @@ describe("cache/request-cache-batcher", () => {
       const backend = createMockBackend({ key1: "backend-value" });
 
       await runWithCacheBatching(async () => {
-        setInRequestCache("key1", "cached-value");
+        setInRequestCache(backend, "key1", "cached-value");
 
         const result = await getCachedWithBatching(backend, "key1");
         assertEquals(result, "cached-value");
@@ -169,7 +262,7 @@ describe("cache/request-cache-batcher", () => {
       const backend = createMockBackend({ key1: "backend-value" });
 
       await runWithCacheBatching(async () => {
-        setInRequestCache("key1", null);
+        setInRequestCache(backend, "key1", null);
 
         const result = await getCachedWithBatching(backend, "key1");
         assertEquals(result, null);
@@ -212,6 +305,40 @@ describe("cache/request-cache-batcher", () => {
       });
     });
 
+    it("should isolate identical keys across different backends", async () => {
+      const firstBackend = createMockBackend({ shared: "first-value" });
+      const secondBackend = createMockBackend({ shared: "second-value" });
+
+      await runWithCacheBatching(async () => {
+        const [first, second] = await Promise.all([
+          getCachedWithBatching(firstBackend, "shared"),
+          getCachedWithBatching(secondBackend, "shared"),
+        ]);
+
+        assertEquals(first, "first-value");
+        assertEquals(second, "second-value");
+        assertEquals(firstBackend.getCalls, ["shared"]);
+        assertEquals(secondBackend.getCalls, ["shared"]);
+
+        assertEquals(await getCachedWithBatching(firstBackend, "shared"), "first-value");
+        assertEquals(await getCachedWithBatching(secondBackend, "shared"), "second-value");
+      });
+    });
+
+    it("scopes explicit request writes to the backend that owns them", async () => {
+      const firstBackend = createMockBackend({ shared: "first-backend" });
+      const secondBackend = createMockBackend({ shared: "second-backend" });
+
+      await runWithCacheBatching(async () => {
+        setInRequestCache(firstBackend, "shared", "first-explicit");
+
+        assertEquals(await getCachedWithBatching(firstBackend, "shared"), "first-explicit");
+        assertEquals(await getCachedWithBatching(secondBackend, "shared"), "second-backend");
+        assertEquals(firstBackend.getCalls, []);
+        assertEquals(secondBackend.getCalls, ["shared"]);
+      });
+    });
+
     it("should cache fetched values in the request context for subsequent reads", async () => {
       const backend = createMockBackend({ "cached-key": "fetched-value" });
 
@@ -226,6 +353,41 @@ describe("cache/request-cache-batcher", () => {
 
         const totalCallsAfter = backend.getCalls.length + backend.getBatchCalls.length;
         assertEquals(totalCallsAfter, totalCallsBefore);
+      });
+    });
+
+    it("should not let a deferred backend read overwrite a newer request write", async () => {
+      let markReadStarted!: () => void;
+      const readStarted = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      let releaseRead!: () => void;
+      const readReleased = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      const backend: CacheBackend = {
+        type: "memory",
+        async get() {
+          markReadStarted();
+          await readReleased;
+          return "stale-backend-value";
+        },
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+      };
+
+      await runWithCacheBatching(async () => {
+        const pendingRead = getCachedWithBatching(backend, "shared-key");
+        await readStarted;
+
+        setInRequestCache(backend, "shared-key", "new-request-value");
+        releaseRead();
+
+        assertEquals(await pendingRead, "new-request-value");
+        assertEquals(
+          await getCachedWithBatching(backend, "shared-key"),
+          "new-request-value",
+        );
       });
     });
 

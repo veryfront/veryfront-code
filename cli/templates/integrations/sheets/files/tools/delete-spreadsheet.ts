@@ -1,8 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSheetsClient } from "../../lib/sheets-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createSheetsClient } from "../lib/sheets-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "delete-spreadsheet",
@@ -16,8 +15,9 @@ export default tool({
       ),
     })
   )(),
-  execute({ spreadsheetId, permanentlyDelete }) {
-    return createSheetsClient(DEFAULT_USER_ID).deleteSpreadsheet(
+  execute({ spreadsheetId, permanentlyDelete }, context) {
+    const userId = requireUserIdFromContext(context);
+    return createSheetsClient(userId).deleteSpreadsheet(
       spreadsheetId,
       { permanentlyDelete },
     );

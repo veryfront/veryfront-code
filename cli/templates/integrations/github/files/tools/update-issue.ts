@@ -1,7 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createGitHubClient } from "../../lib/github-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createGitHubClient } from "../lib/github-client.ts";
+import { optionalAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+const ISSUE_STATES = ["open", "closed"] as const;
 
 export default tool({
   id: "update-issue",
@@ -36,7 +39,7 @@ export default tool({
       const issue = await github.updateIssue(owner, repoName, issueNumber, {
         title,
         body,
-        state,
+        state: optionalAllowedValue(state, ISSUE_STATES, "state"),
         labels,
         assignees,
       });

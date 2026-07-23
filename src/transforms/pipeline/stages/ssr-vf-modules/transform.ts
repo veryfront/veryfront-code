@@ -16,11 +16,10 @@ import denoConfig from "#deno-config" with { type: "json" };
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
-import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap } from "../../../import-rewriter/url-builder.ts";
 import { findRelativeImports } from "./import-finder.ts";
 import { resolveRelativeFrameworkImport, resolveVeryfrontSourcePath } from "./path-resolver.ts";
@@ -43,6 +42,7 @@ import {
   veryfrontTransformCache,
 } from "./constants.ts";
 import { buildFrameworkVfModuleCacheFileName } from "../../../mdx/esm-module-loader/cache-format.ts";
+import { hashString } from "../../../mdx/esm-module-loader/utils/hash.ts";
 
 const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
@@ -91,9 +91,9 @@ export async function cacheTransformedCode(
   // Include FRAMEWORK_ROOT in the hash to prevent cross-environment cache issues.
   // Different environments (source vs compiled binary) have different FRAMEWORK_ROOT values,
   // so their file:// paths are incompatible.
-  const envKey = hashCodeHex(FRAMEWORK_ROOT).slice(0, 8);
-  const contentHash = hashCodeHex(transformed);
-  const pathHash = hashCodeHex(vfModulePath);
+  const envKey = hashString(FRAMEWORK_ROOT);
+  const contentHash = hashString(transformed);
+  const pathHash = hashString(vfModulePath);
   const fileName = buildFrameworkVfModuleCacheFileName(pathHash, envKey, contentHash);
   const frameworkCacheDir = join(cacheDir, "framework");
   const cachePath = join(frameworkCacheDir, fileName);
@@ -206,6 +206,7 @@ async function transformAndCacheFallbackDep(
     ctx.reactVersion,
     ctx.projectDir,
     depContent,
+    ctx.importMapFingerprint,
   );
   // Prefer the main path's fully-resolved cache entry when present —
   // that output is strictly higher quality than what the fallback
@@ -326,10 +327,9 @@ async function rewriteFallbackRelativeImports(
   // from file://, and Node rejects `import ... from "https:"`
   // (ERR_UNSUPPORTED_ESM_URL_SCHEME); leaving the remote specifier in would
   // break SSR under Node whenever a deep framework file hits this fallback.
-  const importMap = await loadImportMap(ctx.projectDir);
   const cacheResult = await cacheHttpImportsToLocal(rewritten, {
     cacheDir: getHttpBundleCacheDir(),
-    importMap,
+    importMap: ctx.importMap,
     reactVersion: ctx.reactVersion,
   });
   return cacheResult.code;
@@ -353,6 +353,7 @@ export async function transformFrameworkCode(
     ctx.reactVersion,
     ctx.projectDir,
     content,
+    ctx.importMapFingerprint,
   );
   const ancestry = ctx.transformAncestry ?? new Set<string>();
 
@@ -417,6 +418,7 @@ async function transformFrameworkCodeUncoalesced(
     ctx.reactVersion,
     ctx.projectDir,
     content,
+    ctx.importMapFingerprint,
   );
   const cached = frameworkFileCache.get(transformKey);
   if (cached) {
@@ -543,6 +545,7 @@ async function transformFrameworkCodeUncoalesced(
             ctx.reactVersion,
             ctx.projectDir,
             depContent,
+            ctx.importMapFingerprint,
           );
           const existingFileUrl = frameworkFileCache.get(dependencyTransformKey);
           if (existingFileUrl) {
@@ -629,10 +632,9 @@ async function transformFrameworkCodeUncoalesced(
     transformed = await stripJsonAttributesFromModuleImports(transformed);
 
     // Cache HTTP imports to local filesystem
-    const importMap = await loadImportMap(ctx.projectDir);
     const cacheResult = await cacheHttpImportsToLocal(transformed, {
       cacheDir: getHttpBundleCacheDir(),
-      importMap,
+      importMap: ctx.importMap,
       reactVersion: ctx.reactVersion,
     });
 
@@ -665,6 +667,7 @@ export async function resolveAndTransformVeryfrontImport(
       ctx.reactVersion,
       ctx.projectDir,
       content,
+      ctx.importMapFingerprint,
     );
     const cached = veryfrontTransformCache.get(transformKey);
     if (cached) {
@@ -736,12 +739,14 @@ export async function transformFrameworkSource(
   reactVersion: string,
   projectDir: string,
   fs: ReturnType<typeof createFileSystem>,
+  importMap: ImportMapConfig,
+  importMapFingerprint: string,
   onProgress?: TransformContext["onProgress"],
 ): Promise<string> {
   return transformFrameworkCode(
     content,
     sourcePath,
-    { reactVersion, projectDir, fs, onProgress },
+    { reactVersion, projectDir, fs, importMap, importMapFingerprint, onProgress },
     true,
   );
 }

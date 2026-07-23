@@ -1,13 +1,46 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  installGlobalTelemetryAPI,
+  type Meter,
+  type MetricsAPI,
+  type ObservableResult,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { MetricsManager } from "./manager.ts";
+
+function createMetricsApi(label: string, calls: string[]): MetricsAPI {
+  const instrument = (name: string) => ({
+    add: () => calls.push(`${label}:${name}`),
+    record: () => calls.push(`${label}:${name}`),
+  });
+  const meter: Meter = {
+    createCounter: (name) => instrument(name),
+    createUpDownCounter: (name) => instrument(name),
+    createHistogram: (name) => instrument(name),
+    createObservableGauge: () => {
+      const callbacks = new Set<(result: ObservableResult) => void>();
+      return {
+        addCallback: (callback: (result: ObservableResult) => void) => callbacks.add(callback),
+        removeCallback: (callback: (result: ObservableResult) => void) =>
+          callbacks.delete(callback),
+      };
+    },
+  };
+  return { getMeter: () => meter };
+}
 
 describe("observability/metrics/manager", () => {
   let manager: MetricsManager;
 
   beforeEach(() => {
     manager = new MetricsManager();
+  });
+
+  afterEach(() => {
+    manager.shutdown();
+    _resetShimForTests();
   });
 
   describe("initial state", () => {
@@ -29,6 +62,27 @@ describe("observability/metrics/manager", () => {
   });
 
   describe("initialize", () => {
+    it("follows metrics provider A to B to none without using stale instruments", async () => {
+      const calls: string[] = [];
+      const providerA = installGlobalTelemetryAPI({ metricsApi: createMetricsApi("A", calls) });
+      await manager.initialize({ enabled: true, prefix: "test" });
+      manager.getRecorder()?.recordHttpRequest();
+
+      const providerB = installGlobalTelemetryAPI({ metricsApi: createMetricsApi("B", calls) });
+      manager.getRecorder()?.recordHttpRequest();
+      assertEquals(providerA.dispose(), false);
+      assertEquals(providerB.dispose(), true);
+      manager.getRecorder()?.recordHttpRequest();
+
+      assertEquals(manager.isEnabled(), false);
+      assertEquals(calls, [
+        "A:test.http.requests",
+        "A:test.http.requests.active",
+        "B:test.http.requests",
+        "B:test.http.requests.active",
+      ]);
+    });
+
     it("should initialize with disabled config", async () => {
       await manager.initialize({ enabled: false });
 
@@ -67,6 +121,25 @@ describe("observability/metrics/manager", () => {
   });
 
   describe("shutdown", () => {
+    it("releases the meter and instruments and permits reinitialization", async () => {
+      const calls: string[] = [];
+      installGlobalTelemetryAPI({ metricsApi: createMetricsApi("A", calls) });
+      await manager.initialize({ enabled: true, prefix: "test" });
+      manager.shutdown();
+
+      assertEquals(manager.getState(), {
+        initialized: false,
+        cacheSize: 0,
+        activeRequests: 0,
+      });
+      assertEquals(manager.isEnabled(), false);
+
+      installGlobalTelemetryAPI({ metricsApi: createMetricsApi("B", calls) });
+      await manager.initialize({ enabled: true, prefix: "test" });
+      manager.getRecorder()?.recordHttpRequest();
+      assertEquals(calls, ["B:test.http.requests", "B:test.http.requests.active"]);
+    });
+
     it("should not throw when not initialized", () => {
       manager.shutdown();
     });

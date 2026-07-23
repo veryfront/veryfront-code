@@ -6,9 +6,11 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "trash-thread",
   description: "Move a Gmail thread to trash.",
-  inputSchema: defineSchema((v) => v.object({
-    threadId: v.string().min(1).describe("Gmail thread ID"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      threadId: v.string().min(1).describe("Gmail thread ID"),
+    })
+  )(),
   execute: async ({ threadId }, context) => {
     const userId = resolveUserId(context);
 

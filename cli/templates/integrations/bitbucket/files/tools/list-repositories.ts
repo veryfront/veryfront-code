@@ -1,7 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createBitbucketClient } from "../lib/bitbucket-client.ts";
+import { optionalAllowedValue } from "../lib/allowed-value.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
+
+const REPOSITORY_ROLES = ["owner", "contributor", "member"] as const;
 
 type BitbucketRepo = {
   name: string;
@@ -19,24 +22,29 @@ type BitbucketRepo = {
 export default tool({
   id: "list-repositories",
   description: "List Bitbucket repositories for the authenticated user",
-  inputSchema: defineSchema((v) => v.object({
-    role: v
-      .enum(["owner", "contributor", "member"])
-      .optional()
-      .describe("Filter repositories by role"),
-    limit: v
-      .number()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe("Maximum number of repositories to return"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      role: v
+        .enum(REPOSITORY_ROLES)
+        .optional()
+        .describe("Filter repositories by role"),
+      limit: v
+        .number()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum number of repositories to return"),
+    })
+  )(),
   execute: async ({ role, limit }, context) => {
     const userId = requireUserIdFromContext(context);
 
     try {
       const bitbucket = createBitbucketClient(userId);
-      const repos = await bitbucket.listRepositories({ role, perPage: limit });
+      const repos = await bitbucket.listRepositories({
+        role: optionalAllowedValue(role, REPOSITORY_ROLES, "repository role"),
+        perPage: limit,
+      });
 
       return {
         repositories: repos.map((repo: BitbucketRepo) => ({
@@ -60,7 +68,8 @@ export default tool({
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {
         return {
-          error: "Bitbucket not connected. Please connect your Bitbucket account.",
+          error:
+            "Bitbucket not connected. Please connect your Bitbucket account.",
           connectUrl: "/api/auth/bitbucket",
         };
       }

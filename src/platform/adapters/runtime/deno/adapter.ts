@@ -158,6 +158,11 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     await Deno.writeTextFile(path, content);
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    assertDenoRuntime("DenoFileSystemAdapter", "rename");
+    await Deno.rename(from, to);
+  }
+
   async exists(path: string): Promise<boolean> {
     if (typeof Deno === "undefined") return false;
     try {

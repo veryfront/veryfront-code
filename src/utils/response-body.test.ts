@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readResponseTextPrefix } from "./response-body.ts";
 
 describe("utils/response-body", () => {
+  it("rejects invalid byte limits", async () => {
+    for (const limit of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assertRejects(
+        () => readResponseTextPrefix(new Response("body"), limit),
+        RangeError,
+      );
+    }
+  });
+
   it("cancels an oversized response after reading the byte limit", async () => {
     const chunk = new TextEncoder().encode("x".repeat(1_024));
     let pulls = 0;
@@ -32,6 +41,12 @@ describe("utils/response-body", () => {
     const result = await readResponseTextPrefix(new Response("complete"), 100);
 
     assertEquals(result, { text: "complete", truncated: false });
+  });
+
+  it("does not emit a replacement character when truncating inside UTF-8", async () => {
+    const result = await readResponseTextPrefix(new Response("😀after"), 3);
+
+    assertEquals(result, { text: "", truncated: true });
   });
 
   it("cancels immediately when the byte limit is reached before EOF", async () => {

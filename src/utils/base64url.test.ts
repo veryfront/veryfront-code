@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { base64urlEncode, base64urlEncodeBytes } from "./base64url.ts";
+import { base64urlDecodeBytes, base64urlEncode, base64urlEncodeBytes } from "./base64url.ts";
 
 describe("base64url", () => {
   describe("base64urlEncode", () => {
@@ -25,10 +25,9 @@ describe("base64url", () => {
       assertEquals(result, "YQ");
     });
 
-    it("should handle latin1 characters", () => {
-      const result = base64urlEncode("café");
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+    it("encodes strings as UTF-8", () => {
+      assertEquals(base64urlEncode("café"), "Y2Fmw6k");
+      assertEquals(base64urlEncode("你好 👋"), "5L2g5aW9IPCfkYs");
     });
 
     it("should produce consistent output", () => {
@@ -64,6 +63,36 @@ describe("base64url", () => {
     it("should produce consistent output for same bytes", () => {
       const bytes = new Uint8Array([1, 2, 3, 4, 5]);
       assertEquals(base64urlEncodeBytes(bytes), base64urlEncodeBytes(bytes));
+    });
+
+    it("should encode large byte arrays without overflowing the call stack", () => {
+      const bytes = Uint8Array.from(
+        { length: 256 * 1024 },
+        (_, index) => index % 256,
+      );
+
+      const encoded = base64urlEncodeBytes(bytes);
+      const padded = encoded.replaceAll("-", "+").replaceAll("_", "/") +
+        "=".repeat((4 - (encoded.length % 4)) % 4);
+      const decoded = atob(padded);
+
+      assertEquals(decoded.length, bytes.length);
+      assertEquals(decoded.charCodeAt(0), bytes[0]);
+      assertEquals(decoded.charCodeAt(131_071), bytes[131_071]);
+      assertEquals(decoded.charCodeAt(bytes.length - 1), bytes[bytes.length - 1]);
+    });
+  });
+
+  describe("base64urlDecodeBytes", () => {
+    it("roundtrips arbitrary binary bytes without interpreting them as text", () => {
+      const bytes = new Uint8Array([0, 255, 128, 64, 32]);
+      assertEquals(base64urlDecodeBytes(base64urlEncodeBytes(bytes)), bytes);
+    });
+
+    it("rejects malformed base64url input", () => {
+      assertEquals(base64urlDecodeBytes("a"), undefined);
+      assertEquals(base64urlDecodeBytes("not+base64"), undefined);
+      assertEquals(base64urlDecodeBytes("Zh"), undefined);
     });
   });
 });

@@ -75,7 +75,8 @@ figma/
 │   ├── _env.example           # Environment template
 │   ├── lib/
 │   │   ├── figma-client.ts    # Figma API client (353 lines)
-│   │   ├── oauth.ts           # OAuth utilities (94 lines)
+│   │   ├── oauth.ts           # Hardened veryfront/oauth adapter
+│   │   ├── oauth-store.ts     # Fail-closed application store binding
 │   │   └── token-store.ts     # Token management (35 lines)
 │   ├── app/api/auth/figma/
 │   │   ├── route.ts           # OAuth initiation (14 lines)
@@ -103,46 +104,47 @@ figma/
 ### Error Handling
 - Authentication state validation
 - Detailed error messages from Figma API
-- Automatic token refresh support (ready for implementation)
+- Automatic token refresh through the shared OAuth service
 
 ## Usage Examples
 
 ### Get File Information
 
 ```typescript
-import { getFile, getFileSummary, extractComponents } from './lib/figma-client'
+import type { ToolExecutionContext } from "veryfront/tool";
+import { createFigmaClient } from "./lib/figma-client.ts";
+import { requireUserIdFromContext } from "./lib/user-id.ts";
 
-const file = await getFile('your-file-key')
-const summary = getFileSummary(file)
-const components = extractComponents(file)
+const figma = createFigmaClient(requireUserIdFromContext(context));
+const file = await figma.getFile("your-file-key");
+const summary = figma.getFileSummary(file);
+const components = figma.extractComponents(file);
 
-console.log(`File: ${summary.name}`)
-console.log(`Components: ${summary.componentCount}`)
-console.log(`Styles: ${summary.styleCount}`)
+console.log(`File: ${summary.name}`);
+console.log(`Components: ${summary.componentCount}`);
+console.log(`Styles: ${summary.styleCount}`);
 ```
 
 ### Post a Comment
 
 ```typescript
-import { postComment } from './lib/figma-client'
-
-await postComment('file-key', 'Great design!', {
+const figma = createFigmaClient(requireUserIdFromContext(context));
+await figma.postComment("file-key", "Great design!", {
   client_meta: {
-    node_id: ['node-id'],
+    node_id: ["node-id"],
     x: 0.5,
     y: 0.5,
-  }
-})
+  },
+});
 ```
 
 ### Read a Figma file URL
 
 ```typescript
-import { getFile } from './lib/figma-client'
-
-const file = await getFile('file-key', { depth: 2 })
-console.log(file.name)
-console.log(file.document.children?.map((page) => page.name))
+const figma = createFigmaClient(requireUserIdFromContext(context));
+const file = await figma.getFile("file-key", { depth: 2 });
+console.log(file.name);
+console.log(file.document.children?.map((page) => page.name));
 ```
 
 ## AI Prompt Examples
@@ -157,22 +159,14 @@ The integration includes pre-configured prompts:
 ## Token Management
 
 ### Development Mode
-Uses in-memory token storage (current implementation)
+Uses the injected application OAuth store. Process-local memory is available
+only through the explicit local-development opt-in documented in `SETUP.md`.
 
 ### Production Ready
-Replace `token-store.ts` with a database-backed implementation:
-
-```typescript
-// Example with database
-export async function setTokens(userId: string, data: TokenData) {
-  await db.tokens.upsert({ userId, ...data })
-}
-
-export async function getAccessToken(userId: string) {
-  const token = await db.tokens.findOne({ userId })
-  return token?.accessToken
-}
-```
+Install a durable `ApplicationOAuthTokenStore` during server startup and report
+its storage capabilities through `getStorageStatus()`. The generated
+`SETUP.md` documents the required one-shot state, compare-and-set, and
+distributed refresh-lock guarantees.
 
 ## Figma API Coverage
 

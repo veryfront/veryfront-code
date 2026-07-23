@@ -22,6 +22,25 @@ function getRuntimeToolSchema(tool: unknown): unknown {
   return (inputSchema as { jsonSchema?: unknown }).jsonSchema;
 }
 
+function getRuntimeToolModelSchema(tool: unknown): unknown {
+  if (!tool || typeof tool !== "object" || !("inputSchema" in tool)) return undefined;
+  const inputSchema = (tool as { inputSchema?: unknown }).inputSchema;
+  if (!inputSchema || typeof inputSchema !== "object" || !("modelJsonSchema" in inputSchema)) {
+    return undefined;
+  }
+  return (inputSchema as { modelJsonSchema?: unknown }).modelJsonSchema;
+}
+
+function getRuntimeToolValidator(tool: unknown): ((input: unknown) => unknown) | undefined {
+  if (!tool || typeof tool !== "object" || !("inputSchema" in tool)) return undefined;
+  const inputSchema = (tool as { inputSchema?: unknown }).inputSchema;
+  if (!inputSchema || typeof inputSchema !== "object" || !("validate" in inputSchema)) {
+    return undefined;
+  }
+  const validate = (inputSchema as { validate?: unknown }).validate;
+  return typeof validate === "function" ? validate as (input: unknown) => unknown : undefined;
+}
+
 describe("model-tool-converter", () => {
   it("mirrors JSON schema fields on runtime schema wrappers for provider compatibility", () => {
     const result = convertToolsToRuntimeTools([
@@ -42,6 +61,40 @@ describe("model-tool-converter", () => {
       (result.outlook__search_emails as { inputSchema: Record<string, unknown> }).inputSchema;
     assertEquals(inputSchema.type, "object");
     assertEquals(inputSchema.jsonSchema, getRuntimeToolSchema(result.outlook__search_emails));
+    assertEquals(typeof getRuntimeToolValidator(result.outlook__search_emails), "function");
+  });
+
+  it("keeps canonical validation stricter than the Google transmission schema", async () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "strict_search",
+        description: "Search with a strict input contract",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+    ], { model: "google/gemini-test" })!;
+
+    assertEquals(getRuntimeToolSchema(result.strict_search), {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      additionalProperties: false,
+    });
+    assertEquals(getRuntimeToolModelSchema(result.strict_search), {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    });
+
+    const validate = getRuntimeToolValidator(result.strict_search)!;
+    const validation = await validate({ query: "Veryfront", injected: true }) as {
+      success: boolean;
+    };
+    assertEquals(validation.success, false);
   });
 
   it("returns undefined for empty tools array", () => {
@@ -337,7 +390,7 @@ describe("model-tool-converter", () => {
       model: "veryfront-cloud/google-ai-studio/gemini-2.5-flash",
     });
 
-    const schema = getRuntimeToolSchema(result?.choose_kind);
+    const schema = getRuntimeToolModelSchema(result?.choose_kind);
 
     assertEquals(containsKey(schema, "const"), false);
     assertEquals(containsKey(schema, "default"), false);
@@ -374,7 +427,7 @@ describe("model-tool-converter", () => {
       model: "veryfront-cloud/moonshotai/kimi-k2.6",
     });
 
-    const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;
+    const schema = getRuntimeToolModelSchema(result?.form_input) as Record<string, unknown>;
     const properties = schema.properties as Record<string, Record<string, unknown>>;
     const defs = schema.$defs as Record<string, Record<string, unknown>>;
 
@@ -407,7 +460,7 @@ describe("model-tool-converter", () => {
       model: "kimi-k2.6",
     });
 
-    const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;
+    const schema = getRuntimeToolModelSchema(result?.form_input) as Record<string, unknown>;
     const properties = schema.properties as Record<string, Record<string, unknown>>;
     const defs = schema.$defs as Record<string, Record<string, unknown>>;
 
@@ -447,7 +500,7 @@ describe("model-tool-converter", () => {
       model: "moonshotai/kimi-k2.6",
     });
 
-    const schema = getRuntimeToolSchema(result?.create_work) as Record<string, unknown>;
+    const schema = getRuntimeToolModelSchema(result?.create_work) as Record<string, unknown>;
     const properties = schema.properties as Record<string, Record<string, unknown>>;
 
     assertEquals(properties.acceptance_criteria?.$ref, undefined);

@@ -6,13 +6,35 @@ import {
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
-import { memoryTokenStore } from "../token-store/memory.ts";
+import {
+  buildOAuthCallbackUrl,
+  createOAuthJsonResponse,
+  createOAuthRedirect,
+  resolveOAuthApplicationUrl,
+} from "../url-utils.ts";
+import { isRefreshCapableTokenStore, normalizeStoredOAuthTokens } from "../token-utils.ts";
+import { normalizeOAuthUserId } from "../state-utils.ts";
+import { normalizeOAuthScopeSet } from "../scope-utils.ts";
+import {
+  getOAuthParameterRecordIssues,
+  RESERVED_AUTHORIZATION_PARAMETERS,
+} from "../config-validation.ts";
+import { resolveOAuthHandlerTokenStore } from "./token-store-policy.ts";
 
 const logger = baseLogger.component("o-auth");
-const DEFAULT_APP_URL = "http://localhost:3000";
-
 function createUnauthorizedResponse(): Response {
-  return Response.json({ error: "Unauthorized" }, { status: 401 });
+  return createOAuthJsonResponse({ error: "Unauthorized" }, { status: 401 });
+}
+
+function createMethodNotAllowedResponse(allow: "GET" | "POST"): Response {
+  return createOAuthJsonResponse(
+    { error: "Method not allowed" },
+    { status: 405, headers: { Allow: allow } },
+  );
+}
+
+function createForbiddenResponse(): Response {
+  return createOAuthJsonResponse({ error: "Forbidden" }, { status: 403 });
 }
 
 async function isRequestUnauthorized(
@@ -36,34 +58,21 @@ async function resolveUserId(
 ): Promise<string | null> {
   if (!getUserId) return null;
   const result = await getUserId(req);
-  if (!result) return null; // null, undefined, or empty string all fail.
-  return result;
+  const normalized = normalizeOAuthUserId(result);
+  return normalized !== null && normalized === result ? normalized : null;
 }
 
-function resolveAppUrl(baseUrl: string | undefined, env: EnvironmentConfig): string {
-  const appUrl = baseUrl ?? env.appUrl;
-  if (appUrl) return appUrl;
-  // Fail closed in production: never silently redirect OAuth callbacks to
-  // localhost. Require APP_URL (or an explicit baseUrl) to be configured.
-  if (env.nodeEnv === "production" || env.veryfrontEnv === "production") {
-    throw new Error(
-      "OAuth callback base URL not configured: set APP_URL (or pass baseUrl) in production.",
-    );
-  }
-  return DEFAULT_APP_URL;
-}
-
-function createNotConfiguredResponse(config: OAuthServiceConfig): Response {
+function createNotConfiguredResponse(service: OAuthService): Response {
   // SEC-009: Do NOT leak internal env var names in the HTTP response body.
   // Operators still need the diagnostic, so log the missing env var names
   // server-side via the existing logger.
   logger.error("OAuth provider not configured", {
-    serviceId: config.serviceId,
-    displayName: config.displayName,
-    missingVars: [config.clientIdEnvVar, config.clientSecretEnvVar],
+    serviceId: service.serviceId,
+    displayName: service.displayName,
+    missingVars: service.credentialEnvironmentVariables,
   });
-  return Response.json(
-    { error: `${config.displayName} OAuth not configured` },
+  return createOAuthJsonResponse(
+    { error: `${service.displayName} OAuth not configured` },
     { status: 503 },
   );
 }
@@ -72,7 +81,7 @@ function createInitErrorResponse(): Response {
   // SEC-009: do NOT leak internal error details (file paths, library
   // internals) to the client. The caller already logs the full error
   // server-side; return a generic message here.
-  return Response.json(
+  return createOAuthJsonResponse(
     { error: "Failed to initiate OAuth flow" },
     { status: 500 },
   );
@@ -83,7 +92,7 @@ export type GetUserIdFn = (req: Request) => string | null | Promise<string | nul
 
 /** Options accepted by oauth init handler. */
 export interface OAuthInitHandlerOptions {
-  /** Token store to use (defaults to memory store) */
+  /** Shared token store. Optional only in explicit development/test environments. */
   tokenStore?: TokenStore;
 
   /** Base URL for callbacks (defaults to APP_URL or localhost) */
@@ -120,7 +129,7 @@ export function createOAuthInitHandler(
   options: OAuthInitHandlerOptions,
 ): (req: Request) => Promise<Response> {
   const {
-    tokenStore = memoryTokenStore,
+    tokenStore: configuredTokenStore,
     baseUrl,
     authOptions = {},
     env = getEnvironmentConfig(),
@@ -128,46 +137,98 @@ export function createOAuthInitHandler(
     isAuthenticated,
     getUserId,
   } = options ?? ({} as OAuthInitHandlerOptions);
+  const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
+  const service = new OAuthService(config, tokenStore, envReader);
+  const handlerUsesPkce = service.pkceMode !== "unsupported";
+
+  if (authOptions.state !== undefined) {
+    throw new Error(
+      "OAuth init handler state is generated internally and must not be configured through authOptions",
+    );
+  }
+  if (authOptions.redirectUri !== undefined) {
+    throw new Error(
+      "OAuth init handler redirectUri is derived from the configured application URL",
+    );
+  }
+  const scopes = authOptions.scopes === undefined ? undefined : normalizeOAuthScopeSet(
+    authOptions.scopes,
+    config.scopeSeparator === "," ? "," : " ",
+  );
+  if (authOptions.scopes !== undefined && !scopes) {
+    throw new Error("OAuth init handler scopes are invalid");
+  }
+  const additionalParamsIssue = getOAuthParameterRecordIssues(
+    authOptions.additionalParams,
+    RESERVED_AUTHORIZATION_PARAMETERS,
+  )[0];
+  if (additionalParamsIssue) {
+    throw new Error(
+      `Invalid OAuth authorization parameter configuration: ${additionalParamsIssue.message}`,
+    );
+  }
+  if (authOptions.usePkce !== undefined && authOptions.usePkce !== handlerUsesPkce) {
+    throw new Error(
+      handlerUsesPkce
+        ? "OAuth init handler requires PKCE with the S256 challenge method"
+        : "OAuth provider does not support PKCE",
+    );
+  }
+  const authorizationOptions: AuthorizationUrlOptions = {
+    ...authOptions,
+    ...(scopes ? { scopes } : {}),
+    ...(authOptions.additionalParams !== undefined
+      ? { additionalParams: { ...authOptions.additionalParams } }
+      : {}),
+    usePkce: handlerUsesPkce,
+  };
+  const appUrl = resolveOAuthApplicationUrl(baseUrl, env);
+  const redirectUri = buildOAuthCallbackUrl(appUrl, service.serviceId);
 
   return async function handler(req: Request): Promise<Response> {
-    if (await isRequestUnauthorized(req, isAuthenticated)) {
-      return createUnauthorizedResponse();
-    }
-
-    const userId = await resolveUserId(req, getUserId);
-    if (!userId) return createUnauthorizedResponse();
-
-    const service = new OAuthService(config, tokenStore, envReader);
-
-    if (!service.isConfigured()) {
-      return createNotConfiguredResponse(config);
-    }
-
-    const appUrl = resolveAppUrl(baseUrl, env);
-    const redirectUri = `${appUrl}/api/auth/${config.serviceId}/callback`;
-
+    if (req.method !== "GET") return createMethodNotAllowedResponse("GET");
     try {
-      const { url, state } = await service.createAuthorizationUrl({ ...authOptions, redirectUri });
+      if (await isRequestUnauthorized(req, isAuthenticated)) {
+        return createUnauthorizedResponse();
+      }
+
+      const userId = await resolveUserId(req, getUserId);
+      if (!userId) return createUnauthorizedResponse();
+
+      if (!service.isConfigured()) {
+        return createNotConfiguredResponse(service);
+      }
+
+      const { url, state } = await service.createAuthorizationUrl({
+        ...authorizationOptions,
+        redirectUri,
+      });
+      if (handlerUsesPkce && !state.codeVerifier) {
+        throw new Error("OAuth provider did not return the required PKCE verifier state");
+      }
       await tokenStore.setState(state.state, {
         userId,
-        serviceId: config.serviceId,
-        codeVerifier: state.codeVerifier,
+        serviceId: service.serviceId,
         redirectUri: state.redirectUri,
         scopes: state.scopes,
         createdAt: state.createdAt,
+        ...(state.codeVerifier === undefined ? {} : { codeVerifier: state.codeVerifier }),
         metadata: state.metadata,
       });
-      return Response.redirect(url);
+      return createOAuthRedirect(url);
     } catch (error) {
-      logger.error("Init error", { serviceId: config.serviceId }, error);
+      logger.error("Init error", { serviceId: service.serviceId }, error);
       return createInitErrorResponse();
     }
   };
 }
 
 export interface OAuthStatusHandlerOptions {
-  /** Token store to use (defaults to memory store) */
+  /** Shared token store. Optional only in explicit development/test environments. */
   tokenStore?: TokenStore;
+
+  /** EnvironmentConfig for store policy/test isolation. */
+  env?: EnvironmentConfig;
 
   /** EnvReader for dynamic env vars (defaults to getEnv) */
   envReader?: EnvReader;
@@ -185,39 +246,58 @@ export function createOAuthStatusHandler(
   options: OAuthStatusHandlerOptions,
 ): (req: Request) => Promise<Response> {
   const {
-    tokenStore = memoryTokenStore,
+    tokenStore: configuredTokenStore,
+    env = getEnvironmentConfig(),
     envReader = getEnv,
     isAuthenticated,
     getUserId,
   } = options ?? ({} as OAuthStatusHandlerOptions);
+  const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
+  const service = new OAuthService(config, tokenStore, envReader);
 
   return async function handler(req: Request): Promise<Response> {
-    if (await isRequestUnauthorized(req, isAuthenticated)) {
-      return createUnauthorizedResponse();
+    if (req.method !== "GET") return createMethodNotAllowedResponse("GET");
+    try {
+      if (await isRequestUnauthorized(req, isAuthenticated)) {
+        return createUnauthorizedResponse();
+      }
+
+      const userId = await resolveUserId(req, getUserId);
+      if (!userId) return createUnauthorizedResponse();
+
+      const storedTokens = await tokenStore.getTokens(service.serviceId, userId);
+      const tokens = storedTokens === null ? null : normalizeStoredOAuthTokens(storedTokens);
+      if (storedTokens !== null && !tokens) {
+        throw new Error("TokenStore returned an invalid OAuth token row");
+      }
+      const isConnected = !!tokens?.accessToken;
+      const isExpired = tokens?.expiresAt !== undefined ? Date.now() >= tokens.expiresAt : false;
+      const hasRefreshToken = !!tokens?.refreshToken;
+      const refreshCapable = isRefreshCapableTokenStore(tokenStore);
+
+      return createOAuthJsonResponse({
+        service: service.serviceId,
+        displayName: service.displayName,
+        connected: isConnected && (!isExpired || (hasRefreshToken && refreshCapable)),
+        configured: service.isConfigured(),
+        expiresAt: tokens?.expiresAt,
+        hasRefreshToken,
+        refreshCapable,
+      });
+    } catch (error) {
+      logger.error("OAuth status lookup failed", { serviceId: service.serviceId }, error);
+      return createOAuthJsonResponse({ error: "Failed to read OAuth status" }, { status: 500 });
     }
-
-    const userId = await resolveUserId(req, getUserId);
-    if (!userId) return createUnauthorizedResponse();
-
-    const tokens = await tokenStore.getTokens(config.serviceId, userId);
-
-    const isConnected = !!tokens?.accessToken;
-    const isExpired = tokens?.expiresAt ? Date.now() > tokens.expiresAt : false;
-    const hasRefreshToken = !!tokens?.refreshToken;
-
-    return Response.json({
-      service: config.serviceId,
-      displayName: config.displayName,
-      connected: isConnected && (!isExpired || hasRefreshToken),
-      configured: !!(envReader(config.clientIdEnvVar) && envReader(config.clientSecretEnvVar)),
-      expiresAt: tokens?.expiresAt,
-      hasRefreshToken,
-    });
   };
 }
 
 export interface OAuthDisconnectHandlerOptions {
+  /** Shared token store. Optional only in explicit development/test environments. */
   tokenStore?: TokenStore;
+  /** EnvironmentConfig for store policy/test isolation. */
+  env?: EnvironmentConfig;
+  /** Public application origin used for same-origin CSRF validation. */
+  baseUrl?: string;
   /** Optional authentication check — return true if the request is authenticated */
   isAuthenticated?: (req: Request) => boolean | Promise<boolean>;
   /** REQUIRED. Resolve the authenticated user's ID (see OAuthInitHandlerOptions). */
@@ -229,22 +309,46 @@ export function createOAuthDisconnectHandler(
   config: OAuthServiceConfig,
   options: OAuthDisconnectHandlerOptions,
 ): (req: Request) => Promise<Response> {
-  const { tokenStore = memoryTokenStore, isAuthenticated, getUserId } = options ??
+  const {
+    tokenStore: configuredTokenStore,
+    env = getEnvironmentConfig(),
+    baseUrl,
+    isAuthenticated,
+    getUserId,
+  } = options ??
     ({} as OAuthDisconnectHandlerOptions);
+  const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
+  const service = new OAuthService(config, tokenStore);
+  const appUrl = resolveOAuthApplicationUrl(baseUrl, env);
 
   return async function handler(req: Request): Promise<Response> {
-    if (await isRequestUnauthorized(req, isAuthenticated)) {
-      return createUnauthorizedResponse();
+    if (req.method !== "POST") return createMethodNotAllowedResponse("POST");
+    const origin = req.headers.get("Origin");
+    try {
+      if (!origin || new URL(origin).origin !== appUrl.origin) return createForbiddenResponse();
+    } catch {
+      return createForbiddenResponse();
     }
+    try {
+      if (await isRequestUnauthorized(req, isAuthenticated)) {
+        return createUnauthorizedResponse();
+      }
 
-    const userId = await resolveUserId(req, getUserId);
-    if (!userId) return createUnauthorizedResponse();
+      const userId = await resolveUserId(req, getUserId);
+      if (!userId) return createUnauthorizedResponse();
 
-    await tokenStore.clearTokens(config.serviceId, userId);
+      await tokenStore.clearTokens(service.serviceId, userId);
 
-    return Response.json({
-      success: true,
-      message: `Disconnected from ${config.displayName}`,
-    });
+      return createOAuthJsonResponse({
+        success: true,
+        message: `Removed locally stored ${service.displayName} OAuth tokens`,
+      });
+    } catch (error) {
+      logger.error("OAuth disconnect failed", { serviceId: service.serviceId }, error);
+      return createOAuthJsonResponse(
+        { error: "Failed to disconnect OAuth provider" },
+        { status: 500 },
+      );
+    }
   };
 }

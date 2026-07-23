@@ -1,21 +1,30 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { searchIssues } from "../../lib/linear-client.ts";
+import { createLinearClient } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "search-issues",
   description:
     "Search for Linear issues by title or description. Returns matching issues with their details including status, assignee, and team.",
-  inputSchema: defineSchema((v) => v.object({
-    query: v.string().describe("Search query to find issues (searches in title and description)"),
-    limit: v.number().min(1).max(50).default(10).describe("Maximum number of results to return"),
-    includeArchived: v
-      .boolean()
-      .default(false)
-      .describe("Whether to include archived issues in results"),
-  }))(),
-  async execute({ query, limit, includeArchived }) {
-    const issues = await searchIssues(query, { limit, includeArchived });
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().describe(
+        "Search query to find issues (searches in title and description)",
+      ),
+      limit: v.number().min(1).max(50).default(10).describe(
+        "Maximum number of results to return",
+      ),
+      includeArchived: v
+        .boolean()
+        .default(false)
+        .describe("Whether to include archived issues in results"),
+    })
+  )(),
+  async execute({ query, limit, includeArchived }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createLinearClient(userId);
+    const issues = await client.searchIssues(query, { limit, includeArchived });
 
     return issues.map((issue) => {
       const assignee = issue.assignee

@@ -1,4 +1,4 @@
-import { getAccessToken } from "./token-store.ts";
+import { fetchOAuthJson } from "./oauth.ts";
 
 const AIRTABLE_BASE_URL = "https://api.airtable.com/v0";
 const AIRTABLE_META_BASE_URL = "https://api.airtable.com/v0/meta";
@@ -58,198 +58,224 @@ export interface AirtableTableDefinition {
   }>;
 }
 
-function getTokenOrThrow(): string {
-  const token = getAccessToken();
-  if (token) return token;
-  throw new Error("Not authenticated with Airtable. Please connect your account.");
-}
+export function createAirtableClient(userId: string) {
+  function apiFetch<T>(
+    baseUrl: string,
+    endpoint: string,
+    options: RequestInit,
+  ): Promise<T> {
+    return fetchOAuthJson<T>(userId, "airtable", `${baseUrl}${endpoint}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  }
 
-async function apiFetch<T>(
-  baseUrl: string,
-  endpoint: string,
-  options: RequestInit,
-  errorPrefix: string,
-): Promise<T> {
-  const token = getTokenOrThrow();
-
-  const response = await fetch(`${baseUrl}${endpoint}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `${errorPrefix}: ${response.status} ${error?.error?.message ?? response.statusText}`,
+  function airtableFetch<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    return apiFetch<T>(
+      AIRTABLE_BASE_URL,
+      endpoint,
+      options,
     );
   }
 
-  return response.json() as Promise<T>;
-}
+  function metaFetch<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    return apiFetch<T>(
+      AIRTABLE_META_BASE_URL,
+      endpoint,
+      options,
+    );
+  }
 
-function airtableFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  return apiFetch<T>(AIRTABLE_BASE_URL, endpoint, options, "Airtable API error");
-}
+  async function listBases(): Promise<AirtableBase[]> {
+    const response = await metaFetch<{ bases: AirtableBase[] }>("/bases");
+    return response.bases ?? [];
+  }
 
-function metaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  return apiFetch<T>(AIRTABLE_META_BASE_URL, endpoint, options, "Airtable Meta API error");
-}
+  function getBase(baseId: string): Promise<AirtableBaseSchema> {
+    return metaFetch<AirtableBaseSchema>(`/bases/${baseId}/tables`);
+  }
 
-export async function listBases(): Promise<AirtableBase[]> {
-  const response = await metaFetch<{ bases: AirtableBase[] }>("/bases");
-  return response.bases ?? [];
-}
+  async function listRecords(
+    baseId: string,
+    tableIdOrName: string,
+    options?: {
+      fields?: string[];
+      filterByFormula?: string;
+      maxRecords?: number;
+      pageSize?: number;
+      sort?: Array<{ field: string; direction: "asc" | "desc" }>;
+      view?: string;
+      offset?: string;
+    },
+  ): Promise<{ records: AirtableRecord[]; offset?: string }> {
+    const params = new URLSearchParams();
 
-export function getBase(baseId: string): Promise<AirtableBaseSchema> {
-  return metaFetch<AirtableBaseSchema>(`/bases/${baseId}/tables`);
-}
+    options?.fields?.forEach((field) => params.append("fields[]", field));
+    if (options?.filterByFormula) {
+      params.append("filterByFormula", options.filterByFormula);
+    }
+    if (options?.maxRecords) {
+      params.append("maxRecords", String(options.maxRecords));
+    }
+    if (options?.pageSize) params.append("pageSize", String(options.pageSize));
+    options?.sort?.forEach((s, i) => {
+      params.append(`sort[${i}][field]`, s.field);
+      params.append(`sort[${i}][direction]`, s.direction);
+    });
+    if (options?.view) params.append("view", options.view);
+    if (options?.offset) params.append("offset", options.offset);
 
-export async function listRecords(
-  baseId: string,
-  tableIdOrName: string,
-  options?: {
-    fields?: string[];
-    filterByFormula?: string;
-    maxRecords?: number;
-    pageSize?: number;
-    sort?: Array<{ field: string; direction: "asc" | "desc" }>;
-    view?: string;
-    offset?: string;
-  },
-): Promise<{ records: AirtableRecord[]; offset?: string }> {
-  const params = new URLSearchParams();
+    const queryString = params.toString();
+    const endpoint = `/${baseId}/${encodeURIComponent(tableIdOrName)}${
+      queryString ? `?${queryString}` : ""
+    }`;
 
-  options?.fields?.forEach((field) => params.append("fields[]", field));
-  if (options?.filterByFormula) params.append("filterByFormula", options.filterByFormula);
-  if (options?.maxRecords) params.append("maxRecords", String(options.maxRecords));
-  if (options?.pageSize) params.append("pageSize", String(options.pageSize));
-  options?.sort?.forEach((s, i) => {
-    params.append(`sort[${i}][field]`, s.field);
-    params.append(`sort[${i}][direction]`, s.direction);
-  });
-  if (options?.view) params.append("view", options.view);
-  if (options?.offset) params.append("offset", options.offset);
+    const response = await airtableFetch<AirtableResponse<AirtableRecord>>(
+      endpoint,
+    );
 
-  const queryString = params.toString();
-  const endpoint = `/${baseId}/${encodeURIComponent(tableIdOrName)}${
-    queryString ? `?${queryString}` : ""
-  }`;
+    return { records: response.records ?? [], offset: response.offset };
+  }
 
-  const response = await airtableFetch<AirtableResponse<AirtableRecord>>(endpoint);
+  function getRecord(
+    baseId: string,
+    tableIdOrName: string,
+    recordId: string,
+  ): Promise<AirtableRecord> {
+    return airtableFetch<AirtableRecord>(
+      `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
+    );
+  }
 
-  return { records: response.records ?? [], offset: response.offset };
-}
+  function createRecord(
+    baseId: string,
+    tableIdOrName: string,
+    fields: Record<string, unknown>,
+    options?: { typecast?: boolean },
+  ): Promise<AirtableRecord> {
+    return airtableFetch<AirtableRecord>(
+      `/${baseId}/${encodeURIComponent(tableIdOrName)}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ fields, typecast: options?.typecast }),
+      },
+    );
+  }
 
-export function getRecord(
-  baseId: string,
-  tableIdOrName: string,
-  recordId: string,
-): Promise<AirtableRecord> {
-  return airtableFetch<AirtableRecord>(
-    `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
-  );
-}
+  async function createRecords(
+    baseId: string,
+    tableIdOrName: string,
+    records: Array<{ fields: Record<string, unknown> }>,
+    options?: { typecast?: boolean },
+  ): Promise<AirtableRecord[]> {
+    const response = await airtableFetch<{ records: AirtableRecord[] }>(
+      `/${baseId}/${encodeURIComponent(tableIdOrName)}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ records, typecast: options?.typecast }),
+      },
+    );
 
-export function createRecord(
-  baseId: string,
-  tableIdOrName: string,
-  fields: Record<string, unknown>,
-  options?: { typecast?: boolean },
-): Promise<AirtableRecord> {
-  return airtableFetch<AirtableRecord>(`/${baseId}/${encodeURIComponent(tableIdOrName)}`, {
-    method: "POST",
-    body: JSON.stringify({ fields, typecast: options?.typecast }),
-  });
-}
+    return response.records;
+  }
 
-export async function createRecords(
-  baseId: string,
-  tableIdOrName: string,
-  records: Array<{ fields: Record<string, unknown> }>,
-  options?: { typecast?: boolean },
-): Promise<AirtableRecord[]> {
-  const response = await airtableFetch<{ records: AirtableRecord[] }>(
-    `/${baseId}/${encodeURIComponent(tableIdOrName)}`,
-    {
+  function updateRecord(
+    baseId: string,
+    tableIdOrName: string,
+    recordId: string,
+    fields: Record<string, unknown>,
+    options?: { destructive?: boolean; typecast?: boolean },
+  ): Promise<AirtableRecord> {
+    return airtableFetch<AirtableRecord>(
+      `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
+      {
+        method: options?.destructive ? "PUT" : "PATCH",
+        body: JSON.stringify({ fields, typecast: options?.typecast }),
+      },
+    );
+  }
+
+  function deleteRecord(
+    baseId: string,
+    tableIdOrName: string,
+    recordId: string,
+  ): Promise<{ id: string; deleted: boolean }> {
+    return airtableFetch<{ id: string; deleted: boolean }>(
+      `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  function createTable(
+    baseId: string,
+    name: string,
+    fields: AirtableFieldDefinition[],
+    options?: { description?: string },
+  ): Promise<AirtableTableDefinition> {
+    return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables`, {
       method: "POST",
-      body: JSON.stringify({ records, typecast: options?.typecast }),
-    },
-  );
+      body: JSON.stringify({ name, description: options?.description, fields }),
+    });
+  }
 
-  return response.records;
-}
+  function updateTable(
+    baseId: string,
+    tableId: string,
+    updates: { name?: string; description?: string },
+  ): Promise<AirtableTableDefinition> {
+    return metaFetch<AirtableTableDefinition>(
+      `/bases/${baseId}/tables/${tableId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+      },
+    );
+  }
 
-export function updateRecord(
-  baseId: string,
-  tableIdOrName: string,
-  recordId: string,
-  fields: Record<string, unknown>,
-  options?: { destructive?: boolean; typecast?: boolean },
-): Promise<AirtableRecord> {
-  return airtableFetch<AirtableRecord>(
-    `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
-    {
-      method: options?.destructive ? "PUT" : "PATCH",
-      body: JSON.stringify({ fields, typecast: options?.typecast }),
-    },
-  );
-}
+  function createField(
+    baseId: string,
+    tableId: string,
+    field: AirtableFieldDefinition,
+  ): Promise<AirtableFieldDefinition & { id: string }> {
+    return metaFetch<AirtableFieldDefinition & { id: string }>(
+      `/bases/${baseId}/tables/${tableId}/fields`,
+      {
+        method: "POST",
+        body: JSON.stringify(field),
+      },
+    );
+  }
 
-export function deleteRecord(
-  baseId: string,
-  tableIdOrName: string,
-  recordId: string,
-): Promise<{ id: string; deleted: boolean }> {
-  return airtableFetch<{ id: string; deleted: boolean }>(
-    `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
-    { method: "DELETE" },
-  );
-}
+  function formatFieldValue(value: unknown): string {
+    if (value == null) return "";
+    if (Array.isArray(value)) {
+      return value.map((v) => formatFieldValue(v)).join(", ");
+    }
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
 
-export function createTable(
-  baseId: string,
-  name: string,
-  fields: AirtableFieldDefinition[],
-  options?: { description?: string },
-): Promise<AirtableTableDefinition> {
-  return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables`, {
-    method: "POST",
-    body: JSON.stringify({ name, description: options?.description, fields }),
-  });
-}
-
-export function updateTable(
-  baseId: string,
-  tableId: string,
-  updates: { name?: string; description?: string },
-): Promise<AirtableTableDefinition> {
-  return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables/${tableId}`, {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
-}
-
-export function createField(
-  baseId: string,
-  tableId: string,
-  field: AirtableFieldDefinition,
-): Promise<AirtableFieldDefinition & { id: string }> {
-  return metaFetch<AirtableFieldDefinition & { id: string }>(
-    `/bases/${baseId}/tables/${tableId}/fields`,
-    {
-      method: "POST",
-      body: JSON.stringify(field),
-    },
-  );
-}
-
-export function formatFieldValue(value: unknown): string {
-  if (value == null) return "";
-  if (Array.isArray(value)) return value.map((v) => formatFieldValue(v)).join(", ");
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  return {
+    listBases,
+    getBase,
+    listRecords,
+    getRecord,
+    createRecord,
+    createRecords,
+    updateRecord,
+    deleteRecord,
+    createTable,
+    updateTable,
+    createField,
+    formatFieldValue,
+  };
 }

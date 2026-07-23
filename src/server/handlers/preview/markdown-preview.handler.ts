@@ -18,6 +18,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 import { validatePathSync } from "#veryfront/security";
+import { getRequestTokenProvenance } from "../../context/request-context.ts";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -82,6 +83,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
           productionMode: false,
           branch,
           environmentName: ctx.environmentName,
+          tokenProvenance: getRequestTokenProvenance(ctx.requestContext, effectiveToken),
         },
       );
     }

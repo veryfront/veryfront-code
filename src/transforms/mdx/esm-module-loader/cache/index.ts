@@ -6,7 +6,7 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { join } from "#veryfront/compat/path";
+import { basename, dirname, join, resolve } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
   getCacheBaseDir,
@@ -18,15 +18,31 @@ import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE,
+  MDX_ESM_CACHE_NAMESPACE,
+} from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
+import { hashString } from "../utils/hash.ts";
+import {
+  MAX_MDX_MODULE_CODE_BYTES,
+  utf8ByteLength,
+} from "../module-fetcher/recovery-payload.ts";
 import { findStaticImportFromSpans } from "../utils/source-spans.ts";
 import {
   formatCacheVersionSegment,
   isCacheVersionSegment,
 } from "#veryfront/utils/cache-version.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import {
+  getMdxEsmSsrCacheDir,
+  getMdxEsmSsrCacheDirs,
+} from "../cache-paths.ts";
+export {
+  getMdxEsmSsrCacheDir,
+  getMdxEsmSsrCacheDirs,
+} from "../cache-paths.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
 
@@ -37,6 +53,10 @@ export type CacheLookupResult =
 
 const MAX_VERIFIED_MODULE_DEPS = 2_000;
 const MAX_MODULE_PATH_CACHE_ENTRIES = 500;
+const MAX_MODULE_PATH_CACHE_DIRS = 128;
+const MAX_MODULE_INDEX_BYTES = 1024 * 1024;
+const MAX_MODULE_ARTIFACTS_PER_DIR = 2_000;
+const MAX_MODULE_ARTIFACT_BYTES_PER_DIR = 512 * 1024 * 1024;
 
 export const verifiedModuleDeps = new LRUCache<string, true>({
   maxEntries: MAX_VERIFIED_MODULE_DEPS,
@@ -155,29 +175,96 @@ function hasUnresolvedVfModules(code: string): boolean {
 const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
 
-export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
-  return join(
-    getMdxEsmCacheDir(),
-    formatCacheVersionSegment(RUNTIME_VERSION),
-    hashCodeHex(projectId),
-    hashCodeHex(contentSourceId),
+export function isSafeModuleArtifactPath(cacheDir: string, artifactPath: string): boolean {
+  const resolvedCacheDir = resolve(cacheDir);
+  const resolvedArtifactPath = resolve(artifactPath);
+  const fileName = basename(resolvedArtifactPath);
+  return dirname(resolvedArtifactPath) === resolvedCacheDir &&
+    fileName.length <= 240 &&
+    /^[A-Za-z0-9._-]+\.mjs$/.test(fileName);
+}
+
+function touchModulePathCacheDir(cacheDir: string, cache: Map<string, string>): void {
+  modulePathCaches.delete(cacheDir);
+  modulePathCaches.set(cacheDir, cache);
+}
+
+function evictOldestModulePathCacheDir(): void {
+  if (modulePathCaches.size < MAX_MODULE_PATH_CACHE_DIRS) return;
+  const oldestCacheDir = modulePathCaches.keys().next().value;
+  if (oldestCacheDir === undefined) return;
+  modulePathCaches.delete(oldestCacheDir);
+  modulePathCacheLoaded.delete(oldestCacheDir);
+}
+
+async function pruneOrphanedModuleArtifacts(
+  cacheDir: string,
+  cache: Map<string, string>,
+): Promise<void> {
+  const localFs = getLocalFs();
+  const referenced = new Set(
+    [...cache.values()]
+      .filter((artifactPath) => isSafeModuleArtifactPath(cacheDir, artifactPath))
+      .map((artifactPath) => resolve(artifactPath)),
   );
-}
 
-function getLegacyHashedMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
-  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), hashCodeHex(contentSourceId));
-}
+  const artifacts: Array<{
+    path: string;
+    size: number;
+    modifiedAt: number;
+    referenced: boolean;
+  }> = [];
+  try {
+    for await (const entry of localFs.readDir(cacheDir)) {
+      if (!entry.isFile || !/^[A-Za-z0-9._-]+\.mjs$/.test(entry.name)) {
+        continue;
+      }
+      const artifactPath = join(cacheDir, entry.name);
+      const stat = await localFs.stat(artifactPath);
+      if (!stat?.isFile) continue;
+      artifacts.push({
+        path: artifactPath,
+        size: Math.max(0, stat.size ?? 0),
+        modifiedAt: stat.mtime?.getTime() ?? 0,
+        referenced: referenced.has(resolve(artifactPath)),
+      });
+    }
 
-function getLegacyRawMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
-  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
-}
+    let artifactCount = artifacts.length;
+    let artifactBytes = artifacts.reduce((total, artifact) => total + artifact.size, 0);
+    if (
+      artifactCount <= MAX_MODULE_ARTIFACTS_PER_DIR &&
+      artifactBytes <= MAX_MODULE_ARTIFACT_BYTES_PER_DIR
+    ) {
+      return;
+    }
 
-export function getMdxEsmSsrCacheDirs(projectId: string, contentSourceId: string): string[] {
-  return [
-    getMdxEsmSsrCacheDir(projectId, contentSourceId),
-    getLegacyHashedMdxEsmSsrCacheDir(projectId, contentSourceId),
-    getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId),
-  ].filter((cacheDir, index, cacheDirs) => cacheDirs.indexOf(cacheDir) === index);
+    // A recovered dependency may be referenced by another cached module without
+    // having its own path-index entry. Never treat every unindexed file as an
+    // orphan: only evict the oldest unreferenced artifacts once the directory is
+    // actually over its hard count/byte bounds.
+    const candidates = artifacts
+      .filter((artifact) => !artifact.referenced)
+      .sort((left, right) => left.modifiedAt - right.modifiedAt);
+    for (const artifact of candidates) {
+      if (
+        artifactCount <= MAX_MODULE_ARTIFACTS_PER_DIR &&
+        artifactBytes <= MAX_MODULE_ARTIFACT_BYTES_PER_DIR
+      ) {
+        break;
+      }
+      await localFs.remove(artifact.path);
+      artifactCount--;
+      artifactBytes -= artifact.size;
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to prune orphaned module artifacts`, {
+        cacheDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }
 
 function getModulePathCacheEntryCount(): number {
@@ -201,17 +288,35 @@ registerCache("mdx-esm-verified-deps", () => ({
 
 export async function getModulePathCache(cacheDir: string): Promise<Map<string, string>> {
   const existing = modulePathCaches.get(cacheDir);
-  if (existing && modulePathCacheLoaded.has(cacheDir)) return existing;
+  if (existing && modulePathCacheLoaded.has(cacheDir)) {
+    touchModulePathCacheDir(cacheDir, existing);
+    return existing;
+  }
 
   const cache = existing ?? new BoundedModulePathCache(MAX_MODULE_PATH_CACHE_ENTRIES);
+  if (!existing) evictOldestModulePathCacheDir();
   modulePathCaches.set(cacheDir, cache);
 
   const indexPath = join(cacheDir, "_index.json");
 
   try {
+    const stat = await getLocalFs().stat(indexPath);
+    if (!stat?.isFile || (stat.size ?? 0) > MAX_MODULE_INDEX_BYTES) {
+      throw new Error("Invalid or oversized MDX module index");
+    }
     const content = await getLocalFs().readTextFile(indexPath);
-    const index = JSON.parse(content) as Record<string, string>;
+    const index: unknown = JSON.parse(content);
+    if (!index || typeof index !== "object" || Array.isArray(index)) {
+      throw new Error("Invalid MDX module index shape");
+    }
     for (const [path, cachePath] of Object.entries(index)) {
+      if (
+        typeof cachePath !== "string" ||
+        !parseMdxEsmPathCacheKey(path) ||
+        !isSafeModuleArtifactPath(cacheDir, cachePath)
+      ) {
+        continue;
+      }
       cache.set(path, cachePath);
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
@@ -220,6 +325,7 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
   }
 
   modulePathCacheLoaded.add(cacheDir);
+  await pruneOrphanedModuleArtifacts(cacheDir, cache);
   return cache;
 }
 
@@ -230,13 +336,16 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
   const indexPath = join(cacheDir, "_index.json");
   const index: Record<string, string> = {};
   for (const [path, cachePath] of cache.entries()) {
+    if (!parseMdxEsmPathCacheKey(path) || !isSafeModuleArtifactPath(cacheDir, cachePath)) continue;
     index[path] = cachePath;
   }
 
   try {
     await getLocalFs().writeTextFile(indexPath, JSON.stringify(index));
+    await pruneOrphanedModuleArtifacts(cacheDir, cache);
   } catch (error) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to save module index`, error);
+    throw error;
   }
 }
 
@@ -279,11 +388,11 @@ function queueIndexPersist(cacheDirs: string[]): void {
   });
 }
 
-export function invalidateModulePaths(changedPaths: string[]): void {
+export async function invalidateModulePaths(changedPaths: string[]): Promise<void> {
   if (modulePathCaches.size === 0) return;
 
   let invalidatedCount = 0;
-  const staleMjsFiles: string[] = [];
+  const staleMjsFiles = new Set<string>();
   const affectedCacheDirs = new Set<string>();
 
   for (const changedPath of changedPaths) {
@@ -298,7 +407,9 @@ export function invalidateModulePaths(changedPaths: string[]): void {
           normalizedCached.endsWith(`/${normalizedChanged}`) ||
           normalizedChanged.endsWith(`/${normalizedCached}`)
         ) {
-          staleMjsFiles.push(cachedFilePath);
+          if (isSafeModuleArtifactPath(cacheDir, cachedFilePath)) {
+            staleMjsFiles.add(cachedFilePath);
+          }
           affectedCacheDirs.add(cacheDir);
           cache.delete(cachedKey);
           // Clear the verified-deps fast-path so lookupMdxEsmCache won't
@@ -317,11 +428,12 @@ export function invalidateModulePaths(changedPaths: string[]): void {
 
   if (invalidatedCount === 0) return;
 
-  // Persist invalidation to disk: update _index.json and delete stale .mjs files.
-  // Fire-and-forget so callers aren't blocked, but disk state is eventually consistent.
-  // Chain onto previous cleanup to avoid lost operations on rapid sequential invalidation.
+  // Persist invalidation before the caller broadcasts a reload. This prevents a
+  // concurrent request or a process restart from resurrecting the stale module
+  // after the in-memory entry has already been removed.
   const cleanup = async () => {
     const localFs = getLocalFs();
+    const failures: unknown[] = [];
 
     // Save updated _index.json for each affected cache dir
     for (const cacheDir of affectedCacheDirs) {
@@ -335,6 +447,7 @@ export function invalidateModulePaths(changedPaths: string[]): void {
           cacheDir,
           error: error instanceof Error ? error.message : String(error),
         });
+        failures.push(error);
       }
     }
 
@@ -343,16 +456,29 @@ export function invalidateModulePaths(changedPaths: string[]): void {
       try {
         await localFs.remove(mjsPath);
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, { mjsPath });
-      } catch (_) {
-        /* expected: file may already be gone */
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to delete stale cached module`, {
+            mjsPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          failures.push(error);
+        }
       }
     }
+
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "MDX-ESM module invalidation did not fully persist");
+    }
   };
-  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
+
+  const operation = _pendingDiskCleanup.then(cleanup, cleanup);
+  _pendingDiskCleanup = operation.catch((error) => {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Disk cleanup failed`, {
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  await operation;
 }
 
 /**
@@ -384,14 +510,18 @@ function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
 
   const parts = cachedPath.slice(prefix.length).split("/");
   const [maybeVersionKey, maybeProjectKey, maybeSourceKey] = parts;
-  const hasVersionSegment = isCacheVersionSegment(maybeVersionKey);
-  const projectKey = hasVersionSegment ? maybeProjectKey : maybeVersionKey;
-  const sourceKey = hasVersionSegment ? maybeSourceKey : maybeProjectKey;
-  if (!projectKey || !sourceKey) return null;
+  if (
+    !maybeVersionKey ||
+    !isCacheVersionSegment(maybeVersionKey) ||
+    !maybeProjectKey ||
+    !maybeSourceKey ||
+    !/^[a-f0-9]{64}$/.test(maybeProjectKey) ||
+    !/^[a-f0-9]{64}$/.test(maybeSourceKey)
+  ) {
+    return null;
+  }
 
-  return hasVersionSegment
-    ? join(baseCacheDir, maybeVersionKey!, projectKey, sourceKey)
-    : join(baseCacheDir, projectKey, sourceKey);
+  return join(baseCacheDir, maybeVersionKey, maybeProjectKey, maybeSourceKey);
 }
 
 function isSameOrDescendantPath(path: string, parentPath: string): boolean {
@@ -408,27 +538,34 @@ function invalidateMdxEsmModuleFromCache(
   reactVersion = REACT_DEFAULT_VERSION,
   expectedCachedPath?: string,
 ): boolean {
-  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
-  const cachedPath = cache.get(cacheKey);
-  if (cachedPath === undefined) {
-    if (expectedCachedPath) verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
-    return false;
+  const target = parseMdxEsmPathCacheKey(
+    toMdxEsmCacheKey(filePath, projectDir, reactVersion),
+  );
+  if (!target) return false;
+
+  let invalidated = false;
+  for (const [cacheKey, cachedPath] of cache.entries()) {
+    const parsed = parseMdxEsmPathCacheKey(cacheKey);
+    if (
+      !parsed ||
+      parsed.reactVersion !== target.reactVersion ||
+      parsed.normalizedPath !== target.normalizedPath
+    ) {
+      continue;
+    }
+    if (expectedCachedPath && cachedPath !== expectedCachedPath) continue;
+
+    cache.delete(cacheKey);
+    verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+    invalidated = true;
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
+      filePath,
+      cachedPath,
+    });
   }
 
-  if (expectedCachedPath && cachedPath !== expectedCachedPath) {
-    verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
-    return false;
-  }
-
-  cache.delete(cacheKey);
-  verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
-    filePath,
-    cachedPath,
-  });
-
-  queueIndexPersist([cacheDir]);
-  return true;
+  if (invalidated) queueIndexPersist([cacheDir]);
+  return invalidated;
 }
 
 export function invalidateMdxEsmModule(
@@ -475,8 +612,45 @@ export async function invalidateMdxEsmModuleForCachedPath(
 }
 
 function extractNormalizedCachedModulePath(cachedKey: string): string {
-  const normalizedPath = cachedKey.match(/(?:^|:)(_vf_modules\/[^:]+)$/)?.[1] ?? cachedKey;
+  const normalizedPath = parseMdxEsmPathCacheKey(cachedKey)?.normalizedPath ?? cachedKey;
   return normalizedPath.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
+}
+
+interface ParsedMdxEsmPathCacheKey {
+  reactVersion: string;
+  normalizedPath: string;
+  sourceContentHash: string | null;
+}
+
+function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | null {
+  const prefix = `${MDX_ESM_CACHE_NAMESPACE}:path:`;
+  if (!cacheKey.startsWith(prefix)) return null;
+  try {
+    const parsed = JSON.parse(cacheKey.slice(prefix.length));
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 3 ||
+      typeof parsed[0] !== "string" ||
+      typeof parsed[1] !== "string" ||
+      (parsed[2] !== null && typeof parsed[2] !== "string") ||
+      parsed[0].length === 0 ||
+      parsed[0].length > 64 ||
+      parsed[1].length === 0 ||
+      parsed[1].length > 4096 ||
+      parsed[1].includes("\0") ||
+      parsed[1].split("/").some((segment: string) => segment === "." || segment === "..") ||
+      (parsed[2] !== null && !/^[a-f0-9]{64}$/.test(parsed[2]))
+    ) {
+      return null;
+    }
+    return {
+      reactVersion: parsed[0],
+      normalizedPath: parsed[1],
+      sourceContentHash: parsed[2],
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 export async function clearESMDiskCache(): Promise<void> {
@@ -500,18 +674,10 @@ export async function clearMdxEsmCacheNamespace(
   projectId: string,
   contentSourceId: string,
 ): Promise<void> {
-  const encodedCacheDir = join(
-    getMdxEsmCacheDir(),
-    encodeURIComponent(projectId),
-    encodeURIComponent(contentSourceId),
-  );
+  const failures: unknown[] = [];
   const currentSsrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
-  const cacheDirs = new Set([encodedCacheDir, currentSsrCacheDir]);
-  const removeDirs = new Set([
-    encodedCacheDir,
-    currentSsrCacheDir,
-    ...getMdxEsmSsrCacheDirs(projectId, contentSourceId),
-  ]);
+  const cacheDirs = new Set([currentSsrCacheDir]);
+  const removeDirs = new Set(getMdxEsmSsrCacheDirs(projectId, contentSourceId));
   const affectedCacheDirs = new Set(removeDirs);
 
   for (const loadedCacheDir of modulePathCaches.keys()) {
@@ -546,6 +712,7 @@ export async function clearMdxEsmCacheNamespace(
           cacheDir,
           error: error instanceof Error ? error.message : String(error),
         });
+        failures.push(error);
       }
     }
 
@@ -563,7 +730,71 @@ export async function clearMdxEsmCacheNamespace(
         cacheDir,
         error: error instanceof Error ? error.message : String(error),
       });
+      failures.push(error);
     }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Failed to clear MDX-ESM cache namespace for project ${projectId}`,
+    );
+  }
+}
+
+/**
+ * Clear every loaded and persisted MDX-ESM content-source namespace owned by
+ * one project. This is used only for explicit all-environment invalidation;
+ * environment-scoped callers should use {@link clearMdxEsmCacheNamespace}.
+ */
+export async function clearMdxEsmCacheNamespacesForProject(projectId: string): Promise<void> {
+  if (typeof projectId !== "string" || projectId.trim().length === 0) {
+    throw new TypeError("A non-empty projectId is required for MDX-ESM project invalidation");
+  }
+
+  const baseDir = getMdxEsmCacheDir();
+  const projectHash = hashString(projectId);
+  const projectRoots = new Set([
+    join(baseDir, formatCacheVersionSegment(RUNTIME_VERSION), projectHash),
+  ]);
+  const affectedCacheDirs = new Set(projectRoots);
+
+  for (const loadedCacheDir of modulePathCaches.keys()) {
+    if ([...projectRoots].some((root) => isSameOrDescendantPath(loadedCacheDir, root))) {
+      affectedCacheDirs.add(loadedCacheDir);
+    }
+  }
+  for (const cacheDir of affectedCacheDirs) {
+    modulePathCaches.delete(cacheDir);
+    modulePathCacheLoaded.delete(cacheDir);
+  }
+  for (const key of Array.from(verifiedModuleDeps.keys())) {
+    if ([...projectRoots].some((root) => isSameOrDescendantPath(String(key), root))) {
+      verifiedModuleDeps.delete(key);
+    }
+  }
+
+  const failures: unknown[] = [];
+  for (const projectRoot of projectRoots) {
+    try {
+      await getLocalFs().remove(projectRoot, { recursive: true });
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        failures.push(error);
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to remove project MDX-ESM namespaces`, {
+          projectId,
+          projectRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Failed to clear every MDX-ESM namespace for project ${projectId}`,
+    );
   }
 }
 
@@ -597,6 +828,7 @@ function toMdxEsmCacheKey(
   filePath: string,
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
+  sourceContentHash?: string,
 ): string {
   let relativePath = filePath;
 
@@ -607,27 +839,27 @@ function toMdxEsmCacheKey(
   relativePath = relativePath.replace(/^\/+/, "");
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
-  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`, reactVersion);
+  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`, reactVersion, sourceContentHash);
 }
 
 export async function lookupMdxEsmCache(
   filePath: string,
   cacheDir: string,
   projectDir?: string,
-  // _contentHash is accepted for API compatibility with callers that pass a
-  // content hash for validation purposes, but cache lookup is keyed solely on
-  // filePath + projectDir + reactVersion.  Content-hash validation is NOT
-  // performed here; the caller is responsible for invalidating stale entries
-  // via invalidateModulePaths when content changes.
-  _contentHash?: string,
+  contentHash?: string,
   recoveryOptions?: { projectId: string; contentSourceId: string },
   reactVersion = REACT_DEFAULT_VERSION,
 ): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
-  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion, contentHash);
 
   const cachedPath = cache.get(cacheKey);
   if (!cachedPath) return { status: "miss" };
+  if (!isSafeModuleArtifactPath(cacheDir, cachedPath)) {
+    cache.delete(cacheKey);
+    queueIndexPersist([cacheDir]);
+    return { status: "corrupted", reason: "Cached path escapes its namespace", filePath };
+  }
 
   const verifyKey = `${cachedPath}:${cacheKey}`;
   if (verifiedModuleDeps.get(verifyKey)) {
@@ -641,7 +873,7 @@ export async function lookupMdxEsmCache(
     // (far cheaper than the read + regex scans below) guards correctness.
     try {
       const stat = await getLocalFs().stat(cachedPath);
-      if (stat?.isFile) {
+      if (stat?.isFile && (stat.size ?? 0) <= MAX_MDX_MODULE_CODE_BYTES) {
         logger.debug(
           `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
         );
@@ -666,12 +898,20 @@ export async function lookupMdxEsmCache(
 
   try {
     const stat = await getLocalFs().stat(cachedPath);
-    if (!stat?.isFile) {
+    if (!stat?.isFile || (stat.size ?? 0) > MAX_MDX_MODULE_CODE_BYTES) {
       cache.delete(cacheKey);
-      return { status: "corrupted", reason: "Cached file no longer exists on disk", filePath };
+      return {
+        status: "corrupted",
+        reason: stat?.isFile ? "Cached file exceeds size limit" : "Cached file no longer exists on disk",
+        filePath,
+      };
     }
 
     const cachedCode = await getLocalFs().readTextFile(cachedPath);
+    if (utf8ByteLength(cachedCode) > MAX_MDX_MODULE_CODE_BYTES) {
+      cache.delete(cacheKey);
+      return { status: "corrupted", reason: "Cached code exceeds size limit", filePath };
+    }
     if (hasIncompatibleCachePaths(cachedCode)) {
       logger.warn(
         `${LOG_PREFIX_MDX_LOADER} Cached module has incompatible cache paths, invalidating`,
@@ -761,13 +1001,9 @@ export async function lookupMdxEsmCache(
       };
     }
 
-    // Note: We intentionally skip contentHash validation for MDX-ESM cached files.
-    // The MDX-ESM cache uses transformed-code hashes in namespaced filenames,
-    // while the SSR loader provides source-code hashes. These will never match.
-    // The cache namespace in the key provides sufficient staleness protection,
-    // and the file's existence confirms it's a valid transform for this codebase.
-    // This allows both loaders to share the same module instance, preventing
-    // duplicate React contexts which break hooks like useContext.
+    // The path-cache key is bound to the caller's full source-content digest.
+    // This lets both loaders share the same module instance while preventing a
+    // missed watcher event or process restart from serving an older transform.
 
     // P3b: Mark as verified to skip re-stat on subsequent calls
     verifiedModuleDeps.set(verifyKey, true);

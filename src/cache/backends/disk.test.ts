@@ -1,18 +1,45 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
-import { DiskCacheBackend } from "./disk.ts";
+import { DiskCacheBackend, type DiskCacheOptions } from "./disk.ts";
 import {
   runCacheInvariantTests,
   testConcurrentAccess,
   testKeyCollisionResistance,
 } from "../testing/invariants.ts";
+import { DEFAULT_CACHE_TTL_SECONDS, MAX_CACHE_TTL_SECONDS } from "./ttl.ts";
 
 const TEST_DIR = join(Deno.makeTempDirSync(), "disk-cache-test");
 
 function makeBackend(): DiskCacheBackend {
   return new DiskCacheBackend(TEST_DIR);
+}
+
+async function listCacheFiles(baseDir: string): Promise<string[]> {
+  const cacheDir = join(baseDir, "veryfront-files");
+  const files: string[] = [];
+  try {
+    for await (const entry of Deno.readDir(cacheDir)) {
+      if (entry.isFile && entry.name.endsWith(".json")) files.push(entry.name);
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  return files.sort();
+}
+
+async function updateEnvelopeIntegrity(envelope: Record<string, unknown>): Promise<void> {
+  const payload = JSON.stringify([
+    envelope.formatVersion,
+    envelope.key,
+    envelope.value,
+    envelope.expiresAt ?? null,
+  ]);
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload)),
+  );
+  envelope.integrity = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function captureDebugLogs(): {
@@ -31,6 +58,26 @@ function captureDebugLogs(): {
     entries,
     restore: () => {
       target.debug = original;
+    },
+  };
+}
+
+function captureErrorLogs(): {
+  entries: Array<{ message: string; args: unknown[] }>;
+  restore: () => void;
+} {
+  const entries: Array<{ message: string; args: unknown[] }> = [];
+  const target = logger as unknown as {
+    error: (message: string, ...args: unknown[]) => void;
+  };
+  const original = target.error;
+  target.error = (message: string, ...args: unknown[]) => {
+    entries.push({ message, args });
+  };
+  return {
+    entries,
+    restore: () => {
+      target.error = original;
     },
   };
 }
@@ -60,6 +107,21 @@ Deno.test("DiskCacheBackend", async (t) => {
   await t.step("get returns null for missing key", async () => {
     const backend = makeBackend();
     assertEquals(await backend.get("nonexistent"), null);
+  });
+
+  await t.step("read failure logs do not expose filesystem paths", async () => {
+    const blockingPath = join(Deno.makeTempDirSync(), "not-a-directory");
+    await Deno.writeTextFile(blockingPath, "file");
+    const backend = new DiskCacheBackend(blockingPath);
+    const errorCapture = captureErrorLogs();
+
+    try {
+      assertEquals(await backend.get("key"), null);
+      assertEquals(errorCapture.entries.length, 1);
+      assertEquals(JSON.stringify(errorCapture.entries).includes(blockingPath), false);
+    } finally {
+      errorCapture.restore();
+    }
   });
 
   await t.step("set and get round-trip", async () => {
@@ -104,38 +166,80 @@ Deno.test("DiskCacheBackend", async (t) => {
     await backend.del("never-existed");
   });
 
-  await t.step("TTL=0 expires very quickly", async () => {
-    const backend = makeBackend();
-    await backend.set("ttl-zero", "val", 0);
-    // TTL=0 means expiresAt = Date.now() + 0; wait 1ms to ensure it's expired
-    await new Promise((r) => setTimeout(r, 5));
-    assertEquals(await backend.get("ttl-zero"), null);
+  await t.step("del propagates filesystem failures", async () => {
+    const blockingPath = join(Deno.makeTempDirSync(), "not-a-directory");
+    await Deno.writeTextFile(blockingPath, "file");
+    const backend = new DiskCacheBackend(blockingPath);
+
+    await assertRejects(() => backend.del("key"));
+  });
+
+  await t.step(
+    "non-positive TTL removes an existing entry without storing a replacement",
+    async () => {
+      const isolatedDir = join(Deno.makeTempDirSync(), "non-positive-ttl-test");
+      const backend = new DiskCacheBackend(isolatedDir);
+      await backend.set("ttl-zero", "old", 60);
+      await backend.set("ttl-zero", "replacement", 0);
+      await backend.set("ttl-negative", "value", -1);
+
+      const dir = (backend as unknown as { dir: string }).dir;
+      const files: string[] = [];
+      for await (const entry of Deno.readDir(dir)) {
+        if (entry.isFile && entry.name.endsWith(".json")) files.push(entry.name);
+      }
+      assertEquals(files, []);
+      assertEquals(await backend.get("ttl-zero"), null);
+      assertEquals(await backend.get("ttl-negative"), null);
+    },
+  );
+
+  await t.step("rejects TTLs that cannot produce a safe expiry timestamp", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "unsafe-ttl-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+
+    await assertRejects(
+      () => backend.set("oversized", "value", MAX_CACHE_TTL_SECONDS + 1),
+      RangeError,
+      "finite number of seconds at most",
+    );
+    await assertRejects(
+      () => backend.set("max-number", "value", Number.MAX_VALUE),
+      RangeError,
+      "finite number of seconds at most",
+    );
+    assertEquals(await backend.get("oversized"), null);
+    assertEquals(await backend.get("max-number"), null);
   });
 
   await t.step("logs expired-entry cleanup failures", async () => {
     const backend = makeBackend();
     const key = "expired-cleanup-fails";
-    await backend.set(key, "val", 0);
-    await new Promise((r) => setTimeout(r, 5));
-
-    const originalDel = backend.del.bind(backend);
-    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = (entryKey: string) =>
-      entryKey === key ? Promise.reject(new Error("delete rejected")) : originalDel(entryKey);
-
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
     const debugCapture = captureDebugLogs();
+    const cleanupTarget = backend as unknown as {
+      removeObservedFile: (...args: unknown[]) => Promise<void>;
+    };
+    const originalCleanup = cleanupTarget.removeObservedFile.bind(backend);
     try {
+      await backend.set(key, "val", 1);
+      now += 2_000;
+      cleanupTarget.removeObservedFile = () => Promise.reject(new Error("delete rejected"));
+
       assertEquals(await backend.get(key), null);
       await Promise.resolve();
 
       assertEquals(debugCapture.entries.length, 1);
       assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
-      assertEquals(
-        (debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined)?.key,
-        key,
-      );
+      const metadata = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      assertEquals(typeof metadata?.keyHash, "string");
+      assertEquals(JSON.stringify(metadata).includes(key), false);
     } finally {
       debugCapture.restore();
-      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+      cleanupTarget.removeObservedFile = originalCleanup;
+      Date.now = originalDateNow;
     }
   });
 
@@ -156,10 +260,22 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("ttl-short"), null);
   });
 
-  await t.step("no TTL means never expire", async () => {
+  await t.step("omitted TTL uses the shared backend default", async () => {
     const backend = makeBackend();
-    await backend.set("no-ttl", "forever");
-    assertEquals(await backend.get("no-ttl"), "forever");
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
+    try {
+      await backend.set("default-ttl", "bounded");
+      assertEquals(
+        await backend.getRemainingTtlSeconds("default-ttl"),
+        DEFAULT_CACHE_TTL_SECONDS,
+      );
+      now += DEFAULT_CACHE_TTL_SECONDS * 1_000;
+      assertEquals(await backend.get("default-ttl"), null);
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   await t.step("keys with path separators", async () => {
@@ -173,6 +289,34 @@ Deno.test("DiskCacheBackend", async (t) => {
     const key = "special:chars!@#$%^&*()=+[]{}|;',.<>?";
     await backend.set(key, "special-value");
     assertEquals(await backend.get(key), "special-value");
+  });
+
+  await t.step("uses cryptographic identities without collapsing lone surrogates", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "cryptographic-identity-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const firstKey = "lone-surrogate-\ud800";
+    const secondKey = "lone-surrogate-\ud801";
+
+    await backend.set(firstKey, "first");
+    await backend.set(secondKey, "second");
+
+    const files = await listCacheFiles(isolatedDir);
+    assertEquals(files.length, 2);
+    assertEquals(files.every((file) => /^[0-9a-f]{64}\.json$/.test(file)), true);
+    assertEquals(await backend.get(firstKey), "first");
+    assertEquals(await backend.get(secondKey), "second");
+  });
+
+  await t.step("key prefixes cannot escape the disk cache namespace", async () => {
+    const root = Deno.makeTempDirSync();
+    const cacheRoot = join(root, "cache-root");
+    const escapedDir = join(root, "escaped");
+    const backend = new DiskCacheBackend(cacheRoot, "../../escaped");
+
+    await backend.set("key", "value");
+
+    assertEquals(await backend.get("key"), "value");
+    await assertRejects(() => Deno.stat(escapedDir), Deno.errors.NotFound);
   });
 
   await t.step("delByPattern removes matching keys", async () => {
@@ -252,6 +396,252 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("large"), largeValue);
   });
 
+  await t.step("validates deterministic capacity options", () => {
+    const baseDir = Deno.makeTempDirSync();
+    assertThrows(
+      () => new DiskCacheBackend(baseDir, undefined, { maxEntries: 0 }),
+      RangeError,
+      "positive safe integer",
+    );
+    assertThrows(
+      () =>
+        new DiskCacheBackend(baseDir, undefined, {
+          maxBytes: 100,
+          maxEntryBytes: 101,
+        }),
+      RangeError,
+      "cannot exceed",
+    );
+    assertThrows(
+      () => new DiskCacheBackend(baseDir, undefined, { sweepIntervalMs: -1 }),
+      RangeError,
+      "non-negative safe integer",
+    );
+  });
+
+  await t.step("rejects oversized writes without replacing a valid entry", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "oversized-write-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, {
+      maxEntries: 10,
+      maxBytes: 512,
+      maxEntryBytes: 256,
+    });
+    await backend.set("bounded", "old-value");
+
+    await assertRejects(
+      () => backend.set("bounded", "x".repeat(300)),
+      RangeError,
+      "maxEntryBytes",
+    );
+
+    assertEquals(await backend.get("bounded"), "old-value");
+    assertEquals((await listCacheFiles(isolatedDir)).length, 1);
+    const allNames: string[] = [];
+    for await (const entry of Deno.readDir(join(isolatedDir, "veryfront-files"))) {
+      allNames.push(entry.name);
+    }
+    assertEquals(allNames.some((name) => name.includes(".tmp.")), false);
+  });
+
+  await t.step("rejects and removes an oversized file before parsing it", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "oversized-read-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, {
+      maxEntries: 10,
+      maxBytes: 512,
+      maxEntryBytes: 256,
+    });
+    await backend.set("oversized-on-disk", "valid");
+    const [fileName] = await listCacheFiles(isolatedDir);
+    await Deno.writeTextFile(
+      join(isolatedDir, "veryfront-files", fileName!),
+      "x".repeat(4_096),
+    );
+
+    assertEquals(await backend.get("oversized-on-disk"), null);
+    assertEquals(await listCacheFiles(isolatedDir), []);
+  });
+
+  await t.step("rejects parseable cache data whose value was modified on disk", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "integrity-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const key = "integrity-protected";
+    await backend.set(key, "original");
+
+    const [fileName] = await listCacheFiles(isolatedDir);
+    const filePath = join(isolatedDir, "veryfront-files", fileName!);
+    const envelope = JSON.parse(await Deno.readTextFile(filePath)) as Record<string, unknown>;
+    envelope.value = "tampered-but-valid-json";
+    await Deno.writeTextFile(filePath, JSON.stringify(envelope));
+
+    assertEquals(await backend.get(key), null);
+    assertEquals(await listCacheFiles(isolatedDir), []);
+  });
+
+  await t.step("bounds directory traversal even when unrelated files accumulate", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "bounded-scan-test");
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    await Deno.mkdir(cacheDir, { recursive: true });
+    await Deno.writeTextFile(join(cacheDir, "unrelated-a"), "a");
+    await Deno.writeTextFile(join(cacheDir, "unrelated-b"), "b");
+    await Deno.writeTextFile(join(cacheDir, "unrelated-c"), "c");
+
+    const backend = new DiskCacheBackend(
+      isolatedDir,
+      undefined,
+      { maxEntries: 2, maxScanEntries: 2 } as DiskCacheOptions,
+    );
+    await assertRejects(
+      () => backend.delByPattern("*"),
+      RangeError,
+      "directory scan exceeded",
+    );
+  });
+
+  await t.step("evicts the oldest entry when the entry limit is reached", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "entry-limit-test");
+    const options = {
+      maxEntries: 2,
+      maxBytes: 4_096,
+      maxEntryBytes: 1_024,
+    };
+    const writer = new DiskCacheBackend(isolatedDir, undefined, options);
+    await writer.set("oldest", "one");
+    await writer.set("newer", "two");
+
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    for (const fileName of await listCacheFiles(isolatedDir)) {
+      const filePath = join(cacheDir, fileName);
+      const envelope = JSON.parse(await Deno.readTextFile(filePath)) as { key: string };
+      const timestamp = envelope.key === "oldest" ? new Date(1_000) : new Date(2_000);
+      await Deno.utime(filePath, timestamp, timestamp);
+    }
+
+    const reloaded = new DiskCacheBackend(isolatedDir, undefined, options);
+    await reloaded.set("newest", "three");
+
+    assertEquals(await reloaded.get("oldest"), null);
+    assertEquals(await reloaded.get("newer"), "two");
+    assertEquals(await reloaded.get("newest"), "three");
+    assertEquals((await listCacheFiles(isolatedDir)).length, 2);
+  });
+
+  await t.step("enforces the aggregate byte limit on disk", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "byte-limit-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, {
+      maxEntries: 10,
+      maxBytes: 400,
+      maxEntryBytes: 400,
+    });
+    await backend.set("byte-first", "a".repeat(100));
+    await backend.set("byte-second", "b".repeat(100));
+
+    assertEquals(await backend.get("byte-first"), null);
+    assertEquals(await backend.get("byte-second"), "b".repeat(100));
+    const files = await listCacheFiles(isolatedDir);
+    assertEquals(files.length, 1);
+    const stat = await Deno.stat(join(isolatedDir, "veryfront-files", files[0]!));
+    assertEquals(stat.size <= 400, true);
+  });
+
+  await t.step("sweeps expired entries after a backend restart", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "restart-expiry-sweep-test");
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
+    try {
+      const writer = new DiskCacheBackend(isolatedDir);
+      await writer.set("expired-without-read", "stale", 1);
+      now += 2_000;
+
+      const reloaded = new DiskCacheBackend(isolatedDir, undefined, { sweepIntervalMs: 0 });
+      assertEquals(await reloaded.get("missing-sweep-trigger"), null);
+      assertEquals(await listCacheFiles(isolatedDir), []);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  await t.step("removes legacy entries and stale temporary files during a sweep", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "stale-temp-sweep-test");
+    const writer = new DiskCacheBackend(isolatedDir);
+    await writer.set("live", "value");
+    const [cacheFileName] = await listCacheFiles(isolatedDir);
+    const tempFileName = `${cacheFileName}.tmp.1.00000000-0000-4000-8000-000000000000`;
+    const tempFilePath = join(isolatedDir, "veryfront-files", tempFileName);
+    await Deno.writeTextFile(tempFilePath, "orphaned");
+    const legacyFilePath = join(isolatedDir, "veryfront-files", `${"0".repeat(32)}.json`);
+    const legacyTempPath = `${legacyFilePath}.tmp.1.00000000`;
+    await Deno.writeTextFile(legacyFilePath, "legacy-cache-entry");
+    await Deno.writeTextFile(legacyTempPath, "legacy-orphan");
+    const staleAt = new Date(Date.now() - 11 * 60 * 1_000);
+    await Deno.utime(tempFilePath, staleAt, staleAt);
+    await Deno.utime(legacyTempPath, staleAt, staleAt);
+
+    const reloaded = new DiskCacheBackend(isolatedDir, undefined, { sweepIntervalMs: 0 });
+    assertEquals(await reloaded.get("missing-sweep-trigger"), null);
+    await assertRejects(() => Deno.stat(tempFilePath), Deno.errors.NotFound);
+    await assertRejects(() => Deno.stat(legacyFilePath), Deno.errors.NotFound);
+    await assertRejects(() => Deno.stat(legacyTempPath), Deno.errors.NotFound);
+    assertEquals(await reloaded.get("live"), "value");
+  });
+
+  await t.step("does not follow a cache entry symlink outside its namespace", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "entry-symlink-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("symlinked", "cached");
+    const [fileName] = await listCacheFiles(isolatedDir);
+    const cacheFilePath = join(isolatedDir, "veryfront-files", fileName!);
+    const externalPath = join(Deno.makeTempDirSync(), "external.json");
+    await Deno.writeTextFile(externalPath, "external-content");
+    await Deno.remove(cacheFilePath);
+    await Deno.symlink(externalPath, cacheFilePath);
+
+    assertEquals(await backend.get("symlinked"), null);
+    assertEquals(await Deno.readTextFile(externalPath), "external-content");
+    await assertRejects(() => Deno.lstat(cacheFilePath), Deno.errors.NotFound);
+  });
+
+  await t.step("rejects a cache-root symlink instead of writing through it", async () => {
+    const root = Deno.makeTempDirSync();
+    const baseDir = join(root, "base");
+    const externalDir = join(root, "external");
+    await Deno.mkdir(baseDir);
+    await Deno.mkdir(externalDir);
+    await Deno.symlink(externalDir, join(baseDir, "veryfront-files"));
+    const backend = new DiskCacheBackend(baseDir);
+
+    await assertRejects(() => backend.set("key", "value"));
+    const externalEntries: string[] = [];
+    for await (const entry of Deno.readDir(externalDir)) externalEntries.push(entry.name);
+    assertEquals(externalEntries, []);
+  });
+
+  await t.step("never overwrites an entry whose stored key does not match", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "collision-guard-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("collision-guard", "original");
+    const [fileName] = await listCacheFiles(isolatedDir);
+    const filePath = join(isolatedDir, "veryfront-files", fileName!);
+    const envelope = JSON.parse(await Deno.readTextFile(filePath)) as Record<string, unknown>;
+    envelope.key = "different-key-with-the-same-file";
+    await updateEnvelopeIntegrity(envelope);
+    await Deno.writeTextFile(filePath, JSON.stringify(envelope));
+
+    await backend.del("collision-guard");
+    assertEquals((await Deno.stat(filePath)).isFile, true);
+    await assertRejects(
+      () => backend.set("collision-guard", "replacement"),
+      Error,
+      "digest collision",
+    );
+    const stored = JSON.parse(await Deno.readTextFile(filePath)) as {
+      key: string;
+      value: string;
+    };
+    assertEquals(stored.key, "different-key-with-the-same-file");
+    assertEquals(stored.value, "original");
+  });
+
   await t.step("delByPattern with no matching keys returns 0", async () => {
     const backend = makeBackend();
     await backend.set("keep:this", "value");
@@ -284,6 +674,14 @@ Deno.test("DiskCacheBackend", async (t) => {
     const backend = new DiskCacheBackend(emptyDir);
     const deleted = await backend.delByPattern("*");
     assertEquals(deleted, 0);
+  });
+
+  await t.step("delByPattern propagates filesystem failures", async () => {
+    const blockingPath = join(Deno.makeTempDirSync(), "not-a-directory");
+    await Deno.writeTextFile(blockingPath, "file");
+    const backend = new DiskCacheBackend(blockingPath);
+
+    await assertRejects(() => backend.delByPattern("*"));
   });
 
   await t.step("type property is 'disk'", () => {

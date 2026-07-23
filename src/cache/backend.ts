@@ -20,6 +20,7 @@ export {
   createDistributedCacheAccessor,
   createDistributedCodeCacheAccessor,
   createTokenizingGateway,
+  DiskCacheBackend,
   isApiCacheAvailable,
   isDiskCacheConfigured,
   isDistributedBackend,

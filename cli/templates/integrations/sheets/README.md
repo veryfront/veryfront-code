@@ -22,8 +22,9 @@ sheets/
 └── files/
     ├── _env.example                        # Environment variables template
     ├── lib/
-    │   ├── oauth.ts                        # OAuth 2.0 helpers
-    │   ├── token-store.ts                  # Token storage (in-memory for dev)
+    │   ├── oauth.ts                        # Hardened veryfront/oauth adapter
+    │   ├── oauth-store.ts                  # Fail-closed store binding
+    │   ├── oauth-store-registry.ts         # Durable store injection contract
     │   └── sheets-client.ts                # Google Sheets API client
     ├── app/api/auth/sheets/
     │   ├── route.ts                        # OAuth initiation endpoint
@@ -86,9 +87,11 @@ The integration requests these scopes:
 ### Create Client
 
 ```typescript
+import type { ToolExecutionContext } from "veryfront/tool";
 import { createSheetsClient } from "./lib/sheets-client.ts";
+import { requireUserIdFromContext } from "./lib/user-id.ts";
 
-const client = createSheetsClient("user-id");
+const client = createSheetsClient(requireUserIdFromContext(context));
 ```
 
 ### List Spreadsheets
@@ -318,21 +321,16 @@ await client.deleteSheet("spreadsheet-id", sheetId);
 
 ### Token Storage
 
-The default implementation uses in-memory storage. For production:
-
-```typescript
-import { createTokenStore } from "./lib/token-store.ts";
-
-const tokenStore = createTokenStore({
-  get: async (key) => await db.get(key),
-  set: async (key, value) => await db.set(key, value),
-  delete: async (key) => await db.delete(key),
-});
-```
+Production OAuth routes fail during loading unless application instrumentation
+installs one durable `ApplicationOAuthTokenStore`. The adapter must implement
+one-shot state consumption, token revisions, atomic compare-and-set, and a
+bounded distributed refresh lease. See the generated `SETUP.md` for the exact
+contract and the explicit local-development memory opt-in.
 
 ### User Authentication
 
-Replace `DEFAULT_USER_ID` with actual user session management:
+Install a verified session/JWT resolver and pass the authenticated tool-context
+user id to `createSheetsClient`:
 
 ```typescript
 // Get user from session

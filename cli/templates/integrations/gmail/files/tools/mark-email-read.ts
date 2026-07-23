@@ -6,9 +6,11 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "mark-email-read",
   description: "Mark a Gmail message as read by removing the UNREAD label.",
-  inputSchema: defineSchema((v) => v.object({
-    messageId: v.string().min(1).describe("Gmail message ID"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      messageId: v.string().min(1).describe("Gmail message ID"),
+    })
+  )(),
   execute: async ({ messageId }, context) => {
     const userId = resolveUserId(context);
 

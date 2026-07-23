@@ -5,11 +5,21 @@ import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singlefligh
 import {
   type CacheBackend,
   CacheBackends,
-  MemoryCacheBackend,
+  isDistributedBackend,
   type TokenizingCacheGateway,
 } from "#veryfront/cache/backend.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  assertPortableCode,
+  detokenizeAllCachePaths,
+  tokenizeAllVeryFrontPaths,
+} from "#veryfront/cache/paths.ts";
+import {
+  DEFAULT_CACHE_TTL_SECONDS,
+  expiresImmediately,
+  MAX_CACHE_TTL_MILLISECONDS,
+  resolveCacheTtlSeconds,
+} from "#veryfront/cache/backends/ttl.ts";
 import type {
   TransformProgressEvent,
   TransformProgressListener,
@@ -17,26 +27,50 @@ import type {
 
 const logger = baseLogger.component("transform-cache");
 
-const DEFAULT_TTL_SECONDS = 300; // 5 minutes
+const DEFAULT_TTL_SECONDS = DEFAULT_CACHE_TTL_SECONDS;
 const FALLBACK_MAX_ENTRIES = 500;
 export const TRANSFORM_FLIGHT_STALE_EVICTION_MS = 5 * 60_000;
+const FALLBACK_MAX_BYTES = 64 * 1024 * 1024;
+const MAX_TRANSFORM_CODE_BYTES = 32 * 1024 * 1024;
+const MAX_STORED_ENTRY_BYTES = 64 * 1024 * 1024;
+const MAX_CACHE_KEY_LENGTH = 32 * 1024;
+const MAX_HASH_LENGTH = 1_024;
+const MAX_MANIFEST_ID_LENGTH = 2_048;
+const MAX_INFLIGHT_TRANSFORMS = 1_000;
+const CACHE_INIT_RETRY_MS = 30_000;
+const TRANSFORM_CACHE_FORMAT_VERSION = 2;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+const STORED_ENTRY_KEYS = new Set([
+  "bundleManifestId",
+  "code",
+  "codeHash",
+  "expiresAt",
+  "formatVersion",
+  "hash",
+  "timestamp",
+]);
+const sizeEncoder = new TextEncoder();
 
 /**
  * Pattern to match unresolved /_vf_modules/_veryfront/ imports.
  * These should have been resolved to file:// paths by ssrVfModulesPlugin.
- * Matches:
- * - from "/_vf_modules/_veryfront/..."
- * - from "file:///_vf_modules/_veryfront/..." (Deno adds file:// prefix to raw paths)
  */
 const UNRESOLVED_VF_MODULES_PATTERN =
   /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/_veryfront\/[^"']+)["']/;
 
 interface TransformCacheEntry {
   code: string;
+  /** Source/config identity retained for diagnostics and compatibility. */
   hash: string;
   timestamp: number;
-  /** ID of the bundle manifest tracking HTTP bundles for this transform */
+  expiresAt: number;
+  codeHash?: string;
+  formatVersion: typeof TRANSFORM_CACHE_FORMAT_VERSION;
   bundleManifestId?: string;
+}
+
+interface StoredTransformCacheEntry extends TransformCacheEntry {
+  codeHash: string;
 }
 
 let cacheGateway: TokenizingCacheGateway | null = null;
@@ -94,7 +128,10 @@ function notifyTransformProgressListener(
   try {
     listener(event);
   } catch (error) {
-    logger.debug("Transform progress listener failed", { key, error });
+    logger.debug("Transform progress listener failed", {
+      keyLength: key.length,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
   }
 }
 
@@ -127,6 +164,8 @@ function publishTransformProgress(
     notifyTransformProgressListener(key, listener, event);
   }
 }
+let lastCacheInitFailureTime: number | undefined;
+let cacheLifecycleGeneration = 0;
 
 interface LocalFallbackLike<K, V> {
   get(key: K): V | undefined;
@@ -138,12 +177,24 @@ interface LocalFallbackLike<K, V> {
   entries(): IterableIterator<[K, V]>;
 }
 
-class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
-  private readonly store = new Map<K, V>();
+function estimateEntryBytes(key: string, entry: TransformCacheEntry): number {
+  return sizeEncoder.encode(key).byteLength + sizeEncoder.encode(entry.code).byteLength +
+    sizeEncoder.encode(entry.hash).byteLength +
+    (entry.codeHash ? sizeEncoder.encode(entry.codeHash).byteLength : 0) +
+    (entry.bundleManifestId ? sizeEncoder.encode(entry.bundleManifestId).byteLength : 0) + 64;
+}
 
-  constructor(private readonly maxEntries: number) {}
+class BoundedTransformFallback implements LocalFallbackLike<string, TransformCacheEntry> {
+  private readonly store = new Map<string, TransformCacheEntry>();
+  private readonly sizes = new Map<string, number>();
+  private currentBytes = 0;
 
-  get(key: K): V | undefined {
+  constructor(
+    private readonly maxEntries: number,
+    private readonly maxBytes: number,
+  ) {}
+
+  get(key: string): TransformCacheEntry | undefined {
     const value = this.store.get(key);
     if (value === undefined) return undefined;
     this.store.delete(key);
@@ -151,43 +202,59 @@ class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
     return value;
   }
 
-  set(key: K, value: V): void {
-    this.store.delete(key);
-    this.store.set(key, value);
+  set(key: string, value: TransformCacheEntry): void {
+    this.delete(key);
+    const size = estimateEntryBytes(key, value);
+    if (this.maxEntries === 0 || this.maxBytes === 0 || size > this.maxBytes) return;
 
-    while (this.store.size > this.maxEntries) {
-      const oldestKey = this.store.keys().next();
-      if (oldestKey.done) break;
-      this.store.delete(oldestKey.value);
+    while (
+      this.store.size > 0 &&
+      (this.store.size >= this.maxEntries || this.currentBytes + size > this.maxBytes)
+    ) {
+      const oldest = this.store.keys().next();
+      if (oldest.done) break;
+      this.delete(oldest.value);
     }
+
+    this.store.set(key, value);
+    this.sizes.set(key, size);
+    this.currentBytes += size;
   }
 
-  delete(key: K): boolean {
+  delete(key: string): boolean {
+    const size = this.sizes.get(key);
+    if (size !== undefined) {
+      this.currentBytes -= size;
+      this.sizes.delete(key);
+    }
     return this.store.delete(key);
   }
 
-  has(key: K): boolean {
+  has(key: string): boolean {
     return this.store.has(key);
   }
 
   clear(): void {
     this.store.clear();
+    this.sizes.clear();
+    this.currentBytes = 0;
   }
 
   get size(): number {
     return this.store.size;
   }
 
-  entries(): IterableIterator<[K, V]> {
+  entries(): IterableIterator<[string, TransformCacheEntry]> {
     return this.store.entries();
   }
 }
 
-const defaultLocalFallback = new EntryBoundedFallback<string, TransformCacheEntry>(
+const defaultLocalFallback = new BoundedTransformFallback(
   FALLBACK_MAX_ENTRIES,
+  FALLBACK_MAX_BYTES,
 );
 
-/** Injected caches for testing */
+/** Injected caches for testing. */
 let injectedLocalFallback: LocalFallbackLike<string, TransformCacheEntry> | null = null;
 let injectedCacheGateway: TokenizingCacheGateway | CacheBackend | null | undefined = undefined;
 
@@ -199,10 +266,16 @@ function getEffectiveCacheGateway(): TokenizingCacheGateway | CacheBackend | nul
   return injectedCacheGateway !== undefined ? injectedCacheGateway : cacheGateway;
 }
 
-/**
- * Inject custom caches for testing.
- * Call with null to restore default behavior.
- */
+function isDistributedGateway(
+  gateway: TokenizingCacheGateway | CacheBackend,
+): boolean {
+  if ("isDistributed" in gateway && typeof gateway.isDistributed === "function") {
+    return gateway.isDistributed();
+  }
+  return isDistributedBackend(gateway);
+}
+
+/** Inject custom caches for testing. Call with null to restore default behavior. */
 export function __injectCachesForTests(
   caches: {
     localFallback?: LocalFallbackLike<string, TransformCacheEntry> | null;
@@ -219,14 +292,13 @@ export function __injectCachesForTests(
   if (caches.cacheBackend !== undefined) injectedCacheGateway = caches.cacheBackend;
 }
 
-/**
- * Reset initialization state for testing.
- * This allows tests to simulate fresh initialization.
- */
-function __resetInitStateForTests(): void {
+/** Reset initialization state for deterministic tests and lifecycle cleanup. */
+export function __resetInitStateForTests(): void {
+  cacheLifecycleGeneration++;
   cacheInitialized = false;
   cacheInitPromise = null;
   cacheGateway = null;
+  lastCacheInitFailureTime = undefined;
 }
 
 registerCache("transform-cache", () => ({
@@ -237,28 +309,48 @@ registerCache("transform-cache", () => ({
 }));
 
 export async function initializeTransformCache(): Promise<boolean> {
-  if (cacheInitialized) return cacheGateway?.type !== "memory";
+  if (cacheInitialized && cacheGateway) return isDistributedGateway(cacheGateway);
 
-  cacheInitPromise ??= (async () => {
-    try {
-      // Use TokenizingCacheGateway for consistent interface and isDistributed() checks
-      cacheGateway = await CacheBackends.codeStore("TRANSFORM-CACHE", { keyPrefix: "transform" });
-      logger.info("Initialized with gateway", { backend: cacheGateway.type });
-    } catch (error) {
-      logger.warn("Backend init failed, using memory", { error });
-      // Fallback to memory backend wrapped in gateway for consistent interface
-      const memBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
-      const { createTokenizingGateway } = await import("../../cache/tokenizing-gateway.ts");
-      cacheGateway = createTokenizingGateway(memBackend, "TRANSFORM-CACHE");
-    } finally {
-      cacheInitialized = true;
-    }
-  })();
+  if (
+    lastCacheInitFailureTime !== undefined &&
+    Date.now() - lastCacheInitFailureTime < CACHE_INIT_RETRY_MS
+  ) {
+    return false;
+  }
 
-  await cacheInitPromise;
-  cacheInitPromise = null;
+  if (!cacheInitPromise) {
+    const generation = cacheLifecycleGeneration;
+    cacheInitPromise = (async () => {
+      try {
+        const gateway = await CacheBackends.codeStore("TRANSFORM-CACHE", {
+          keyPrefix: "transform",
+        });
+        if (cacheLifecycleGeneration !== generation) return;
+        cacheGateway = gateway;
+        cacheInitialized = true;
+        lastCacheInitFailureTime = undefined;
+        logger.info("Initialized with gateway", { backend: gateway.type });
+      } catch (error) {
+        if (cacheLifecycleGeneration !== generation) return;
+        cacheGateway = null;
+        cacheInitialized = false;
+        lastCacheInitFailureTime = Date.now();
+        logger.warn("Backend init failed; local fallback remains active", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  }
 
-  return cacheGateway?.type !== "memory";
+  const pending = cacheInitPromise;
+  try {
+    await pending;
+  } finally {
+    if (cacheInitPromise === pending) cacheInitPromise = null;
+  }
+
+  return cacheGateway ? isDistributedGateway(cacheGateway) : false;
 }
 
 interface CacheKeyOptions {
@@ -277,46 +369,233 @@ export function generateCacheKey(
   return buildTransformCacheKey(filePath, contentHash, ssr, studioEmbed, options);
 }
 
+function validateCacheKey(key: string): void {
+  if (typeof key !== "string" || key.length === 0 || key.length > MAX_CACHE_KEY_LENGTH) {
+    throw new RangeError(
+      `Transform cache key must contain 1 to ${MAX_CACHE_KEY_LENGTH} characters`,
+    );
+  }
+  if (hasControlCharacters(key)) {
+    throw new TypeError("Transform cache key cannot contain control characters");
+  }
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function validateBoundedString(
+  value: unknown,
+  maxLength: number,
+  allowEmpty = false,
+): value is string {
+  return typeof value === "string" && (allowEmpty || value.length > 0) &&
+    value.length <= maxLength && !hasControlCharacters(value);
+}
+
+function validateCode(code: unknown): code is string {
+  if (typeof code !== "string" || code.length === 0 || code.length > MAX_TRANSFORM_CODE_BYTES) {
+    return false;
+  }
+  return sizeEncoder.encode(code).byteLength <= MAX_TRANSFORM_CODE_BYTES;
+}
+
+function validateTimestamp(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 &&
+    (value as number) <= 8_640_000_000_000_000;
+}
+
+function getOwnData(value: object, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || descriptor.get || descriptor.set) return undefined;
+  return descriptor.value;
+}
+
+function parseStoredEntry(raw: string): StoredTransformCacheEntry | undefined {
+  if (raw.length === 0 || raw.length > MAX_STORED_ENTRY_BYTES) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (Object.getPrototypeOf(value) !== Object.prototype) return undefined;
+  if (Object.keys(value).some((key) => !STORED_ENTRY_KEYS.has(key))) return undefined;
+
+  const formatVersion = getOwnData(value, "formatVersion");
+  const code = getOwnData(value, "code");
+  const hash = getOwnData(value, "hash");
+  const codeHash = getOwnData(value, "codeHash");
+  const timestamp = getOwnData(value, "timestamp");
+  const expiresAt = getOwnData(value, "expiresAt");
+  const bundleManifestId = getOwnData(value, "bundleManifestId");
+
+  if (formatVersion !== TRANSFORM_CACHE_FORMAT_VERSION) return undefined;
+  if (!validateCode(code)) return undefined;
+  if (!validateBoundedString(hash, MAX_HASH_LENGTH)) return undefined;
+  if (typeof codeHash !== "string" || !SHA256_HEX_PATTERN.test(codeHash)) return undefined;
+  if (!validateTimestamp(timestamp) || !validateTimestamp(expiresAt)) return undefined;
+  if (expiresAt <= timestamp || expiresAt - timestamp > MAX_CACHE_TTL_MILLISECONDS) {
+    return undefined;
+  }
+  if (
+    bundleManifestId !== undefined &&
+    !validateBoundedString(bundleManifestId, MAX_MANIFEST_ID_LENGTH)
+  ) {
+    return undefined;
+  }
+
+  return {
+    formatVersion,
+    code,
+    hash,
+    codeHash,
+    timestamp,
+    expiresAt,
+    ...(bundleManifestId === undefined ? {} : { bundleManifestId }),
+  };
+}
+
+function getValidLocalEntry(key: string, now = Date.now()): TransformCacheEntry | undefined {
+  const fallback = getLocalFallback();
+  const entry = fallback.get(key);
+  if (!entry) return undefined;
+  if (
+    entry.formatVersion !== TRANSFORM_CACHE_FORMAT_VERSION ||
+    !validateCode(entry.code) ||
+    !validateBoundedString(entry.hash, MAX_HASH_LENGTH) ||
+    !validateTimestamp(entry.timestamp) ||
+    !validateTimestamp(entry.expiresAt) ||
+    entry.expiresAt <= entry.timestamp ||
+    entry.expiresAt - entry.timestamp > MAX_CACHE_TTL_MILLISECONDS ||
+    now >= entry.expiresAt ||
+    (entry.codeHash !== undefined && !SHA256_HEX_PATTERN.test(entry.codeHash)) ||
+    (entry.bundleManifestId !== undefined &&
+      !validateBoundedString(entry.bundleManifestId, MAX_MANIFEST_ID_LENGTH))
+  ) {
+    fallback.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+
+async function deleteCacheEntry(key: string): Promise<void> {
+  getLocalFallback().delete(key);
+  const gateway = getEffectiveCacheGateway();
+  if (gateway) await gateway.del(key);
+}
+
+async function discardInvalidGatewayEntry(
+  gateway: TokenizingCacheGateway | CacheBackend,
+  key: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await gateway.del(key);
+  } catch (error) {
+    logger.warn("Failed to remove invalid transform cache entry", {
+      keyLength: key.length,
+      reason,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
 export async function getCachedTransformAsync(
   key: string,
 ): Promise<TransformCacheEntry | undefined> {
+  validateCacheKey(key);
   const gateway = getEffectiveCacheGateway();
 
   if (gateway) {
     try {
-      // Use raw get() since we store JSON and handle tokenization at the entry level
       const raw = await gateway.get(key);
-      if (raw) {
-        const entry = JSON.parse(raw) as TransformCacheEntry;
-        if (!entry.code) {
-          logger.warn("Cache entry has empty code, discarding", { key });
-          return undefined;
+      if (raw !== null) {
+        const entry = parseStoredEntry(raw);
+        if (!entry) {
+          await discardInvalidGatewayEntry(gateway, key, "invalid payload");
+        } else if (Date.now() >= entry.expiresAt) {
+          await discardInvalidGatewayEntry(gateway, key, "expired payload");
+        } else if (await computeHash(entry.code) !== entry.codeHash) {
+          await discardInvalidGatewayEntry(gateway, key, "integrity mismatch");
+        } else {
+          const code = isDistributedGateway(gateway)
+            ? detokenizeAllCachePaths(entry.code)
+            : entry.code;
+          if (!validateCode(code)) {
+            await discardInvalidGatewayEntry(gateway, key, "invalid detokenized payload");
+          } else {
+            return { ...entry, code };
+          }
         }
-        // Detokenize code from distributed cache
-        // The gateway's isDistributed() tells us if we need to detokenize
-        const isDistributed = "isDistributed" in gateway
-          ? (gateway as TokenizingCacheGateway).isDistributed()
-          : gateway.type !== "memory";
-        if (isDistributed) {
-          entry.code = detokenizeAllCachePaths(entry.code);
-        }
-        return entry;
       }
     } catch (error) {
-      logger.error("Transform cache backend get failed", {
-        key: key.slice(-60),
+      logger.warn("Transform cache backend get failed", {
+        keyLength: key.length,
+        errorName: error instanceof Error ? error.name : typeof error,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  return getLocalFallback().get(key);
+  const local = getValidLocalEntry(key);
+  if (!local) return undefined;
+  if (local.codeHash && await computeHash(local.code) !== local.codeHash) {
+    getLocalFallback().delete(key);
+    return undefined;
+  }
+  return local;
 }
 
+/** Synchronous access is intentionally limited to trusted process-local entries. */
 export function getCachedTransform(key: string): TransformCacheEntry | undefined {
-  const gateway = getEffectiveCacheGateway();
-  if (gateway && gateway.type !== "memory") return undefined;
-  return getLocalFallback().get(key);
+  validateCacheKey(key);
+  return getValidLocalEntry(key);
+}
+
+function resolveTransformTtl(ttlSeconds: number | undefined): number {
+  return resolveCacheTtlSeconds(ttlSeconds, DEFAULT_TTL_SECONDS)!;
+}
+
+function validateTransformPayload(code: string, hash: string): void {
+  if (!validateCode(code)) {
+    throw new RangeError(
+      `Transform code must contain 1 to ${MAX_TRANSFORM_CODE_BYTES} UTF-8 bytes`,
+    );
+  }
+  if (!validateBoundedString(hash, MAX_HASH_LENGTH)) {
+    throw new TypeError("Transform source hash is invalid");
+  }
+}
+
+function createEntry(
+  code: string,
+  hash: string,
+  timestamp: number,
+  expiresAt: number,
+  codeHash: string | undefined,
+  bundleManifestId?: string,
+): TransformCacheEntry {
+  if (
+    bundleManifestId !== undefined &&
+    !validateBoundedString(bundleManifestId, MAX_MANIFEST_ID_LENGTH)
+  ) {
+    throw new TypeError("Transform bundle manifest ID is invalid");
+  }
+  return {
+    formatVersion: TRANSFORM_CACHE_FORMAT_VERSION,
+    code,
+    hash,
+    timestamp,
+    expiresAt,
+    ...(codeHash === undefined ? {} : { codeHash }),
+    ...(bundleManifestId === undefined ? {} : { bundleManifestId }),
+  };
 }
 
 export async function setCachedTransformAsync(
@@ -326,101 +605,125 @@ export async function setCachedTransformAsync(
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
   bundleManifestId?: string,
 ): Promise<void> {
-  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now(), bundleManifestId };
+  validateCacheKey(key);
+  const ttl = resolveTransformTtl(ttlSeconds);
+  if (expiresImmediately(ttl)) {
+    await deleteCacheEntry(key);
+    return;
+  }
+  validateTransformPayload(code, hash);
+
+  const timestamp = Date.now();
+  const expiresAt = timestamp + Math.ceil(ttl * 1_000);
+  const localCodeHash = await computeHash(code);
+  const localEntry = createEntry(
+    code,
+    hash,
+    timestamp,
+    expiresAt,
+    localCodeHash,
+    bundleManifestId,
+  );
   const gateway = getEffectiveCacheGateway();
 
-  if (gateway) {
-    try {
-      // Tokenize code before storing in distributed cache
-      // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
-      const isDistributed = "isDistributed" in gateway
-        ? (gateway as TokenizingCacheGateway).isDistributed()
-        : gateway.type !== "memory";
-      const entryToStore = isDistributed
-        ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
-        : entry;
-      await gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
-      return;
-    } catch (error) {
-      logger.error("Transform cache backend set failed", {
-        key: key.slice(-60),
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  if (!gateway) {
+    getLocalFallback().set(key, localEntry);
+    return;
   }
 
-  setLocalFallback(key, entry);
+  const distributed = isDistributedGateway(gateway);
+  const storedCode = distributed ? tokenizeAllVeryFrontPaths(code) : code;
+  if (distributed) assertPortableCode(storedCode);
+  const storedCodeHash = distributed ? await computeHash(storedCode) : localCodeHash;
+  const storedEntry = createEntry(
+    storedCode,
+    hash,
+    timestamp,
+    expiresAt,
+    storedCodeHash,
+    bundleManifestId,
+  ) as StoredTransformCacheEntry;
+  const serialized = JSON.stringify(storedEntry);
+  if (sizeEncoder.encode(serialized).byteLength > MAX_STORED_ENTRY_BYTES) {
+    throw new RangeError("Serialized transform cache entry is too large");
+  }
+
+  try {
+    await gateway.set(key, serialized, ttl);
+  } catch (error) {
+    getLocalFallback().set(key, localEntry);
+    throw new Error("Transform cache backend set failed; stored in local fallback", {
+      cause: error,
+    });
+  }
 }
 
+/**
+ * Legacy synchronous writes are process-local. Persisted entries require an
+ * asynchronous SHA-256 integrity digest and therefore use setCachedTransformAsync.
+ */
 export function setCachedTransform(
   key: string,
   code: string,
   hash: string,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
 ): void {
-  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now() };
-  const gateway = getEffectiveCacheGateway();
-
-  if (!gateway) {
-    setLocalFallback(key, entry);
+  validateCacheKey(key);
+  const ttl = resolveTransformTtl(ttlSeconds);
+  if (expiresImmediately(ttl)) {
+    getLocalFallback().delete(key);
+    const gateway = getEffectiveCacheGateway();
+    gateway?.del(key).catch((error) => {
+      logger.warn("Failed to expire synchronous transform cache entry", {
+        keyLength: key.length,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    });
     return;
   }
-
-  // Tokenize code before storing in distributed cache
-  // This replaces absolute file:// paths with __VF_CACHE_DIR__ tokens for cross-pod portability
-  const isDistributed = "isDistributed" in gateway
-    ? (gateway as TokenizingCacheGateway).isDistributed()
-    : gateway.type !== "memory";
-  const entryToStore = isDistributed ? { ...entry, code: tokenizeAllVeryFrontPaths(code) } : entry;
-  gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
-    logger.debug("Backend set failed", { key, error });
-  });
-
-  if (gateway.type === "memory") setLocalFallback(key, entry);
-}
-
-function normalizeTtl(ttlSeconds: number): number {
-  return ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
-}
-
-function setLocalFallback(key: string, entry: TransformCacheEntry): void {
-  const fallback = getLocalFallback();
-  fallback.set(key, entry);
+  validateTransformPayload(code, hash);
+  const timestamp = Date.now();
+  getLocalFallback().set(
+    key,
+    createEntry(code, hash, timestamp, timestamp + Math.ceil(ttl * 1_000), undefined),
+  );
 }
 
 export function destroyTransformCache(): void {
+  cacheLifecycleGeneration++;
   getLocalFallback().clear();
   transformFlight = new Singleflight<TransformCacheResult>();
   transformProgress.clear();
+  cacheGateway = null;
+  cacheInitialized = false;
+  cacheInitPromise = null;
+  lastCacheInitFailureTime = undefined;
 }
 
 export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
   await initializeTransformCache();
   const gateway = getEffectiveCacheGateway();
-  if (!gateway || gateway.type === "memory") return null;
+  if (!gateway || !isDistributedGateway(gateway)) return null;
   return gateway as CacheBackend;
 }
 
 interface TransformCacheResult {
   code: string;
-  /** Bundle manifest ID if the cached entry has one (for manifest-based validation) */
+  /** Bundle manifest ID if the cached entry has one. */
   bundleManifestId?: string;
-  /** Whether this was a cache hit */
   cacheHit: boolean;
 }
 
 function publishComputedTransform(
   key: string,
   code: string,
+  hash: string,
   ttlSeconds: number,
 ): void {
   const previousPublication = transformCachePublications.get(key) ?? Promise.resolve();
   const publication = previousPublication
     .catch(() => {})
-    .then(async () => {
-      const hash = hashCodeHex(code).slice(0, 16);
-      await setCachedTransformAsync(key, code, hash, ttlSeconds);
-    })
+    .then(() => setCachedTransformAsync(key, code, hash, ttlSeconds))
     .finally(() => {
       if (transformCachePublications.get(key) === publication) {
         transformCachePublications.delete(key);
@@ -429,8 +732,106 @@ function publishComputedTransform(
 
   transformCachePublications.set(key, publication);
   void publication.catch((error) => {
-    logger.debug("Failed to cache computed transform", { key, error });
+    logger.warn("Failed to cache computed transform", {
+      keyLength: key.length,
+      errorName: error instanceof Error ? error.name : typeof error,
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
+}
+
+function primeComputedTransformLocally(
+  key: string,
+  code: string,
+  hash: string,
+  ttlSeconds: number,
+): void {
+  const fallback = getLocalFallback();
+  if (expiresImmediately(ttlSeconds)) {
+    fallback.delete(key);
+    return;
+  }
+
+  const timestamp = Date.now();
+  fallback.set(
+    key,
+    createEntry(
+      code,
+      hash,
+      timestamp,
+      timestamp + Math.ceil(ttlSeconds * 1_000),
+      hash,
+    ),
+  );
+}
+
+async function executeTransformFlight(
+  key: string,
+  computeFn: (reportProgress?: TransformProgressListener) => Promise<string>,
+  ttlSeconds: number,
+  mayPublish: () => boolean,
+): Promise<TransformCacheResult> {
+  const progressFlight = beginTransformProgressFlight(key);
+  const reportProgress: TransformProgressListener = (event) =>
+    publishTransformProgress(key, progressFlight.state, event);
+  try {
+    const cached = await getCachedTransformAsync(key);
+    if (cached) {
+      if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
+        const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
+        logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
+          keyLength: key.length,
+          unresolvedImport: match?.[1]?.slice(0, 60),
+        });
+        try {
+          await deleteCacheEntry(key);
+        } catch (error) {
+          logger.warn("Failed to delete stale transform cache entry", {
+            keyLength: key.length,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        }
+      } else {
+        logger.debug("Cache hit", { keyLength: key.length });
+        reportProgress({ phase: "transform-cache:hit" });
+        return {
+          code: cached.code,
+          bundleManifestId: cached.bundleManifestId,
+          cacheHit: true,
+        };
+      }
+    }
+
+    logger.debug("Cache miss, computing", { keyLength: key.length });
+    reportProgress({ phase: "transform-cache:miss" });
+    const code = await computeFn(reportProgress);
+    if (!validateCode(code)) {
+      throw new RangeError("Computed transform is empty or exceeds the transform cache size limit");
+    }
+    reportProgress({ phase: "transform-cache:computed" });
+
+    if (mayPublish()) {
+      const hash = await computeHash(code);
+      if (mayPublish()) {
+        // Make the completed value immediately available to process-local
+        // followers, while serialized persistence remains off the critical path.
+        primeComputedTransformLocally(key, code, hash, ttlSeconds);
+        publishComputedTransform(key, code, hash, ttlSeconds);
+      } else {
+        logger.debug("Skipped cache write from stale transform flight", {
+          keyLength: key.length,
+        });
+      }
+    } else {
+      logger.debug("Skipped cache write from stale transform flight", {
+        keyLength: key.length,
+      });
+    }
+
+    return { code, cacheHit: false };
+  } finally {
+    progressFlight.end();
+  }
 }
 
 export async function getOrComputeTransform(
@@ -441,74 +842,48 @@ export async function getOrComputeTransform(
   signal?: AbortSignal,
 ): Promise<TransformCacheResult> {
   signal?.throwIfAborted();
+  validateCacheKey(key);
+  const ttl = resolveTransformTtl(ttlSeconds);
   const flightRegistry = transformFlight;
-  if (!flightRegistry.has(key)) {
+  const alreadyInFlight = flightRegistry.has(key);
+  if (!alreadyInFlight) {
     transformProgress.set(key, { listeners: new Set(), flights: 0 });
   }
   const unsubscribe = subscribeToTransformProgress(key, onProgress);
 
   try {
-    const flight = flightRegistry.do(
-      key,
-      async (control) => {
-        const progressFlight = beginTransformProgressFlight(key);
-        const reportProgress: TransformProgressListener = (event) =>
-          publishTransformProgress(key, progressFlight.state, event);
-        try {
-          const cached = await getCachedTransformAsync(key);
-          if (cached) {
-            // Validate cached code doesn't have unresolved _vf_modules imports.
-            // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
-            // If they're still present, the cache is stale and we need to recompute.
-            if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
-              const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
-              logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
-                key: key.slice(-60),
-                unresolvedImport: match?.[1]?.slice(0, 60),
-              });
-              // Fall through to recompute
-            } else {
-              logger.debug("Cache hit", { key });
-              reportProgress({ phase: "transform-cache:hit" });
-              return {
-                code: cached.code,
-                bundleManifestId: cached.bundleManifestId,
-                cacheHit: true,
-              };
-            }
-          }
-
-          logger.debug("Cache miss, computing", { key });
-          reportProgress({ phase: "transform-cache:miss" });
-          const code = await computeFn(reportProgress);
-          reportProgress({ phase: "transform-cache:computed" });
-
-          if (transformFlight === flightRegistry && control.isCurrent()) {
-            // Serialize publications for one key. If this generation is reset
-            // after this synchronous identity check, a replacement publication
-            // queues behind it and therefore commits last.
-            publishComputedTransform(key, code, ttlSeconds);
-          } else {
-            logger.debug("Skipped cache write from stale transform flight", {
-              key: key.slice(-60),
+    let flight: Promise<TransformCacheResult>;
+    if (!alreadyInFlight && flightRegistry.size >= MAX_INFLIGHT_TRANSFORMS) {
+      logger.warn("Transform singleflight capacity reached; computing independently", {
+        inflight: flightRegistry.size,
+      });
+      flight = executeTransformFlight(
+        key,
+        computeFn,
+        ttl,
+        () => transformFlight === flightRegistry,
+      );
+    } else {
+      flight = flightRegistry.do(
+        key,
+        (control) =>
+          executeTransformFlight(
+            key,
+            computeFn,
+            ttl,
+            () => transformFlight === flightRegistry && control.isCurrent(),
+          ),
+        {
+          staleAfterMs: TRANSFORM_FLIGHT_STALE_EVICTION_MS,
+          onStaleEvicted: () => {
+            logger.warn("Evicted stalled transform-cache flight", {
+              keyLength: key.length,
+              timeoutMs: TRANSFORM_FLIGHT_STALE_EVICTION_MS,
             });
-          }
-
-          return { code, cacheHit: false };
-        } finally {
-          progressFlight.end();
-        }
-      },
-      {
-        staleAfterMs: TRANSFORM_FLIGHT_STALE_EVICTION_MS,
-        onStaleEvicted: () => {
-          logger.warn("Evicted stalled transform-cache flight", {
-            key: key.slice(-60),
-            timeoutMs: TRANSFORM_FLIGHT_STALE_EVICTION_MS,
-          });
+          },
         },
-      },
-    );
+      );
+    }
 
     // A caller timeout must detach that request without cancelling the shared
     // singleflight leader: another concurrent render may still depend on the

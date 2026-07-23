@@ -1,14 +1,17 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listFolders } from "../../lib/outlook-client.ts";
+import { createOutlookClient } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "list-folders",
   description:
     "List all mail folders in the mailbox, including inbox, sent items, drafts, and custom folders.",
   inputSchema: defineSchema((v) => v.object({}))(),
-  async execute() {
-    const folders = await listFolders();
+  async execute(_input, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createOutlookClient(userId);
+    const folders = await client.listFolders();
 
     return folders.map((folder) => ({
       id: folder.id,

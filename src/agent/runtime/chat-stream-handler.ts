@@ -24,12 +24,12 @@ import {
 } from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { type Span, SpanKind } from "#veryfront/observability";
+import { setSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
-  redactSensitive,
+  redactForSerialization,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
 } from "#veryfront/utils/logger/redact.ts";
@@ -57,6 +57,7 @@ export interface StreamingToolCall {
   inputAvailable?: boolean;
   providerExecuted?: boolean;
   dynamic?: boolean;
+  supportsDeferredResults?: boolean;
 }
 
 export interface StreamingToolResult {
@@ -66,6 +67,7 @@ export interface StreamingToolResult {
   error?: unknown;
   providerExecuted?: boolean;
   dynamic?: boolean;
+  supportsDeferredResults?: boolean;
   preliminary?: boolean;
 }
 
@@ -80,6 +82,7 @@ export interface ChatStreamState {
   accumulatedText: string;
   reasoningParts: StreamingReasoningPart[];
   finishReason: string | null;
+  providerMetadata?: Record<string, unknown>;
   toolCalls: Map<string, StreamingToolCall>;
   toolResults: StreamingToolResult[];
   suppressedToolCalls: { id: string; name: string }[];
@@ -145,6 +148,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isErrorValue(value: unknown): value is Error {
+  try {
+    return value instanceof Error;
+  } catch {
+    return false;
+  }
+}
+
 function normalizeToolInputString(input: unknown): string {
   if (typeof input === "string") {
     return input;
@@ -163,7 +174,7 @@ function tryParseToolInputObject(input: string): Record<string, unknown> | null 
 }
 
 export function summarizeProviderToolDebugValue(value: unknown): unknown {
-  if (value instanceof Error) {
+  if (isErrorValue(value)) {
     return sanitizeSerializedError({
       name: value.name,
       message: value.message,
@@ -176,7 +187,7 @@ export function summarizeProviderToolDebugValue(value: unknown): unknown {
     return safe.length > 500 ? `${safe.slice(0, 500)}…` : safe;
   }
 
-  return redactSensitive(value);
+  return redactForSerialization(value);
 }
 
 function resolveToolResultOutput(part: RuntimeStreamPart): unknown {
@@ -202,6 +213,7 @@ function logProviderToolPart(
     toolName: string;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    supportsDeferredResults?: boolean;
     output?: unknown;
     error?: unknown;
     input?: unknown;
@@ -227,6 +239,7 @@ function logProviderToolPart(
     toolName: part.toolName,
     providerExecuted: part.providerExecuted,
     dynamic: part.dynamic,
+    supportsDeferredResults: part.supportsDeferredResults,
     preliminary: part.preliminary,
     isError: part.isError,
     outputType: typeof part.output,
@@ -342,13 +355,14 @@ export function processStream(
   };
   const traceSpanName = callbacks?.traceSpanName ?? "agent.runtime.processStream";
 
-  const process = async () => {
+  const process = async (traceSpan: Span) => {
     let eventCount = 0;
     let textOpen = false;
     let activeReasoningId: string | null = null;
     const reasoningParts = new Map<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
+    let hasProviderExecutedActivity = false;
     const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
     const availableToolNames = callbacks?.availableToolNames
       ? new Set(callbacks.availableToolNames)
@@ -366,8 +380,14 @@ export function processStream(
       state.suppressedToolCalls.push({ id: toolCallId, name: toolName });
     };
 
-    const resolveProviderExecuted = (toolName: string, providerExecuted?: boolean) =>
-      providerExecuted ?? (providerExecutedToolNames.has(toolName) ? true : undefined);
+    const observeProviderExecuted = (toolName: string, providerExecuted?: boolean) => {
+      const resolved = providerExecuted ??
+        (providerExecutedToolNames.has(toolName) ? true : undefined);
+      if (resolved === true) {
+        hasProviderExecutedActivity = true;
+      }
+      return resolved;
+    };
 
     const normalizeReasoningId = (part: { id?: string }) =>
       typeof part.id === "string" && part.id.length > 0 ? part.id : "reasoning";
@@ -502,9 +522,10 @@ export function processStream(
       input?: unknown;
       providerExecuted?: boolean;
       dynamic?: boolean;
+      supportsDeferredResults?: boolean;
     }) => {
       const dynamic = part.dynamic ?? isDynamicTool(part.toolName);
-      const providerExecuted = resolveProviderExecuted(part.toolName, part.providerExecuted);
+      const providerExecuted = observeProviderExecuted(part.toolName, part.providerExecuted);
       const existing = state.toolCalls.get(part.toolCallId);
 
       if (!existing) {
@@ -516,6 +537,7 @@ export function processStream(
           inputAvailable: true,
           ...(providerExecuted !== undefined ? { providerExecuted } : {}),
           ...(dynamic ? { dynamic: true } : {}),
+          ...(part.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
           inputAnnounced: true,
         });
         sendSSE(controller, encoder, {
@@ -551,6 +573,9 @@ export function processStream(
       if (dynamic) {
         existing.dynamic = true;
       }
+      if (part.supportsDeferredResults === true) {
+        existing.supportsDeferredResults = true;
+      }
 
       announceToolInputStart(existing);
       sendSSE(controller, encoder, {
@@ -583,7 +608,9 @@ export function processStream(
         ? await readNextStreamPartWithTimeout(
           streamIterator,
           state,
-          LOCAL_TOOL_COMMIT_GRACE_MS,
+          hasProviderExecutedActivity
+            ? callbacks?.streamIdleTimeoutMs ?? STREAM_OUTPUT_IDLE_MS
+            : LOCAL_TOOL_COMMIT_GRACE_MS,
         )
         : shouldStopForIdleOutput
         ? await readNextStreamPartWithTimeout(
@@ -618,6 +645,14 @@ export function processStream(
       }
 
       const typedPart = part as RuntimeStreamPart;
+      let receivedTerminalFinish = false;
+
+      if (typeof part.toolName === "string") {
+        observeProviderExecuted(
+          part.toolName,
+          typeof part.providerExecuted === "boolean" ? part.providerExecuted : undefined,
+        );
+      }
 
       if (typedPart.type.startsWith("data-")) {
         sendSSE(controller, encoder, {
@@ -691,7 +726,7 @@ export function processStream(
             hasActiveLocalToolInput = false;
             break;
           }
-          const providerExecuted = resolveProviderExecuted(
+          const providerExecuted = observeProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
@@ -703,6 +738,7 @@ export function processStream(
             inputAvailable: false,
             providerExecuted,
             dynamic: typedPart.dynamic,
+            supportsDeferredResults: typedPart.supportsDeferredResults,
             inputDeltas: [],
             inputAnnounced: false,
           });
@@ -766,7 +802,7 @@ export function processStream(
             hasActiveLocalToolInput = false;
             break;
           }
-          const providerExecuted = resolveProviderExecuted(
+          const providerExecuted = observeProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
@@ -784,6 +820,8 @@ export function processStream(
             inputAvailable: true,
             providerExecuted,
             dynamic,
+            supportsDeferredResults: typedPart.supportsDeferredResults ??
+              previous?.supportsDeferredResults,
           });
 
           if (!wasInputAvailable) {
@@ -812,7 +850,7 @@ export function processStream(
             hasActiveLocalToolInput = false;
             break;
           }
-          const providerExecuted = resolveProviderExecuted(
+          const providerExecuted = observeProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
@@ -831,6 +869,8 @@ export function processStream(
             inputAvailable: true,
             providerExecuted,
             dynamic: typedPart.dynamic,
+            supportsDeferredResults: typedPart.supportsDeferredResults ??
+              previous?.supportsDeferredResults,
           };
           state.toolCalls.set(toolId, toolCall);
 
@@ -863,7 +903,7 @@ export function processStream(
             suppressToolCall(typedPart.toolCallId, typedPart.toolName);
             break;
           }
-          const providerExecuted = resolveProviderExecuted(
+          const providerExecuted = observeProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
@@ -873,6 +913,7 @@ export function processStream(
             input: typedPart.input,
             providerExecuted,
             dynamic: typedPart.dynamic,
+            supportsDeferredResults: typedPart.supportsDeferredResults,
           });
           const toolResultOutput = resolveToolResultOutput(typedPart);
           const inferredToolError = getToolResultError(toolResultOutput);
@@ -899,6 +940,9 @@ export function processStream(
               error: toolResultError,
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
+              ...(typedPart.supportsDeferredResults === true
+                ? { supportsDeferredResults: true }
+                : {}),
             });
             sendSSE(controller, encoder, {
               type: "tool-output-error",
@@ -916,6 +960,9 @@ export function processStream(
             output: toolResultOutput,
             ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
+            ...(typedPart.supportsDeferredResults === true
+              ? { supportsDeferredResults: true }
+              : {}),
             ...(typedPart.preliminary !== undefined ? { preliminary: typedPart.preliminary } : {}),
           });
           sendSSE(controller, encoder, {
@@ -932,7 +979,14 @@ export function processStream(
         case "tool-error": {
           closeTextSegment();
           closeReasoningSegment();
-          const providerExecuted = resolveProviderExecuted(
+          if (
+            suppressedToolCallIds.has(typedPart.toolCallId) ||
+            isUnavailableTool(typedPart.toolName)
+          ) {
+            suppressToolCall(typedPart.toolCallId, typedPart.toolName);
+            break;
+          }
+          const providerExecuted = observeProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
@@ -942,6 +996,7 @@ export function processStream(
             input: typedPart.input,
             providerExecuted,
             dynamic: typedPart.dynamic,
+            supportsDeferredResults: typedPart.supportsDeferredResults,
           });
           logProviderToolPart("tool-error", {
             toolCallId: typedPart.toolCallId,
@@ -957,6 +1012,9 @@ export function processStream(
             error: typedPart.error,
             ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
+            ...(typedPart.supportsDeferredResults === true
+              ? { supportsDeferredResults: true }
+              : {}),
           });
           sendSSE(controller, encoder, {
             type: "tool-output-error",
@@ -969,11 +1027,15 @@ export function processStream(
         }
 
         case "finish": {
+          receivedTerminalFinish = true;
           closeTextSegment();
           closeReasoningSegment();
           state.finishReason = typedPart.finishReason ?? null;
+          if (typedPart.providerMetadata) {
+            state.providerMetadata = typedPart.providerMetadata;
+          }
           if (state.finishReason) {
-            setActiveSpanAttributes({
+            setSpanAttributes(traceSpan, {
               "gen_ai.response.finish_reasons": [state.finishReason],
             });
           }
@@ -1041,7 +1103,10 @@ export function processStream(
                 : {}),
             };
             callbacks?.onUsage?.(state.usage);
-            setActiveSpanAttributes(buildRuntimeUsageTraceAttributes(state.usage));
+            setSpanAttributes(traceSpan, buildRuntimeUsageTraceAttributes(state.usage));
+          }
+          if (shouldStopForCommittedLocalToolCall) {
+            requestStreamIteratorReturn(streamIterator);
           }
           break;
         }
@@ -1065,11 +1130,14 @@ export function processStream(
       }
 
       throwIfAborted(abortSignal);
+      if (receivedTerminalFinish && shouldStopForCommittedLocalToolCall) {
+        break;
+      }
     }
 
     throwIfAborted(abortSignal);
 
-    setActiveSpanAttributes({
+    setSpanAttributes(traceSpan, {
       "stream.event_count": eventCount,
       "stream.tool_calls": state.toolCalls.size,
       "stream.text_length": state.accumulatedText.length,

@@ -13,7 +13,7 @@ import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -29,13 +29,10 @@ import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-modul
 
 const logger = rendererLogger.component("ssr-module-loader");
 
-/** Content length threshold: below this, use fast sync hash; above, use async SHA-256 */
-const SYNC_HASH_THRESHOLD = 10_000;
-
 /**
  * Manages caching concerns for SSR module loading:
  * - Cache key computation and config hashing
- * - Content hashing (sync for small content, async SHA-256 for large)
+ * - Collision-resistant content hashing
  * - Temp file path management
  * - Cached code validation (HTTP bundles, local paths, VF module imports)
  * - Cache entry invalidation
@@ -76,20 +73,7 @@ export class SSRCacheManager {
   }
 
   async hashContentAsync(content: string): Promise<string> {
-    if (content.length < SYNC_HASH_THRESHOLD) return hashCodeHex(content);
-
-    try {
-      const data = new TextEncoder().encode(content);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray
-        .slice(0, 8)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    } catch (_) {
-      /* expected: WebCrypto may not be available, fall back to sync hash */
-      return hashCodeHex(content);
-    }
+    return await computeHash(content);
   }
 
   async getTempPath(filePath: string, contentHash?: string): Promise<string> {

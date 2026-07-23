@@ -4,15 +4,7 @@
  * Provides a type-safe interface to Google Docs API operations.
  */
 
-import { getValidToken } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-  return undefined;
-}
+import { fetchOAuthJson } from "./oauth.ts";
 
 const DOCS_API_BASE = "https://docs.googleapis.com/v1";
 const DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
@@ -320,24 +312,6 @@ export interface WriteControl {
   targetRevisionId: string;
 }
 
-/**
- * Google Docs OAuth provider configuration
- */
-export const docsOAuthProvider = {
-  name: "docs-google",
-  authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenUrl: "https://oauth2.googleapis.com/token",
-  clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
-  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
-  scopes: [
-    "https://www.googleapis.com/auth/documents.readonly",
-    "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/docs",
-    "https://www.googleapis.com/auth/drive.readonly",
-  ],
-  callbackPath: "/api/auth/docs-google/callback",
-};
-
 export function createDocsClient(userId: string): {
   listDocuments(options?: {
     maxResults?: number;
@@ -345,9 +319,20 @@ export function createDocsClient(userId: string): {
   }): Promise<DocumentFile[]>;
   getDocument(documentId: string): Promise<Document>;
   createDocument(options: CreateDocumentOptions): Promise<Document>;
-  updateDocument(documentId: string, requests: Request[]): Promise<BatchUpdateResponse>;
-  insertText(documentId: string, text: string, index: number): Promise<BatchUpdateResponse>;
-  deleteContent(documentId: string, startIndex: number, endIndex: number): Promise<BatchUpdateResponse>;
+  updateDocument(
+    documentId: string,
+    requests: Request[],
+  ): Promise<BatchUpdateResponse>;
+  insertText(
+    documentId: string,
+    text: string,
+    index: number,
+  ): Promise<BatchUpdateResponse>;
+  deleteContent(
+    documentId: string,
+    startIndex: number,
+    endIndex: number,
+  ): Promise<BatchUpdateResponse>;
   replaceAllText(
     documentId: string,
     searchText: string,
@@ -358,43 +343,32 @@ export function createDocsClient(userId: string): {
   extractText(document: Document): string;
   createDocumentWithContent(title: string, content: string): Promise<Document>;
 } {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(docsOAuthProvider, userId, "docs-google");
-    if (!token) throw new Error("Google Docs not connected. Please connect your Google account first.");
-    return token;
-  }
-
-  async function apiRequest<T>(
+  function apiRequest<T>(
     baseUrl: string,
-    label: string,
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${baseUrl}${endpoint}`, {
+    return fetchOAuthJson<T>(userId, "docs-google", `${baseUrl}${endpoint}`, {
       ...options,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         ...options.headers,
       },
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${label} API error: ${response.status} - ${error}`);
-    }
-
-    return response.json();
   }
 
-  function docsApiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    return apiRequest<T>(DOCS_API_BASE, "Docs", endpoint, options);
+  function docsApiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    return apiRequest<T>(DOCS_API_BASE, endpoint, options);
   }
 
-  function driveApiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    return apiRequest<T>(DRIVE_API_BASE, "Drive", endpoint, options);
+  function driveApiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    return apiRequest<T>(DRIVE_API_BASE, endpoint, options);
   }
 
   function extractText(document: Document): string {
@@ -427,24 +401,33 @@ export function createDocsClient(userId: string): {
   } = {}): Promise<DocumentFile[]> {
     const params = new URLSearchParams({
       q: "mimeType='application/vnd.google-apps.document' and trashed=false",
-      fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
+      fields:
+        "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
       pageSize: String(options.maxResults ?? 20),
       orderBy: `${options.orderBy ?? "modifiedTime"} desc`,
     });
 
-    const result = await driveApiRequest<{ files: DocumentFile[] }>(`/files?${params.toString()}`);
+    const result = await driveApiRequest<{ files: DocumentFile[] }>(
+      `/files?${params.toString()}`,
+    );
     return result.files ?? [];
   }
 
-  async function searchDocuments(query: string, maxResults = 20): Promise<DocumentFile[]> {
+  async function searchDocuments(
+    query: string,
+    maxResults = 20,
+  ): Promise<DocumentFile[]> {
     const params = new URLSearchParams({
       q: `mimeType='application/vnd.google-apps.document' and trashed=false and fullText contains '${query}'`,
-      fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
+      fields:
+        "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,iconLink,thumbnailLink)",
       pageSize: String(maxResults),
       orderBy: "modifiedTime desc",
     });
 
-    const result = await driveApiRequest<{ files: DocumentFile[] }>(`/files?${params.toString()}`);
+    const result = await driveApiRequest<{ files: DocumentFile[] }>(
+      `/files?${params.toString()}`,
+    );
     return result.files ?? [];
   }
 
@@ -459,14 +442,24 @@ export function createDocsClient(userId: string): {
     });
   }
 
-  function updateDocument(documentId: string, requests: Request[]): Promise<BatchUpdateResponse> {
-    return docsApiRequest<BatchUpdateResponse>(`/documents/${documentId}:batchUpdate`, {
-      method: "POST",
-      body: JSON.stringify({ requests }),
-    });
+  function updateDocument(
+    documentId: string,
+    requests: Request[],
+  ): Promise<BatchUpdateResponse> {
+    return docsApiRequest<BatchUpdateResponse>(
+      `/documents/${documentId}:batchUpdate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ requests }),
+      },
+    );
   }
 
-  function insertText(documentId: string, text: string, index: number): Promise<BatchUpdateResponse> {
+  function insertText(
+    documentId: string,
+    text: string,
+    index: number,
+  ): Promise<BatchUpdateResponse> {
     return updateDocument(documentId, [
       {
         insertText: {
@@ -477,7 +470,11 @@ export function createDocsClient(userId: string): {
     ]);
   }
 
-  function deleteContent(documentId: string, startIndex: number, endIndex: number): Promise<BatchUpdateResponse> {
+  function deleteContent(
+    documentId: string,
+    startIndex: number,
+    endIndex: number,
+  ): Promise<BatchUpdateResponse> {
     return updateDocument(documentId, [
       {
         deleteContentRange: {
@@ -506,7 +503,10 @@ export function createDocsClient(userId: string): {
     ]);
   }
 
-  async function createDocumentWithContent(title: string, content: string): Promise<Document> {
+  async function createDocumentWithContent(
+    title: string,
+    content: string,
+  ): Promise<Document> {
     const doc = await createDocument({ title });
     await insertText(doc.documentId, content, 1);
     return getDocument(doc.documentId);

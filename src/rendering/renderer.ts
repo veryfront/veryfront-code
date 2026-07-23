@@ -30,7 +30,8 @@
  * @module rendering/renderer
  */
 
-import { rendererLogger } from "#veryfront/utils";
+import { isCompiledBinary, rendererLogger } from "#veryfront/utils";
+import { join } from "#veryfront/compat/path";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -40,7 +41,7 @@ import {
   type QueryParamCacheOptions,
 } from "#veryfront/cache/keys.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
-import { getEnvNumber } from "#veryfront/compat/process.ts";
+import { getEnvBoolean, getEnvNumber, getEnvString } from "#veryfront/compat/process.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import {
   createRenderContext,
@@ -52,7 +53,6 @@ import {
   areSharedServicesInitialized,
   getSharedServices,
   initializeSharedServices,
-  setSharedCompileMDX,
   type SharedServicesOptions,
 } from "./shared/shared-services.ts";
 import {
@@ -78,6 +78,7 @@ import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrat
 import type { HandlerContext } from "#veryfront/types";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
 import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   acquireProjectSlot,
   projectRenderCounts,
@@ -87,6 +88,9 @@ import {
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import type { ComponentRegistry } from "./ssr/component-registry.ts";
+import type { VirtualModuleSystem } from "./virtual-module-system.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -105,6 +109,17 @@ const DEFAULT_RENDER_PREWARM_MAX_ROUTES = 12;
 const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
 /** Bound remembered release contexts so multi-tenant processes cannot grow without limit. */
 const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
+/** Bound project-scoped virtual-module/component registries in shared runtimes. */
+const RENDER_CONTEXT_SERVICE_MAX_ENTRIES = 500;
+
+interface RendererContextServices {
+  readonly projectId: string;
+  readonly contentSourceId: string;
+  readonly virtualModules: VirtualModuleSystem;
+  readonly componentRegistry: ComponentRegistry;
+  componentInitialization: Promise<void> | null;
+  componentsInitialized: boolean;
+}
 
 const RENDER_PREWARM_MAX_ROUTES = getBoundedEnvNumber(
   "VERYFRONT_RENDER_PREWARM_MAX_ROUTES",
@@ -136,10 +151,67 @@ export interface RendererOptions {
  */
 interface CachedRenderData {
   html: string;
+  css?: string;
   frontmatter: RenderResult["frontmatter"];
   headings?: RenderResult["headings"];
+  nodeMap?: RenderResult["nodeMap"];
   ssrHash?: string;
   pageModule?: RenderResult["pageModule"];
+}
+
+interface RenderCachePolicy {
+  /** Canonical storage identity, including configuration generation. */
+  cacheKey: string | null;
+  check: boolean;
+  persist: boolean;
+  singleflight: boolean;
+  configDigest: string | null;
+}
+
+interface ProjectRenderGeneration {
+  generation: number;
+  activeRenders: number;
+  invalidation?: Promise<void>;
+}
+
+interface ProjectRenderToken {
+  readonly projectId: string;
+  readonly state: ProjectRenderGeneration;
+  readonly generation: number;
+}
+
+const BYPASS_RENDER_CACHE: RenderCachePolicy = {
+  cacheKey: null,
+  check: false,
+  persist: false,
+  singleflight: false,
+  configDigest: null,
+};
+
+function cloneCachedRenderData(data: CachedRenderData): RenderResult {
+  const cloned = structuredClone(data);
+  return {
+    html: cloned.html,
+    css: cloned.css,
+    frontmatter: cloned.frontmatter,
+    headings: cloned.headings,
+    nodeMap: cloned.nodeMap,
+    ssrHash: cloned.ssrHash,
+    pageModule: cloned.pageModule,
+    stream: null,
+  };
+}
+
+function snapshotRenderResult(result: RenderResult): CachedRenderData {
+  return structuredClone({
+    html: result.html,
+    css: result.css,
+    frontmatter: result.frontmatter,
+    headings: result.headings,
+    nodeMap: result.nodeMap,
+    ssrHash: result.ssrHash,
+    pageModule: result.pageModule,
+  });
 }
 
 function getBoundedEnvNumber(
@@ -242,6 +314,8 @@ export class Renderer {
   private layoutComponentCache = createLayoutComponentCache();
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
+  private destroyed = false;
 
   /**
    * Singleflight for render deduplication. Caches HTML string results so
@@ -250,29 +324,133 @@ export class Renderer {
    */
   private renderFlight = new Singleflight<CachedRenderData>();
   private productionPrewarmContexts = new Map<string, Promise<void>>();
+  private contextServices = new Map<string, RendererContextServices>();
+  /**
+   * Generations exist only while a project has active render/cache-lookup work.
+   * This prevents unbounded tenant retention while letting invalidation split
+   * old and new singleflight groups and block stale post-clear persistence.
+   */
+  private projectRenderGenerations = new Map<string, ProjectRenderGeneration>();
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
   }
 
+  private async beginProjectRender(projectId: string): Promise<ProjectRenderToken> {
+    let state = this.projectRenderGenerations.get(projectId);
+    if (!state) {
+      state = { generation: 0, activeRenders: 0 };
+      this.projectRenderGenerations.set(projectId, state);
+    }
+    state.activeRenders++;
+    try {
+      if (state.invalidation) await state.invalidation;
+      return { projectId, state, generation: state.generation };
+    } catch (error) {
+      state.activeRenders--;
+      if (state.activeRenders === 0 && this.projectRenderGenerations.get(projectId) === state) {
+        this.projectRenderGenerations.delete(projectId);
+      }
+      throw error;
+    }
+  }
+
+  private endProjectRender(token: ProjectRenderToken): void {
+    token.state.activeRenders = Math.max(0, token.state.activeRenders - 1);
+    if (
+      token.state.activeRenders === 0 && !token.state.invalidation &&
+      this.projectRenderGenerations.get(token.projectId) === token.state
+    ) {
+      this.projectRenderGenerations.delete(token.projectId);
+    }
+  }
+
+  private async runProjectCacheInvalidation(
+    projectId: string,
+    invalidate: () => Promise<void>,
+  ): Promise<void> {
+    let state = this.projectRenderGenerations.get(projectId);
+    if (!state) {
+      state = { generation: 0, activeRenders: 0 };
+      this.projectRenderGenerations.set(projectId, state);
+    }
+    state.generation++;
+
+    const previous = state.invalidation;
+    const operation = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      await invalidate();
+    })();
+    state.invalidation = operation;
+
+    try {
+      await operation;
+    } finally {
+      if (state.invalidation === operation) state.invalidation = undefined;
+      if (
+        state.activeRenders === 0 && !state.invalidation &&
+        this.projectRenderGenerations.get(projectId) === state
+      ) {
+        this.projectRenderGenerations.delete(projectId);
+      }
+    }
+  }
+
+  private invalidateAllProjectRenders(): void {
+    for (const state of this.projectRenderGenerations.values()) state.generation++;
+  }
+
+  private isProjectRenderCurrent(token: ProjectRenderToken): boolean {
+    return token.state.generation === token.generation;
+  }
+
+  private applyRequestSpecificOutput(
+    result: RenderResult,
+    options?: RenderOptions,
+  ): RenderResult {
+    if (!options?.nonce || !result.html) return result;
+    return {
+      ...result,
+      html: addNonceToHtmlTags(result.html, options.nonce),
+    };
+  }
+
   async initialize(options?: SharedServicesOptions): Promise<void> {
     if (this.initialized) return;
+    if (this.destroyed) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "A destroyed renderer cannot be initialized again.",
+      });
+    }
     if (this.initializationPromise) return this.initializationPromise;
 
-    this.initializationPromise = (async () => {
+    const generation = this.lifecycleGeneration;
+    const initialization = (async () => {
       const startTime = performance.now();
       logger.debug("Initializing...");
 
       await initializeSharedServices(options);
+
+      if (this.destroyed || generation !== this.lifecycleGeneration) {
+        throw INITIALIZATION_ERROR.create({
+          detail: "Renderer initialization was cancelled before it completed.",
+        });
+      }
 
       this.initialized = true;
       logger.debug("Initialized", {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
     })();
+    this.initializationPromise = initialization;
 
-    await this.initializationPromise;
-    this.initializationPromise = null;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) {
+        this.initializationPromise = null;
+      }
+    }
   }
 
   renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
@@ -285,49 +463,77 @@ export class Renderer {
           });
         }
 
-        const startTime = performance.now();
-        logger.debug("Rendering page", {
-          slug,
-          projectId: ctx.projectId,
-          environment: ctx.environment,
-        });
-
-        const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
-        const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
-        const effectiveOptions = {
-          ...options,
-          releaseAssetManifest: releaseManifest,
-        };
-        const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
-        const cacheResult = cacheKey !== null
-          ? await this.cache.checkCache(slug, effectiveCtx, effectiveOptions?.colorScheme, cacheKey)
-          : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
-        if (cacheResult.hit && cacheResult.cachedResult) {
-          logger.debug("Cache hit", {
+        const renderToken = await this.beginProjectRender(ctx.projectId);
+        try {
+          const startTime = performance.now();
+          logger.debug("Rendering page", {
             slug,
-            projectId: effectiveCtx.projectId,
-            colorScheme: effectiveOptions?.colorScheme,
-            status: cacheResult.status,
-            duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+            projectId: ctx.projectId,
+            environment: ctx.environment,
           });
-          if (cacheResult.status === "stale") {
-            this.scheduleProductionRenderRefresh(slug, effectiveCtx, effectiveOptions, cacheKey);
-          } else {
-            this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
-          }
-          return cacheResult.cachedResult;
-        }
 
-        const result = await this.doRenderPage(
-          slug,
-          effectiveCtx,
-          effectiveOptions,
-          startTime,
-          cacheKey,
-          effectiveOptions.abortSignal ?? effectiveOptions.request?.signal,
-        );
-        this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
-        return result;
+          const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
+          const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+          const effectiveOptions = {
+            ...options,
+            releaseAssetManifest: releaseManifest,
+          };
+          const cachePolicy = await this.buildCachePolicy(slug, effectiveCtx, effectiveOptions);
+          const cacheResult = cachePolicy.check && cachePolicy.cacheKey !== null
+            ? await this.cache.checkCache(
+              slug,
+              effectiveCtx,
+              effectiveOptions?.colorScheme,
+              cachePolicy.cacheKey,
+            )
+            : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
+          if (cacheResult.hit && cacheResult.cachedResult) {
+            logger.debug("Cache hit", {
+              slug,
+              projectId: effectiveCtx.projectId,
+              colorScheme: effectiveOptions?.colorScheme,
+              status: cacheResult.status,
+              duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+            });
+            if (cacheResult.status === "stale" && this.isProjectRenderCurrent(renderToken)) {
+              this.scheduleProductionRenderRefresh(
+                slug,
+                effectiveCtx,
+                effectiveOptions,
+                cachePolicy,
+              );
+            } else if (this.isProjectRenderCurrent(renderToken)) {
+              this.scheduleProductionRenderPrewarm(
+                slug,
+                effectiveCtx,
+                effectiveOptions,
+                cachePolicy,
+              );
+            }
+            return this.applyRequestSpecificOutput(cacheResult.cachedResult, effectiveOptions);
+          }
+
+          const result = await this.doRenderPage(
+            slug,
+            effectiveCtx,
+            effectiveOptions,
+            startTime,
+            cachePolicy,
+            renderToken,
+            effectiveOptions.abortSignal ?? effectiveOptions.request?.signal,
+          );
+          if (this.isProjectRenderCurrent(renderToken)) {
+            this.scheduleProductionRenderPrewarm(
+              slug,
+              effectiveCtx,
+              effectiveOptions,
+              cachePolicy,
+            );
+          }
+          return this.applyRequestSpecificOutput(result, effectiveOptions);
+        } finally {
+          this.endProjectRender(renderToken);
+        }
       },
       {
         "renderer.slug": slug,
@@ -373,8 +579,9 @@ export class Renderer {
     slug: string,
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
+    generation = 0,
   ): string {
-    return `${ctx.cachePrefix}:${slug}:${colorScheme ?? "default"}`;
+    return `${ctx.cachePrefix}:${slug}:${colorScheme ?? "default"}:generation-${generation}`;
   }
 
   /**
@@ -387,33 +594,79 @@ export class Renderer {
    * - "include-list": Only include specified params
    * - "exclude-list": Exclude common tracking/cache-busting params (default)
    */
-  private buildCacheKey(
+  private async buildCachePolicy(
     slug: string,
     ctx: RenderContext,
     options?: RenderOptions,
-  ): string | null {
-    if (options?.cacheKey) return options.cacheKey;
+  ): Promise<RenderCachePolicy> {
+    if (!this.isCanonicalCacheVariant(ctx, options)) return BYPASS_RENDER_CACHE;
 
     const req = options?.request;
-    if (req) {
-      if (requestHasCacheSensitiveState(req)) return null;
-    }
+    if (req && !options?.cacheKey) return BYPASS_RENDER_CACHE;
+    if (req && requestHasCacheSensitiveState(req)) return BYPASS_RENDER_CACHE;
 
     // Get query param handling options from config
     const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
+    const baseKey = options?.cacheKey ||
+      buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
 
-    return buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
+    let serializedConfig: string | undefined;
+    try {
+      serializedConfig = JSON.stringify(ctx.config);
+    } catch (error) {
+      logger.warn("Render cache bypassed because configuration is not serializable", {
+        projectId: ctx.projectId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return BYPASS_RENDER_CACHE;
+    }
+    if (serializedConfig === undefined) return BYPASS_RENDER_CACHE;
+
+    const configDigest = await computeHash(serializedConfig);
+    const cacheKey = `${baseKey}:config-${configDigest}`;
+    const check = options?.skipCacheCheck !== true;
+    const persist = options?.skipCachePersist !== true;
+
+    return {
+      cacheKey,
+      check,
+      persist,
+      singleflight: check,
+      configDigest,
+    };
+  }
+
+  private isCanonicalCacheVariant(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): boolean {
+    if (options?.delivery === "stream") return false;
+    if (ctx.nonce) return false;
+    // An explicit public cache contract may cache a nonce-free artifact and
+    // apply the response nonce after lookup. Without that contract, nonce is a
+    // request-scoped variant and must bypass shared work.
+    if (options?.nonce && !options.cacheKey) return false;
+    if (options?.studioEmbed) return false;
+    if (options?.props !== undefined || options?.params !== undefined) return false;
+    if (options?.pageId !== undefined || options?.layoutProps !== undefined) return false;
+    if (options?.renderSessionId !== undefined && !options.cacheKey) return false;
+    if (options?.clientPageIsland !== undefined) {
+      return false;
+    }
+    if (options?.noHmr || options?.forceProductionScripts) return false;
+    if (options?.colorSchemeFromParam || options?.colorSchemeFromHeader) return false;
+    return true;
   }
 
   private scheduleProductionRenderPrewarm(
     currentSlug: string,
     ctx: RenderContext,
     options: RenderOptions | undefined,
-    cacheKey: string | null,
+    cachePolicy: RenderCachePolicy,
   ): void {
-    if (!this.shouldScheduleProductionPrewarm(ctx, options, cacheKey)) return;
+    if (!this.shouldScheduleProductionPrewarm(ctx, options, cachePolicy)) return;
 
-    const prewarmKey = this.getProductionPrewarmKey(ctx);
+    const prewarmKey = this.getProductionPrewarmKey(ctx, cachePolicy);
     if (this.productionPrewarmContexts.has(prewarmKey)) return;
 
     const prewarmOptions = this.buildCanonicalPrewarmOptions(ctx, options);
@@ -444,18 +697,18 @@ export class Renderer {
   private shouldScheduleProductionPrewarm(
     ctx: RenderContext,
     options: RenderOptions | undefined,
-    cacheKey: string | null,
+    cachePolicy: RenderCachePolicy,
   ): boolean {
     if (RENDER_PREWARM_MAX_ROUTES <= 0) return false;
-    return this.shouldScheduleProductionStaleRefresh(ctx, options, cacheKey);
+    return this.shouldScheduleProductionStaleRefresh(ctx, options, cachePolicy);
   }
 
   private shouldScheduleProductionStaleRefresh(
     ctx: RenderContext,
     options: RenderOptions | undefined,
-    cacheKey: string | null,
+    cachePolicy: RenderCachePolicy,
   ): boolean {
-    if (cacheKey === null) return false;
+    if (!cachePolicy.persist || cachePolicy.cacheKey === null) return false;
     if (ctx.environment !== "production" || ctx.mode !== "production") return false;
     if (!ctx.adapter?.fs) return false;
     if (options?.studioEmbed) return false;
@@ -463,8 +716,11 @@ export class Renderer {
     return true;
   }
 
-  private getProductionPrewarmKey(ctx: RenderContext): string {
-    return `${ctx.cachePrefix}:canonical`;
+  private getProductionPrewarmKey(
+    ctx: RenderContext,
+    cachePolicy: RenderCachePolicy,
+  ): string {
+    return `${ctx.cachePrefix}:canonical:${cachePolicy.configDigest}`;
   }
 
   private rememberProductionPrewarm(key: string, promise: Promise<void>): void {
@@ -511,11 +767,11 @@ export class Renderer {
     slug: string,
     ctx: RenderContext,
     options: RenderOptions | undefined,
-    cacheKey: string | null,
+    cachePolicy: RenderCachePolicy,
   ): void {
-    if (!this.shouldScheduleProductionStaleRefresh(ctx, options, cacheKey)) return;
+    if (!this.shouldScheduleProductionStaleRefresh(ctx, options, cachePolicy)) return;
 
-    const refreshKey = `${ctx.cachePrefix}:refresh:${cacheKey}`;
+    const refreshKey = `${ctx.cachePrefix}:refresh:${cachePolicy.cacheKey}`;
     if (this.productionPrewarmContexts.has(refreshKey)) return;
 
     const refreshOptions = this.buildStaleRefreshOptions(ctx, options);
@@ -529,11 +785,32 @@ export class Renderer {
     this.rememberProductionPrewarm(refreshKey, promise);
 
     setTimeout(() => {
-      void this.doRenderPage(slug, ctx, refreshOptions, performance.now(), cacheKey, undefined)
-        .then(() => {
-          this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cacheKey);
+      void (async () => {
+        const renderToken = await this.beginProjectRender(ctx.projectId);
+        try {
+          await this.doRenderPage(
+            slug,
+            ctx,
+            refreshOptions,
+            performance.now(),
+            {
+              ...cachePolicy,
+              check: false,
+              singleflight: false,
+            },
+            renderToken,
+            undefined,
+          );
+          if (this.isProjectRenderCurrent(renderToken)) {
+            this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cachePolicy);
+          }
           resolvePromise();
-        }, rejectPromise);
+        } catch (error) {
+          rejectPromise(error);
+        } finally {
+          this.endProjectRender(renderToken);
+        }
+      })();
     }, 0);
 
     promise.finally(() => {
@@ -608,22 +885,31 @@ export class Renderer {
     ctx: RenderContext,
     options: RenderOptions | undefined,
     startTime: number,
-    cacheKey: string | null,
+    cachePolicy: RenderCachePolicy,
+    renderToken: ProjectRenderToken,
     callerSignal: AbortSignal | undefined,
   ): Promise<RenderResult> {
-    const effectiveKey = cacheKey ?? crypto.randomUUID();
-    const flightKey = this.getSingleflightKey(effectiveKey, ctx, options?.colorScheme);
-    const isFollower = cacheKey !== null ? this.renderFlight.has(flightKey) : false;
+    const effectiveKey = cachePolicy.cacheKey ?? crypto.randomUUID();
+    const flightKey = this.getSingleflightKey(
+      effectiveKey,
+      ctx,
+      options?.colorScheme,
+      renderToken.generation,
+    );
+    const isFollower = cachePolicy.singleflight ? this.renderFlight.has(flightKey) : false;
 
-    const runRender = async () => {
+    const runRenderWithLogging = async (
+      signal: AbortSignal | undefined,
+    ): Promise<RenderResult> => {
       try {
         return await this.runRenderWithCapacity(
           slug,
           ctx,
           options,
           startTime,
-          cacheKey,
-          callerSignal,
+          cachePolicy,
+          renderToken,
+          signal,
         );
       } catch (error) {
         if (error instanceof TimeoutError) {
@@ -637,12 +923,25 @@ export class Renderer {
       }
     };
 
-    const cachedData = cacheKey !== null
-      ? await waitForSharedPromise(
-        this.renderFlight.do(flightKey, runRender),
-        callerSignal,
-      )
-      : await runRender();
+    if (!cachePolicy.singleflight) {
+      return await runRenderWithLogging(callerSignal);
+    }
+
+    const runSharedRender = async (): Promise<CachedRenderData> => {
+      // A caller may detach while the shared leader continues. Retain the
+      // generation until the underlying render settles so invalidation can
+      // still prevent that leader from repopulating cleared cache state.
+      renderToken.state.activeRenders++;
+      try {
+        return snapshotRenderResult(await runRenderWithLogging(undefined));
+      } finally {
+        this.endProjectRender(renderToken);
+      }
+    };
+    const sharedRender = cachePolicy.cacheKey !== null
+      ? this.renderFlight.do(flightKey, runSharedRender)
+      : runSharedRender();
+    const cachedData = await waitForSharedPromise(sharedRender, callerSignal);
 
     if (isFollower) {
       logger.debug("Render deduplicated (follower)", {
@@ -653,14 +952,7 @@ export class Renderer {
       });
     }
 
-    return {
-      html: cachedData.html,
-      frontmatter: cachedData.frontmatter,
-      headings: cachedData.headings,
-      ssrHash: cachedData.ssrHash,
-      pageModule: cachedData.pageModule,
-      stream: null,
-    };
+    return cloneCachedRenderData(cachedData);
   }
 
   private async runRenderWithCapacity(
@@ -668,9 +960,10 @@ export class Renderer {
     ctx: RenderContext,
     options: RenderOptions | undefined,
     startTime: number,
-    cacheKey: string | null,
+    cachePolicy: RenderCachePolicy,
+    renderToken: ProjectRenderToken,
     callerSignal: AbortSignal | undefined,
-  ): Promise<CachedRenderData> {
+  ): Promise<RenderResult> {
     if (!(await acquireProjectSlot(ctx.projectId))) {
       const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
       logger.error("Per-project render limit reached", {
@@ -708,17 +1001,20 @@ export class Renderer {
     }
 
     try {
+      await this.initializeComponents(ctx);
       const services = this.createServicesForContext(ctx, options?.colorScheme);
       const renderAbortController = new AbortController();
-      const request = cacheKey !== null && options?.request
-        ? new Request(options.request, { signal: renderAbortController.signal })
-        : options?.request;
+      const pipelineOptions = cachePolicy.cacheKey !== null && options?.cacheKey
+        ? { ...options, nonce: undefined }
+        : options;
+      const request = cachePolicy.cacheKey !== null && pipelineOptions?.request
+        ? new Request(pipelineOptions.request, { signal: renderAbortController.signal })
+        : pipelineOptions?.request;
       const result = await withTimeoutThrow(
         services.pipeline.renderPage(slug, {
-          ...options,
+          ...pipelineOptions,
           request,
           abortSignal: renderAbortController.signal,
-          delivery: "string",
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,
@@ -729,14 +1025,23 @@ export class Renderer {
         RENDER_PIPELINE_TIMEOUT_MS,
         `Render pipeline for ${ctx.projectId}:${slug}`,
         {
-          signal: cacheKey === null ? callerSignal : undefined,
+          signal: cachePolicy.singleflight ? undefined : callerSignal,
           onAbort: (reason) => renderAbortController.abort(reason),
           onTimeout: (error) => renderAbortController.abort(error),
         },
       );
 
-      if (cacheKey !== null) {
-        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
+      if (
+        cachePolicy.persist && cachePolicy.cacheKey !== null &&
+        this.isProjectRenderCurrent(renderToken)
+      ) {
+        await this.cache.persistResult(
+          result,
+          slug,
+          ctx,
+          options?.colorScheme,
+          cachePolicy.cacheKey,
+        );
       }
 
       logger.debug("Render complete (leader)", {
@@ -746,13 +1051,7 @@ export class Renderer {
         htmlLength: result.html?.length ?? 0,
       });
 
-      return {
-        html: result.html,
-        frontmatter: result.frontmatter,
-        headings: result.headings,
-        ssrHash: result.ssrHash,
-        pageModule: result.pageModule,
-      };
+      return result;
     } finally {
       renderSemaphore.release();
       await releaseProjectSlot(ctx.projectId);
@@ -773,6 +1072,7 @@ export class Renderer {
     return withSpan("renderer.resolvePageData", async () => {
       const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
       const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+      await this.initializeComponents(effectiveCtx);
       const services = this.createServicesForContext(effectiveCtx);
 
       return services.pipeline.resolvePageData(slug, {
@@ -840,23 +1140,83 @@ export class Renderer {
   }
 
   async clearCache(ctx: RenderContext, slug?: string): Promise<void> {
-    if (slug) {
-      await this.cache.clearSlug(slug, ctx);
-      return;
-    }
-    await this.cache.clearForContext(ctx);
+    await this.runProjectCacheInvalidation(ctx.projectId, async () => {
+      if (slug) {
+        await this.cache.clearSlug(slug, ctx);
+        return;
+      }
+      await this.cache.clearForContext(ctx);
+      this.releaseContextServices(ctx);
+    });
   }
 
   async clearCacheForProject(projectId: string): Promise<void> {
     logger.debug("Clearing render cache for project", { projectId });
-    await this.cache.clearForProject(projectId);
+    await this.runProjectCacheInvalidation(projectId, async () => {
+      await this.cache.clearForProject(projectId);
+      for (const [key, services] of this.contextServices) {
+        if (services.projectId !== projectId) continue;
+        this.disposeContextServices(key, services);
+      }
+    });
+  }
+
+  getVirtualModuleSystem(ctx: RenderContext): VirtualModuleSystem {
+    this.assertReady();
+    return this.getContextServices(ctx).virtualModules;
+  }
+
+  initializeComponents(ctx: RenderContext): Promise<void> {
+    this.assertReady();
+    const services = this.getContextServices(ctx);
+    if (services.componentsInitialized) return Promise.resolve();
+    if (services.componentInitialization) return services.componentInitialization;
+
+    const initialization = (async () => {
+      const isVeryFrontAPI = ctx.config.fs?.type === "veryfront-api";
+      if (!isCompiledBinary() && !isVeryFrontAPI) {
+        for (const directory of ctx.config.directories?.components ?? ["components"]) {
+          await services.componentRegistry.loadFromDirectory(
+            join(ctx.projectDir, directory),
+            false,
+          );
+        }
+      }
+      await services.componentRegistry.initializeComponents();
+      if (this.destroyed) {
+        throw INITIALIZATION_ERROR.create({
+          detail: "Renderer was destroyed while components were initializing.",
+        });
+      }
+      services.componentsInitialized = true;
+    })();
+    services.componentInitialization = initialization;
+    return initialization.finally(() => {
+      if (services.componentInitialization === initialization) {
+        services.componentInitialization = null;
+      }
+    });
+  }
+
+  async releaseContext(ctx: RenderContext): Promise<void> {
+    await this.runProjectCacheInvalidation(ctx.projectId, async () => {
+      await this.cache.clearForContext(ctx);
+      this.releaseContextServices(ctx);
+    });
   }
 
   async destroy(): Promise<void> {
-    await this.cache.destroy();
-    this.productionPrewarmContexts.clear();
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.lifecycleGeneration++;
+    this.invalidateAllProjectRenders();
     this.initialized = false;
     this.initializationPromise = null;
+    for (const [key, services] of this.contextServices) {
+      this.disposeContextServices(key, services);
+    }
+    await this.cache.destroy();
+    this.productionPrewarmContexts.clear();
     logger.debug("Destroyed");
   }
 
@@ -869,6 +1229,7 @@ export class Renderer {
     const mdxCacheAdapter = new MDXCacheAdapter({
       config: ctx.config,
       mode: ctx.mode,
+      scope: JSON.stringify([ctx.projectId, ctx.contentSourceId]),
     });
 
     const mdxCompiler = new MDXCompiler({
@@ -878,10 +1239,8 @@ export class Renderer {
     });
 
     const compileMDX = mdxCompiler.compileMDX.bind(mdxCompiler);
-    setSharedCompileMDX(compileMDX);
 
-    const virtualModules = createVirtualModuleSystem(ctx);
-    const componentRegistry = createComponentRegistry(ctx, virtualModules);
+    const { componentRegistry } = this.getContextServices(ctx);
     const pageResolver = createPageResolver(ctx);
     const layoutCollector = createLayoutCollector(ctx, compileMDX);
     const layoutCompiler = createLayoutCompiler(ctx, compileMDX);
@@ -958,6 +1317,68 @@ export class Renderer {
 
     return { pipeline };
   }
+
+  private assertReady(): void {
+    if (!this.initialized || this.destroyed) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "Renderer not initialized. Call initialize() first.",
+      });
+    }
+  }
+
+  private contextServicesKey(ctx: RenderContext): string {
+    return JSON.stringify([
+      ctx.projectId,
+      ctx.contentSourceId,
+      ctx.projectDir,
+      ctx.port ?? null,
+      ctx.moduleServerUrl ?? null,
+    ]);
+  }
+
+  private getContextServices(ctx: RenderContext): RendererContextServices {
+    const key = this.contextServicesKey(ctx);
+    const existing = this.contextServices.get(key);
+    if (existing) {
+      // Refresh insertion order so deterministic capacity eviction is LRU.
+      this.contextServices.delete(key);
+      this.contextServices.set(key, existing);
+      return existing;
+    }
+
+    const virtualModules = createVirtualModuleSystem(ctx);
+    const services: RendererContextServices = {
+      projectId: ctx.projectId,
+      contentSourceId: ctx.contentSourceId,
+      virtualModules,
+      componentRegistry: createComponentRegistry(ctx, virtualModules),
+      componentInitialization: null,
+      componentsInitialized: false,
+    };
+    this.contextServices.set(key, services);
+
+    while (this.contextServices.size > RENDER_CONTEXT_SERVICE_MAX_ENTRIES) {
+      const oldest = this.contextServices.entries().next().value as
+        | [string, RendererContextServices]
+        | undefined;
+      if (!oldest) break;
+      this.disposeContextServices(oldest[0], oldest[1]);
+    }
+    return services;
+  }
+
+  private releaseContextServices(ctx: RenderContext): void {
+    const key = this.contextServicesKey(ctx);
+    const services = this.contextServices.get(key);
+    if (services) this.disposeContextServices(key, services);
+  }
+
+  private disposeContextServices(key: string, services: RendererContextServices): void {
+    if (this.contextServices.get(key) !== services) return;
+    this.contextServices.delete(key);
+    services.componentRegistry.clear();
+    services.virtualModules.clear();
+  }
 }
 
 export {
@@ -970,6 +1391,40 @@ export {
 let renderer: Renderer | null = null;
 let rendererInitializationPromise: Promise<Renderer> | null = null;
 let rendererGeneration = 0;
+
+type ColdProjectCacheInvalidator = (projectId: string) => Promise<boolean>;
+
+async function invalidateConfiguredColdProjectCache(projectId: string): Promise<boolean> {
+  const proxyMode = getEnvBoolean("PROXY_MODE", false, {
+    trueValues: ["1"],
+    trim: false,
+    caseSensitive: true,
+  });
+  if (!proxyMode || !getEnvString("VERYFRONT_API_BASE_URL")) return false;
+
+  const { APICacheStore } = await import("./cache/stores/api-store.ts");
+  const store = new APICacheStore({
+    keyPrefix: "render",
+    ttlSeconds: 3_600,
+    localMaxEntries: 1,
+    enableLocalCache: false,
+  });
+  try {
+    await store.deleteByPrefix(`${encodeURIComponent(projectId)}:`);
+    return true;
+  } finally {
+    await store.destroy();
+  }
+}
+
+let coldProjectCacheInvalidator: ColdProjectCacheInvalidator = invalidateConfiguredColdProjectCache;
+
+/** @internal Dependency seam for cold-pod authoritative invalidation tests. */
+export function setColdProjectCacheInvalidatorForTesting(
+  invalidator?: ColdProjectCacheInvalidator,
+): void {
+  coldProjectCacheInvalidator = invalidator ?? invalidateConfiguredColdProjectCache;
+}
 
 export function getRenderer(): Renderer {
   if (!renderer) {
@@ -986,22 +1441,25 @@ export async function initializeRenderer(options?: RendererOptions): Promise<Ren
 
   const nextRenderer = new Renderer(options);
   const generation = rendererGeneration;
-  rendererInitializationPromise = (async () => {
-    try {
-      await nextRenderer.initialize(options?.shared);
-      if (generation !== rendererGeneration) {
-        await nextRenderer.destroy();
-        throw INITIALIZATION_ERROR.create({
-          detail: "Renderer initialization was cancelled before it completed.",
-        });
-      }
-      renderer = nextRenderer;
-      return nextRenderer;
-    } finally {
+  const initialization: Promise<Renderer> = (async () => {
+    await nextRenderer.initialize(options?.shared);
+    if (generation !== rendererGeneration) {
+      await nextRenderer.destroy();
+      throw INITIALIZATION_ERROR.create({
+        detail: "Renderer initialization was cancelled before it completed.",
+      });
+    }
+    renderer = nextRenderer;
+    return nextRenderer;
+  })();
+  rendererInitializationPromise = initialization;
+  try {
+    return await initialization;
+  } finally {
+    if (rendererInitializationPromise === initialization) {
       rendererInitializationPromise = null;
     }
-  })();
-  return rendererInitializationPromise;
+  }
 }
 
 export function isRendererInitialized(): boolean {
@@ -1019,13 +1477,20 @@ export async function destroyRenderer(): Promise<void> {
 }
 
 export async function clearRendererCacheForProject(projectId: string): Promise<void> {
+  if (typeof projectId !== "string" || projectId.trim().length === 0) {
+    throw new TypeError("Project cache invalidation requires a non-empty projectId");
+  }
   logger.debug("clearRendererCacheForProject called", {
     projectId,
     hasRenderer: !!renderer,
   });
 
   if (!renderer) {
-    logger.debug("No renderer instance, skipping project cache clear", { projectId });
+    const invalidated = await coldProjectCacheInvalidator(projectId);
+    logger.debug("Cold renderer project cache invalidation complete", {
+      projectId,
+      authoritativeStoreConfigured: invalidated,
+    });
     return;
   }
 

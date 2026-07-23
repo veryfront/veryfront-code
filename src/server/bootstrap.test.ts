@@ -9,13 +9,29 @@ import "#veryfront/schemas/_test-setup.ts";
  * failure without fabricating the whole bootstrap environment.
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { _resetShimForTests } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  _resetShimForTests,
+  getGlobalTelemetryAPISnapshot,
+  type GlobalTelemetryAPISnapshot,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
 import { __resetLogRecordEmitterForTests, logger } from "#veryfront/utils/logger/index.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
-import { orchestrateOrDisposeFS, wireTracingShim } from "./bootstrap.ts";
+import {
+  createRetryableDisposer,
+  createStartupFailureCleanup,
+  orchestrateOrDisposeFS,
+  replaceLifecycleResource,
+  wireTracingShim,
+} from "./bootstrap.ts";
 import { ExtensionLoader } from "veryfront/extensions";
 
 const noopLogger = {
@@ -24,6 +40,61 @@ const noopLogger = {
   warn: () => {},
   error: () => {},
 };
+
+describe("createRetryableDisposer()", () => {
+  it("shares an in-flight attempt and permits a retry only after failure", async () => {
+    let calls = 0;
+    const dispose = createRetryableDisposer(() => {
+      calls++;
+      if (calls === 1) throw new Error("transient cleanup failure");
+    });
+
+    const first = dispose();
+    const concurrent = dispose();
+    assertStrictEquals(first, concurrent);
+    await assertRejects(() => first, Error, "transient cleanup failure");
+
+    const retry = dispose();
+    assertNotStrictEquals(retry, first);
+    await retry;
+    assertStrictEquals(dispose(), retry);
+    assertEquals(calls, 2);
+  });
+});
+
+describe("createStartupFailureCleanup()", () => {
+  it("attempts independent resources and retains ownership until failures are retried", async () => {
+    let fileLogDisposeCalls = 0;
+    let fsDisposeCalls = 0;
+    let ownershipReleaseCalls = 0;
+    const dispose = createStartupFailureCleanup(
+      [
+        () => {
+          fileLogDisposeCalls++;
+          if (fileLogDisposeCalls === 1) {
+            throw new Error("transient file-log cleanup failure");
+          }
+        },
+        () => {
+          fsDisposeCalls++;
+        },
+      ],
+      () => {
+        ownershipReleaseCalls++;
+      },
+    );
+
+    await assertRejects(dispose, Error, "transient file-log cleanup failure");
+    assertEquals(fsDisposeCalls, 1);
+    assertEquals(ownershipReleaseCalls, 0);
+
+    await dispose();
+    await dispose();
+    assertEquals(fileLogDisposeCalls, 2);
+    assertEquals(fsDisposeCalls, 1);
+    assertEquals(ownershipReleaseCalls, 1);
+  });
+});
 
 describe("orchestrateOrDisposeFS()", () => {
   it("returns the loader when orchestration succeeds", async () => {
@@ -73,8 +144,6 @@ describe("orchestrateOrDisposeFS()", () => {
   });
 
   it("preserves the original error when fsDispose itself throws", async () => {
-    // If fsDispose throws, we still want the original orchestration error
-    // to reach the caller — a dispose failure must not mask the root cause.
     const originalError = new Error("orchestrate-boom");
 
     await assertRejects(
@@ -86,44 +155,199 @@ describe("orchestrateOrDisposeFS()", () => {
           },
         ),
       Error,
-      // The current implementation lets the dispose error propagate because
-      // it is thrown synchronously after the catch; adjust this test if that
-      // changes. Right now it will be "fsDispose-boom", which is acceptable
-      // for a resource-leak fix (both errors are visible).
-      "fsDispose-boom",
+      "orchestrate-boom",
     );
   });
 });
 
-describe("wireTracingShim()", () => {
-  it("registers and clears the TracingExporter log emitter", () => {
-    reset();
-    _resetShimForTests();
-    __resetLogRecordEmitterForTests();
+describe("replaceLifecycleResource()", () => {
+  it("commits disable-to-null only after disposing the old resource", async () => {
+    const old = { id: "old" };
+    const disposed: string[] = [];
 
-    const emitted: unknown[] = [];
+    const result = await replaceLifecycleResource(
+      old,
+      () => null,
+      (resource) => {
+        disposed.push(resource.id);
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(disposed, ["old"]);
+  });
+
+  it("leaves the old resource owned when replacement creation fails", async () => {
+    const old = { id: "old" };
+    const disposed: string[] = [];
+
+    await assertRejects(
+      () =>
+        replaceLifecycleResource(
+          old,
+          () => {
+            throw new Error("create replacement failed");
+          },
+          (resource) => {
+            disposed.push(resource.id);
+          },
+        ),
+      Error,
+      "create replacement failed",
+    );
+
+    assertEquals(disposed, []);
+  });
+
+  it("rolls back a prepared replacement when retiring the old resource fails", async () => {
+    const old = { id: "old" };
+    const replacement = { id: "replacement" };
+    const disposed: string[] = [];
+
+    await assertRejects(
+      () =>
+        replaceLifecycleResource(
+          old,
+          () => replacement,
+          (resource) => {
+            disposed.push(resource.id);
+            if (resource === old) throw new Error("old cleanup failed");
+          },
+        ),
+      Error,
+      "old cleanup failed",
+    );
+
+    assertEquals(disposed, ["old", "replacement"]);
+  });
+});
+
+describe("wireTracingShim()", () => {
+  function createExporter(label: string, emitted: string[]) {
+    const tracerProvider = {
+      getTracer: () => ({ label }),
+    } as unknown as GlobalTelemetryAPISnapshot["tracerProvider"];
+    const metricsApi = {
+      getMeter: () => ({ label }),
+    } as unknown as NonNullable<GlobalTelemetryAPISnapshot["metricsApi"]>;
+    const activeSpanAccessor = {
+      getActiveSpan: () => ({ label }),
+      getSpan: () => ({ label }),
+      setSpan: (context: unknown) => context,
+    } as unknown as NonNullable<GlobalTelemetryAPISnapshot["activeSpanAccessor"]>;
+    const contextAccessor = {
+      active: () => ({ label }),
+      with: <T>(_context: unknown, fn: () => T): T => fn(),
+    } as unknown as NonNullable<GlobalTelemetryAPISnapshot["contextAccessor"]>;
     const exporter: TracingExporter = {
       start: () => Promise.resolve(),
       export: () => Promise.resolve(),
       shutdown: () => Promise.resolve(),
-      getProvider: () => ({ getTracer: () => ({}) }),
-      getMetricsAPI: () => null,
-      getLogRecordEmitter: () => (record) => emitted.push(record),
+      getProvider: () => tracerProvider,
+      getMetricsAPI: () => metricsApi,
+      getTraceAPI: () =>
+        activeSpanAccessor as unknown as NonNullable<
+          ReturnType<NonNullable<TracingExporter["getTraceAPI"]>>
+        >,
+      getContextAPI: () => contextAccessor,
+      getLogRecordEmitter: () => (record) => emitted.push(`${label}:${record.message}`),
     };
+    return {
+      activeSpanAccessor,
+      contextAccessor,
+      exporter,
+      metricsApi,
+      tracerProvider,
+    };
+  }
 
-    register("TracingExporter", exporter);
-    wireTracingShim();
-    logger.info("otel bridge smoke", { project_id: "project-1" });
-
-    assertEquals(emitted.length, 1);
-    assertEquals((emitted[0] as { message: string }).message, "otel bridge smoke");
-
+  function resetTelemetryTestState(): void {
     reset();
-    wireTracingShim();
-    logger.info("after bridge clear");
-
-    assertEquals(emitted.length, 1);
     _resetShimForTests();
     __resetLogRecordEmitterForTests();
+  }
+
+  it("replaces exporter A with a fresh no-op generation", () => {
+    resetTelemetryTestState();
+
+    const emitted: string[] = [];
+    const a = createExporter("A", emitted);
+    register("TracingExporter", a.exporter);
+    const aInstallation = wireTracingShim();
+
+    reset();
+    const noExporterInstallation = wireTracingShim();
+    const snapshot = getGlobalTelemetryAPISnapshot();
+    logger.info("after no-exporter install");
+
+    assertNotStrictEquals(snapshot.tracerProvider, a.tracerProvider);
+    assertEquals(snapshot.metricsApi, null);
+    assertEquals(snapshot.contextAccessor, null);
+    assertEquals(snapshot.activeSpanAccessor, null);
+    assertEquals(emitted, []);
+    assertEquals(aInstallation.dispose(), false);
+    assertEquals(noExporterInstallation.dispose(), true);
+    resetTelemetryTestState();
+  });
+
+  it("keeps exporter B installed when stale exporter A is disposed", () => {
+    resetTelemetryTestState();
+
+    const emitted: string[] = [];
+    const a = createExporter("A", emitted);
+    const b = createExporter("B", emitted);
+    register("TracingExporter", a.exporter);
+    const aInstallation = wireTracingShim();
+
+    register("TracingExporter", b.exporter);
+    const bInstallation = wireTracingShim();
+    assertEquals(aInstallation.dispose(), false);
+
+    const snapshot = getGlobalTelemetryAPISnapshot();
+    assertStrictEquals(snapshot.tracerProvider, b.tracerProvider);
+    assertStrictEquals(snapshot.metricsApi, b.metricsApi);
+    assertStrictEquals(snapshot.contextAccessor, b.contextAccessor);
+    assertStrictEquals(snapshot.activeSpanAccessor, b.activeSpanAccessor);
+
+    logger.info("owned by B");
+    assertEquals(emitted, ["B:owned by B"]);
+    assertEquals(bInstallation.dispose(), true);
+    assertNotStrictEquals(getGlobalTelemetryAPISnapshot().tracerProvider, b.tracerProvider);
+    logger.info("after B disposal");
+    assertEquals(emitted, ["B:owned by B"]);
+    resetTelemetryTestState();
+  });
+
+  it("leaves exporter A intact when an exporter B getter throws", () => {
+    resetTelemetryTestState();
+
+    const emitted: string[] = [];
+    const a = createExporter("A", emitted);
+    const b = createExporter("B", emitted);
+    const brokenB: TracingExporter = {
+      ...b.exporter,
+      getContextAPI: () => {
+        throw new Error("context-getter-boom");
+      },
+    };
+    register("TracingExporter", a.exporter);
+    const aInstallation = wireTracingShim();
+    const before = getGlobalTelemetryAPISnapshot();
+
+    register("TracingExporter", brokenB);
+    assertThrows(wireTracingShim, Error, "context-getter-boom");
+
+    const after = getGlobalTelemetryAPISnapshot();
+    assertStrictEquals(after.generation, before.generation);
+    assertStrictEquals(after.tracerProvider, a.tracerProvider);
+    assertStrictEquals(after.metricsApi, a.metricsApi);
+    assertStrictEquals(after.contextAccessor, a.contextAccessor);
+    assertStrictEquals(after.activeSpanAccessor, a.activeSpanAccessor);
+
+    logger.info("still owned by A");
+    assertEquals(emitted, ["A:still owned by A"]);
+
+    assertEquals(aInstallation.dispose(), true);
+    resetTelemetryTestState();
   });
 });

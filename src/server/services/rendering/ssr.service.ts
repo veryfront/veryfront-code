@@ -26,6 +26,9 @@ import {
   HTTP_UNAVAILABLE,
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
+import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
+import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -94,6 +97,41 @@ interface RedirectResultContext {
     destination?: unknown;
     permanent?: unknown;
   };
+}
+
+async function buildPublicRenderCacheKey(
+  ctx: HandlerContext,
+  options: SSRRenderOptions,
+): Promise<string | undefined> {
+  const policy = ctx.config?.cache?.render?.public;
+  if (policy?.enabled !== true) return undefined;
+  if ((ctx.resolvedEnvironment ?? ctx.requestContext?.mode) !== "production") return undefined;
+  if (
+    options.useNoCache || options.studioEmbed || options.pageId !== undefined || options.noHmr ||
+    options.forceProductionScripts
+  ) return undefined;
+
+  const method = options.request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return undefined;
+  if (requestHasCacheSensitiveState(options.request)) return undefined;
+
+  const varyHeaders = [...new Set((policy.varyHeaders ?? []).map((name) => name.toLowerCase()))]
+    .sort();
+  const queryIdentity = buildQueryAwareCacheKey(
+    options.slug,
+    options.url,
+    ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
+  );
+  const identity = {
+    version: 1,
+    projectId: ctx.projectId ?? ctx.projectSlug ?? null,
+    method,
+    origin: options.url.origin,
+    route: queryIdentity,
+    vary: varyHeaders.map((name) => [name, options.request.headers.get(name) ?? null]),
+  };
+
+  return `public-${await computeHash(JSON.stringify(identity))}`;
 }
 
 function extractRedirectLocation(
@@ -176,6 +214,7 @@ export class SSRService implements SSRServiceLike {
       // during the render are attributed to THIS render, not whichever
       // concurrent session started first.
       const delivery = useNoCache ? "stream" : "string";
+      const cacheKey = await buildPublicRenderCacheKey(ctx, options);
       const result = await runInRenderSession(renderSessionId, () =>
         profilePhase(
           "ssr.render_page",
@@ -197,6 +236,7 @@ export class SSRService implements SSRServiceLike {
                 noHmr,
                 forceProductionScripts: options.forceProductionScripts,
                 renderSessionId,
+                cacheKey,
               })),
         ));
 

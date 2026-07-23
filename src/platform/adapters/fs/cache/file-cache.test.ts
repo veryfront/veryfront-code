@@ -1,11 +1,29 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FileCache,
   initializeFileCacheBackend,
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
+import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+
+type FileCacheModule = typeof import("./file-cache.ts");
+
+function createDistributedBackend(): CacheBackend {
+  return {
+    type: "redis",
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    del: () => Promise.resolve(),
+  };
+}
+
+async function importFreshFileCacheModule(label: string): Promise<FileCacheModule> {
+  return await import(
+    new URL(`./file-cache.ts?${label}-${crypto.randomUUID()}`, import.meta.url).href
+  ) as FileCacheModule;
+}
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -32,6 +50,19 @@ describe("FileCache", () => {
           maxMemory: 50 * 1024 * 1024,
         }),
       );
+    });
+
+    it("rejects limits that can make eviction non-terminating or expiry invalid", () => {
+      for (
+        const options of [
+          { maxSize: 0 },
+          { maxMemory: 0 },
+          { ttl: 0 },
+          { ttl: Number.NaN },
+        ]
+      ) {
+        assertThrows(() => new FileCache(options), RangeError);
+      }
     });
   });
 
@@ -204,6 +235,15 @@ describe("FileCache", () => {
       assertEquals(smallCache.has("key3"), true);
       smallCache.clear();
     });
+
+    it("evicts an empty-string key without looping", () => {
+      const smallCache = new FileCache({ maxSize: 1 });
+      smallCache.set("", "first");
+      smallCache.set("next", "second");
+
+      assertEquals(smallCache.has(""), false);
+      assertEquals(smallCache.get("next"), "second");
+    });
   });
 
   describe("eviction on memory limit", () => {
@@ -260,6 +300,14 @@ describe("FileCache", () => {
       cache.delete("key1");
       const statsAfterDelete = cache.stats();
       assertEquals(statsAfterDelete.memoryUsed, 0);
+    });
+
+    it("replaces an existing entry without double-counting memory", () => {
+      cache.set("key", "longer-value");
+      cache.set("key", "x");
+
+      assertEquals(cache.stats().size, 1);
+      assertEquals(cache.stats().memoryUsed, 2);
     });
   });
 
@@ -331,6 +379,66 @@ describe("Distributed cache functions", () => {
 
     it("should return boolean", async () => {
       assertEquals(typeof (await initializeFileCacheBackend()), "boolean");
+    });
+
+    it("retries an auto-selected memory backend after the retry interval", async () => {
+      const mutableBackends = CacheBackends as {
+        file: () => Promise<CacheBackend>;
+      };
+      const originalFactory = mutableBackends.file;
+      const originalDateNow = Date.now;
+      let now = originalDateNow();
+      let calls = 0;
+      Date.now = () => now;
+      mutableBackends.file = () => {
+        calls++;
+        return Promise.resolve(
+          calls === 1 ? new MemoryCacheBackend() : createDistributedBackend(),
+        );
+      };
+
+      try {
+        const fresh = await importFreshFileCacheModule("memory-retry");
+        assertEquals(await fresh.initializeFileCacheBackend(), false);
+        assertEquals(await fresh.initializeFileCacheBackend(), false);
+        assertEquals(calls, 1);
+
+        now += 30_001;
+        assertEquals(await fresh.initializeFileCacheBackend(), true);
+        assertEquals(calls, 2);
+      } finally {
+        mutableBackends.file = originalFactory;
+        Date.now = originalDateNow;
+      }
+    });
+
+    it("shares one backend construction across concurrent initialization", async () => {
+      const mutableBackends = CacheBackends as {
+        file: () => Promise<CacheBackend>;
+      };
+      const originalFactory = mutableBackends.file;
+      let calls = 0;
+      let resolveBackend!: (backend: CacheBackend) => void;
+      const pendingBackend = new Promise<CacheBackend>((resolve) => {
+        resolveBackend = resolve;
+      });
+      mutableBackends.file = () => {
+        calls++;
+        return pendingBackend;
+      };
+
+      try {
+        const fresh = await importFreshFileCacheModule("concurrent-init");
+        const first = fresh.initializeFileCacheBackend();
+        const second = fresh.initializeFileCacheBackend();
+        assertEquals(calls, 1);
+
+        resolveBackend(createDistributedBackend());
+        assertEquals(await Promise.all([first, second]), [true, true]);
+        assertEquals(calls, 1);
+      } finally {
+        mutableBackends.file = originalFactory;
+      }
     });
   });
 

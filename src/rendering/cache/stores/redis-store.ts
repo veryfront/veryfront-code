@@ -1,19 +1,19 @@
 import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
 import { MemoryCacheStore } from "./memory-store.ts";
+import {
+  buildRedisCacheScanPattern,
+  registerLegacyRenderRedisCacheNamespace,
+} from "#veryfront/cache/backends/redis-keyspace.ts";
+import { requirePositiveIntegerCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
+import { parseCachePayload, serializeCachePayload } from "../cache-payload.ts";
+import {
+  createRedisClientManager,
+  type RedisClient,
+  type RedisClientManager,
+} from "#veryfront/utils/redis-client.ts";
 
 const logger = rendererLogger.component("redis");
-
-interface RedisClient {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
-  del(key: string | string[]): Promise<number>;
-  scan(cursor: number, options?: { MATCH?: string; COUNT?: number }): Promise<[number, string[]]>;
-  on?(event: string, listener: (...args: unknown[]) => void): void;
-}
 
 /** Default TTL for Redis cache entries (1 hour) */
 const DEFAULT_TTL_SECONDS = 3_600;
@@ -21,32 +21,42 @@ const DEFAULT_TTL_SECONDS = 3_600;
 const FALLBACK_MAX_ENTRIES = 100;
 /** Number of keys to scan per Redis SCAN iteration */
 const REDIS_SCAN_COUNT = 100;
-/** Smaller scan batch size for clear operations (deletes each key inline) */
-const REDIS_CLEAR_SCAN_COUNT = 50;
+/** Maximum keys passed to one DEL command. */
+const REDIS_DELETE_BATCH_SIZE = 100;
+/** Defensive bounds for untrusted/proxied SCAN implementations. */
+const REDIS_MAX_SCAN_ITERATIONS = 1_000_000;
+const REDIS_MAX_COLLECTED_KEYS = 100_000;
 
 export interface RedisCacheStoreOptions {
   url?: string;
+  /** Redis namespace; an omitted trailing colon is normalized for backward compatibility. */
   keyPrefix?: string;
   enableFallback?: boolean;
   /** TTL in seconds for cache entries (default: 3600 = 1 hour) */
   ttlSeconds?: number;
+  /** Optional connection manager for embedding/tests. */
+  clientManager?: RedisClientManager;
 }
 
 export class RedisCacheStore implements CacheStore {
-  private client: RedisClient | null = null;
   private readonly url?: string;
   private readonly keyPrefix: string;
   private readonly enableFallback: boolean;
   private readonly ttlSeconds: number;
+  private readonly clientManager: RedisClientManager;
   private fallbackStore: MemoryCacheStore | null = null;
-  private redisUnavailable = false;
-  private errorLogged = false;
+  private readonly fallbackDeadlines = new Map<string, number>();
 
   constructor(options: RedisCacheStoreOptions = {}) {
     this.url = options.url;
-    this.keyPrefix = options.keyPrefix ?? "veryfront:render:";
+    this.keyPrefix = registerLegacyRenderRedisCacheNamespace(
+      options.keyPrefix ?? "veryfront:render:",
+    );
     this.enableFallback = options.enableFallback ?? false;
-    this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    this.clientManager = options.clientManager ?? createRedisClientManager();
+    this.ttlSeconds = requirePositiveIntegerCacheTtlSeconds(
+      options.ttlSeconds ?? DEFAULT_TTL_SECONDS,
+    );
   }
 
   private getFallbackStore(): MemoryCacheStore {
@@ -55,83 +65,182 @@ export class RedisCacheStore implements CacheStore {
     // Small fallback cache for when Redis is unavailable
     this.fallbackStore = new MemoryCacheStore({
       maxEntries: FALLBACK_MAX_ENTRIES,
-      ttlMs: this.ttlSeconds * 1000,
+      enforceStoreTtl: false,
     });
     logger.warn("Redis unavailable, using memory cache fallback");
     return this.fallbackStore;
   }
 
   private async ensureClient(): Promise<RedisClient> {
-    if (this.client) return this.client;
-
-    let createClient: ((options: { url?: string }) => RedisClient) | undefined;
-    try {
-      // Construct module name dynamically to prevent Deno static analyzer
-      // from trying to resolve this npm package during lint/check
-      const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
-      const mod = await import(redisClientModule);
-      createClient = mod.createClient as (options: { url?: string }) => RedisClient;
-    } catch (_) {
-      /* expected: redis client package may not be installed */
-      throw toError(
-        createError({
-          type: "render",
-          message:
-            "Redis cache store requires npm:@redis/client. Install dependencies or switch cache.render.type to 'memory' or 'filesystem'.",
-        }),
-      );
-    }
-
-    const client = createClient({ url: this.url });
-    client.on?.("error", (err: unknown) => {
-      // Only log the first error to avoid flooding logs during reconnection attempts
-      if (!this.errorLogged) {
-        logger.error("client error", err);
-        this.errorLogged = true;
-      }
-      this.redisUnavailable = true;
-    });
-
-    await client.connect();
-    this.client = client;
-    this.redisUnavailable = false;
-    this.errorLogged = false;
-    return client;
+    return await this.clientManager.getClient({ url: this.url });
   }
 
   private storageKey(key: string): string {
     return `${this.keyPrefix}${key}`;
   }
 
-  private shouldUseFallback(): boolean {
-    return this.redisUnavailable && this.enableFallback;
+  private async resetRedisConnection(): Promise<void> {
+    await this.clientManager.disconnect();
   }
 
-  private shouldSkipRedis(): boolean {
-    return this.redisUnavailable && !this.enableFallback;
+  private async resetAfterFailure(error: unknown): Promise<void> {
+    try {
+      await this.resetRedisConnection();
+    } catch (disconnectError) {
+      logger.warn("failed to reset Redis connection", { error, disconnectError });
+    }
   }
 
-  private markRedisUnavailable(): void {
-    this.redisUnavailable = true;
+  private async scanKeys(client: RedisClient, literalPrefix: string): Promise<string[]> {
+    let cursor = 0;
+    let iterations = 0;
+    const seenCursors = new Set<number>();
+    const keys = new Set<string>();
+
+    do {
+      iterations++;
+      if (iterations > REDIS_MAX_SCAN_ITERATIONS) {
+        throw new Error("Redis SCAN exceeded the maximum iteration count");
+      }
+      const result = await client.scan(cursor, {
+        MATCH: buildRedisCacheScanPattern(literalPrefix),
+        COUNT: REDIS_SCAN_COUNT,
+      });
+      if (
+        !result ||
+        !Number.isSafeInteger(result.cursor) ||
+        result.cursor < 0 ||
+        !Array.isArray(result.keys) ||
+        !result.keys.every((key) => typeof key === "string")
+      ) {
+        throw new TypeError("Redis returned an invalid SCAN result");
+      }
+
+      if (result.cursor !== 0 && seenCursors.has(result.cursor)) {
+        throw new Error("Redis SCAN repeated a cursor before completing");
+      }
+      if (result.cursor !== 0) seenCursors.add(result.cursor);
+      for (const key of result.keys) {
+        if (!key.startsWith(literalPrefix)) {
+          throw new Error("Redis SCAN returned a key outside the requested cache namespace");
+        }
+        keys.add(key);
+        if (keys.size > REDIS_MAX_COLLECTED_KEYS) {
+          throw new Error("Redis SCAN exceeded the maximum collected key count");
+        }
+      }
+      cursor = result.cursor;
+    } while (cursor !== 0);
+
+    return [...keys];
+  }
+
+  private resolveRetentionTtlSeconds(value: CachePayload, now = Date.now()): number {
+    const retainUntil = value.staleUntil ?? value.expiresAt;
+    if (retainUntil === undefined) return this.ttlSeconds;
+    const remainingSeconds = Math.ceil((retainUntil - now) / 1_000);
+    if (remainingSeconds <= 0) {
+      throw new RangeError("Redis render cache payload retention has already expired");
+    }
+    return requirePositiveIntegerCacheTtlSeconds(
+      Math.max(this.ttlSeconds, remainingSeconds),
+    );
+  }
+
+  private async setFallback(key: string, value: CachePayload): Promise<void> {
+    const now = Date.now();
+    const deadline = now + this.resolveRetentionTtlSeconds(value, now) * 1_000;
+    const fallback = this.getFallbackStore();
+    await fallback.set(key, value);
+    this.fallbackDeadlines.delete(key);
+    this.fallbackDeadlines.set(key, deadline);
+    while (this.fallbackDeadlines.size > FALLBACK_MAX_ENTRIES) {
+      const oldestKey = this.fallbackDeadlines.keys().next().value as string | undefined;
+      if (oldestKey === undefined) break;
+      this.fallbackDeadlines.delete(oldestKey);
+      await fallback.delete(oldestKey);
+    }
+  }
+
+  private async getFallback(key: string): Promise<CachePayload | undefined> {
+    const fallback = this.getFallbackStore();
+    const deadline = this.fallbackDeadlines.get(key);
+    if (deadline === undefined || Date.now() >= deadline) {
+      this.fallbackDeadlines.delete(key);
+      await fallback.delete(key);
+      return undefined;
+    }
+    const value = await fallback.get(key);
+    if (value === undefined) {
+      this.fallbackDeadlines.delete(key);
+      return undefined;
+    }
+    this.fallbackDeadlines.delete(key);
+    this.fallbackDeadlines.set(key, deadline);
+    return value;
+  }
+
+  private async deleteFallback(key: string): Promise<void> {
+    this.fallbackDeadlines.delete(key);
+    await this.fallbackStore?.delete(key);
+  }
+
+  private async deleteFallbackByPrefix(prefix: string): Promise<number> {
+    for (const key of [...this.fallbackDeadlines.keys()]) {
+      if (key.startsWith(prefix)) this.fallbackDeadlines.delete(key);
+    }
+    return (await this.fallbackStore?.deleteByPrefix?.(prefix)) ?? 0;
+  }
+
+  private async deleteKeys(client: RedisClient, keys: string[]): Promise<number> {
+    let deleted = 0;
+    for (let index = 0; index < keys.length; index += REDIS_DELETE_BATCH_SIZE) {
+      const batch = keys.slice(index, index + REDIS_DELETE_BATCH_SIZE);
+      const count = await client.del(batch);
+      if (!Number.isSafeInteger(count) || count < 0 || count > batch.length) {
+        throw new TypeError("Redis returned an invalid DEL count");
+      }
+      deleted += count;
+    }
+    return deleted;
+  }
+
+  private async deleteRedisKey(client: RedisClient, key: string): Promise<void> {
+    const count = await client.del(key);
+    if (!Number.isSafeInteger(count) || count < 0 || count > 1) {
+      throw new TypeError("Redis returned an invalid DEL count");
+    }
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
-    if (this.shouldUseFallback()) return this.getFallbackStore().get(key);
-    if (this.shouldSkipRedis()) return undefined;
-
     try {
       const client = await this.ensureClient();
       const raw = await client.get(this.storageKey(key));
-      if (!raw) return undefined;
-
-      try {
-        return JSON.parse(raw) as CachePayload;
-      } catch (_) {
-        /* expected: cached data may be corrupted or malformed JSON */
+      if (!raw) {
+        await this.deleteFallback(key);
         return undefined;
       }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_) {
+        /* expected: cached data may be corrupted or malformed JSON */
+        await this.deleteRedisKey(client, this.storageKey(key));
+        await this.deleteFallback(key);
+        return undefined;
+      }
+
+      const payload = parseCachePayload(parsed);
+      if (payload) {
+        await this.deleteFallback(key);
+        return payload;
+      }
+      await this.deleteRedisKey(client, this.storageKey(key));
+      await this.deleteFallback(key);
+      return undefined;
     } catch (error) {
-      this.markRedisUnavailable();
+      await this.resetAfterFailure(error);
 
       if (!this.enableFallback) {
         logger.warn("get failed, skipping fallback", { key, error });
@@ -139,117 +248,79 @@ export class RedisCacheStore implements CacheStore {
       }
 
       logger.warn("get failed, using fallback", { key, error });
-      return this.getFallbackStore().get(key);
+      return this.getFallback(key);
     }
   }
 
   async set(key: string, value: CachePayload): Promise<void> {
-    if (this.shouldUseFallback()) return this.getFallbackStore().set(key, value);
-    if (this.shouldSkipRedis()) return;
+    const serialized = serializeCachePayload(value);
+    const retainUntil = value.staleUntil ?? value.expiresAt;
+    if (retainUntil !== undefined && retainUntil <= Date.now()) {
+      await this.delete(key);
+      return;
+    }
 
     try {
       const client = await this.ensureClient();
       // Apply TTL to prevent unbounded Redis growth
-      await client.set(this.storageKey(key), JSON.stringify(value), { EX: this.ttlSeconds });
+      const result = await client.set(this.storageKey(key), serialized, {
+        EX: this.resolveRetentionTtlSeconds(value),
+      });
+      if (result !== "OK") throw new Error("Redis SET did not acknowledge the write");
+      await this.deleteFallback(key);
     } catch (error) {
-      this.markRedisUnavailable();
+      await this.resetAfterFailure(error);
 
       if (!this.enableFallback) {
-        logger.warn("set failed, skipping fallback", { key, error });
-        return;
+        logger.warn("set failed", { key, error });
+        throw error;
       }
 
       logger.warn("set failed, using fallback", { key, error });
-      await this.getFallbackStore().set(key, value);
+      await this.setFallback(key, value);
     }
   }
 
   async delete(key: string): Promise<void> {
-    if (this.shouldUseFallback()) return this.getFallbackStore().delete(key);
-    if (this.shouldSkipRedis()) return;
+    await this.deleteFallback(key);
 
     try {
       const client = await this.ensureClient();
-      await client.del(this.storageKey(key));
+      await this.deleteRedisKey(client, this.storageKey(key));
     } catch (error) {
-      this.markRedisUnavailable();
-
-      if (!this.enableFallback) {
-        logger.warn("delete failed, skipping fallback", { key, error });
-        return;
-      }
-
-      logger.warn("delete failed, using fallback", { key, error });
-      await this.getFallbackStore().delete(key);
+      await this.resetAfterFailure(error);
+      logger.warn("delete failed; Redis invalidation is incomplete", { key, error });
+      throw error;
     }
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
-    const localDeleted = (await this.fallbackStore?.deleteByPrefix?.(prefix)) ?? 0;
-
-    if (this.redisUnavailable) return localDeleted;
+    const localDeleted = await this.deleteFallbackByPrefix(prefix);
 
     try {
       const client = await this.ensureClient();
-      let cursor = 0;
-      const keysToDelete: string[] = [];
-
-      do {
-        const [nextCursor, keys] = await client.scan(cursor, {
-          MATCH: `${this.keyPrefix}${prefix}*`,
-          COUNT: REDIS_SCAN_COUNT,
-        });
-        cursor = nextCursor;
-        if (keys.length) keysToDelete.push(...keys);
-      } while (cursor !== 0);
-
-      if (!keysToDelete.length) return localDeleted;
-
-      const deleteResults = await Promise.all(keysToDelete.map((key) => client.del(key)));
-      const deleted = deleteResults.reduce((sum, count) => sum + count, 0);
+      const keysToDelete = await this.scanKeys(client, `${this.keyPrefix}${prefix}`);
+      const deleted = await this.deleteKeys(client, keysToDelete);
       return localDeleted + deleted;
     } catch (error) {
-      this.markRedisUnavailable();
-
-      if (!this.enableFallback) {
-        logger.warn("deleteByPrefix failed, skipping fallback", { prefix, error });
-        return localDeleted;
-      }
-
-      logger.warn("deleteByPrefix failed, using fallback", { prefix, error });
-      return localDeleted;
+      await this.resetAfterFailure(error);
+      logger.warn("deleteByPrefix failed; Redis invalidation is incomplete", { prefix, error });
+      throw error;
     }
   }
 
   async clear(): Promise<void> {
+    this.fallbackDeadlines.clear();
     await this.fallbackStore?.clear();
-
-    if (this.redisUnavailable) return;
 
     try {
       const client = await this.ensureClient();
-      let cursor = 0;
-
-      do {
-        const [nextCursor, keys] = await client.scan(cursor, {
-          MATCH: `${this.keyPrefix}*`,
-          COUNT: REDIS_CLEAR_SCAN_COUNT,
-        });
-        cursor = nextCursor;
-
-        for (const key of keys) {
-          await client.del(key);
-        }
-      } while (cursor !== 0);
+      const keys = await this.scanKeys(client, this.keyPrefix);
+      await this.deleteKeys(client, keys);
     } catch (error) {
-      this.markRedisUnavailable();
-
-      if (!this.enableFallback) {
-        logger.warn("clear failed, skipping fallback", { error });
-        return;
-      }
-
-      logger.warn("clear failed", { error });
+      await this.resetAfterFailure(error);
+      logger.warn("clear failed; Redis invalidation is incomplete", { error });
+      throw error;
     }
   }
 
@@ -258,11 +329,9 @@ export class RedisCacheStore implements CacheStore {
       await this.fallbackStore.destroy();
       this.fallbackStore = null;
     }
+    this.fallbackDeadlines.clear();
 
-    if (!this.client) return;
-
-    await this.client.disconnect();
-    this.client = null;
+    await this.clientManager.disconnect();
   }
 
   getStats(): CacheStoreStats {

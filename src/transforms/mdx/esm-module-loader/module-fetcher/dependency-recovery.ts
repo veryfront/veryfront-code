@@ -7,7 +7,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery
  */
 
-import { basename, dirname } from "#veryfront/compat/path/index.ts";
+import { basename, dirname, resolve } from "#veryfront/compat/path/index.ts";
 import { detokenizeAllCachePaths } from "#veryfront/cache/paths.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import type { Logger } from "#veryfront/utils";
@@ -18,12 +18,22 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/local-fs.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
+import { getMdxEsmSsrCacheDir } from "../cache-paths.ts";
+import {
+  MAX_MDX_MODULE_CODE_BYTES,
+  MAX_MDX_RECOVERY_DEPTH,
+  MAX_MDX_RECOVERY_MODULES,
+  MAX_MDX_RECOVERY_TOTAL_BYTES,
+  parseMdxModuleRecoveryPayload,
+  utf8ByteLength,
+} from "./recovery-payload.ts";
 
 // Captures the filesystem path from `file://` URLs that point to veryfront-mdx-esm
 // cache entries.  The character class excludes only quote characters (the
 // delimiters used in JS source) so that paths containing spaces — e.g. under a
 // home directory like `/Users/John Doe/…` — are captured in full.
-const MDX_VFMOD_FILE_URL_PATTERN = /file:\/\/([^"']+veryfront-mdx-esm\/[^"']+\.mjs)/gi;
+const MDX_VFMOD_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"']+veryfront-mdx-esm\/[^"']+\.mjs)/gi
+  .source;
 
 interface EnsureMdxModuleDependenciesOptions {
   projectId: string;
@@ -37,19 +47,37 @@ interface EnsureMdxModuleDependenciesResult {
   missing: string[];
 }
 
+interface RecoveryState {
+  visited: Set<string>;
+  recovered: Set<string>;
+  recoveredBytes: number;
+}
+
 function extractMdxModuleDependencyPaths(code: string): string[] {
+  if (utf8ByteLength(code) > MAX_MDX_MODULE_CODE_BYTES) return [];
   const paths: string[] = [];
   const seen = new Set<string>();
+  const pattern = new RegExp(MDX_VFMOD_FILE_URL_PATTERN_SOURCE, "gi");
   let match: RegExpExecArray | null;
-  while ((match = MDX_VFMOD_FILE_URL_PATTERN.exec(code)) !== null) {
+  while ((match = pattern.exec(code)) !== null) {
     const rawPath = match[1];
     if (!rawPath) continue;
     const cleanPath = rawPath.replace(/\?.*$/, "");
     if (seen.has(cleanPath)) continue;
     seen.add(cleanPath);
     paths.push(cleanPath);
+    if (paths.length > MAX_MDX_RECOVERY_MODULES) break;
   }
   return paths;
+}
+
+function isOwnedModulePath(absolutePath: string, tenantCacheDir: string): boolean {
+  if (absolutePath.split(/[\\/]/).some((segment) => segment === "." || segment === "..")) {
+    return false;
+  }
+  const resolvedPath = resolve(absolutePath);
+  const resolvedTenantDir = resolve(tenantCacheDir);
+  return dirname(resolvedPath) === resolvedTenantDir && basename(resolvedPath) === basename(absolutePath);
 }
 
 async function ensureHttpBundleDependencies(code: string, log: Logger): Promise<boolean> {
@@ -68,30 +96,46 @@ async function ensureHttpBundleDependencies(code: string, log: Logger): Promise<
 
 async function ensureModuleFileAndDeps(
   absolutePath: string,
+  tenantCacheDir: string,
   distributedCache: CacheBackend,
   options: EnsureMdxModuleDependenciesOptions,
-  visited: Set<string>,
-  recovered: Set<string>,
+  state: RecoveryState,
+  depth: number,
 ): Promise<boolean> {
-  if (visited.has(absolutePath)) return true;
-  visited.add(absolutePath);
+  if (depth > MAX_MDX_RECOVERY_DEPTH) return false;
+  if (!isOwnedModulePath(absolutePath, tenantCacheDir)) {
+    options.log.warn(`${LOG_PREFIX_MDX_LOADER} Rejected out-of-namespace vfmod recovery path`, {
+      dependencyPath: absolutePath,
+      tenantCacheDir,
+    });
+    return false;
+  }
+
+  const resolvedPath = resolve(absolutePath);
+  if (state.visited.has(resolvedPath)) return true;
+  if (state.visited.size >= MAX_MDX_RECOVERY_MODULES) return false;
+  state.visited.add(resolvedPath);
 
   const localFs = getLocalFs();
 
   try {
-    const stat = await localFs.stat(absolutePath);
-    if (stat?.isFile) {
-      const existingCode = await localFs.readTextFile(absolutePath);
+    const lstat = localFs.lstat ? await localFs.lstat(resolvedPath) : await localFs.stat(resolvedPath);
+    if (lstat?.isSymlink) return false;
+    if (lstat?.isFile) {
+      if ((lstat.size ?? 0) > MAX_MDX_MODULE_CODE_BYTES) return false;
+      const existingCode = await localFs.readTextFile(resolvedPath);
+      if (utf8ByteLength(existingCode) > MAX_MDX_MODULE_CODE_BYTES) return false;
       if (!(await ensureHttpBundleDependencies(existingCode, options.log))) return false;
 
       for (const nestedPath of extractMdxModuleDependencyPaths(existingCode)) {
         if (
           !(await ensureModuleFileAndDeps(
             nestedPath,
+            tenantCacheDir,
             distributedCache,
             options,
-            visited,
-            recovered,
+            state,
+            depth + 1,
           ))
         ) {
           return false;
@@ -107,11 +151,11 @@ async function ensureModuleFileAndDeps(
   const recoveryKey = buildMdxEsmModuleRecoveryCacheKey(
     options.projectId,
     options.contentSourceId,
-    basename(absolutePath),
+    basename(resolvedPath),
   );
 
-  const portableCode = await distributedCache.get(recoveryKey);
-  if (!portableCode) {
+  const serializedPayload = await distributedCache.get(recoveryKey);
+  if (!serializedPayload) {
     options.log.debug(`${LOG_PREFIX_MDX_LOADER} No distributed vfmod recovery entry`, {
       dependencyPath: absolutePath,
       recoveryKey,
@@ -119,29 +163,51 @@ async function ensureModuleFileAndDeps(
     return false;
   }
 
-  const recoveredCode = detokenizeAllCachePaths(portableCode);
+  const payload = parseMdxModuleRecoveryPayload(serializedPayload, {
+    projectId: options.projectId,
+    contentSourceId: options.contentSourceId,
+    fileName: basename(resolvedPath),
+  });
+  if (!payload) {
+    options.log.warn(`${LOG_PREFIX_MDX_LOADER} Rejected invalid vfmod recovery payload`, {
+      dependencyPath: resolvedPath,
+      recoveryKey,
+    });
+    return false;
+  }
+
+  const recoveredCode = detokenizeAllCachePaths(payload.portableCode);
+  const recoveredBytes = utf8ByteLength(recoveredCode);
+  if (
+    recoveredBytes > MAX_MDX_MODULE_CODE_BYTES ||
+    state.recoveredBytes + recoveredBytes > MAX_MDX_RECOVERY_TOTAL_BYTES
+  ) {
+    return false;
+  }
   if (!(await ensureHttpBundleDependencies(recoveredCode, options.log))) return false;
 
   for (const nestedPath of extractMdxModuleDependencyPaths(recoveredCode)) {
     if (
       !(await ensureModuleFileAndDeps(
         nestedPath,
+        tenantCacheDir,
         distributedCache,
         options,
-        visited,
-        recovered,
+        state,
+        depth + 1,
       ))
     ) {
       return false;
     }
   }
 
-  await localFs.mkdir(dirname(absolutePath), { recursive: true });
-  await localFs.writeTextFile(absolutePath, recoveredCode);
-  recovered.add(absolutePath);
+  await localFs.mkdir(tenantCacheDir, { recursive: true });
+  await localFs.writeTextFile(resolvedPath, recoveredCode);
+  state.recovered.add(resolvedPath);
+  state.recoveredBytes += recoveredBytes;
 
   options.log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered vfmod dependency from distributed cache`, {
-    dependencyPath: absolutePath,
+    dependencyPath: resolvedPath,
     recoveryKey,
   });
 
@@ -155,23 +221,33 @@ export async function ensureMdxModuleDependencies(
   const distributedCache = options.distributedCache ?? (await getDistributedTransformBackend());
   if (!distributedCache) return { recovered: [], missing: extractMdxModuleDependencyPaths(code) };
 
-  const visited = new Set<string>();
-  const recovered = new Set<string>();
+  if (utf8ByteLength(code) > MAX_MDX_MODULE_CODE_BYTES) {
+    options.log.warn(`${LOG_PREFIX_MDX_LOADER} Skipped recovery for oversized module code`);
+    return { recovered: [], missing: [] };
+  }
+
+  const tenantCacheDir = getMdxEsmSsrCacheDir(options.projectId, options.contentSourceId);
+  const state: RecoveryState = {
+    visited: new Set<string>(),
+    recovered: new Set<string>(),
+    recoveredBytes: 0,
+  };
   const missing: string[] = [];
 
   for (const dependencyPath of extractMdxModuleDependencyPaths(code)) {
     const ok = await ensureModuleFileAndDeps(
       dependencyPath,
+      tenantCacheDir,
       distributedCache,
       options,
-      visited,
-      recovered,
+      state,
+      0,
     );
     if (!ok) missing.push(dependencyPath);
   }
 
   return {
-    recovered: [...recovered],
+    recovered: [...state.recovered],
     missing,
   };
 }

@@ -11,6 +11,13 @@ import {
 
 describe("observability/simple-metrics/metrics-state", () => {
   describe("getSSRBoundaries", () => {
+    it("returns a defensive copy", () => {
+      const boundaries = getSSRBoundaries();
+      boundaries[0] = -1;
+
+      assertEquals(getSSRBoundaries()[0], 5);
+    });
+
     it("should return array of boundary values", () => {
       const boundaries = getSSRBoundaries();
       assertEquals(Array.isArray(boundaries), true);

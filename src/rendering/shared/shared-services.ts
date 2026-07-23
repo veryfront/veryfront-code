@@ -33,6 +33,7 @@ export interface SharedServices {
 
 let sharedServices: SharedServices | null = null;
 let initializationPromise: Promise<SharedServices> | null = null;
+let sharedServicesGeneration = 0;
 
 export async function initializeSharedServices(
   options: SharedServicesOptions = {},
@@ -42,8 +43,9 @@ export async function initializeSharedServices(
 
   const debugMode = options.debugMode ?? false;
   const maxValidationDepth = options.maxValidationDepth ?? 20;
+  const generation = sharedServicesGeneration;
 
-  initializationPromise = withSpan(
+  const initialization = withSpan(
     SpanNames.SHARED_SERVICES_INIT,
     async (): Promise<SharedServices> => {
       logger.debug("Initializing shared renderer services");
@@ -60,27 +62,38 @@ export async function initializeSharedServices(
         debugMode,
       };
 
-      sharedServices = {
+      const nextSharedServices = {
         elementValidator: new ElementValidator(validatorOptions),
         compilerService: new CompilerService(),
       };
+
+      if (generation !== sharedServicesGeneration) {
+        throw INITIALIZATION_ERROR.create({
+          detail: "Shared services initialization was cancelled before it completed.",
+        });
+      }
+
+      sharedServices = nextSharedServices;
 
       logger.debug("Shared services initialized", {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
 
-      return sharedServices;
+      return nextSharedServices;
     },
     {
       "shared_services.debug_mode": debugMode,
       "shared_services.max_validation_depth": maxValidationDepth,
     },
   );
+  initializationPromise = initialization;
 
   try {
-    return await initializationPromise;
+    return await initialization;
   } finally {
-    initializationPromise = null;
+    if (initializationPromise === initialization) {
+      initializationPromise = null;
+    }
   }
 }
 
@@ -106,6 +119,7 @@ export function getSharedCompileMDX(): CompileMDXFunction {
 }
 
 export function destroySharedServices(): void {
+  sharedServicesGeneration++;
   sharedServices = null;
   initializationPromise = null;
   logger.debug("Shared services destroyed");

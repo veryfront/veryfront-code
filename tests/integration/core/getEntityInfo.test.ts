@@ -385,6 +385,30 @@ describe("getEntityBySlug", () => {
     assertEquals(info.entity.content, "// higher-priority dynamic segment");
   });
 
+  it("preserves dynamic precedence after eighteen static segments", async () => {
+    const adapter = createMockAdapter();
+    const projectDir = "/project";
+    const prefix = Array.from({ length: 18 }, (_, index) => `segment-${index}`);
+    const parentDir = join(projectDir, "pages", ...prefix);
+    adapter.fs.files.set(
+      join(parentDir, "[...all].tsx"),
+      "// lower-priority catch-all",
+    );
+    adapter.fs.files.set(
+      join(parentDir, "[id].tsx"),
+      "// higher-priority dynamic segment",
+    );
+
+    const info = await getEntityBySlug(
+      projectDir,
+      [...prefix, "post"].join("/"),
+      adapter,
+    );
+
+    assertExists(info);
+    assertEquals(info.entity.content, "// higher-priority dynamic segment");
+  });
+
   it("selects a required catch-all over an optional catch-all", async () => {
     const adapter = createMockAdapter();
     const projectDir = "/project";

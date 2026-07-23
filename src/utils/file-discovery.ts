@@ -6,7 +6,7 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DirEntry, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -55,9 +55,56 @@ function matchesPatterns(fileName: string, patterns: string[] | undefined): bool
   return patterns.some((pattern) => fileName.includes(pattern));
 }
 
+/**
+ * Match a glob against one directory-entry name without compiling caller input
+ * as a regular expression. `*` matches zero or more characters and `?`
+ * matches exactly one character; every other character is literal.
+ */
+function matchesEntryGlob(name: string, pattern: string): boolean {
+  const nameTokens = [...name];
+  let previous = new Uint8Array(nameTokens.length + 1);
+  previous[0] = 1;
+
+  for (const token of pattern) {
+    const current = new Uint8Array(nameTokens.length + 1);
+    if (token === "*") {
+      current[0] = previous[0] ?? 0;
+      for (let index = 1; index <= nameTokens.length; index++) {
+        current[index] = (previous[index] || current[index - 1]) ? 1 : 0;
+      }
+    } else {
+      for (let index = 1; index <= nameTokens.length; index++) {
+        if (previous[index - 1] && (token === "?" || token === nameTokens[index - 1])) {
+          current[index] = 1;
+        }
+      }
+    }
+    previous = current;
+  }
+
+  return previous[nameTokens.length] === 1;
+}
+
 function shouldIgnore(name: string, ignorePatterns: string[] | undefined): boolean {
   if (!ignorePatterns?.length) return false;
-  return ignorePatterns.some((pattern) => name.includes(pattern));
+  return ignorePatterns.some((pattern) =>
+    pattern.includes("*") || pattern.includes("?")
+      ? matchesEntryGlob(name, pattern)
+      : name.includes(pattern)
+  );
+}
+
+function normalizePhysicalPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function isWithinPhysicalDirectory(baseDir: string, target: string): boolean {
+  const base = normalizePhysicalPath(baseDir);
+  const candidate = normalizePhysicalPath(target);
+  return base === "/"
+    ? candidate.startsWith("/")
+    : candidate === base || candidate.startsWith(`${base}/`);
 }
 
 function matchesFile(
@@ -66,6 +113,29 @@ function matchesFile(
   patterns: string[] | undefined,
 ): boolean {
   return matchesExtensions(entryName, extensions) && matchesPatterns(entryName, patterns);
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error &&
+    (error as { code?: unknown }).code === code;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return true;
+  if (!(error instanceof Error)) return false;
+  return error.name === "NotFound" || error.name === "NotFoundError";
+}
+
+async function* readDirectoryEntries(
+  adapter: RuntimeAdapter,
+  dir: string,
+): AsyncIterable<DirEntry> {
+  try {
+    for await (const entry of adapter.fs.readDir(dir)) yield entry;
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
+  }
 }
 
 export async function* discoverFiles(
@@ -83,7 +153,26 @@ export async function* discoverFiles(
     adapter,
   } = options;
 
+  if (
+    maxDepth !== Number.POSITIVE_INFINITY &&
+    (!Number.isInteger(maxDepth) || maxDepth < 0)
+  ) {
+    throw new RangeError("File discovery maxDepth must be a non-negative integer or Infinity");
+  }
+
   const runtimeAdapter = adapter ?? (await getDefaultAdapter());
+  let physicalBaseDir: string | undefined;
+  if (followSymlinks) {
+    if (typeof runtimeAdapter.fs.realPath !== "function") {
+      throw new Error("File discovery requires adapter.fs.realPath when following symlinks");
+    }
+    try {
+      physicalBaseDir = await runtimeAdapter.fs.realPath(baseDir);
+    } catch (error) {
+      if (isNotFoundError(error) || hasErrorCode(error, "ELOOP")) return;
+      throw error;
+    }
+  }
 
   yield* walkDirectory({
     dir: baseDir,
@@ -96,6 +185,8 @@ export async function* discoverFiles(
     recursive,
     followSymlinks,
     adapter: runtimeAdapter,
+    physicalBaseDir,
+    visitedDirectories: new Set<string>(),
   });
 }
 
@@ -110,6 +201,8 @@ interface WalkDirectoryOptions {
   recursive: boolean;
   followSymlinks: boolean;
   adapter: RuntimeAdapter;
+  physicalBaseDir: string | undefined;
+  visitedDirectories: Set<string>;
 }
 
 async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<FileDiscoveryResult> {
@@ -124,29 +217,73 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
     recursive,
     followSymlinks,
     adapter,
+    physicalBaseDir,
+    visitedDirectories,
   } = options;
 
   if (currentDepth > maxDepth) return;
 
-  try {
-    const entries = adapter.fs.readDir(dir);
+  if (followSymlinks) {
+    let physicalDir: string;
+    try {
+      physicalDir = await adapter.fs.realPath!(dir);
+    } catch (error) {
+      if (isNotFoundError(error) || hasErrorCode(error, "ELOOP")) return;
+      throw error;
+    }
 
-    for await (const entry of entries) {
-      if (shouldIgnore(entry.name, ignorePatterns)) continue;
+    if (!physicalBaseDir || !isWithinPhysicalDirectory(physicalBaseDir, physicalDir)) return;
+    if (visitedDirectories.has(physicalDir)) return;
+    visitedDirectories.add(physicalDir);
+  }
 
-      const fullPath = join(dir, entry.name);
+  for await (const entry of readDirectoryEntries(adapter, dir)) {
+    if (shouldIgnore(entry.name, ignorePatterns)) continue;
 
-      if (entry.isDirectory) {
-        if (includeDirs) {
-          yield {
-            path: fullPath,
-            name: entry.name,
-            isFile: false,
-            isDirectory: true,
-            depth: currentDepth,
-          };
-        }
+    const fullPath = join(dir, entry.name);
 
+    if (entry.isDirectory) {
+      if (includeDirs) {
+        yield {
+          path: fullPath,
+          name: entry.name,
+          isFile: false,
+          isDirectory: true,
+          depth: currentDepth,
+        };
+      }
+
+      if (!recursive) continue;
+
+      yield* walkDirectory({
+        ...options,
+        dir: fullPath,
+        currentDepth: currentDepth + 1,
+      });
+      continue;
+    }
+
+    if (entry.isFile) {
+      if (!matchesFile(entry.name, extensions, patterns)) continue;
+
+      yield {
+        path: fullPath,
+        name: entry.name,
+        isFile: true,
+        isDirectory: false,
+        depth: currentDepth,
+      };
+      continue;
+    }
+
+    if (!entry.isSymlink || !followSymlinks) continue;
+
+    try {
+      const physicalTarget = await adapter.fs.realPath!(fullPath);
+      if (!physicalBaseDir || !isWithinPhysicalDirectory(physicalBaseDir, physicalTarget)) continue;
+      const stat = await adapter.fs.stat(fullPath);
+
+      if (stat.isDirectory) {
         if (!recursive) continue;
 
         yield* walkDirectory({
@@ -157,51 +294,20 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
         continue;
       }
 
-      if (entry.isFile) {
-        if (!matchesFile(entry.name, extensions, patterns)) continue;
+      if (!stat.isFile) continue;
+      if (!matchesFile(entry.name, extensions, patterns)) continue;
 
-        yield {
-          path: fullPath,
-          name: entry.name,
-          isFile: true,
-          isDirectory: false,
-          depth: currentDepth,
-        };
-        continue;
-      }
-
-      if (!entry.isSymlink || !followSymlinks) continue;
-
-      try {
-        const stat = await adapter.fs.stat(fullPath);
-
-        if (stat.isDirectory) {
-          if (!recursive) continue;
-
-          yield* walkDirectory({
-            ...options,
-            dir: fullPath,
-            currentDepth: currentDepth + 1,
-          });
-          continue;
-        }
-
-        if (!stat.isFile) continue;
-        if (!matchesFile(entry.name, extensions, patterns)) continue;
-
-        yield {
-          path: fullPath,
-          name: entry.name,
-          isFile: true,
-          isDirectory: false,
-          depth: currentDepth,
-        };
-      } catch (_) {
-        /* expected: broken symlinks cannot be stat'd */
-      }
+      yield {
+        path: fullPath,
+        name: entry.name,
+        isFile: true,
+        isDirectory: false,
+        depth: currentDepth,
+      };
+    } catch (error) {
+      if (isNotFoundError(error) || hasErrorCode(error, "ELOOP")) continue;
+      throw error;
     }
-  } catch (_) {
-    /* expected: directory may be missing or inaccessible */
   }
 }
 

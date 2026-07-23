@@ -15,6 +15,7 @@ interface BundleManifestConfig {
 }
 import {
   type BundleManifestStore,
+  getBundleManifestStore,
   InMemoryBundleManifestStore,
   setBundleManifestStore,
 } from "./bundle-manifest.ts";
@@ -23,8 +24,8 @@ import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./const
 const logger = serverLogger.component("bundle-manifest");
 
 class UnsupportedBundleManifestStoreError extends Error {
-  constructor(storeType: string) {
-    super(`Bundle manifest store type "${storeType}" is configured but is not implemented`);
+  constructor(storeType: string, reason = "is configured but is not implemented") {
+    super(`Bundle manifest store type "${storeType}" ${reason}`);
     this.name = "UnsupportedBundleManifestStoreError";
   }
 }
@@ -39,7 +40,6 @@ export async function initializeBundleManifest(
 
   if (!enabled) {
     logger.debug("Bundle manifest disabled");
-    setBundleManifestStore(new InMemoryBundleManifestStore());
     return;
   }
 
@@ -48,23 +48,14 @@ export async function initializeBundleManifest(
 
   logger.debug("Initializing bundle manifest", { type: storeType, mode });
 
+  const store = await createStore(storeType, config.cache, adapter);
+  if (store !== getBundleManifestStore()) setBundleManifestStore(store);
+
   try {
-    const store = await createStore(storeType, config.cache, adapter);
-    setBundleManifestStore(store);
-
-    try {
-      const stats = await store.getStats();
-      logger.debug("Store statistics", stats);
-    } catch (error) {
-      logger.debug("Failed to get stats", { error });
-    }
+    const stats = await store.getStats();
+    logger.debug("Store statistics", stats);
   } catch (error) {
-    if (error instanceof UnsupportedBundleManifestStoreError) throw error;
-
-    logger.error("Failed to initialize store, using in-memory fallback", {
-      error,
-    });
-    setBundleManifestStore(new InMemoryBundleManifestStore());
+    logger.debug("Failed to get stats", { error });
   }
 }
 
@@ -81,8 +72,15 @@ async function createStore(
     throw new UnsupportedBundleManifestStoreError(storeType);
   }
 
+  if (storeType !== "memory") {
+    throw new UnsupportedBundleManifestStoreError(storeType, "is not supported");
+  }
+
   logger.debug("In-memory store initialized");
-  return new InMemoryBundleManifestStore();
+  const current = getBundleManifestStore();
+  return current instanceof InMemoryBundleManifestStore
+    ? current
+    : new InMemoryBundleManifestStore();
 }
 
 export function getBundleManifestTTL(
@@ -90,7 +88,7 @@ export function getBundleManifestTTL(
   mode: "development" | "production",
 ): number | undefined {
   const ttl = config.cache?.bundleManifest?.ttl;
-  if (ttl) return ttl;
+  if (ttl !== undefined) return ttl;
 
   if (mode === "production") return BUNDLE_MANIFEST_PROD_TTL_MS;
   return BUNDLE_MANIFEST_DEV_TTL_MS;

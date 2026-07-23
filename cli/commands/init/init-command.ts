@@ -22,8 +22,15 @@ import {
   installDependencies,
   type PackageManager,
 } from "../../utils/package-manager.ts";
-import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
-import type { EnvVarConfig, ResolvedIntegration, TemplateFile } from "../../templates/types.ts";
+import {
+  generateGitignoreContent,
+  promptForEnvVars,
+} from "../../utils/env-prompt.ts";
+import type {
+  EnvVarConfig,
+  ResolvedIntegration,
+  TemplateFile,
+} from "../../templates/types.ts";
 import {
   loadFeature,
   mergeFiles,
@@ -31,7 +38,6 @@ import {
   validateFeatures,
 } from "../../templates/feature-loader.ts";
 import {
-  getIntegrationBaseFiles,
   loadIntegrationBaseConfig,
   loadIntegrationBaseFilesFromDirectory,
   loadIntegrations,
@@ -98,13 +104,119 @@ const INTEGRATION_ICONS: Record<string, string> = {
 /**
  * Generate the integrations status route based on loaded integrations
  */
-function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): string {
-  const integrationEntries = integrations
-    .map((integration) => {
-      const icon = INTEGRATION_ICONS[integration.config.name] ?? "default";
-      return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}" },`;
-    })
-    .join("\n");
+function generateIntegrationsStatusRoute(
+  integrations: ResolvedIntegration[],
+): string {
+  const definitions = integrations.map(({ config }) => ({
+    id: config.name,
+    name: config.displayName,
+    icon: INTEGRATION_ICONS[config.name] ?? "default",
+    authType: config.auth.type,
+    connectionMode: config.auth.type === "oauth2" &&
+        config.auth.grantType !== "client_credentials"
+      ? "user-oauth"
+      : "environment",
+    requiredEnvironmentVariables: (config.envVars ?? [])
+      .filter(({ required }) => required)
+      .map(({ name }) => name),
+  }));
+  const hasUserOAuth = definitions.some(({ connectionMode }) =>
+    connectionMode === "user-oauth"
+  );
+  const hasEnvironmentAuth = definitions.some(
+    ({ connectionMode }) => connectionMode === "environment",
+  );
+  const integrationEntries = definitions.map((definition) => {
+    const environmentVariables = definition.requiredEnvironmentVariables.length
+      ? `[
+${
+        definition.requiredEnvironmentVariables.map((name) =>
+          `      ${JSON.stringify(name)},`
+        ).join("\n")
+      }
+    ]`
+      : "[]";
+    return `  {
+    id: ${JSON.stringify(definition.id)},
+    name: ${JSON.stringify(definition.name)},
+    icon: ${JSON.stringify(definition.icon)},
+    authType: ${JSON.stringify(definition.authType)},
+    connectionMode: ${JSON.stringify(definition.connectionMode)},
+    requiredEnvironmentVariables: ${environmentVariables},
+  },`;
+  }).join("\n");
+  const imports = [
+    hasUserOAuth
+      ? 'import { oauthTokenStore } from "../../../../lib/oauth-store.ts";'
+      : "",
+    'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
+    hasEnvironmentAuth
+      ? 'import { readEnvironmentVariable } from "../../../../lib/environment.ts";'
+      : "",
+  ].filter(Boolean).join("\n");
+  const oauthTokenValidator = hasUserOAuth
+    ? `function hasUsableOAuthTokens(value: unknown, now = Date.now()): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const token = value as Record<string, unknown>;
+  if (
+    typeof token.accessToken !== "string" || token.accessToken.length === 0 ||
+    token.accessToken.length > 131072 ||
+    token.accessToken.trim() !== token.accessToken
+  ) return false;
+  const hasRefreshToken = typeof token.refreshToken === "string" &&
+    token.refreshToken.length > 0 && token.refreshToken.length <= 131072 &&
+    token.refreshToken.trim() === token.refreshToken;
+  if (token.refreshToken !== undefined && !hasRefreshToken) return false;
+  if (token.expiresAt === undefined) return true;
+  if (
+    typeof token.expiresAt !== "number" ||
+    !Number.isSafeInteger(token.expiresAt) ||
+    token.expiresAt < 0
+  ) return false;
+  return token.expiresAt > now || hasRefreshToken;
+}`
+    : "";
+  const environmentValidator = hasEnvironmentAuth
+    ? `function hasRequiredConfiguration(names: readonly string[]): boolean {
+  return names.length > 0 && names.every((name) => {
+    const value = readEnvironmentVariable(name);
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}`
+    : "";
+  const connectionResolver = hasUserOAuth && hasEnvironmentAuth
+    ? `async function resolveConnected(
+  integration: (typeof INTEGRATIONS)[number],
+  userId: string,
+): Promise<boolean> {
+  return integration.connectionMode === "user-oauth"
+    ? hasUsableOAuthTokens(
+      await oauthTokenStore.getTokens(integration.id, userId),
+    )
+    : hasRequiredConfiguration(integration.requiredEnvironmentVariables);
+}`
+    : hasUserOAuth
+    ? `async function resolveConnected(
+  integration: (typeof INTEGRATIONS)[number],
+  userId: string,
+): Promise<boolean> {
+  return hasUsableOAuthTokens(
+    await oauthTokenStore.getTokens(integration.id, userId),
+  );
+}`
+    : `function resolveConnected(
+  integration: (typeof INTEGRATIONS)[number],
+  _userId: string,
+): Promise<boolean> {
+  return Promise.resolve(
+    hasRequiredConfiguration(integration.requiredEnvironmentVariables),
+  );
+}`;
+  const helperDefinitions = [
+    oauthTokenValidator,
+    environmentValidator,
+    connectionResolver,
+  ].filter(Boolean).join("\n\n");
 
   return `/**
  * Integration Status API
@@ -115,31 +227,51 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
  * This file is auto-generated based on the integrations you selected.
  */
 
-import { tokenStore } from "../../../../lib/token-store";
+${imports}
 
 // Integrations configured for this project
 const INTEGRATIONS = [
 ${integrationEntries}
-];
+] as const;
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
 
-export async function GET(_req: Request) {
-  // Get actual user ID from session in production
-  const userId = "current-user";
+function jsonResponse(body: unknown, status = 200): Response {
+  return Response.json(body, { status, headers: NO_STORE_HEADERS });
+}
 
-  const statuses = await Promise.all(
-    INTEGRATIONS.map(async (integration) => {
-      const connected = await tokenStore.isConnected(userId, integration.id);
-      return {
-        id: integration.id,
-        name: integration.name,
-        icon: integration.icon,
-        connected,
-        connectUrl: \`/api/auth/\${integration.id}\`,
-      };
-    }),
-  );
+${helperDefinitions}
 
-  return Response.json({ integrations: statuses });
+export async function GET(req: Request): Promise<Response> {
+  const userId = await requireUserIdFromRequest(req);
+  if (!userId) return jsonResponse({ error: "Unauthorized" }, 401);
+
+  try {
+    const integrations = await Promise.all(
+      INTEGRATIONS.map(async (integration) => {
+        const { id, name, icon, authType, connectionMode } = integration;
+        const connected = await resolveConnected(integration, userId);
+        const isUserOAuth = String(connectionMode) === "user-oauth";
+
+        return {
+          id,
+          name,
+          icon,
+          authType,
+          connected,
+          connectionState: connected
+            ? (isUserOAuth ? "connected" : "configured")
+            : (isUserOAuth ? "disconnected" : "configuration-required"),
+          connectUrl: isUserOAuth ? \`/api/auth/\${id}\` : null,
+        };
+      }),
+    );
+
+    return jsonResponse({ integrations });
+  } catch {
+    return jsonResponse({
+      error: "Integration status is temporarily unavailable",
+    }, 503);
+  }
 }
 `;
 }
@@ -206,10 +338,13 @@ function structureRank(name: string): number {
   return index === -1 ? STRUCTURE_ORDER.length : index;
 }
 
-function sortStructureEntries([nameA, nodeA]: [string, StructureNode], [nameB, nodeB]: [
-  string,
-  StructureNode,
-]): number {
+function sortStructureEntries(
+  [nameA, nodeA]: [string, StructureNode],
+  [nameB, nodeB]: [
+    string,
+    StructureNode,
+  ],
+): number {
   const rankDiff = structureRank(nameA) - structureRank(nameB);
   if (rankDiff !== 0) return rankDiff;
 
@@ -217,7 +352,11 @@ function sortStructureEntries([nameA, nodeA]: [string, StructureNode], [nameB, n
   return nameA.localeCompare(nameB);
 }
 
-function renderProjectStructure(rootName: string, paths: string[], maxLines = 22): string[] {
+function renderProjectStructure(
+  rootName: string,
+  paths: string[],
+  maxLines = 22,
+): string[] {
   const root: StructureNode = { file: false, children: new Map() };
   const normalizedPaths = [...new Set(paths)]
     .filter((path) => path && !path.endsWith("/"))
@@ -259,7 +398,11 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
   walk(root, 1);
 
   if (omitted > 0) {
-    lines.push(`${"  ".repeat(1)}... ${omitted} more ${omitted === 1 ? "entry" : "entries"}`);
+    lines.push(
+      `${"  ".repeat(1)}... ${omitted} more ${
+        omitted === 1 ? "entry" : "entries"
+      }`,
+    );
   }
 
   return lines;
@@ -331,7 +474,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
   validateOrThrow("features", features, validateFeatures);
   validateOrThrow("integrations", integrations, validateIntegrations);
 
-  const featuresStr = features.length ? ` with features: ${features.join(", ")}` : "";
+  const featuresStr = features.length
+    ? ` with features: ${features.join(", ")}`
+    : "";
   const integrationsStr = integrations.length
     ? ` with integrations: ${integrations.join(", ")}`
     : "";
@@ -384,7 +529,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     ]);
   }
 
-  const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
+  const allEnvVars: EnvVarConfig[] = templateConfig?.envVars
+    ? [...templateConfig.envVars]
+    : [];
   const featureTips: string[] = [];
   let loadedIntegrations: ResolvedIntegration[] = [];
 
@@ -409,7 +556,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
         continue;
       }
 
-      logger.debug(`Loading feature: ${featureName} (${feature.files.length} files)`);
+      logger.debug(
+        `Loading feature: ${featureName} (${feature.files.length} files)`,
+      );
       templateFiles = mergeFiles(templateFiles, feature.files);
 
       if (feature.config.envVars) allEnvVars.push(...feature.config.envVars);
@@ -420,11 +569,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (integrations.length) {
     logger.debug(`Loading integrations: ${integrations.join(", ")}`);
 
-    templateFiles = mergeFiles(templateFiles, getIntegrationBaseFiles());
-    templateFiles = mergeFiles(templateFiles, await loadIntegrationBaseFilesFromDirectory());
+    templateFiles = mergeFiles(
+      templateFiles,
+      await loadIntegrationBaseFilesFromDirectory(),
+    );
 
     const baseConfig = await loadIntegrationBaseConfig();
-    if (baseConfig?.envVars) allEnvVars.push(...baseConfig.envVars);
+    if (baseConfig.envVars) allEnvVars.push(...baseConfig.envVars);
 
     const {
       integrations: resolvedIntegrations,
@@ -434,13 +585,23 @@ export async function initCommand(options: InitOptions): Promise<void> {
     loadedIntegrations = resolvedIntegrations;
 
     if (integrationErrors.length) {
-      for (const error of integrationErrors) logger.warn(error);
+      for (const error of integrationErrors) logger.error(error);
+      throw toError(
+        createError({
+          type: "config",
+          message: `Failed to load selected integrations: ${
+            integrationErrors.join("; ")
+          }`,
+        }),
+      );
     }
 
     templateFiles = mergeFiles(templateFiles, integrationFiles);
 
     for (const integration of loadedIntegrations) {
-      if (integration.config.envVars) allEnvVars.push(...integration.config.envVars);
+      if (integration.config.envVars) {
+        allEnvVars.push(...integration.config.envVars);
+      }
     }
 
     templateFiles = mergeFiles(templateFiles, [
@@ -462,7 +623,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (projectName) await ensureDir(projectDir);
 
   // Create project files with progress spinner
-  const filesSpinner = quiet ? null : createSpinner("Creating project files...");
+  const filesSpinner = quiet
+    ? null
+    : createSpinner("Creating project files...");
   const createdPaths: string[] = [];
   try {
     for (const file of templateFiles as TemplateFile[]) {
@@ -505,7 +668,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
       createdPaths.push(".env");
       logger.debug("Created file: .env");
 
-      await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+      await fs.writeTextFile(
+        join(projectDir, ".env.example"),
+        envResult.envExampleContent,
+      );
       createdPaths.push(".env.example");
       logger.debug("Created file: .env.example");
     }
@@ -518,7 +684,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
       existingGitignore = undefined;
     }
 
-    await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+    await fs.writeTextFile(
+      gitignorePath,
+      generateGitignoreContent(existingGitignore),
+    );
     createdPaths.push(".gitignore");
     logger.debug("Updated file: .gitignore");
 
@@ -530,10 +699,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Initialize git if requested
   if (initGit) {
-    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
+    const gitSpinner = quiet
+      ? null
+      : createSpinner("Initializing git repository...");
     try {
       const { initializeGitRepo } = await import("../../utils/git.ts");
-      const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
+      const success = await initializeGitRepo(
+        projectDir,
+        projectName ?? "veryfront project",
+      );
       if (success) {
         gitSpinner?.success("Git repository initialized");
       } else {
@@ -544,11 +718,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
-  (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
+  (options as InitOptions & { _featureTips?: string[] })._featureTips =
+    featureTips;
 
   if (!options.skipInstall) {
     const pm = await detectPackageManager(projectDir, pmPreference);
-    const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
+    const installSpinner = quiet
+      ? null
+      : createSpinner(`Installing dependencies with ${pm}...`);
     const installSuccess = await installDependencies(projectDir, {
       silent: true,
       packageManager: pm,
@@ -559,7 +736,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     } else {
       installSpinner?.error("Dependency installation failed");
       if (!quiet) {
-        logger.warn(`Run '${getInstallCommand(pm)}' manually to install dependencies.`);
+        logger.warn(
+          `Run '${getInstallCommand(pm)}' manually to install dependencies.`,
+        );
       }
     }
   }
@@ -568,13 +747,17 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let deployedSlug: string | undefined;
   if (options.deploy) {
     const { chdir } = await import("veryfront/platform");
-    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+    const { ensureAuthenticated, readToken } = await import(
+      "../../auth/index.ts"
+    );
     const { randomSuffix } = await import("#cli/shared/slug");
     const { reserveProjectSlug } = await import("#cli/shared/reserve-slug");
     const { writeProjectSlug } = await import("#cli/shared/config");
     const { pushCommand } = await import("../push/index.ts");
     const { deployCommand } = await import("../deploy/index.ts");
-    const manualDeployHint = `Run ${brand("veryfront push --branch main")}, then ${
+    const manualDeployHint = `Run ${
+      brand("veryfront push --branch main")
+    }, then ${
       brand("veryfront deploy --branch main --env production")
     } to deploy later.`;
 
@@ -620,7 +803,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
             }`,
           );
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = error instanceof Error
+            ? error.message
+            : String(error);
           log(`\n  Deploy failed: ${message}`);
           log(`  Your project was created locally. ${manualDeployHint}`);
         }
@@ -673,7 +858,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   if (!quiet) {
     console.log("");
-    console.log(box(successContent.join("\n"), { style: "rounded", padding: 1 }));
+    console.log(
+      box(successContent.join("\n"), { style: "rounded", padding: 1 }),
+    );
 
     const tips: string[] = [];
     if (template !== "minimal") {
@@ -683,7 +870,8 @@ export async function initCommand(options: InitOptions): Promise<void> {
       );
     }
 
-    const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
+    const displayFeatureTips =
+      (options as InitOptions & { _featureTips?: string[] })._featureTips;
     if (displayFeatureTips?.length) {
       for (const tip of displayFeatureTips) {
         tips.push(dim(tip));

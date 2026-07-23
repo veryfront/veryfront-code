@@ -21,6 +21,7 @@ import { generateNonce } from "#veryfront/security/http/response/security-handle
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { getRequestTokenProvenance } from "../../../context/request-context.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -96,6 +97,10 @@ export class RSCHandler extends BaseHandler {
                 ? null
                 : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
               environmentName: ctx.environmentName,
+              tokenProvenance: getRequestTokenProvenance(
+                ctx.requestContext,
+                ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "",
+              ),
             },
           )
           : await execute();

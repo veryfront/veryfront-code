@@ -7,6 +7,8 @@ import type {
   ResolvedExtension,
 } from "./types.ts";
 import { register, tryResolve } from "./contracts.ts";
+import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
+import { validateExtension } from "./validation.ts";
 import type { EvalReportExporterRegistry } from "./eval/index.ts";
 import { createEvalReportExporterRegistry, EvalReportExporterRegistryName } from "./eval/index.ts";
 import {
@@ -255,7 +257,13 @@ function createBuiltinLLMProviderExtension(
 export function createOptionalBuiltinExtension(
   definition: OptionalBuiltinExtensionDefinition,
 ): ResolvedExtension {
-  let loaded: Extension | undefined;
+  let generation:
+    | {
+      extension: Extension;
+      setupSettled: Promise<void>;
+      teardown?: Promise<void>;
+    }
+    | undefined;
 
   return {
     source: "builtin",
@@ -269,17 +277,47 @@ export function createOptionalBuiltinExtension(
         const extension = await loadOptionalBuiltinExtension(definition, ctx);
         if (!extension) return;
 
-        loaded = extension;
-        for (
-          const [contract, impl] of Object.entries(extension.provides ?? {})
-        ) {
-          ctx.provide(contract, impl);
+        const setupSettlement = Promise.withResolvers<void>();
+        const current: NonNullable<typeof generation> = {
+          extension,
+          setupSettled: setupSettlement.promise,
+        };
+        generation = current;
+        try {
+          for (
+            const [contract, impl] of Object.entries(extension.provides ?? {})
+          ) {
+            ctx.provide(contract, impl);
+          }
+          await extension.setup?.(ctx);
+        } finally {
+          setupSettlement.resolve();
         }
-        await extension.setup?.(ctx);
       },
       async teardown() {
-        await loaded?.teardown?.();
-        loaded = undefined;
+        const current = generation;
+        if (!current) return;
+
+        if (current.teardown) {
+          await current.teardown;
+          return;
+        }
+
+        // A non-cooperative setup may continue after the outer loader times
+        // out. Wait for its final acquisition opportunity, then run the
+        // implementation hook once per attempt. Concurrent callers share the
+        // same barrier; a rejected hook remains owned and may be retried by a
+        // later explicit teardown call.
+        const cleanup = current.setupSettled.then(() => current.extension.teardown?.());
+        current.teardown = cleanup;
+
+        try {
+          await cleanup;
+          if (generation === current) generation = undefined;
+        } catch (error) {
+          if (current.teardown === cleanup) current.teardown = undefined;
+          throw error;
+        }
       },
     },
   };
@@ -294,7 +332,16 @@ async function loadOptionalBuiltinExtension(
       definition.sourceDirectory,
       getFirstPartyExtensionPackageName(definition),
     );
-    return factory();
+    const factoryResult = (factory as () => unknown)();
+    const issues = validateExtension(factoryResult);
+    if (issues.length > 0) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail: `Optional builtin factory for "${definition.name}" returned an invalid extension: ${
+          issues.join("; ")
+        }`,
+      });
+    }
+    return factoryResult as Extension;
   } catch (error) {
     if (!isMissingOptionalBuiltinImplementation(error, definition)) {
       throw error;

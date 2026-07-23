@@ -8,6 +8,7 @@ export { type EnvReader, OAuthProvider, OAuthService } from "./base.ts";
 
 export {
   calendarConfig,
+  docsGoogleConfig,
   driveConfig,
   gmailConfig,
   googleServices,
@@ -58,6 +59,8 @@ export type {
   OAuthServiceConfig,
   OAuthState,
   OAuthTokens,
+  OAuthTokenSnapshot,
+  RefreshCapableTokenStore,
   TokenExchangeOptions,
   TokenExchangeResult,
   TokenStore,

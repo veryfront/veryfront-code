@@ -46,9 +46,13 @@ export function recordError(
     return;
   }
 
-  errorCounter.add(1, {
-    slug: error.slug,
-    category: error.category,
-    status: String(error.status),
-  });
+  try {
+    errorCounter.add(1, {
+      slug: error.slug,
+      category: error.category,
+      status: String(error.status),
+    });
+  } catch (_) {
+    /* expected: metrics failures must never affect error handling */
+  }
 }

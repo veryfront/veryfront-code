@@ -13,6 +13,12 @@
       "required": false,
       "sensitive": false,
       "default": "http://localhost:3000"
+    },
+    {
+      "name": "VERYFRONT_OAUTH_STORE_MODE",
+      "description": "Set to memory only for an explicit local development OAuth store",
+      "required": false,
+      "sensitive": false
     }
   ],
   "tools": []

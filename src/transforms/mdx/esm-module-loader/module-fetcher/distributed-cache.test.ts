@@ -7,6 +7,7 @@ import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { readDistributedCache, writeDistributedCache } from "./distributed-cache.ts";
+import { parseMdxModuleRecoveryPayload } from "./recovery-payload.ts";
 
 interface LogEntry {
   level: "debug" | "warn" | "info" | "error";
@@ -167,13 +168,13 @@ describe("module-fetcher/distributed-cache", () => {
       "export default child;",
     ].join("\n");
 
-    writeDistributedCache(
+    await writeDistributedCache(
       cache,
       "transform:write",
       "project-a",
       "preview-main",
       moduleCode,
-      "app/page.mdx",
+      "_vf_modules/app/page.js",
       log,
     );
 
@@ -187,6 +188,14 @@ describe("module-fetcher/distributed-cache", () => {
     assertEquals(primary?.includes("/tmp/build/.cache"), false);
     assertEquals(cache.setCalls[0]?.ttlSeconds, TRANSFORM_DISTRIBUTED_TTL_SEC);
     assertEquals(recovery?.ttlSeconds, TRANSFORM_DISTRIBUTED_TTL_SEC);
-    assertEquals(recovery?.value, primary);
+    const payload = recovery
+      ? parseMdxModuleRecoveryPayload(recovery.value, {
+        projectId: "project-a",
+        contentSourceId: "preview-main",
+        fileName: JSON.parse(recovery.value).fileName,
+      })
+      : null;
+    assertEquals(payload?.portableCode, primary);
+    assertEquals(payload?.codeHash.length, 64);
   });
 });

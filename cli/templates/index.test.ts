@@ -1,9 +1,35 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { getTemplate, templateConfigs } from "./index.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
+import {
+  airtableConfig,
+  asanaConfig,
+  bitbucketConfig,
+  calendarConfig,
+  confluenceConfig,
+  docsGoogleConfig,
+  driveConfig,
+  figmaConfig,
+  githubConfig,
+  gitlabConfig,
+  gmailConfig,
+  jiraConfig,
+  linearConfig,
+  notionConfig,
+  oneDriveConfig,
+  outlookConfig,
+  sharePointConfig,
+  sheetsConfig,
+  slackConfig,
+  teamsConfig,
+} from "veryfront/oauth";
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [
   "ai-agent",
@@ -14,6 +40,79 @@ const STYLED_STARTER_TEMPLATES: TemplateName[] = [
   "saas-starter",
 ];
 
+const OAUTH_CLIENT_INTEGRATIONS = {
+  airtable: "createAirtableClient",
+  asana: "createAsanaClient",
+  confluence: "createConfluenceClient",
+  figma: "createFigmaClient",
+  gitlab: "createGitLabClient",
+  jira: "createJiraClient",
+  linear: "createLinearClient",
+  notion: "createNotionClient",
+  onedrive: "createOneDriveClient",
+  outlook: "createOutlookClient",
+  sharepoint: "createSharePointClient",
+  teams: "createTeamsClient",
+} as const;
+
+const SUPPORTED_OAUTH_TOOL_INTEGRATIONS = [
+  ...Object.keys(OAUTH_CLIENT_INTEGRATIONS),
+  "bitbucket",
+  "calendar",
+  "docs-google",
+  "drive",
+  "github",
+  "gmail",
+  "sheets",
+  "slack",
+] as const;
+
+const OAUTH_CLIENT_FILES = {
+  airtable: "airtable-client.ts",
+  asana: "asana-client.ts",
+  bitbucket: "bitbucket-client.ts",
+  calendar: "calendar-client.ts",
+  confluence: "confluence-client.ts",
+  "docs-google": "docs-client.ts",
+  drive: "drive-client.ts",
+  figma: "figma-client.ts",
+  github: "github-client.ts",
+  gitlab: "gitlab-client.ts",
+  gmail: "gmail-client.ts",
+  jira: "jira-client.ts",
+  linear: "linear-client.ts",
+  notion: "notion-client.ts",
+  onedrive: "onedrive-client.ts",
+  outlook: "outlook-client.ts",
+  sharepoint: "sharepoint-client.ts",
+  sheets: "sheets-client.ts",
+  slack: "slack-client.ts",
+  teams: "teams-client.ts",
+} as const;
+
+const OAUTH_PROVIDER_CONFIGS = {
+  airtable: airtableConfig,
+  asana: asanaConfig,
+  bitbucket: bitbucketConfig,
+  calendar: calendarConfig,
+  confluence: confluenceConfig,
+  "docs-google": docsGoogleConfig,
+  drive: driveConfig,
+  figma: figmaConfig,
+  github: githubConfig,
+  gitlab: gitlabConfig,
+  gmail: gmailConfig,
+  jira: jiraConfig,
+  linear: linearConfig,
+  notion: notionConfig,
+  onedrive: oneDriveConfig,
+  outlook: outlookConfig,
+  sharepoint: sharePointConfig,
+  sheets: sheetsConfig,
+  slack: slackConfig,
+  teams: teamsConfig,
+} as const;
+
 async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
   const files: URL[] = [];
 
@@ -22,7 +121,10 @@ async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
 
     if (entry.isDirectory) {
       files.push(...await collectTemplateTsFiles(child));
-    } else if (entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
+    } else if (
+      entry.isFile &&
+      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
+    ) {
       files.push(child);
     }
   }
@@ -36,7 +138,10 @@ describe("cli/templates", () => {
 
     for (const templateName of STARTER_TEMPLATE_NAMES) {
       const files = await getTemplate(templateName);
-      assertExists(files, `${templateName} should load from the template registry`);
+      assertExists(
+        files,
+        `${templateName} should load from the template registry`,
+      );
 
       if (files.some((file) => file.path === "package.json")) {
         offenders.push(templateName);
@@ -50,8 +155,14 @@ describe("cli/templates", () => {
         offenders.join(", ")
       }`,
     );
-    assertEquals(templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/node"], "^4.4.2");
-    assertEquals(templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/wasm"], "4.5.2");
+    assertEquals(
+      templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/node"],
+      "^4.4.2",
+    );
+    assertEquals(
+      templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/wasm"],
+      "4.5.2",
+    );
     assertEquals(templateConfigs["docs-agent"]?.firstPartyExtensions, [
       "@veryfront/ext-document-kreuzberg",
     ]);
@@ -59,7 +170,10 @@ describe("cli/templates", () => {
 
   it("ships a Tailwind entry stylesheet for styled starter templates", async () => {
     for (const templateName of STYLED_STARTER_TEMPLATES) {
-      const globalsPath = new URL(`./files/${templateName}/globals.css`, import.meta.url);
+      const globalsPath = new URL(
+        `./files/${templateName}/globals.css`,
+        import.meta.url,
+      );
       const globals = await Deno.readTextFile(globalsPath);
       assertExists(globals, `${templateName} should include globals.css`);
       assertEquals(
@@ -72,7 +186,10 @@ describe("cli/templates", () => {
 
   it("imports globals.css from each styled starter root layout", async () => {
     for (const templateName of STYLED_STARTER_TEMPLATES) {
-      const layoutPath = new URL(`./files/${templateName}/app/layout.tsx`, import.meta.url);
+      const layoutPath = new URL(
+        `./files/${templateName}/app/layout.tsx`,
+        import.meta.url,
+      );
       const layout = await Deno.readTextFile(layoutPath);
       assertExists(layout, `${templateName} should include app/layout.tsx`);
       assertEquals(
@@ -86,19 +203,35 @@ describe("cli/templates", () => {
   });
 
   it("keeps the ai-agent calculator template lint-clean", async () => {
-    const calculatorPath = new URL("./files/ai-agent/tools/calculator.ts", import.meta.url);
+    const calculatorPath = new URL(
+      "./files/ai-agent/tools/calculator.ts",
+      import.meta.url,
+    );
     const calculator = await Deno.readTextFile(calculatorPath);
 
     assertEquals(calculator.includes("execute: async"), false);
-    assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
+    assertEquals(
+      calculator.includes("execute: ({ operation, a, b }) =>"),
+      true,
+    );
   });
 
   it("uses the current app-mode chat surface in starter templates", async () => {
-    const simpleStarters: Array<{ template: TemplateName; page: string; agentId: string }> = [
+    const simpleStarters: Array<
+      { template: TemplateName; page: string; agentId: string }
+    > = [
       { template: "ai-agent", page: "app/page.tsx", agentId: "assistant" },
-      { template: "multi-agent-system", page: "app/page.tsx", agentId: "orchestrator" },
+      {
+        template: "multi-agent-system",
+        page: "app/page.tsx",
+        agentId: "orchestrator",
+      },
       { template: "coding-agent", page: "app/page.tsx", agentId: "coder" },
-      { template: "saas-starter", page: "app/dashboard/page.tsx", agentId: "assistant" },
+      {
+        template: "saas-starter",
+        page: "app/dashboard/page.tsx",
+        agentId: "assistant",
+      },
     ];
 
     for (const { template, page, agentId } of simpleStarters) {
@@ -147,7 +280,11 @@ describe("cli/templates", () => {
         "Tabs",
       ]
     ) {
-      assertEquals(layout.includes(needle), true, `docs-agent layout should use ${needle}`);
+      assertEquals(
+        layout.includes(needle),
+        true,
+        `docs-agent layout should use ${needle}`,
+      );
     }
     assertEquals(layout.includes("<ChatSidebar.Root"), true);
     assertEquals(layout.includes("<ChatSidebar fill"), false);
@@ -173,7 +310,9 @@ describe("cli/templates", () => {
       "token-store.ts should centralize default store selection",
     );
     assertEquals(
-      tokenStore.includes("In-memory token storage is not allowed in production"),
+      tokenStore.includes(
+        "In-memory credential storage is not allowed in production",
+      ),
       true,
       "token-store.ts should fail closed for production memory storage",
     );
@@ -183,15 +322,478 @@ describe("cli/templates", () => {
       "token-store.ts should resolve the default store lazily",
     );
     assertEquals(
-      tokenStore.includes("export const tokenStore: TokenStore = inMemoryStore;"),
+      tokenStore.includes(
+        "export const tokenStore: TokenStore = inMemoryStore;",
+      ),
       false,
       "token-store.ts must not export the in-memory store unconditionally",
     );
     assertEquals(
-      tokenStore.includes("export const tokenStore: TokenStore = createDefaultTokenStore();"),
+      tokenStore.includes(
+        "export const tokenStore: TokenStore = createDefaultTokenStore();",
+      ),
       false,
       "token-store.ts must not throw during module import in production",
     );
+  });
+
+  it("OAuth integration routes share one hardened application token store", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const oauthRoutes: URL[] = [];
+    const offenders: string[] = [];
+
+    for (const file of await collectTemplateTsFiles(integrationTemplates)) {
+      if (!file.pathname.includes("/app/api/auth/")) continue;
+      const source = await Deno.readTextFile(file);
+      if (
+        !source.includes("createOAuthInitHandler") &&
+        !source.includes("createOAuthCallbackHandler")
+      ) {
+        continue;
+      }
+
+      oauthRoutes.push(file);
+      for (
+        const forbidden of [
+          "oauthMemoryTokenStore",
+          "hybridTokenStore",
+          "tokenStore.getToken",
+          "codeVerifier?: string",
+          "redirectUri?: string",
+        ]
+      ) {
+        if (source.includes(forbidden)) {
+          offenders.push(`${file.pathname}: ${forbidden}`);
+        }
+      }
+      if (!source.includes("oauthTokenStore")) {
+        offenders.push(`${file.pathname}: missing oauthTokenStore`);
+      }
+      const sharedLibPrefix = source.includes("createOAuthCallbackHandler")
+        ? "../../../../../lib/"
+        : "../../../../lib/";
+      if (!source.includes(sharedLibPrefix)) {
+        offenders.push(`${file.pathname}: invalid generated lib import depth`);
+      }
+    }
+
+    assertEquals(
+      oauthRoutes.length,
+      46,
+      "23 OAuth integrations should ship init + callback routes",
+    );
+    assertEquals(
+      offenders,
+      [],
+      `OAuth routes must share the production-capable TokenStore contract. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
+  it("OAuth storage is injected, capability-checked, and only explicitly memory-backed in dev", async () => {
+    const registry = await Deno.readTextFile(
+      new URL(
+        "./integrations/_base/files/lib/oauth-store-registry.ts",
+        import.meta.url,
+      ),
+    );
+    const store = await Deno.readTextFile(
+      new URL("./integrations/_base/files/lib/oauth-store.ts", import.meta.url),
+    );
+
+    for (
+      const capability of [
+        "getTokenSnapshot",
+        "compareAndSetTokens",
+        "withTokenRefreshLock",
+        "setState",
+        "consumeState",
+        "getStorageStatus",
+      ]
+    ) {
+      assertEquals(
+        registry.includes(capability),
+        true,
+        `injected OAuth TokenStore must require ${capability}`,
+      );
+    }
+    assertEquals(registry.includes("installOAuthTokenStore"), true);
+    assertEquals(store.includes("VERYFRONT_OAUTH_STORE_MODE"), true);
+    assertEquals(store.includes('=== "memory"'), true);
+    assertEquals(store.includes("new MemoryTokenStore"), true);
+    assertEquals(
+      store.includes("OAuth TokenStore is not configured"),
+      true,
+      "production route loading must fail instead of silently selecting memory",
+    );
+
+    const statusRoute = await Deno.readTextFile(
+      new URL(
+        "./integrations/_base/files/app/api/integrations/token-storage/route.ts",
+        import.meta.url,
+      ),
+    );
+    assertEquals(statusRoute.includes("getOAuthStorageStatus"), true);
+    assertEquals(statusRoute.includes("requireUserIdFromRequest"), true);
+    assertEquals(statusRoute.includes("process.env"), false);
+    assertEquals(statusRoute.includes("autoGenerated"), false);
+    assertEquals(statusRoute.includes("encrypted: true"), false);
+
+    const legacyStore = await Deno.readTextFile(
+      new URL(
+        "./integrations/_base/files/lib/token-store.ts",
+        import.meta.url,
+      ),
+    );
+    assertEquals(legacyStore.includes("process.env"), false);
+    assertEquals(legacyStore.includes("AUTO_KEY_STORAGE"), false);
+    assertEquals(legacyStore.includes("JSON.stringify(["), true);
+    assertEquals(legacyStore.includes("legacyColonKeyMigration"), true);
+    await assertRejects(
+      () =>
+        Deno.stat(
+          new URL(
+            "./integrations/_base/files/lib/token-store-examples.ts",
+            import.meta.url,
+          ),
+        ),
+      Deno.errors.NotFound,
+    );
+  });
+
+  it("OAuth request identity requires an injected verified resolver", async () => {
+    const userIdTemplate = await Deno.readTextFile(
+      new URL("./integrations/_base/files/lib/user-id.ts", import.meta.url),
+    );
+
+    assertEquals(
+      userIdTemplate.includes("installRequestIdentityResolver"),
+      true,
+    );
+    assertEquals(userIdTemplate.includes("x-user-id"), false);
+    assertEquals(userIdTemplate.includes("x-veryfront-user-id"), false);
+    assertEquals(userIdTemplate.includes('?? "dev-user"'), false);
+    assertEquals(
+      userIdTemplate.includes("Deno.env"),
+      false,
+      "template must not require Deno",
+    );
+    assertEquals(
+      userIdTemplate.includes("globalThis"),
+      true,
+      "template must support Deno",
+    );
+  });
+
+  it("integration OAuth clients delegate refresh to veryfront/oauth", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const oauthFiles: URL[] = [];
+
+    for (const file of await collectTemplateTsFiles(integrationTemplates)) {
+      if (file.pathname.endsWith("/files/lib/oauth.ts")) oauthFiles.push(file);
+    }
+
+    assertEquals(
+      oauthFiles.map((file) =>
+        file.pathname.replace(integrationTemplates.pathname, "")
+      ),
+      ["_base/files/lib/oauth.ts"],
+      "integrations must not override the shared hardened OAuth helper",
+    );
+    const source = await Deno.readTextFile(oauthFiles[0]!);
+    assertEquals(source.includes("OAuthService"), true);
+    assertEquals(source.includes("oauthTokenStore"), true);
+    assertEquals(source.includes('redirect: "error"'), true);
+    assertEquals(source.includes("AbortSignal.timeout"), true);
+    assertEquals(source.includes("readBoundedBytes"), true);
+    assertEquals(source.includes("target.origin !== allowed.origin"), true);
+    assertEquals(source.includes("assertCredentialFreeHeaders"), true);
+  });
+
+  it("OAuth integration clients never issue raw token-bearing fetch requests", async () => {
+    const offenders: string[] = [];
+    for (const [integration, fileName] of Object.entries(OAUTH_CLIENT_FILES)) {
+      const source = await Deno.readTextFile(
+        new URL(
+          `./integrations/${integration}/files/lib/${fileName}`,
+          import.meta.url,
+        ),
+      );
+      if (/(^|[^.\w])fetch\s*\(/m.test(source)) {
+        offenders.push(`${integration}: raw fetch`);
+      }
+      if (/Authorization\s*:/i.test(source)) {
+        offenders.push(`${integration}: constructs Authorization`);
+      }
+      if (source.includes("getValidToken")) {
+        offenders.push(`${integration}: extracts a bearer token`);
+      }
+    }
+    assertEquals(
+      offenders,
+      [],
+      `OAuth clients must delegate requests to the bounded helper. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
+  it("OAuth API tools bind every request to the authenticated application user", async () => {
+    const offenders: string[] = [];
+
+    for (
+      const [integration, factoryName] of Object.entries(
+        OAUTH_CLIENT_INTEGRATIONS,
+      )
+    ) {
+      const clientPath = new URL(
+        `./integrations/${integration}/files/lib/${integration}-client.ts`,
+        import.meta.url,
+      );
+      const client = await Deno.readTextFile(clientPath);
+
+      if (client.includes('from "./token-store.ts"')) {
+        offenders.push(`${integration}: imports the legacy token store`);
+      }
+      if (!client.includes('from "./oauth.ts"')) {
+        offenders.push(
+          `${integration}: does not use the hardened OAuth helper`,
+        );
+      }
+      if (!client.includes(`export function ${factoryName}(userId: string)`)) {
+        offenders.push(`${integration}: missing ${factoryName}(userId)`);
+      }
+      if (/getAccessToken\s*\(\s*\)/.test(client)) {
+        offenders.push(`${integration}: calls a zero-argument token getter`);
+      }
+
+      const toolsDir = new URL(
+        `./integrations/${integration}/files/tools/`,
+        import.meta.url,
+      );
+      for (const toolFile of await collectTemplateTsFiles(toolsDir)) {
+        const tool = await Deno.readTextFile(toolFile);
+        const relativePath = toolFile.pathname.replace(toolsDir.pathname, "");
+        if (!tool.includes("requireUserIdFromContext")) {
+          offenders.push(
+            `${integration}/${relativePath}: missing authenticated user resolver`,
+          );
+        }
+        if (!tool.includes("requireUserIdFromContext(context)")) {
+          offenders.push(
+            `${integration}/${relativePath}: does not resolve context.userId`,
+          );
+        }
+        if (!tool.includes(`${factoryName}(userId)`)) {
+          offenders.push(
+            `${integration}/${relativePath}: does not create a per-user client`,
+          );
+        }
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `OAuth API clients and tools must be user-bound. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
+  it("supported OAuth tools import shared libraries from their emitted location", async () => {
+    const offenders: string[] = [];
+
+    for (const integration of SUPPORTED_OAUTH_TOOL_INTEGRATIONS) {
+      const toolsDir = new URL(
+        `./integrations/${integration}/files/tools/`,
+        import.meta.url,
+      );
+      for (const toolFile of await collectTemplateTsFiles(toolsDir)) {
+        const source = await Deno.readTextFile(toolFile);
+        const relativePath = toolFile.pathname.replace(toolsDir.pathname, "");
+        if (source.includes('"../../lib/')) {
+          offenders.push(
+            `${integration}/${relativePath}: escapes the emitted project root`,
+          );
+        }
+        if (!source.includes('"../lib/')) {
+          offenders.push(
+            `${integration}/${relativePath}: missing emitted lib import`,
+          );
+        }
+        if (
+          !source.includes("requireUserIdFromContext(context)") &&
+          !source.includes("resolveUserId(context)")
+        ) {
+          offenders.push(
+            `${integration}/${relativePath}: missing authenticated context user`,
+          );
+        }
+        if (
+          source.includes("DEFAULT_USER_ID") || source.includes("demo-user")
+        ) {
+          offenders.push(
+            `${integration}/${relativePath}: contains a shared fallback user`,
+          );
+        }
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `Generated OAuth tool imports must resolve from root tools/. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
+  it("Google Docs templates only request documented Google OAuth scopes", async () => {
+    const invalidScope = "https://www.googleapis.com/auth/docs";
+    const checkedFiles = [
+      "./integrations/docs-google/connector.json",
+      "./integrations/docs-google/files/lib/docs-client.ts",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = await Deno.readTextFile(new URL(path, import.meta.url));
+      assertEquals(
+        source.includes(invalidScope),
+        false,
+        `${path} contains a nonexistent scope`,
+      );
+    }
+  });
+
+  it("keeps supported OAuth connector scopes aligned with generated setup guidance", async () => {
+    const expectedScopes = {
+      drive: ["https://www.googleapis.com/auth/drive"],
+      github: ["repo", "read:user", "read:org"],
+      gitlab: ["api", "read_user", "read_repository"],
+      bitbucket: ["repository", "pullrequest:write", "issue", "account"],
+      jira: [
+        "read:jira-work",
+        "write:jira-work",
+        "read:jira-user",
+        "offline_access",
+      ],
+      confluence: [
+        "read:confluence-content.all",
+        "write:confluence-content",
+        "read:confluence-space.summary",
+        "read:confluence-user",
+        "search:confluence",
+        "read:page:confluence",
+        "write:page:confluence",
+        "offline_access",
+      ],
+      sheets: [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+      ],
+      onedrive: [
+        "Files.Read",
+        "Files.ReadWrite",
+        "Files.Read.All",
+        "Files.ReadWrite.All",
+        "offline_access",
+      ],
+      sharepoint: [
+        "Sites.Read.All",
+        "Sites.ReadWrite.All",
+        "Files.Read.All",
+        "Files.ReadWrite.All",
+        "offline_access",
+      ],
+      outlook: [
+        "Mail.Read",
+        "Mail.Send",
+        "Mail.ReadWrite",
+        "Calendars.Read",
+        "Calendars.ReadWrite",
+        "Group.Read.All",
+        "Group-Conversation.Read.All",
+        "User.Read",
+        "offline_access",
+      ],
+      teams: [
+        "Chat.Read",
+        "Chat.ReadWrite",
+        "ChannelMessage.Send",
+        "ChannelMessage.Read.All",
+        "Channel.ReadBasic.All",
+        "Team.ReadBasic.All",
+        "User.Read",
+        "offline_access",
+      ],
+    } as const;
+    const setup = await Deno.readTextFile(
+      new URL("./integrations/_base/files/SETUP.md", import.meta.url),
+    );
+    const setupPage = await Deno.readTextFile(
+      new URL(
+        "./integrations/_base/files/app/setup/page-helpers.tsx",
+        import.meta.url,
+      ),
+    );
+
+    for (const [integration, scopes] of Object.entries(expectedScopes)) {
+      const connector = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `./integrations/${integration}/connector.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { auth?: { scopes?: unknown } };
+      assertEquals(
+        connector.auth?.scopes,
+        [...scopes],
+        `${integration} connector scopes must match the generated contract`,
+      );
+
+      for (const scope of scopes) {
+        assertEquals(
+          setup.includes(scope),
+          true,
+          `SETUP.md must list ${integration} scope ${scope}`,
+        );
+        assertEquals(
+          setupPage.includes(scope),
+          true,
+          `setup page must list ${integration} scope ${scope}`,
+        );
+      }
+    }
+
+    assertEquals(setup.includes("Enable **PKCE**"), true);
+    assertEquals(
+      setupPage.includes("Enable PKCE for the authorization flow (S256)"),
+      true,
+    );
+  });
+
+  it("keeps every generated OAuth connector scope-exact with its runtime provider", async () => {
+    for (
+      const [integration, provider] of Object.entries(OAUTH_PROVIDER_CONFIGS)
+    ) {
+      const connector = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `./integrations/${integration}/connector.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { auth?: { scopes?: unknown } };
+      assertEquals(
+        connector.auth?.scopes ?? [],
+        [...provider.defaultScopes],
+        `${integration} connector scopes must exactly match its OAuthService config`,
+      );
+    }
   });
 
   it("integration templates do not use a shared current-user token key", async () => {
@@ -200,15 +802,21 @@ describe("cli/templates", () => {
 
     for (const file of await collectTemplateTsFiles(integrationTemplates)) {
       const source = await Deno.readTextFile(file);
-      if (source.includes('"current-user"') || source.includes("'current-user'")) {
-        offenders.push(file.pathname.replace(integrationTemplates.pathname, ""));
+      if (
+        source.includes('"current-user"') || source.includes("'current-user'")
+      ) {
+        offenders.push(
+          file.pathname.replace(integrationTemplates.pathname, ""),
+        );
       }
     }
 
     assertEquals(
       offenders,
       [],
-      `Integration templates must require a real user id. Offenders: ${offenders.join(", ")}`,
+      `Integration templates must require a real user id. Offenders: ${
+        offenders.join(", ")
+      }`,
     );
   });
 
@@ -229,7 +837,9 @@ describe("cli/templates", () => {
     const offenders: string[] = [];
 
     for (const filePath of checkedFiles) {
-      const source = await Deno.readTextFile(new URL(filePath, import.meta.url));
+      const source = await Deno.readTextFile(
+        new URL(filePath, import.meta.url),
+      );
       for (const needle of forbidden) {
         if (source.includes(needle)) {
           offenders.push(`${filePath}: ${needle}`);
@@ -311,7 +921,9 @@ describe("cli/templates", () => {
       }
     }
 
-    const manifest = await Deno.readTextFile(new URL("./manifest.json", import.meta.url));
+    const manifest = await Deno.readTextFile(
+      new URL("./manifest.json", import.meta.url),
+    );
     if (/(^|[^.\w])JSX\./.test(manifest)) {
       offenders.push("manifest.json");
     }

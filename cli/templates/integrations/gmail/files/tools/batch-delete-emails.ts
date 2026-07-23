@@ -6,9 +6,13 @@ import { resolveUserId } from "../lib/context.ts";
 export default tool({
   id: "batch-delete-emails",
   description: "Permanently delete multiple Gmail messages.",
-  inputSchema: defineSchema((v) => v.object({
-    messageIds: v.array(v.string().min(1)).min(1).describe("Gmail message IDs"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      messageIds: v.array(v.string().min(1)).min(1).describe(
+        "Gmail message IDs",
+      ),
+    })
+  )(),
   execute: async ({ messageIds }, context) => {
     const userId = resolveUserId(context);
 

@@ -133,7 +133,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/app/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
@@ -253,7 +253,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFoundError();
           },
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {

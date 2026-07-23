@@ -2,7 +2,7 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
+import { bootstrapProd, type BootstrapResult, createRetryableDisposer } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -26,17 +26,88 @@ import {
   parseShutdownDrainTimeoutMs,
 } from "./graceful-shutdown.ts";
 import {
+  clearSSRServerPort,
+  disableSSRClientOnlyFetching,
+  disableSSRFetchInterception,
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { ExclusiveProcessOwner } from "./process-ownership.ts";
+import { HMRHandler } from "./handlers/preview/hmr.handler.ts";
+import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
 
 /** Default port when PORT / VERYFRONT_PORT env vars are not set */
 const DEFAULT_SERVER_PORT = 3_000;
+
+const productionServerOwnership = new ExclusiveProcessOwner("production server");
+
+interface ReadinessOutcome {
+  readonly status: "ready" | "failed";
+  readonly error?: unknown;
+}
+
+/**
+ * Generation-owned production readiness coordination.
+ *
+ * @internal Exported for lifecycle regression tests; not re-exported from the
+ * public server barrel.
+ */
+export interface ProductionReadiness {
+  onListen(): void;
+  cancel(error: unknown): void;
+  ready(): Promise<void>;
+}
+
+/** @internal */
+export function createProductionReadiness(
+  handlerReady: Promise<void>,
+): ProductionReadiness {
+  setServerInitialized(false);
+  const listenReady = Promise.withResolvers<void>();
+  const cancelled = Promise.withResolvers<ReadinessOutcome>();
+  let active = true;
+
+  const completed = Promise.all([listenReady.promise, handlerReady]).then(
+    (): ReadinessOutcome => {
+      if (!active) {
+        return {
+          status: "failed",
+          error: new Error("Production server startup was cancelled before readiness"),
+        };
+      }
+      setServerInitialized(true);
+      return { status: "ready" };
+    },
+    (error: unknown): ReadinessOutcome => {
+      setServerInitialized(false);
+      return { status: "failed", error };
+    },
+  );
+  const outcome = Promise.race([completed, cancelled.promise]);
+
+  return {
+    onListen(): void {
+      if (active) listenReady.resolve();
+    },
+    cancel(error: unknown): void {
+      if (!active) return;
+      active = false;
+      setServerInitialized(false);
+      cancelled.resolve({ status: "failed", error });
+    },
+    ready(): Promise<void> {
+      return outcome.then((result) => {
+        if (result.status === "ready") return;
+        throw result.error;
+      });
+    },
+  };
+}
 
 async function prewarmLocalProductionCSSArtifacts(
   adapter: RuntimeAdapter,
@@ -145,7 +216,14 @@ interface ServerOptions {
 
 /** Public API contract for server handle. */
 export interface ServerHandle {
+  /** Resolves after both the HTTP listener and request handler are ready. */
   ready: Promise<void>;
+  /** Actual bound port. This differs from the requested value when port 0 is used. */
+  readonly port: number;
+  /**
+   * Stop the listener and release all owned resources. Concurrent calls share
+   * an attempt; call again to retry a rejected cleanup.
+   */
   stop: () => Promise<void>;
 }
 
@@ -153,7 +231,10 @@ export interface ServerHandle {
 export interface StartProductionServerOptions extends ServerOptions {
   debug?: boolean;
   adapter?: RuntimeAdapter;
-  /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
+  /**
+   * Pre-computed bootstrap result to skip internal bootstrap. Ownership is
+   * transferred to the returned handle; callers must not dispose it directly.
+   */
   bootstrapResult?: BootstrapResult;
 }
 
@@ -164,30 +245,132 @@ export function startProductionServer(
   return withSpan(
     "server.startProductionServer",
     async () => {
-      const {
-        projectDir,
-        port,
-        bindAddress = "0.0.0.0",
-        signal,
-        debug,
-        defaultProjectSlug,
-        defaultProjectId,
-        defaultReleaseId,
-        defaultEnvironment,
-        requestInterceptor,
-        bootstrapResult,
-        discoveryConfig,
-        localProjects,
-      } = options;
+      const releaseServerOwnership = productionServerOwnership.acquire();
+      setServerInitialized(false);
+      let activeBootstrap: BootstrapResult | undefined;
+      let readiness: ProductionReadiness | undefined;
+      let ownsMemoryMonitoring = false;
+      let memoryMonitoringStopped = true;
+      let releaseHmrLifecycleOwner: (() => Promise<void>) | undefined;
+      let hmrLifecycleReleased = true;
+      let bootstrapDisposed = true;
+      let serverOwnershipReleased = false;
+      let listeningPort = options.port;
+      let ssrPortInstalledValue: number | undefined;
+      let ssrFetchInstalled = false;
+      let ssrClientOnlyInstalled = false;
 
-      const baseAdapter = options.adapter ?? (await runtime.get());
-      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
-      const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      const installSSRPort = (port: number): void => {
+        if (ssrPortInstalledValue === port) return;
+        if (ssrPortInstalledValue !== undefined) {
+          clearSSRServerPort(ssrPortInstalledValue);
+        }
+        setSSRServerPort(port);
+        ssrPortInstalledValue = port;
+      };
+
+      const releaseSSRRuntime = (): void => {
+        const failures: unknown[] = [];
+        if (ssrClientOnlyInstalled) {
+          try {
+            disableSSRClientOnlyFetching();
+            ssrClientOnlyInstalled = false;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (ssrFetchInstalled) {
+          try {
+            disableSSRFetchInterception();
+            ssrFetchInstalled = false;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (ssrPortInstalledValue !== undefined) {
+          try {
+            clearSSRServerPort(ssrPortInstalledValue);
+            ssrPortInstalledValue = undefined;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (failures.length > 0) {
+          throw new AggregateError(failures, "Failed to release production SSR runtime state");
+        }
+      };
+
+      const cleanupOwnedResources = createRetryableDisposer(async () => {
+        const failures: unknown[] = [];
+
+        if (!memoryMonitoringStopped) {
+          try {
+            stopMemoryMonitoring();
+            memoryMonitoringStopped = true;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        try {
+          releaseSSRRuntime();
+        } catch (error) {
+          failures.push(error);
+        }
+        if (!hmrLifecycleReleased) {
+          try {
+            await releaseHmrLifecycleOwner?.();
+            hmrLifecycleReleased = true;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        if (!bootstrapDisposed) {
+          try {
+            await activeBootstrap?.dispose?.();
+            bootstrapDisposed = true;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+
+        if (failures.length > 0) {
+          throw new AggregateError(failures, "Production server resource cleanup failed");
+        }
+        if (!serverOwnershipReleased) {
+          releaseServerOwnership();
+          serverOwnershipReleased = true;
+        }
+      });
 
       try {
+        const {
+          projectDir,
+          port,
+          bindAddress = "0.0.0.0",
+          signal,
+          debug,
+          defaultProjectSlug,
+          defaultProjectId,
+          defaultReleaseId,
+          defaultEnvironment,
+          requestInterceptor,
+          bootstrapResult,
+          discoveryConfig,
+          localProjects,
+        } = options;
+
+        const baseAdapter = options.adapter ?? bootstrapResult?.adapter ?? (await runtime.get());
+        const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
+        ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+        memoryMonitoringStopped = !ownsMemoryMonitoring;
+
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        activeBootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        bootstrapDisposed = false;
+        const bootstrap = activeBootstrap;
         const adapter = bootstrap.adapter;
+        releaseHmrLifecycleOwner = HMRHandler.registerLifecycleOwner();
+        hmrLifecycleReleased = false;
 
         if (bootstrap.usingFSAdapter) {
           logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
@@ -202,14 +385,16 @@ export function startProductionServer(
         });
 
         // Enable SSR fetch interception to handle relative URLs during SSR
-        setSSRServerPort(port);
+        installSSRPort(port);
         enableSSRFetchInterception();
+        ssrFetchInstalled = true;
 
         // Enable client-only fetching for /api/* routes in production.
         // This returns empty mock responses during SSR (instead of failing with
         // "Invalid URL" or "Connection refused"). React Query will refetch
         // the actual data client-side after hydration.
         enableSSRClientOnlyFetching();
+        ssrClientOnlyInstalled = true;
 
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
@@ -234,6 +419,8 @@ export function startProductionServer(
                     fsAdapter: discoveryConfig.fsAdapter,
                     verbose: discoveryConfig.verbose ?? false,
                   }),
+                undefined,
+                { tokenProvenance: "project-bound" },
               );
             } else {
               await discoverAll({
@@ -246,6 +433,7 @@ export function startProductionServer(
             serverLog.error("Primitive discovery failed", {
               error: error instanceof Error ? error.message : String(error),
             });
+            throw error;
           }
         }
 
@@ -278,41 +466,61 @@ export function startProductionServer(
           )
           : coreHandler;
 
-        let resolveListenReady: (() => void) | undefined;
-        const listenReady = new Promise<void>((resolve) => {
-          resolveListenReady = resolve;
-        });
-
-        const ready = (async () => {
-          await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
-          // Mark server as initialized when ready resolves
-          setServerInitialized(true);
-        })();
+        readiness = createProductionReadiness(handler.ready ?? Promise.resolve());
 
         const server = await adapter.serve(handler, {
           port,
           hostname: bindAddress, // Deno uses "hostname" for bind address
           signal,
           onListen: (params) => {
-            resolveListenReady?.();
+            listeningPort = params.port;
+            installSSRPort(params.port);
+            readiness?.onListen();
             logger.info("Production server listening", params);
           },
         });
+        listeningPort = server.addr.port;
+        installSSRPort(listeningPort);
 
-        const stop = async (): Promise<void> => {
-          setServerInitialized(false);
-          if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        let serverStopped = false;
+        const stop = createRetryableDisposer(async () => {
+          readiness?.cancel(new Error("Production server stopped before readiness"));
 
-          try {
+          if (!serverStopped) {
             await server.stop();
-          } catch (error) {
-            logger.debug("Server stop failed", { error });
+            serverStopped = true;
           }
-        };
+          await cleanupOwnedResources();
+        });
 
-        return { ready, stop };
+        const ready = readiness.ready().catch(async (error) => {
+          try {
+            await stop();
+          } catch (disposeError) {
+            throw new ServerStartupCleanupError(
+              "Production handler readiness",
+              error,
+              disposeError,
+              stop,
+            );
+          }
+          throw error;
+        });
+
+        return { ready, stop, port: listeningPort };
       } catch (error) {
-        if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        readiness?.cancel(error);
+        setServerInitialized(false);
+        try {
+          await cleanupOwnedResources();
+        } catch (cleanupError) {
+          throw new ServerStartupCleanupError(
+            "Production server startup",
+            error,
+            cleanupError,
+            cleanupOwnedResources,
+          );
+        }
         throw error;
       }
     },
@@ -420,7 +628,6 @@ if (import.meta.main) {
         signal,
         drainTimeoutMs,
         abort: () => shutdownController.abort(),
-        dispose: bootstrap.dispose,
         stop: server.stop,
         logger,
       });

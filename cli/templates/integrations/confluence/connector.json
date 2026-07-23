@@ -49,6 +49,13 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    },
+    {
+      "name": "CONFLUENCE_CLOUD_ID",
+      "description": "Optional Atlassian site ID; required when the user can access multiple Confluence sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/#get-list-of-resources"
     }
   ],
   "tools": [

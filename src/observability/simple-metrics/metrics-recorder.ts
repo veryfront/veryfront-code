@@ -3,10 +3,14 @@
  * @module
  */
 
-import { getSSRBoundaries, state } from "./metrics-state.ts";
+import { getContentNetworkBoundaries, getSSRBoundaries, state } from "./metrics-state.ts";
 import { getObservabilityMetrics } from "./observability-loader.ts";
 import { getOtelInstruments, safeOtelOperation } from "./otel-instruments.ts";
+import { nonNegativeSafeInteger, saturatingAdd } from "../metrics/numeric.ts";
 import type { RSCRequestKind } from "./types.ts";
+
+const SSR_BOUNDARIES = getSSRBoundaries();
+const CONTENT_NETWORK_BOUNDARIES = getContentNetworkBoundaries();
 
 function recordObservability(
   fn: (obs: Awaited<ReturnType<typeof getObservabilityMetrics>>) => void,
@@ -30,10 +34,14 @@ function recordObservability(
  * ```
  */
 export async function incRequest(): Promise<void> {
-  state.requests++;
+  state.requests = saturatingAdd(state.requests);
 
-  const obs = await getObservabilityMetrics();
-  obs?.recordHttpRequest();
+  try {
+    const obs = await getObservabilityMetrics();
+    obs?.recordHttpRequest();
+  } catch {
+    /* metrics recording failure - non-critical */
+  }
 
   const otel = getOtelInstruments();
   await safeOtelOperation(() => otel.requestCounter?.add(1), "incRequest counter add failed");
@@ -52,14 +60,17 @@ export async function incRequest(): Promise<void> {
  * ```
  */
 export function recordHttp(resolved: number, blocked: number, fetchMsTotal: number): void {
-  state.jitHttpResolved += resolved;
-  state.jitHttpBlocked += blocked;
-  state.jitHttpFetchMsTotal += Math.floor(fetchMsTotal);
+  const resolvedCount = nonNegativeSafeInteger(resolved);
+  const blockedCount = nonNegativeSafeInteger(blocked);
+  const fetchDuration = nonNegativeSafeInteger(fetchMsTotal);
+  state.jitHttpResolved = saturatingAdd(state.jitHttpResolved, resolvedCount);
+  state.jitHttpBlocked = saturatingAdd(state.jitHttpBlocked, blockedCount);
+  state.jitHttpFetchMsTotal = saturatingAdd(state.jitHttpFetchMsTotal, fetchDuration);
 
   const otel = getOtelInstruments();
   void safeOtelOperation(() => {
-    if (resolved) otel.jitResolvedCounter?.add(resolved);
-    if (blocked) otel.jitBlockedCounter?.add(blocked);
+    if (resolvedCount) otel.jitResolvedCounter?.add(resolvedCount);
+    if (blockedCount) otel.jitBlockedCounter?.add(blockedCount);
   }, "HTTP counters add failed");
 }
 
@@ -75,9 +86,9 @@ export function recordHttp(resolved: number, blocked: number, fetchMsTotal: numb
  * ```
  */
 export function recordCacheGet(hit: boolean): void {
-  state.cacheGets++;
-  if (hit) state.cacheHits++;
-  else state.cacheMisses++;
+  state.cacheGets = saturatingAdd(state.cacheGets);
+  if (hit) state.cacheHits = saturatingAdd(state.cacheHits);
+  else state.cacheMisses = saturatingAdd(state.cacheMisses);
 
   recordObservability((obs) => obs?.recordCacheGet(hit));
 
@@ -98,7 +109,7 @@ export function recordCacheGet(hit: boolean): void {
  * ```
  */
 export function recordCacheSet(): void {
-  state.cacheSets++;
+  state.cacheSets = saturatingAdd(state.cacheSets);
 
   recordObservability((obs) => obs?.recordCacheSet());
 
@@ -117,8 +128,9 @@ export function recordCacheSet(): void {
  * ```
  */
 export function recordCacheInvalidate(n: number): void {
-  const count = n | 0;
-  state.cacheInvalidations += count;
+  const count = nonNegativeSafeInteger(n);
+  if (count === 0) return;
+  state.cacheInvalidations = saturatingAdd(state.cacheInvalidations, count);
 
   recordObservability((obs) => obs?.recordCacheInvalidate(count));
 
@@ -132,17 +144,17 @@ export function recordCacheInvalidate(n: number): void {
 export type ModuleServeStatus = "ok" | "not_found" | "error";
 
 export function recordModuleServe(status: ModuleServeStatus): void {
-  state.moduleServeTotal++;
+  state.moduleServeTotal = saturatingAdd(state.moduleServeTotal);
 
   switch (status) {
     case "ok":
-      state.moduleServeOk++;
+      state.moduleServeOk = saturatingAdd(state.moduleServeOk);
       break;
     case "not_found":
-      state.moduleServeNotFound++;
+      state.moduleServeNotFound = saturatingAdd(state.moduleServeNotFound);
       break;
     case "error":
-      state.moduleServeError++;
+      state.moduleServeError = saturatingAdd(state.moduleServeError);
       break;
   }
 
@@ -154,9 +166,12 @@ export function recordModuleServe(status: ModuleServeStatus): void {
 }
 
 export function recordModuleTransform(durationMs: number): void {
-  const duration = Math.max(0, Math.floor(durationMs));
-  state.moduleTransformTotal++;
-  state.moduleTransformDurationMsTotal += duration;
+  const duration = nonNegativeSafeInteger(durationMs);
+  state.moduleTransformTotal = saturatingAdd(state.moduleTransformTotal);
+  state.moduleTransformDurationMsTotal = saturatingAdd(
+    state.moduleTransformDurationMsTotal,
+    duration,
+  );
 
   const otel = getOtelInstruments();
   void safeOtelOperation(() => {
@@ -166,8 +181,8 @@ export function recordModuleTransform(durationMs: number): void {
 }
 
 export function recordRouteManifestLookup(hit: boolean): void {
-  if (hit) state.routeManifestLruHits++;
-  else state.routeManifestLruMisses++;
+  if (hit) state.routeManifestLruHits = saturatingAdd(state.routeManifestLruHits);
+  else state.routeManifestLruMisses = saturatingAdd(state.routeManifestLruMisses);
 
   const otel = getOtelInstruments();
   void safeOtelOperation(
@@ -187,13 +202,12 @@ export function recordRouteManifestLookup(hit: boolean): void {
  * ```
  */
 export function recordSSR(durationMs: number): void {
-  const d = Math.max(0, Math.floor(durationMs));
-  const boundaries = getSSRBoundaries();
+  const d = nonNegativeSafeInteger(durationMs);
 
-  let idx = boundaries.findIndex((b) => d <= b);
+  let idx = SSR_BOUNDARIES.findIndex((b) => d <= b);
   if (idx === -1) idx = state._ssrCounts.length - 1;
 
-  state._ssrCounts[idx] = (state._ssrCounts[idx] ?? 0) + 1;
+  state._ssrCounts[idx] = saturatingAdd(state._ssrCounts[idx] ?? 0);
 
   recordObservability((obs) => obs?.recordRender(d));
 
@@ -212,23 +226,25 @@ export function recordSSR(durationMs: number): void {
  * ```
  */
 export function recordRSCStreamDuration(durationMs: number): void {
-  const boundaries = getSSRBoundaries();
-  const d = Math.max(0, Math.floor(durationMs));
+  const d = nonNegativeSafeInteger(durationMs);
 
   state.rscStreamHistogram ??= {
-    boundaries: [...boundaries],
-    counts: Array.from({ length: boundaries.length + 1 }, () => 0),
+    boundaries: [...SSR_BOUNDARIES],
+    counts: Array.from({ length: SSR_BOUNDARIES.length + 1 }, () => 0),
   };
 
-  let idx = boundaries.findIndex((b) => d <= b);
+  let idx = SSR_BOUNDARIES.findIndex((b) => d <= b);
   if (idx === -1) idx = state.rscStreamHistogram.counts.length - 1;
 
-  state.rscStreamHistogram.counts[idx] = (state.rscStreamHistogram.counts[idx] ?? 0) + 1;
+  state.rscStreamHistogram.counts[idx] = saturatingAdd(
+    state.rscStreamHistogram.counts[idx] ?? 0,
+  );
 
   recordObservability((obs) => obs?.recordRSCStream(d));
 }
 
 type ObservabilityRSCKind = "manifest" | "page" | "stream" | "action";
+type RSCStateCounter = "rscManifest" | "rscPage" | "rscStream" | "rscAction" | "rscErrors";
 
 function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
   recordObservability((obs) => obs?.recordRSCRequest(obsKind));
@@ -237,7 +253,7 @@ function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
 /** RSC kind to state property and observability kind mapping */
 const RSC_KIND_MAP: Record<
   RSCRequestKind,
-  { prop: keyof typeof state; obs?: ObservabilityRSCKind }
+  { prop: RSCStateCounter; obs?: ObservabilityRSCKind }
 > = {
   manifest: { prop: "rscManifest", obs: "manifest" },
   page: { prop: "rscPage", obs: "page" },
@@ -260,7 +276,7 @@ const RSC_KIND_MAP: Record<
  */
 export function recordRSC(kind: RSCRequestKind): void {
   const { prop, obs } = RSC_KIND_MAP[kind];
-  state[prop]++;
+  state[prop] = saturatingAdd(state[prop]);
   if (obs) recordObservabilityRSC(obs);
 }
 
@@ -273,7 +289,7 @@ export function recordRSC(kind: RSCRequestKind): void {
  * ```
  */
 export function recordCorsRejection(): void {
-  state.corsRejections++;
+  state.corsRejections = saturatingAdd(state.corsRejections);
 }
 
 /**
@@ -285,32 +301,31 @@ export function recordCorsRejection(): void {
  * ```
  */
 export function recordSecurityHeaders(): void {
-  state.securityHeadersApplied++;
+  state.securityHeadersApplied = saturatingAdd(state.securityHeadersApplied);
 }
 
 export function recordApiRequest(status: number): void {
+  if (!Number.isFinite(status)) return;
   if (status >= 200 && status < 300) {
-    state.apiRequests2xx++;
+    state.apiRequests2xx = saturatingAdd(state.apiRequests2xx);
     return;
   }
 
   if (status >= 400 && status < 500) {
-    state.apiRequests4xx++;
+    state.apiRequests4xx = saturatingAdd(state.apiRequests4xx);
     return;
   }
 
-  if (status >= 500) state.apiRequests5xx++;
+  if (status >= 500) state.apiRequests5xx = saturatingAdd(state.apiRequests5xx);
 }
 
 export function recordApiRetry(): void {
-  state.apiRetries++;
+  state.apiRetries = saturatingAdd(state.apiRetries);
 }
 
 // ============================================================================
 // Content Cache Metrics - Track cache behavior for file reads
 // ============================================================================
-
-import { getContentNetworkBoundaries } from "./metrics-state.ts";
 
 export type ContentCacheLayer = "request" | "persistent" | "filelist";
 
@@ -329,13 +344,13 @@ export type ContentCacheLayer = "request" | "persistent" | "filelist";
 export function recordContentCacheHit(layer: ContentCacheLayer): void {
   switch (layer) {
     case "request":
-      state.contentRequestScopedHits++;
+      state.contentRequestScopedHits = saturatingAdd(state.contentRequestScopedHits);
       break;
     case "persistent":
-      state.contentPersistentCacheHits++;
+      state.contentPersistentCacheHits = saturatingAdd(state.contentPersistentCacheHits);
       break;
     case "filelist":
-      state.contentFileListHits++;
+      state.contentFileListHits = saturatingAdd(state.contentFileListHits);
       break;
   }
 }
@@ -353,22 +368,21 @@ export function recordContentCacheHit(layer: ContentCacheLayer): void {
  * ```
  */
 export function recordContentNetworkFetch(durationMs: number, isPreview: boolean): void {
-  const d = Math.max(0, Math.floor(durationMs));
-  const boundaries = getContentNetworkBoundaries();
+  const d = nonNegativeSafeInteger(durationMs);
 
   // Update counters
-  state.contentNetworkFetches++;
-  state.contentNetworkFetchMsTotal += d;
+  state.contentNetworkFetches = saturatingAdd(state.contentNetworkFetches);
+  state.contentNetworkFetchMsTotal = saturatingAdd(state.contentNetworkFetchMsTotal, d);
 
   // Track preview vs production
   if (isPreview) {
-    state.contentPreviewRequests++;
+    state.contentPreviewRequests = saturatingAdd(state.contentPreviewRequests);
   } else {
-    state.contentProductionRequests++;
+    state.contentProductionRequests = saturatingAdd(state.contentProductionRequests);
   }
 
   // Update histogram
-  let idx = boundaries.findIndex((b) => d <= b);
+  let idx = CONTENT_NETWORK_BOUNDARIES.findIndex((b) => d <= b);
   if (idx === -1) idx = state._contentNetworkCounts.length - 1;
-  state._contentNetworkCounts[idx] = (state._contentNetworkCounts[idx] ?? 0) + 1;
+  state._contentNetworkCounts[idx] = saturatingAdd(state._contentNetworkCounts[idx] ?? 0);
 }

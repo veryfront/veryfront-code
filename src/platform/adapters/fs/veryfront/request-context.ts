@@ -17,7 +17,15 @@ export interface RequestContext {
    * This is especially important in preview mode where the persistent cache is disabled.
    */
   fileCache?: Map<string, string>;
+  /** Immutable capability used only when the caller explicitly proved token/project binding. */
+  cacheApiCredential?: Readonly<{
+    token: string;
+    projectSlug: string;
+    projectId?: string;
+  }>;
 }
+
+export type RequestTokenProvenance = "project-bound" | "untrusted";
 
 export const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 
@@ -72,6 +80,7 @@ export function runWithRequestContext<T>(
     releaseId?: string | null;
     branch?: string | null;
     environmentName?: string | null;
+    tokenProvenance?: RequestTokenProvenance;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -85,6 +94,15 @@ export function runWithRequestContext<T>(
     branch: productionMode ? null : (options.branch ?? null),
     environmentName: options.environmentName ?? null,
     fileCache: new Map<string, string>(),
+    ...(options.tokenProvenance === "project-bound"
+      ? {
+        cacheApiCredential: Object.freeze({
+          token: options.token,
+          projectSlug: options.projectSlug,
+          projectId: options.projectId,
+        }),
+      }
+      : {}),
   };
   return asyncLocalStorage.run(context, fn);
 }

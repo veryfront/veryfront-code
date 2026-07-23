@@ -9,15 +9,13 @@
  * credential before serialization, so an accidental
  * `logger.info("...", { authorization: token })` cannot leak the secret.
  *
- * Scope is intentionally key-based: we do not attempt to find secrets embedded
- * in free-form message strings (too lossy). The deny-list errs toward
- * over-redaction — masking a benign `tokenCount` is acceptable; leaking a real
- * token is not. The traversal fails *closed*: on a cycle, depth overflow, or a
- * throwing getter it returns {@link REDACTED} rather than risk emitting an
- * unredacted object.
+ * Sensitive keys are masked and every string value is scrubbed for credentials
+ * embedded in URL userinfo, query parameters, or fragment parameters. The
+ * deny-list errs toward over-redaction — masking a benign `tokenCount` is
+ * acceptable; leaking a real token is not. The traversal fails *closed*: on a
+ * cycle, depth overflow, or a throwing getter it returns {@link REDACTED}
+ * rather than risk emitting an unredacted object.
  */
-
-import { isRecord } from "./core.ts";
 
 /** Replacement value substituted for any sensitive field. */
 export const REDACTED = "[REDACTED]";
@@ -95,25 +93,69 @@ export function isSensitiveKey(key: string): boolean {
   return sensitive;
 }
 
+export type RedactedValue =
+  | string
+  | number
+  | boolean
+  | null
+  | RedactedValue[]
+  | { [key: string]: RedactedValue };
+
+type RedactionMode = "compatible" | "serialization";
+
 /**
- * A non-null, non-array object. {@link isRecord} covers class instances too,
- * whose enumerable fields `JSON.stringify` *would* serialize, so we must
- * traverse them to catch secrets.
+ * `Array.isArray` normally looks like a harmless classifier, but it throws for
+ * revoked proxies. Returning `null` lets every public redaction entry point
+ * fail closed without touching the unreadable value again.
  */
-function isTraversableRecord(value: unknown): value is Record<string, unknown> {
-  return isRecord(value);
+function classifyArray(value: object): boolean | null {
+  try {
+    return Array.isArray(value);
+  } catch {
+    return null;
+  }
 }
 
-function hasToJson(value: object): value is { toJSON: () => unknown } {
-  return typeof (value as { toJSON?: unknown }).toJSON === "function";
-}
+function redactValue(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  mode: RedactionMode,
+): unknown {
+  if (typeof value === "string") return sanitizeUrlCredentials(value);
+  if (typeof value === "bigint") return mode === "serialization" ? value.toString() : value;
+  if (typeof value === "number") {
+    return mode === "serialization" && !Number.isFinite(value) ? null : value;
+  }
+  if (typeof value === "boolean" || value === null) return value;
+  if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
+    return mode === "serialization" ? REDACTED : value;
+  }
 
-function redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
-  if (Array.isArray(value)) {
+  const arrayClassification = classifyArray(value);
+  if (arrayClassification === null) return REDACTED;
+
+  if (arrayClassification) {
     if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
     seen.add(value);
     try {
-      return value.map((item) => redactValue(item, depth + 1, seen));
+      const arrayValue = value as unknown[];
+      const length = arrayValue.length;
+      const redacted: unknown[] = mode === "compatible" ? new Array(length) : [];
+      for (let index = 0; index < length; index++) {
+        if (mode === "compatible" && !(index in arrayValue)) continue;
+        const item = redactValue(arrayValue[index], depth + 1, seen, mode);
+        if (mode === "compatible") {
+          redacted[index] = item;
+        } else {
+          redacted.push(item);
+        }
+      }
+      return redacted;
+    } catch {
+      // Array indices can be accessors or proxy traps. A failed read makes the
+      // serialized contents unknowable, so the complete array fails closed.
+      return REDACTED;
     } finally {
       seen.delete(value);
     }
@@ -124,19 +166,32 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
   // enumerable keys. A key-based pass over the object's own properties would
   // therefore miss credentials smuggled through `toJSON`, e.g.
   // `{ toJSON: () => ({ apiKey: "sk-..." }) }` (CODEX P2). When `toJSON`
-  // returns a non-scalar (an object/array that could carry credential keys),
-  // redact *that* — the thing actually emitted. When it returns a scalar
-  // (Date/URL → ISO string), the original object is left intact, preserving
-  // prior behavior and identity.
-  if (isRecord(value) && hasToJson(value)) {
-    if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
+  // returns an object, array, or scalar, the serialization API redacts *that*
+  // snapshot. The compatibility API keeps scalar serializers such as Date and
+  // URL intact, preserving the established generic return contract.
+  if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
+  let toJSON: unknown;
+  try {
+    toJSON = (value as Record<string, unknown>).toJSON;
+  } catch {
+    // Accessors can throw before a serializer is callable. Never inspect the
+    // raw object after that because its eventual serialization is unknown.
+    return REDACTED;
+  }
+
+  if (typeof toJSON === "function") {
     seen.add(value);
     try {
-      const serialized = value.toJSON();
-      if (isRecord(serialized) || Array.isArray(serialized)) {
-        return redactValue(serialized, depth + 1, seen);
+      const serialized = Reflect.apply(toJSON, value, []);
+      if (mode === "serialization") {
+        return redactValue(serialized, depth + 1, seen, mode);
       }
-      // Scalar result (string/number/…): the object serializes safely as-is.
+
+      if (serialized !== null && typeof serialized === "object") {
+        if (classifyArray(serialized) === null) return REDACTED;
+        return redactValue(serialized, depth + 1, seen, mode);
+      }
+
       return value;
     } catch {
       // A throwing toJSON must never let the raw object (whose own keys we
@@ -147,38 +202,52 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
     }
   }
 
-  if (isTraversableRecord(value)) {
-    if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
-    seen.add(value);
-    try {
-      const out: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(value)) {
-        out[key] = isSensitiveKey(key) ? REDACTED : redactValue(child, depth + 1, seen);
-      }
-      return out;
-    } catch {
-      // A throwing getter (or other access error) must never let an
-      // unredacted object through: fail closed.
-      return REDACTED;
-    } finally {
-      seen.delete(value);
+  seen.add(value);
+  try {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      // Match JSON object semantics only for the explicit serialization API.
+      // The generic compatibility API retains undefined own properties.
+      if (mode === "serialization" && child === undefined) continue;
+      Object.defineProperty(out, key, {
+        configurable: true,
+        enumerable: true,
+        value: isSensitiveKey(key) ? REDACTED : redactValue(child, depth + 1, seen, mode),
+        writable: true,
+      });
     }
+    return out;
+  } catch {
+    // A throwing getter (or other access error) must never let an
+    // unredacted object through: fail closed.
+    return REDACTED;
+  } finally {
+    seen.delete(value);
   }
-
-  // Primitives and scalar-serializing objects (Date, URL, …) are returned
-  // untouched: they are not key/value bags we can safely rewrite.
-  return value;
 }
 
 /**
- * Returns a redacted deep copy of `context`. Any property whose key is
- * {@link isSensitiveKey} has its value replaced with {@link REDACTED}; nested
- * plain objects, class instances, and arrays are traversed. The input is never
- * mutated, and the pass fails closed (returns {@link REDACTED}) on cycles,
- * depth overflow, or a throwing getter.
+ * Returns a redacted copy of `context` while preserving the established source
+ * and runtime value shapes. Any property whose key is {@link isSensitiveKey}
+ * is replaced with {@link REDACTED}; nested records and arrays are traversed,
+ * while primitives and scalar-serializing objects retain their original types.
+ * The input is never mutated.
+ *
+ * Use {@link redactForSerialization} at JSON/logging boundaries where BigInt,
+ * functions, symbols, and custom `toJSON` implementations must be normalized.
  */
 export function redactSensitive<T>(context: T): T {
-  return redactValue(context, 0, new Set<object>()) as T;
+  return redactValue(context, 0, new Set<object>(), "compatible") as T;
+}
+
+/**
+ * Returns a JSON-safe redacted snapshot of `context`. Sensitive keys are
+ * masked, nested values are traversed, BigInts become decimal strings,
+ * non-finite numbers become `null`, and unsupported or unreadable values fail
+ * closed. Objects with `toJSON` are snapshotted exactly once before redaction.
+ */
+export function redactForSerialization(context: unknown): RedactedValue {
+  return redactValue(context, 0, new Set<object>(), "serialization") as RedactedValue;
 }
 
 /**
@@ -237,11 +306,20 @@ export function sanitizeUrlCredentials(input: string): string {
   });
 
   // 2) sensitive query/fragment params: `key=value` → `key=[REDACTED]`.
-  // Match `?key=`, `&key=`, `;key=` separators and stop at the next delimiter.
+  // Match `?key=`, `#key=`, `&key=`, and `;key=` separators and stop at the
+  // next delimiter. OAuth implicit-flow tokens commonly appear after `#`.
   out = out.replace(
-    /([?&;])([a-z0-9_.\-]+)=([^&#;\s]*)/gi,
+    /([?#&;])([a-z0-9_.%\-]+)=([^&#;\s]*)/gi,
     (match, sep: string, key: string, _val: string) => {
-      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(key));
+      let decodedKey = key;
+      try {
+        decodedKey = decodeURIComponent(key);
+      } catch {
+        // A malformed encoded key cannot be normalized more precisely.
+      }
+      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(
+        normalizeToAlphanumeric(decodedKey),
+      );
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
   );

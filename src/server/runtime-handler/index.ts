@@ -21,7 +21,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
-import { createRequestContext } from "../context/request-context.ts";
+import { bindRequestTokenToProject, createRequestContext } from "../context/request-context.ts";
 
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -523,7 +523,7 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const reqCtx = createRequestContext(request, { proxyTrusted });
+          let reqCtx = createRequestContext(request, { proxyTrusted });
 
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
 
@@ -541,6 +541,10 @@ export function createVeryfrontHandler(
                 proxyTrusted,
               }),
           );
+          reqCtx = bindRequestTokenToProject(reqCtx, {
+            proxyTrusted: proxyTrusted === true,
+            projectSlug: projectRes.projectSlug,
+          });
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
           setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
@@ -577,6 +581,7 @@ export function createVeryfrontHandler(
               projectSlug: projectRes.projectSlug,
               projectId: projectRes.projectId,
               proxyToken: reqCtx.token,
+              tokenProvenance: reqCtx.tokenProvenance,
               releaseId: projectRes.releaseId,
               proxyEnv: projectRes.proxyEnv,
               branch: reqCtx.branch,

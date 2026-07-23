@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getSemaphore, Semaphore, SemaphoreTimeoutError } from "./semaphore.ts";
 
 describe("Semaphore", () => {
+  it("should reject invalid permit counts", () => {
+    for (const permits of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new Semaphore(permits), RangeError);
+    }
+  });
+
   it("should execute operation and return result", async () => {
     const sem = new Semaphore(2);
     const result = await sem.acquire(() => Promise.resolve(42));

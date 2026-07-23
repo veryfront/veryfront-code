@@ -19,11 +19,12 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
 import {
   getCachedWithBatching,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 
 const logger = baseLogger.component("file-cache");
 
@@ -45,39 +46,68 @@ const FALLBACK_MAX_ENTRIES = 200;
 /** Fallback cache max memory (10 MB, for local dev) */
 const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
 
+/** Avoid hot-looping backend construction after a transient startup failure. */
+const BACKEND_INIT_RETRY_MS = 30_000;
+
 // Shared backend state across all FileCache instances
 let cacheBackend: CacheBackend | null = null;
 let backendInitialized = false;
 let backendInitPromise: Promise<void> | null = null;
+let lastBackendInitFailureTime: number | undefined;
 
 /**
  * Initialize file cache backend.
  * Call this at startup if you want to enable distributed caching.
  */
 export async function initializeFileCacheBackend(): Promise<boolean> {
-  if (backendInitialized) return cacheBackend?.type !== "memory";
+  if (backendInitialized) return cacheBackend !== null && cacheBackend.type !== "memory";
+
+  if (
+    lastBackendInitFailureTime !== undefined &&
+    Date.now() - lastBackendInitFailureTime < BACKEND_INIT_RETRY_MS
+  ) {
+    return false;
+  }
 
   if (backendInitPromise) {
     await backendInitPromise;
-    return cacheBackend?.type !== "memory";
+    return cacheBackend !== null && cacheBackend.type !== "memory";
   }
 
-  backendInitPromise = withSpan("platform.fs.cache.initializeBackend", async () => {
+  const initialization = withSpan("platform.fs.cache.initializeBackend", async () => {
     try {
-      cacheBackend = await CacheBackends.file();
-      logger.debug("Backend initialized", { type: cacheBackend.type });
-    } catch (error) {
-      logger.warn("Backend init failed, using memory fallback", { error });
-      cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
-    } finally {
+      const candidate = await CacheBackends.file();
+      if (candidate.type === "memory") {
+        // The factory's memory result is a safe per-call degradation, not proof
+        // that a distributed backend can never become available. Retain the
+        // instance-local fallback and allow a bounded later retry.
+        cacheBackend = null;
+        backendInitialized = false;
+        lastBackendInitFailureTime = Date.now();
+        logger.debug("Distributed backend unavailable; retry scheduled");
+        return;
+      }
+
+      cacheBackend = candidate;
       backendInitialized = true;
+      lastBackendInitFailureTime = undefined;
+      logger.debug("Backend initialized", { type: candidate.type });
+    } catch (error) {
+      logger.warn("Backend init failed; instance-local caches remain active", { error });
+      cacheBackend = null;
+      backendInitialized = false;
+      lastBackendInitFailureTime = Date.now();
     }
   }) as Promise<void>;
+  backendInitPromise = initialization;
 
-  await backendInitPromise;
-  backendInitPromise = null;
+  try {
+    await initialization;
+  } finally {
+    if (backendInitPromise === initialization) backendInitPromise = null;
+  }
 
-  return cacheBackend?.type !== "memory";
+  return cacheBackend !== null && cacheBackend.type !== "memory";
 }
 
 /**
@@ -109,6 +139,7 @@ export class FileCache {
       maxMemory: FALLBACK_MAX_MEMORY_BYTES,
       ...options,
     };
+    validateOptions(this.options);
     this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
 
     const mode = cacheBackend?.type ?? "memory";
@@ -142,7 +173,7 @@ export class FileCache {
       return undefined;
     }
 
-    if (Date.now() - entry.timestamp > this.options.ttl) {
+    if (Date.now() - entry.timestamp >= this.options.ttl) {
       this.delete(key);
       this.misses++;
       return undefined;
@@ -207,7 +238,7 @@ export class FileCache {
     if (backend) {
       const serialized = JSON.stringify(entry);
       // Update request-scoped cache so subsequent reads in same request see the new value
-      setInRequestCache(key, serialized);
+      setInRequestCache(backend, key, serialized);
       backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
         logger.warn("Backend set failed", { key, error });
       });
@@ -240,7 +271,7 @@ export class FileCache {
         try {
           const serialized = JSON.stringify(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
-          setInRequestCache(key, serialized);
+          setInRequestCache(backend, key, serialized);
           await backend.set(key, serialized, this.backendTtlSeconds);
         } catch (error) {
           logger.debug("Backend set failed, skipping fallback", { key, error });
@@ -252,6 +283,12 @@ export class FileCache {
 
   /** Write to fallback memory cache with size check and eviction. */
   private setToFallback<T>(key: string, entry: CacheEntry<T>, size: number): void {
+    const previous = this.fallbackCache.get(key);
+    if (previous) {
+      this.fallbackCache.delete(key);
+      this.fallbackMemoryUsed -= previous.size;
+    }
+
     if (size > this.options.maxMemory) {
       logger.warn("Value too large for fallback cache", { key, size });
       return;
@@ -269,7 +306,7 @@ export class FileCache {
     const entry = this.fallbackCache.get(key);
     if (!entry) return false;
 
-    if (Date.now() - entry.timestamp > this.options.ttl) {
+    if (Date.now() - entry.timestamp >= this.options.ttl) {
       this.delete(key);
       return false;
     }
@@ -418,7 +455,7 @@ export class FileCache {
     let evicted = 0;
 
     for (const [key, entry] of this.fallbackCache) {
-      if (now - entry.timestamp <= this.options.ttl) continue;
+      if (now - entry.timestamp < this.options.ttl) continue;
 
       this.fallbackMemoryUsed -= entry.size;
       this.fallbackCache.delete(key);
@@ -429,23 +466,44 @@ export class FileCache {
   }
 
   private evictFallbackIfNeeded(newSize: number): void {
-    const evictOldest = (): void => {
-      const oldest = this.fallbackCache.keys().next().value as string | undefined;
-      if (!oldest) return;
+    const evictOldest = (): boolean => {
+      const oldest = this.fallbackCache.keys().next();
+      if (oldest.done) return false;
 
-      const entry = this.fallbackCache.get(oldest);
+      const entry = this.fallbackCache.get(oldest.value);
       if (entry) this.fallbackMemoryUsed -= entry.size;
-      this.fallbackCache.delete(oldest);
+      this.fallbackCache.delete(oldest.value);
+      return true;
     };
 
     while (this.fallbackCache.size >= this.options.maxSize) {
-      evictOldest();
+      if (!evictOldest()) break;
     }
 
     while (
       this.fallbackMemoryUsed + newSize > this.options.maxMemory && this.fallbackCache.size > 0
     ) {
-      evictOldest();
+      if (!evictOldest()) break;
     }
+  }
+}
+
+function validateOptions(options: Required<FileCacheOptions>): void {
+  if (typeof options.enabled !== "boolean") {
+    throw new TypeError("File cache enabled must be a boolean");
+  }
+  if (
+    !Number.isSafeInteger(options.ttl) || options.ttl <= 0 ||
+    options.ttl > MAX_CACHE_TTL_MILLISECONDS
+  ) {
+    throw new RangeError(
+      `File cache TTL must be a positive integer no greater than ${MAX_CACHE_TTL_MILLISECONDS} milliseconds`,
+    );
+  }
+  if (!Number.isSafeInteger(options.maxSize) || options.maxSize <= 0) {
+    throw new RangeError("File cache maxSize must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(options.maxMemory) || options.maxMemory <= 0) {
+    throw new RangeError("File cache maxMemory must be a positive safe integer");
   }
 }

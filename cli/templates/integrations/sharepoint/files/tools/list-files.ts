@@ -1,41 +1,49 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listFiles, searchFiles } from "../../lib/sharepoint-client.ts";
+import { createSharePointClient } from "../lib/sharepoint-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "list-files",
   description:
     "List files and folders in a SharePoint document library. Can list root level or a specific folder, or search across the entire library.",
-  inputSchema: defineSchema((v) => v.object({
-    siteId: v.string().describe("The ID of the SharePoint site"),
-    driveId: v.string().describe("The ID of the document library (drive)"),
-    folderId: v
-      .string()
-      .optional()
-      .describe(
-        "Optional folder ID to list contents from. If not provided, lists root level.",
-      ),
-    search: v
-      .string()
-      .optional()
-      .describe(
-        "Optional search query to find files by name or content instead of listing",
-      ),
-    orderBy: v
-      .enum(["name", "lastModifiedDateTime", "size"])
-      .optional()
-      .describe("Sort order for results"),
-    limit: v
-      .number()
-      .min(1)
-      .max(100)
-      .default(50)
-      .describe("Maximum number of items to return"),
-  }))(),
-  async execute({ siteId, driveId, folderId, search, orderBy, limit }) {
+  inputSchema: defineSchema((v) =>
+    v.object({
+      siteId: v.string().describe("The ID of the SharePoint site"),
+      driveId: v.string().describe("The ID of the document library (drive)"),
+      folderId: v
+        .string()
+        .optional()
+        .describe(
+          "Optional folder ID to list contents from. If not provided, lists root level.",
+        ),
+      search: v
+        .string()
+        .optional()
+        .describe(
+          "Optional search query to find files by name or content instead of listing",
+        ),
+      orderBy: v
+        .enum(["name", "lastModifiedDateTime", "size"])
+        .optional()
+        .describe("Sort order for results"),
+      limit: v
+        .number()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Maximum number of items to return"),
+    })
+  )(),
+  async execute(
+    { siteId, driveId, folderId, search, orderBy, limit },
+    context,
+  ) {
+    const userId = requireUserIdFromContext(context);
+    const client = createSharePointClient(userId);
     const files = search
-      ? await searchFiles(siteId, search, { limit })
-      : await listFiles(siteId, driveId, folderId, { limit, orderBy });
+      ? await client.searchFiles(siteId, search, { limit })
+      : await client.listFiles(siteId, driveId, folderId, { limit, orderBy });
 
     return files.map((file) => ({
       id: file.id,
