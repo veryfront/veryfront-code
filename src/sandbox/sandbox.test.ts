@@ -1313,7 +1313,45 @@ describe("Sandbox", () => {
       }
     });
 
-    it("waits for Kubernetes runtime endpoint readiness even when the session is already running", async () => {
+    it("uses API proxy routes for default Kubernetes data-plane calls", async () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://3912734599.sandbox.veryfront.org",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      try {
+        assertEquals(await sandbox.executeCommand("echo ok"), {
+          stdout: "ok\n",
+          stderr: "",
+          exitCode: 0,
+        });
+
+        assertEquals(fetchCalls.map((call) => call.url), [
+          "https://api.test.com/sandbox-sessions",
+          "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat",
+          "https://api.test.com/sandbox-sessions/sandbox-1/commands/stream",
+        ]);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("waits for explicit runtime endpoint readiness even when the session is already running", async () => {
       setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
       mockTimers({ advanceTimeByMs: true });
       mockFetch([
@@ -1340,6 +1378,8 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
         execStartRetryDelayMs: 1,
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1361,7 +1401,7 @@ describe("Sandbox", () => {
       }
     });
 
-    it("reprovisions SDK-created Kubernetes sessions when the runtime endpoint never becomes ready", async () => {
+    it("reprovisions SDK-created sessions when the explicit runtime endpoint never becomes ready", async () => {
       setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
       mockTimers({ advanceTimeByMs: true });
       mockFetch([
@@ -1397,6 +1437,8 @@ describe("Sandbox", () => {
         startupTimeoutMs: 3,
         pollIntervalMs: 2,
         controlRequestTimeoutMs: 0,
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1530,6 +1572,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1574,6 +1618,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1723,6 +1769,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1812,6 +1860,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1882,6 +1932,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -1951,6 +2003,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
@@ -2152,6 +2206,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ endpoint }) =>
+          resolveDefaultSandboxRuntimeEndpoint({ endpoint }),
       });
 
       try {
