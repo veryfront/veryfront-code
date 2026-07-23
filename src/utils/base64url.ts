@@ -28,14 +28,16 @@ export function encodeBase64(value: string): string {
 
 /** Encode raw bytes as standard base64. */
 export function encodeBase64Bytes(bytes: Uint8Array): string {
+  // Prefer Buffer where available (Node): avoids building a large intermediate
+  // binary string, which is slower and can hit maximum-string-size limits.
+  const bufferCtor = (globalThis as { Buffer?: typeof Buffer }).Buffer;
+  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
+
   if (typeof globalThis.btoa === "function") {
     let binary = "";
     for (const byte of bytes) binary += String.fromCharCode(byte);
     return globalThis.btoa(binary);
   }
-
-  const bufferCtor = (globalThis as { Buffer?: typeof Buffer }).Buffer;
-  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
 
   throw new Error("Base64 encoding is not supported in this runtime");
 }
