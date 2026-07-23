@@ -76,7 +76,7 @@ describe("error-handlers", () => {
           if (attempts < 2) throw new Error("fail");
           return "success";
         },
-        { maxRetries: 3, initialDelay: 1 },
+        { maxAttempts: 3, initialDelay: 1 },
       );
 
       assertEquals(result, "success");
@@ -94,7 +94,7 @@ describe("error-handlers", () => {
               attempts++;
               throw new Error("always fails");
             },
-            { maxRetries: 2, initialDelay: 1 },
+            { maxAttempts: 2, initialDelay: 1 },
           ),
         Error,
         "always fails",
