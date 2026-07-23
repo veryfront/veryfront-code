@@ -56,7 +56,10 @@ export interface RetryWithBackoffOptions {
   initialDelay?: number;
   maxDelay?: number;
   logger?: typeof serverLogger;
-  /** Per-attempt timeout; aborts the attempt's signal with an AbortError. */
+  /**
+   * Per-attempt timeout: aborts the attempt's AbortSignal with an AbortError.
+   * Cooperative — the attempt only stops if `fn` observes the signal it is given.
+   */
   timeoutMs?: number;
   /** Return false to rethrow immediately without further attempts (default: always retry). */
   shouldRetry?: (error: unknown, attempt: number) => boolean;
@@ -64,7 +67,10 @@ export interface RetryWithBackoffOptions {
   computeDelay?: (attempt: number, error: unknown) => number;
   /** Called before each backoff wait; replaces the default warn log. */
   onRetry?: (info: { error: Error; attempt: number; delay: number; isTimeout: boolean }) => void;
-  /** Wrap the terminal error once all attempts are exhausted (default: rethrow as-is). */
+  /**
+   * Wrap the terminal error once all attempts are exhausted. Default: rethrow
+   * the normalized Error (non-Error throws become `new Error(String(value))`).
+   */
   wrapFinalError?: (lastError: Error, lastAttempt: number) => Error;
 }
 

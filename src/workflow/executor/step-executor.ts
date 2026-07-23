@@ -233,7 +233,7 @@ export class StepExecutor {
     };
   }
 
-  /** HTTP-style statuses worth retrying: timeout, rate limit, and transient 5xx. */
+  /** Shared transient classification (HTTP statuses + network error codes) via retry-policy. */
   private isRetryableError(error: Error, config: RetryConfig): boolean {
     // Starting another attempt while the timed-out operation is still active
     // would violate step isolation and allow concurrent external side effects.
