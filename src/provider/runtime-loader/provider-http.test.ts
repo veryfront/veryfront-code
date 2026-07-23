@@ -1,5 +1,6 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   buildProviderError,
   parseRetryAfterMs,
@@ -168,6 +169,71 @@ describe("provider-http", () => {
       );
       assertEquals(err.message, "Provider request failed with status 500");
       assertEquals(err.message.includes("<TOKEN>"), false);
+    });
+
+    it("preserves structured 400 details for internal classification without enumerating them", async () => {
+      const responseBody = JSON.stringify({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "This model does not support assistant message prefill.",
+        },
+      });
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(JSON.stringify(err).includes("assistant message prefill"), false);
+      assertEquals(err.message, "Provider request failed with status 400");
+      assertEquals(parseProviderError(err), {
+        code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+        message:
+          "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+      });
+    });
+
+    it("preserves invalid-request details when a provider also supplies a specific code", async () => {
+      const responseBody = JSON.stringify({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+          message: "The prompt is too long for this model.",
+        },
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(400, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(parseProviderError(err), {
+        code: "CONTEXT_LENGTH_EXCEEDED",
+        message: "Conversation is too long",
+      });
+    });
+
+    it("does not preserve arbitrary provider api error messages", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, {
+          type: "error",
+          error: {
+            type: "api_error",
+            message: "private provider payload <TOKEN>",
+          },
+        }),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(parseProviderError(err), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+      assertEquals(JSON.stringify(err).includes("<TOKEN>"), false);
     });
 
     it("uses the response status when the body is empty", async () => {
