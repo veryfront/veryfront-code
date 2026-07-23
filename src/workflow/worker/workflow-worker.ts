@@ -5,7 +5,7 @@
  * Enables distributed workflow execution across multiple pods.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger, sleep } from "#veryfront/utils";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { hasWorkerSupport } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
@@ -193,7 +193,7 @@ export class WorkflowWorker {
           `[WorkflowWorker] Waiting for ${this.activeResumes.size} active resumes to complete`,
         );
       }
-      await this.sleep(1000);
+      await sleep(1000);
     }
 
     this.status = "stopped";
@@ -331,14 +331,6 @@ export class WorkflowWorker {
         this.activeResumes.delete(run.id);
       }
     })();
-  }
-
-  /**
-   * Sleep for specified milliseconds
-   */
-  private sleep(ms: number): Promise<void> {
-    // no cleanup needed: one-shot
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

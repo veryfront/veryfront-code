@@ -1,5 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { API_CLIENT_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { sleep } from "#veryfront/utils";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
@@ -460,12 +461,6 @@ function collectReferencedChildConversationIds(messages: DurableRunCanaryMessage
   }
 
   return [...childConversationIds];
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function isTerminalRunStatus(status: string): boolean {

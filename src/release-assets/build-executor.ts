@@ -52,7 +52,7 @@ import {
   collectCssImportPaths,
   CSS_IMPORTING_SOURCE_EXTENSIONS,
 } from "#veryfront/html/styles-builder/css-import-extraction.ts";
-import { sha256HexBytes } from "./hash.ts";
+import { computeHashBytes } from "#veryfront/utils";
 import {
   RELEASE_ASSET_BASE_PATH,
   RELEASE_ASSET_CONTENT_TYPES,
@@ -1163,7 +1163,7 @@ async function addPreparedJavaScriptAsset(
   const bytes = new TextEncoder().encode(code) as Uint8Array<ArrayBuffer>;
   if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) return null;
 
-  const contentHash = await sha256HexBytes(bytes);
+  const contentHash = await computeHashBytes(bytes);
   const entry: PreparedAsset = {
     logicalPath,
     contentHash,
@@ -1712,7 +1712,7 @@ async function runBuildInner(
       });
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
-        const contentHash = await sha256HexBytes(bytes);
+        const contentHash = await computeHashBytes(bytes);
         css.push({
           contentHash,
           size: bytes.byteLength,
@@ -1796,7 +1796,7 @@ async function runBuildInner(
   }
 
   // 6. Assemble and PUT the manifest.
-  const sourceContentHash = await sha256HexBytes(
+  const sourceContentHash = await computeHashBytes(
     new TextEncoder().encode([...sourceByPath.keys()].sort().join("\n")) as Uint8Array<ArrayBuffer>,
   );
   const manifest: ReleaseAssetManifest = {
@@ -1965,7 +1965,7 @@ async function releaseFileSetSignature(sourceByPath: Map<string, string>): Promi
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, content]) => `${path}${separator}${content}`)
     .join(separator);
-  return await sha256HexBytes(new TextEncoder().encode(serialized) as Uint8Array<ArrayBuffer>);
+  return await computeHashBytes(new TextEncoder().encode(serialized) as Uint8Array<ArrayBuffer>);
 }
 
 async function resolveReleaseConfigFromSourceFiles(

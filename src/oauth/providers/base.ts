@@ -10,7 +10,7 @@ import type {
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { INVALID_ARGUMENT, TOKEN_STORAGE_ERROR } from "#veryfront/errors";
-import { logger as baseLogger } from "#veryfront/utils";
+import { base64urlEncodeBytes, logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("o-auth");
 
@@ -36,11 +36,7 @@ function generateCodeVerifier(): string {
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
   const data = new TextEncoder().encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  return base64urlEncodeBytes(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
 }
 
 /** Implement oauth provider. */

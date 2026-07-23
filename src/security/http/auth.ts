@@ -1,5 +1,4 @@
 import { BaseHandler } from "./base-handler.ts";
-import { createError, toError } from "#veryfront/errors";
 import type {
   HandlerContext,
   HandlerMetadata,
@@ -7,34 +6,9 @@ import type {
   HandlerResult,
 } from "#veryfront/types";
 import type { AuthConfig } from "./middleware/types.ts";
-import { Buffer } from "node:buffer";
+import { encodeBase64 } from "#veryfront/utils";
 import { constantTimeEqual } from "../utils/constant-time.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
-
-function encodeBase64(value: string): string {
-  if (typeof globalThis.btoa === "function") {
-    try {
-      return globalThis.btoa(value);
-    } catch (_) {
-      /* expected: non-Latin1 string — fall back to TextEncoder */
-      const bytes = new TextEncoder().encode(value);
-      let binary = "";
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return globalThis.btoa(binary);
-    }
-  }
-
-  const bufferCtor = (globalThis as { Buffer?: typeof Buffer }).Buffer;
-  if (bufferCtor) return bufferCtor.from(value, "utf8").toString("base64");
-
-  throw toError(
-    createError({
-      type: "not_supported",
-      message: "Base64 encoding is not supported in this runtime",
-      feature: "Base64 encoding",
-    }),
-  );
-}
 
 function sanitizeRealm(realm: unknown): string {
   // deno-lint-ignore no-control-regex -- intentional: strips control chars and special chars from HTTP realm header

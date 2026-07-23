@@ -1,5 +1,6 @@
 import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
 import type { CompilationTarget } from "#veryfront/extensions/content/index.ts";
+import { base64urlEncode } from "#veryfront/utils";
 
 export interface ImportRewriterConfig {
   filePath: string;
@@ -26,7 +27,7 @@ function toAbsPath(spec: string, basedir: string): string {
 function toBrowserFs(abs: string, baseUrl?: string): string {
   if (abs.startsWith("http://") || abs.startsWith("https://")) return abs;
 
-  const b64 = btoa(abs).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const b64 = base64urlEncode(abs);
   const path = `/_veryfront/fs/${b64}.js`;
   return baseUrl ? `${baseUrl}${path}` : path;
 }

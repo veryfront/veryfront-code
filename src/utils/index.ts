@@ -107,10 +107,15 @@ export {
   type BundleCode as HashBundleCode,
   computeCodeHash,
   computeHash,
+  computeHashBytes,
   fnv1aHash,
   shortHash,
   simpleHash,
 } from "./hash-utils.ts";
+
+export { base64urlEncode, base64urlEncodeBytes, encodeBase64 } from "./base64url.ts";
+
+export { sleep } from "./sleep.ts";
 
 export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./memoize.ts";
 

@@ -4,7 +4,7 @@
  * @module server/project-env/fetcher
  */
 
-import { getBaseLogger } from "#veryfront/utils";
+import { encodeBase64, getBaseLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
@@ -24,7 +24,7 @@ function getInternalAuthorization(): string | undefined {
   const username = getHostEnv("VERYFRONT_API_INTERNAL_USER");
   const password = getHostEnv("VERYFRONT_API_INTERNAL_PASS");
   if (!username || !password) return undefined;
-  return `Basic ${globalThis.btoa(`${username}:${password}`)}`;
+  return `Basic ${encodeBase64(`${username}:${password}`)}`;
 }
 
 async function fetchEnvironmentVariables(

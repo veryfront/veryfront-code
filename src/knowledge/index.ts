@@ -15,6 +15,7 @@
 
 import { ragStore } from "#veryfront/embedding/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+import { base64urlEncodeBytes } from "#veryfront/utils";
 import type {
   RagSearchOptions,
   RagSearchResult,
@@ -469,10 +470,7 @@ function createLookupItem(
 }
 
 function encodeCursor(state: ProjectKnowledgeLookupCursorState): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(state));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return base64urlEncodeBytes(new TextEncoder().encode(JSON.stringify(state)));
 }
 
 function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {

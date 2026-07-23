@@ -1,5 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { AGENT_ERROR, AGENT_TIMEOUT } from "#veryfront/errors";
+import { sleep } from "#veryfront/utils";
 import type {
   InferInput,
   InferSchema,
@@ -314,7 +315,7 @@ export async function waitForDurableHumanInputResolution<TSnapshot>(
       return result;
     }
 
-    await delay(options.pollIntervalMs);
+    await sleep(options.pollIntervalMs);
   }
 
   throw AGENT_TIMEOUT.create({
@@ -370,10 +371,4 @@ function submitHumanInputResumeValue(
     // Ignore late resume submissions once the local wait has already completed
     // or the ephemeral session has been finalized.
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }

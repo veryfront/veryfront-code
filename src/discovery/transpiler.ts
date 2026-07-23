@@ -10,6 +10,7 @@ import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/def
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
+import { computeHash } from "#veryfront/utils";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
@@ -28,19 +29,6 @@ type TranspileCacheEntry = {
 // bundled dependency contents it was built from and is only served while those
 // still match (see findCachedModuleWithFreshDeps).
 const transpileCache = new Map<string, TranspileCacheEntry[]>();
-
-const textEncoder = new TextEncoder();
-
-async function hashSource(source: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    textEncoder.encode(source),
-  );
-  return Array.from(
-    new Uint8Array(digest),
-    (byte) => byte.toString(16).padStart(2, "0"),
-  ).join("");
-}
 
 /**
  * Returns the first cached module whose recorded bundled-dependency contents
@@ -63,7 +51,7 @@ async function findCachedModuleWithFreshDeps(
           const content = context.fsAdapter
             ? await context.fsAdapter.readFile(dep.path)
             : await createFileSystem().readTextFile(dep.path);
-          hash = await hashSource(content);
+          hash = await computeHash(content);
         } catch {
           hash = undefined;
         }
@@ -214,7 +202,7 @@ export async function importModule(
   // another project's discovery. The entry hash alone is still not enough —
   // bundled relative imports are inlined into the module — so cached entries
   // are only served after their recorded dependency contents re-verify.
-  const cacheKey = `${file} ${await hashSource(source)}`;
+  const cacheKey = `${file} ${await computeHash(source)}`;
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
     const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);
@@ -308,7 +296,7 @@ export async function importModule(
     moduleUrl.searchParams.set("v", String(Date.now()));
     const module = await import(moduleUrl.href);
     const deps = await Promise.all(
-      bundledDeps.map(async ({ path, content }) => ({ path, hash: await hashSource(content) })),
+      bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
     );
     const entries = transpileCache.get(cacheKey) ?? [];
     entries.push({ deps, module });

@@ -7,7 +7,7 @@ import type {
 } from "../../types.ts";
 import { parseDuration } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
-import { sleep } from "./utils.ts";
+import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import {

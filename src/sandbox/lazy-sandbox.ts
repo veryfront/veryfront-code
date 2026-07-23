@@ -1,6 +1,6 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { logger } from "#veryfront/utils";
+import { logger, sleep } from "#veryfront/utils";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import {
@@ -607,7 +607,7 @@ export class LazySandbox {
     const start = Date.now();
 
     while (Date.now() - start < this.startupTimeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+      await sleep(this.pollIntervalMs);
 
       const res = await this.fetchControl(
         `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
@@ -659,7 +659,7 @@ export class LazySandbox {
         lastFailure = error instanceof Error ? error.message : String(error);
       }
 
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+      await sleep(this.pollIntervalMs);
     }
 
     throw REQUEST_ERROR.create({
@@ -838,7 +838,7 @@ export class LazySandbox {
   }
 
   private waitForExecStartRetry(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, this.execStartRetryDelayMs));
+    return sleep(this.execStartRetryDelayMs);
   }
 
   private async reprovisionAfterExecStartFailure(): Promise<void> {

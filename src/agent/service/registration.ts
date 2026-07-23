@@ -2,6 +2,7 @@ import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import { CONFIG_INVALID, NETWORK_ERROR } from "#veryfront/errors";
+import { computeHash } from "#veryfront/utils";
 
 /** Public API contract for agent service registration mode. */
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
@@ -242,11 +243,7 @@ async function stableServiceKey(input: {
     input.baseUrl,
     input.podIdentity ?? "no-pod-identity",
   ].join("|");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(keySource));
-  const hash = Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 32);
+  const hash = (await computeHash(keySource)).slice(0, 32);
   return `${input.serviceName}:${hash}`.slice(0, 128);
 }
 

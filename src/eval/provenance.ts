@@ -1,4 +1,5 @@
 import { join } from "@std/path";
+import { computeHash, computeHashBytes } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import type { EvalRunProvenance } from "./types.ts";
 
@@ -185,19 +186,6 @@ async function runGit(
   }
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  return sha256Bytes(new TextEncoder().encode(value));
-}
-
-async function sha256Bytes(value: Uint8Array): Promise<string> {
-  const bytes = new Uint8Array(value.byteLength);
-  bytes.set(value);
-  const hash = await crypto.subtle.digest("SHA-256", bytes.buffer);
-  return Array.from(new Uint8Array(hash))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 function parseNullSeparated(value: string | undefined): string[] {
   if (!value) return [];
   return value.split("\0").filter(Boolean).sort();
@@ -212,7 +200,7 @@ async function hashUntrackedFiles(
   for (const relativePath of paths) {
     try {
       const content = await readFile(join(projectDir, relativePath));
-      entries.push(`${relativePath}\0${await sha256Bytes(content)}`);
+      entries.push(`${relativePath}\0${await computeHashBytes(new Uint8Array(content))}`);
     } catch {
       entries.push(`${relativePath}\0unreadable`);
     }
@@ -250,7 +238,7 @@ async function resolveGitProvenance(
     ...(branch ? { branch } : {}),
     ...(dirty !== undefined ? { dirty } : {}),
     ...(dirty
-      ? { dirtyHash: await sha256Hex(`${status ?? ""}\n${diff ?? ""}\n${untrackedHashInput}`) }
+      ? { dirtyHash: await computeHash(`${status ?? ""}\n${diff ?? ""}\n${untrackedHashInput}`) }
       : {}),
   };
 }
